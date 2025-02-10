@@ -17,7 +17,7 @@ class QwenVLMaxClient(BaseVLMClient):
             "Content-Type": "application/json"
         }
         # 添加 prompt 描述使用场景
-        prompt = "This image contains a student's question and possibly their solution process. Please extract the question and the student's solution in markdown format."
+        prompt = "我上传的是一张学生的题目，其中一定包含了题目的本身，有可能包含了学生的解题过程。我希望模型输出一个JSON格式的文件，其中包含两个键："
         data = {
             "model": "qwen-vl-plus",
             "messages": [

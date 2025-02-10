@@ -4,6 +4,7 @@ import random
 import gradio as gr
 import numpy as np
 from PIL import Image
+import base64  # 新增导入
 
 # 导入 API 客户端和 Markdown 格式化工具
 from api_clients.qwen_vl_max_client import QwenVLMaxClient
@@ -22,10 +23,12 @@ def process_image(image):
     if isinstance(image, np.ndarray):
         image = Image.fromarray(image)
     
-    # 保存图片到临时文件
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
-        image.save(tmp_file.name)
-        tmp_path = tmp_file.name
+    tmp_path = "/home/pcuser/Myproject/Super_Error_Log/POC/vlm-api-testing/temp_file/image.png"
+    image.save(tmp_path)
+    
+    # 将图片转换为 Base64 编码
+    with open(tmp_path, "rb") as image_file:
+        base64_encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
     
     # 调用 API 客户端，获取分析结果（包含 'question' 与 'student_answer'）
     result = client.analyze_image(tmp_path)
