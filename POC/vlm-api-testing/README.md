@@ -5,7 +5,7 @@
 ## 项目结构
 
 - **main.py**：前端测试界面，基于 Gradio 实现。
-- **api_clients/**：存放不同视觉大模型 API 客户端代码。
+- **api_clients/**：存放不同视觉大模型 API 客户端代码。git
   - **base_client.py**：定义基础客户端抽象类。
   - **qwen_vl_max_client.py**：Qwen-VL-Max API 客户端的示例实现。
 - **utils/**：存放工具函数。

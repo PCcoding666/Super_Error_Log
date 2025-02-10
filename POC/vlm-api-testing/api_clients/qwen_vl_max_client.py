@@ -4,17 +4,7 @@ import requests
 from api_clients.base_client import BaseVLMClient
 
 class QwenVLMaxClient(BaseVLMClient):
-    """
-    Qwen-VL-Max API 客户端实现
-    """
-
-    def __init__(self):
-        """
-        初始化客户端
-        """
-        load_dotenv()
-        self.api_key = os.getenv("qwen_api_key")
-        self.base_url = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+    # ... existing code ...
 
     def analyze_image(self, image_path: str) -> dict:
         """
@@ -26,11 +16,14 @@ class QwenVLMaxClient(BaseVLMClient):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        # 添加 prompt 描述使用场景
+        prompt = "This image contains a student's question and possibly their solution process. Please extract the question and the student's solution in markdown format."
         data = {
             "model": "qwen-vl-plus",
             "messages": [
                 {"role": "user", "content": [
-                    {"type": "image_url", "image_url": {"url": image_path}}
+                    {"type": "image_url", "image_url": {"url": image_path}},
+                    {"type": "text", "text": prompt}
                 ]}
             ]
         }
