@@ -3,3 +3,5 @@ numpy
 Pillow
 requests
 python-dotenv
+google-cloud-storage==2.8.0
+
