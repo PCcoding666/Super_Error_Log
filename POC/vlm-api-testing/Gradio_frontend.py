@@ -1,7 +1,13 @@
 import gradio as gr
 from api_clients.qwen_vl_max_client import QwenVLMaxClient
+import os
+from dotenv import load_dotenv
 
-api_key = "your_actual_api_key_here"
+# Load environment variables from .env file
+load_dotenv("/home/pcuser/Myproject/Super_Error_Log/POC/vlm-api-testing/.env")
+
+# Get the API key from the environment variable
+api_key = os.getenv("qwen_api_key")
 client = QwenVLMaxClient(api_key=api_key)
 
 def process_image(image=None, url=None):
@@ -13,7 +19,7 @@ def process_image(image=None, url=None):
         return "请上传图片或输入 URL"
 
 with gr.Blocks() as demo:
-    gr.Markdown("## 题目 OCR 解析")
+    gr.Markdown("## 题目解析")
 
     with gr.Row():
         img_input = gr.Image(type="filepath", label="上传图片")

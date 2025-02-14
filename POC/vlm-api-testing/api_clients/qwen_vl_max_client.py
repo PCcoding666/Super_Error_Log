@@ -16,7 +16,10 @@ class QwenVLMaxClient:
         """
         # 处理图片输入
         if is_base64:
-            image_url = encode_image_to_base64(image_input, "png")  # 读取本地图片
+            try:
+                image_url = encode_image_to_base64(image_input, "png")  # 读取本地图片
+            except Exception as e:
+                raise Exception(f"Base64 编码失败: {str(e)}")
         else:
             image_url = image_input  # 直接使用公网 URL
 
@@ -24,12 +27,14 @@ class QwenVLMaxClient:
             "我上传的是一张学生的题目图片，其中一定包含题目本身，并且可能包含学生的解题过程。\n"
             "请输出 JSON 格式：\n\n"
             "{\n  \"question\": \"图片中题目的完整内容（Markdown格式）\",\n"
-            "  \"student_answer\": \"学生的解题过程（Markdown格式），如果没有则返回空字符串\" \n}"
-            "\n严格按照图片内容提取，不要补充信息，不要输出额外说明！"
+            "  \"student_answer\": \"图片中学生的实际作答过程（Markdown格式），如果没有则返回空字符串\" \n}"
+            "\n严格按照图片内容逐字逐句提取，不得遗漏任何信息。\n"
+            "如果学生解题过程不完整，也必须提取已有部分，不可忽略。\n"
+            "不要推测或补充答案，不要输出额外说明！"
         )
 
         payload = {
-            "model": "qwen-vl-plus",
+            "model": "qwen-vl-max",
             "messages": [
                 {"role": "system", "content": "你是一个精准的 OCR 解析助手，严格按照图片内容提取信息，不进行推理。"},
                 {
@@ -49,12 +54,16 @@ class QwenVLMaxClient:
             "X-DashScope-SSE": "disable"
         }
 
-        response = requests.post(self.endpoint_url, json=payload, headers=headers)
+        try:
+            response = requests.post(self.endpoint_url, json=payload, headers=headers)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"API 请求失败: {str(e)}")
 
-        if response.status_code != 200:
-            raise Exception(f"API 请求失败: {response.status_code}, {response.text}")
-
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as e:
+            raise Exception(f"解析 JSON 失败: {str(e)}")
 
 # --------------------------
 # 测试代码
@@ -69,4 +78,7 @@ if __name__ == "__main__":
 
     # 测试本地 Base64
     test_local_path = "/home/pcuser/Myproject/Super_Error_Log/POC/vlm-api-testing/temp_file/测试示例.png"
-    print("Base64 结果:", client.inference(test_local_path, is_base64=True))
+    try:
+        print("Base64 结果:", client.inference(test_local_path, is_base64=True))
+    except Exception as e:
+        print(f"测试失败: {str(e)}")
