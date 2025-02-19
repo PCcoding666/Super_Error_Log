@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv('/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm-api-testing/.env')
+load_dotenv('/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm_api_testing/.env')
 
 # Get the API key from the environment variable
 api_key = os.getenv("qwen_api_key")
@@ -39,7 +39,7 @@ with gr.Blocks() as demo:
     # 添加示例图片
     gr.Examples(
         examples=[
-            "/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm-api-testing/temp_file/测试示例.png"
+            "/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm_api_testing/temp_file/测试示例.png"
         ],
         inputs=img_input,
         outputs=output_text,

@@ -1,5 +1,9 @@
+# -*- coding: utf-8 -*-
+import io
 import os
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding='utf-8')
 import openai
 import requests
 
@@ -109,7 +113,7 @@ if __name__ == "__main__":
     api_key = os.getenv("qwen_api_key", "sk-684e72cf6479433cad644344f537ef5f")
     client = QwenVLMaxClient(api_key=api_key)
 
-    test_image = "/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm-api-testing/temp_file/测试示例.png"
+    test_image = "/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm_api_testing/temp_file/测试示例.png"
     try:
         result = client.inference(test_image)
         print("识别结果:", result)

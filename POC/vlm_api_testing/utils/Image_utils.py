@@ -19,7 +19,7 @@ def upload_image_to_gcs(local_file_path: str, destination_blob_name: str) -> str
     将本地文件上传到 GCS 并返回签名 URL。
     """
     try:
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm-api-testing/crypto-galaxy-407901-55c76baa3f01.json"
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm_api_testing/crypto-galaxy-407901-55c76baa3f01.json"
         bucket_name = "vlm_api_test_storage"
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
@@ -47,7 +47,7 @@ def upload_image_to_gcs(local_file_path: str, destination_blob_name: str) -> str
 # 测试代码
 # --------------------------
 if __name__ == "__main__":
-    local_image = "/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm-api-testing/temp_file/测试示例.png"
+    local_image = "/Users/chengpeng/MyProject/Super_Error_Log/POC/vlm_api_testing/temp_file/测试示例.png"
     # print("Base64 编码:", encode_image_to_base64(local_image, "png"))
 
     # 使用指定的 GCS 存储桶
