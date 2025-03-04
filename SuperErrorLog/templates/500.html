@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}服务器错误 - 超级错题本{% endblock %}
+
+{% block content %}
+<div class="container text-center py-5">
+    <div class="error-state">
+        <i class="bi bi-exclamation-triangle error-state-icon"></i>
+        <h1 class="display-1 fw-bold">500</h1>
+        <h2 class="mb-4">服务器错误</h2>
+        <p class="lead mb-5">抱歉，服务器遇到了问题。请稍后再试或联系我们的支持团队。</p>
+        <div class="d-flex justify-content-center gap-3">
+            <a href="{{ url_for('index') }}" class="btn btn-primary">
+                <i class="bi bi-house-door me-2"></i>返回首页
+            </a>
+            <a href="#" class="btn btn-outline-primary">
+                <i class="bi bi-headset me-2"></i>联系支持
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %} 

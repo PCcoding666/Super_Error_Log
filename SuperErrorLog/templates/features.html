@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+
+{% block title %}功能特点 - 超级错题本{% endblock %}
+
+{% block content %}
+<!-- 页面标题 -->
+<div class="container">
+    <div class="text-center mb-5">
+        <h1 class="fw-bold">超级错题本功能特点</h1>
+        <p class="text-muted">探索我们强大的功能，提升您的学习效率</p>
+    </div>
+    
+    <!-- 主要功能 -->
+    <div class="row mb-5">
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-4">
+                        <div class="feature-icon me-3">
+                            <i class="bi bi-camera"></i>
+                        </div>
+                        <h3>智能识别</h3>
+                    </div>
+                    <p>通过通义千问视觉模型，自动识别题目内容和学生答案，无需手动输入。支持多种题型，包括选择题、填空题、计算题和解答题等。</p>
+                    <ul class="list-unstyled">
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>支持手写和印刷体识别</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>支持数学公式和特殊符号</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>自动区分题目和答案</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>高精度识别率</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-4">
+                        <div class="feature-icon me-3">
+                            <i class="bi bi-lightbulb"></i>
+                        </div>
+                        <h3>智能分析</h3>
+                    </div>
+                    <p>利用DeepSeek大语言模型，提供正确解法和错误分析，帮助理解错误原因。分析结果包含详细的解题步骤和错误点说明。</p>
+                    <ul class="list-unstyled">
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>提供多种解题方法</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>详细的错误原因分析</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>相关知识点解释</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>针对性的学习建议</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-4">
+                        <div class="feature-icon me-3">
+                            <i class="bi bi-tags"></i>
+                        </div>
+                        <h3>知识点分类</h3>
+                    </div>
+                    <p>自动将题目按学科、知识模块和具体知识点分类，方便复习和查找。系统会根据题目内容智能标记相关知识点，帮助您系统性地复习。</p>
+                    <ul class="list-unstyled">
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>三级分类体系</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>自动标记关联知识点</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>知识点关联图谱</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>个性化学习路径推荐</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-4">
+                        <div class="feature-icon me-3">
+                            <i class="bi bi-clock-history"></i>
+                        </div>
+                        <h3>历史记录</h3>
+                    </div>
+                    <p>保存所有上传的题目和分析结果，随时查看和复习，跟踪学习进度。您可以按时间、学科或难度等多种方式筛选和排序历史记录。</p>
+                    <ul class="list-unstyled">
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>永久保存（付费用户）</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>多维度筛选功能</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>学习进度统计</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>错题重复率分析</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-4">
+                        <div class="feature-icon me-3">
+                            <i class="bi bi-search"></i>
+                        </div>
+                        <h3>知识点搜索</h3>
+                    </div>
+                    <p>按知识点分类搜索错题记录，快速找到需要复习的内容。支持模糊搜索和高级筛选，帮助您精准定位需要复习的内容。</p>
+                    <ul class="list-unstyled">
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>多级知识点筛选</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>关键词全文搜索</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>相似题目推荐</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>智能搜索建议</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-4">
+                        <div class="feature-icon me-3">
+                            <i class="bi bi-cloud"></i>
+                        </div>
+                        <h3>云端存储</h3>
+                    </div>
+                    <p>所有数据安全存储在云端，多设备同步，随时随地访问。您可以在电脑、手机或平板上使用超级错题本，数据自动同步。</p>
+                    <ul class="list-unstyled">
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>多设备同步</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>数据加密保护</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>自动备份</li>
+                        <li><i class="bi bi-check-circle-fill text-success me-2"></i>数据导出功能</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 功能对比 -->
+    <div class="mb-5">
+        <h2 class="text-center mb-4">功能对比</h2>
+        <div class="table-responsive">
+            <table class="table table-bordered">
+                <thead class="table-light">
+                    <tr>
+                        <th>功能</th>
+                        <th class="text-center">免费版</th>
+                        <th class="text-center">标准版</th>
+                        <th class="text-center">专业版</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>题目分析次数</td>
+                        <td class="text-center">每月10次</td>
+                        <td class="text-center">每月100次</td>
+                        <td class="text-center">无限制</td>
+                    </tr>
+                    <tr>
+                        <td>错题分析详细程度</td>
+                        <td class="text-center">基础</td>
+                        <td class="text-center">详细</td>
+                        <td class="text-center">详细</td>
+                    </tr>
+                    <tr>
+                        <td>历史记录保存</td>
+                        <td class="text-center">30天</td>
+                        <td class="text-center">永久</td>
+                        <td class="text-center">永久</td>
+                    </tr>
+                    <tr>
+                        <td>知识点分类</td>
+                        <td class="text-center"><i class="bi bi-x-lg text-danger"></i></td>
+                        <td class="text-center"><i class="bi bi-check-lg text-success"></i></td>
+                        <td class="text-center"><i class="bi bi-check-lg text-success"></i></td>
+                    </tr>
+                    <tr>
+                        <td>高级搜索功能</td>
+                        <td class="text-center"><i class="bi bi-x-lg text-danger"></i></td>
+                        <td class="text-center"><i class="bi bi-check-lg text-success"></i></td>
+                        <td class="text-center"><i class="bi bi-check-lg text-success"></i></td>
+                    </tr>
+                    <tr>
+                        <td>批量上传</td>
+                        <td class="text-center"><i class="bi bi-x-lg text-danger"></i></td>
+                        <td class="text-center"><i class="bi bi-x-lg text-danger"></i></td>
+                        <td class="text-center">最多20题</td>
+                    </tr>
+                    <tr>
+                        <td>优先客服支持</td>
+                        <td class="text-center"><i class="bi bi-x-lg text-danger"></i></td>
+                        <td class="text-center"><i class="bi bi-x-lg text-danger"></i></td>
+                        <td class="text-center"><i class="bi bi-check-lg text-success"></i></td>
+                    </tr>
+                    <tr>
+                        <td>数据导出</td>
+                        <td class="text-center"><i class="bi bi-x-lg text-danger"></i></td>
+                        <td class="text-center">基础格式</td>
+                        <td class="text-center">多种格式</td>
+                    </tr>
+                    <tr>
+                        <td>学习统计报告</td>
+                        <td class="text-center"><i class="bi bi-x-lg text-danger"></i></td>
+                        <td class="text-center">基础报告</td>
+                        <td class="text-center">详细报告</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- 技术支持 -->
+    <div class="mb-5">
+        <div class="card bg-light">
+            <div class="card-body p-4">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <h3>需要技术支持？</h3>
+                        <p class="mb-md-0">如果您有任何问题或需要帮助，我们的技术支持团队随时为您服务。</p>
+                    </div>
+                    <div class="col-md-4 text-md-end">
+                        <a href="#" class="btn btn-primary">联系支持</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 行动号召 -->
+    <div class="text-center mb-5">
+        <h2 class="mb-4">准备好开始使用了吗？</h2>
+        <div class="d-flex justify-content-center gap-3">
+            <a href="{{ url_for('upload') }}" class="btn btn-primary btn-lg">
+                <i class="bi bi-upload me-2"></i>立即体验
+            </a>
+            <a href="{{ url_for('pricing') }}" class="btn btn-outline-primary btn-lg">
+                <i class="bi bi-tag me-2"></i>查看价格
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %} 

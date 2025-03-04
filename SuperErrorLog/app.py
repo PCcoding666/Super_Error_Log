@@ -35,20 +35,30 @@ def index():
     """首页"""
     return render_template('index.html', app_name=APP_NAME, app_version=APP_VERSION)
 
+@app.route('/features')
+def features():
+    """功能特点页面"""
+    return render_template('features.html', app_name=APP_NAME, app_version=APP_VERSION)
+
+@app.route('/pricing')
+def pricing():
+    """价格方案页面"""
+    return render_template('pricing.html', app_name=APP_NAME, app_version=APP_VERSION)
+
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():
     """上传图片页面"""
     if request.method == 'POST':
         # 检查是否有文件
         if 'file' not in request.files:
-            flash('没有选择文件')
+            flash('没有选择文件', 'warning')
             return redirect(request.url)
         
         file = request.files['file']
         
         # 检查文件名是否为空
         if file.filename == '':
-            flash('没有选择文件')
+            flash('没有选择文件', 'warning')
             return redirect(request.url)
         
         # 检查文件类型是否允许
@@ -78,18 +88,19 @@ def upload():
                 os.remove(temp_path)
                 
                 # 重定向到结果页面
+                flash('题目分析成功！', 'success')
                 return redirect(url_for('view_log', log_id=log_id))
                 
             except Exception as e:
-                flash(f'处理失败: {str(e)}')
+                flash(f'处理失败: {str(e)}', 'danger')
                 # 删除临时文件
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
                 return redirect(request.url)
         else:
-            flash('不支持的文件类型，请上传 PNG、JPG、JPEG 或 WEBP 格式的图片')
+            flash('不支持的文件类型，请上传PNG、JPG、JPEG或WEBP格式的图片', 'warning')
             return redirect(request.url)
-    
+            
     return render_template('upload.html')
 
 @app.route('/logs')
@@ -112,7 +123,7 @@ def view_log(log_id):
     log = db.get_error_log_by_id(log_id)
     
     if not log:
-        flash('记录不存在')
+        flash('记录不存在', 'warning')
         return redirect(url_for('logs'))
     
     return render_template('view_log.html', log=log)
@@ -151,6 +162,15 @@ def serve_static(filename):
 def serve_upload(filename):
     """提供上传的图片"""
     return send_from_directory(UPLOAD_FOLDER, filename)
+
+# 错误处理
+@app.errorhandler(404)
+def page_not_found(e):
+    return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    return render_template('500.html'), 500
 
 @app.template_filter('format_date')
 def format_date(value):

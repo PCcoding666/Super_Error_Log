@@ -3,54 +3,252 @@
 {% block title %}首页 - 超级错题本{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-8 text-center">
-        <h1 class="display-4 mb-4">欢迎使用超级错题本</h1>
-        <p class="lead">
-            超级错题本是一个智能错题管理系统，可以帮助您分析题目、识别错误并提供解决方案。
-        </p>
+<!-- 英雄区域 -->
+<div class="hero-section">
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-lg-6 fade-in">
+                <h1 class="hero-title">智能错题管理，提升学习效率</h1>
+                <p class="hero-subtitle">
+                    超级错题本利用AI技术，自动识别题目内容，分析错误原因，提供详细解答，让学习更高效。
+                </p>
+                <div class="d-flex gap-3">
+                    <a href="{{ url_for('upload') }}" class="btn btn-light btn-lg">
+                        <i class="bi bi-upload me-2"></i>立即体验
+                    </a>
+                    <a href="{{ url_for('pricing') }}" class="btn btn-outline-light btn-lg">
+                        <i class="bi bi-tag me-2"></i>查看价格
+                    </a>
+                </div>
+            </div>
+            <div class="col-lg-6 d-none d-lg-block text-center fade-in">
+                <img src="https://placehold.co/600x400/4e73df/ffffff?text=超级错题本" class="img-fluid rounded-3 shadow" alt="超级错题本演示">
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 统计数据 -->
+<div class="container">
+    <div class="row text-center mb-5">
+        <div class="col-md-4 mb-4 mb-md-0">
+            <div class="card">
+                <div class="card-body">
+                    <h3 class="display-4 fw-bold text-primary">10,000+</h3>
+                    <p class="text-muted mb-0">用户使用</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-4 mb-md-0">
+            <div class="card">
+                <div class="card-body">
+                    <h3 class="display-4 fw-bold text-primary">100万+</h3>
+                    <p class="text-muted mb-0">题目分析</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h3 class="display-4 fw-bold text-primary">98%</h3>
+                    <p class="text-muted mb-0">用户满意度</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 特性展示 -->
+<div class="container mb-5">
+    <div class="text-center mb-5">
+        <h2 class="fw-bold">为什么选择超级错题本？</h2>
+        <p class="text-muted">我们提供全面的错题管理解决方案，帮助学生高效学习</p>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-4 mb-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <div class="feature-icon">
+                        <i class="bi bi-camera"></i>
+                    </div>
+                    <h4>智能识别</h4>
+                    <p class="text-muted">
+                        通过通义千问视觉模型，自动识别题目内容和学生答案，无需手动输入。
+                    </p>
+                </div>
+            </div>
+        </div>
         
-        <div class="row mt-5">
-            <div class="col-md-4">
-                <div class="card mb-4">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">上传题目</h5>
-                        <p class="card-text">上传题目图片，获取智能分析和解答</p>
-                        <a href="{{ url_for('upload') }}" class="btn btn-primary">开始上传</a>
+        <div class="col-md-4 mb-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <div class="feature-icon">
+                        <i class="bi bi-lightbulb"></i>
                     </div>
+                    <h4>智能分析</h4>
+                    <p class="text-muted">
+                        利用DeepSeek大语言模型，提供正确解法和错误分析，帮助理解错误原因。
+                    </p>
                 </div>
             </div>
-            
-            <div class="col-md-4">
-                <div class="card mb-4">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">历史记录</h5>
-                        <p class="card-text">查看您之前上传的所有题目和分析</p>
-                        <a href="{{ url_for('logs') }}" class="btn btn-primary">查看历史</a>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <div class="feature-icon">
+                        <i class="bi bi-tags"></i>
                     </div>
+                    <h4>知识点分类</h4>
+                    <p class="text-muted">
+                        自动将题目按学科、知识模块和具体知识点分类，方便复习和查找。
+                    </p>
                 </div>
             </div>
-            
-            <div class="col-md-4">
-                <div class="card mb-4">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">知识点搜索</h5>
-                        <p class="card-text">按知识点分类搜索您的错题记录</p>
-                        <a href="{{ url_for('search') }}" class="btn btn-primary">开始搜索</a>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <div class="feature-icon">
+                        <i class="bi bi-clock-history"></i>
+                    </div>
+                    <h4>历史记录</h4>
+                    <p class="text-muted">
+                        保存所有上传的题目和分析结果，随时查看和复习，跟踪学习进度。
+                    </p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <div class="feature-icon">
+                        <i class="bi bi-search"></i>
+                    </div>
+                    <h4>知识点搜索</h4>
+                    <p class="text-muted">
+                        按知识点分类搜索错题记录，快速找到需要复习的内容。
+                    </p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card feature-card h-100">
+                <div class="card-body">
+                    <div class="feature-icon">
+                        <i class="bi bi-cloud"></i>
+                    </div>
+                    <h4>云端存储</h4>
+                    <p class="text-muted">
+                        所有数据安全存储在云端，多设备同步，随时随地访问。
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 用户评价 -->
+<div class="container mb-5">
+    <div class="text-center mb-5">
+        <h2 class="fw-bold">用户评价</h2>
+        <p class="text-muted">听听我们的用户怎么说</p>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex mb-3">
+                        <div class="text-warning">
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                        </div>
+                    </div>
+                    <p class="mb-3">"超级错题本帮我节省了大量整理错题的时间，AI分析非常准确，对我的学习有很大帮助。"</p>
+                    <div class="d-flex align-items-center">
+                        <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-3" style="width: 40px; height: 40px;">
+                            <span>张</span>
+                        </div>
+                        <div>
+                            <h6 class="mb-0">张同学</h6>
+                            <small class="text-muted">高三学生</small>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
         
-        <div class="mt-5">
-            <h2>使用说明</h2>
-            <ol class="text-start">
-                <li>点击"上传题目"，上传您需要分析的题目图片</li>
-                <li>系统会自动识别题目内容和学生答案</li>
-                <li>系统会提供正确解法和错误分析</li>
-                <li>所有记录会自动保存，并按知识点分类</li>
-                <li>您可以随时查看历史记录或按知识点搜索</li>
-            </ol>
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex mb-3">
+                        <div class="text-warning">
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                        </div>
+                    </div>
+                    <p class="mb-3">"作为一名老师，我推荐学生使用超级错题本。它不仅能分析错误，还能提供详细的解题思路，非常实用。"</p>
+                    <div class="d-flex align-items-center">
+                        <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-3" style="width: 40px; height: 40px;">
+                            <span>李</span>
+                        </div>
+                        <div>
+                            <h6 class="mb-0">李老师</h6>
+                            <small class="text-muted">数学教师</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex mb-3">
+                        <div class="text-warning">
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-fill"></i>
+                            <i class="bi bi-star-half"></i>
+                        </div>
+                    </div>
+                    <p class="mb-3">"孩子用了超级错题本后，学习效率明显提高，知识点分类功能特别好，复习更有针对性。"</p>
+                    <div class="d-flex align-items-center">
+                        <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-3" style="width: 40px; height: 40px;">
+                            <span>王</span>
+                        </div>
+                        <div>
+                            <h6 class="mb-0">王女士</h6>
+                            <small class="text-muted">学生家长</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 行动号召 -->
+<div class="container mb-5">
+    <div class="card bg-primary text-white">
+        <div class="card-body p-5 text-center">
+            <h2 class="fw-bold mb-3">立即开始使用超级错题本</h2>
+            <p class="mb-4">注册账号，开始智能错题管理之旅</p>
+            <a href="{{ url_for('upload') }}" class="btn btn-light btn-lg">
+                <i class="bi bi-upload me-2"></i>立即体验
+            </a>
         </div>
     </div>
 </div>

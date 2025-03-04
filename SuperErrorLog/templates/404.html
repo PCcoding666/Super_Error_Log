@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}页面未找到 - 超级错题本{% endblock %}
+
+{% block content %}
+<div class="container text-center py-5">
+    <div class="error-state">
+        <i class="bi bi-exclamation-circle error-state-icon"></i>
+        <h1 class="display-1 fw-bold">404</h1>
+        <h2 class="mb-4">页面未找到</h2>
+        <p class="lead mb-5">您访问的页面不存在或已被移除。</p>
+        <div class="d-flex justify-content-center gap-3">
+            <a href="{{ url_for('index') }}" class="btn btn-primary">
+                <i class="bi bi-house-door me-2"></i>返回首页
+            </a>
+            <a href="javascript:history.back()" class="btn btn-outline-primary">
+                <i class="bi bi-arrow-left me-2"></i>返回上一页
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %} 
