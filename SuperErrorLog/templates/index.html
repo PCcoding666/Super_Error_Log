@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}首页 - 超级错题本{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 text-center">
+        <h1 class="display-4 mb-4">欢迎使用超级错题本</h1>
+        <p class="lead">
+            超级错题本是一个智能错题管理系统，可以帮助您分析题目、识别错误并提供解决方案。
+        </p>
+        
+        <div class="row mt-5">
+            <div class="col-md-4">
+                <div class="card mb-4">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">上传题目</h5>
+                        <p class="card-text">上传题目图片，获取智能分析和解答</p>
+                        <a href="{{ url_for('upload') }}" class="btn btn-primary">开始上传</a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card mb-4">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">历史记录</h5>
+                        <p class="card-text">查看您之前上传的所有题目和分析</p>
+                        <a href="{{ url_for('logs') }}" class="btn btn-primary">查看历史</a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card mb-4">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">知识点搜索</h5>
+                        <p class="card-text">按知识点分类搜索您的错题记录</p>
+                        <a href="{{ url_for('search') }}" class="btn btn-primary">开始搜索</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mt-5">
+            <h2>使用说明</h2>
+            <ol class="text-start">
+                <li>点击"上传题目"，上传您需要分析的题目图片</li>
+                <li>系统会自动识别题目内容和学生答案</li>
+                <li>系统会提供正确解法和错误分析</li>
+                <li>所有记录会自动保存，并按知识点分类</li>
+                <li>您可以随时查看历史记录或按知识点搜索</li>
+            </ol>
+        </div>
+    </div>
+</div>
+{% endblock %} 

@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block title %}上传题目 - 超级错题本{% endblock %}
+
+{% block extra_css %}
+<style>
+    .upload-area {
+        border: 2px dashed #ccc;
+        border-radius: 8px;
+        padding: 40px;
+        text-align: center;
+        background-color: #f8f9fa;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    
+    .upload-area:hover {
+        border-color: #0d6efd;
+        background-color: #f1f8ff;
+    }
+    
+    .upload-icon {
+        font-size: 48px;
+        color: #6c757d;
+        margin-bottom: 15px;
+    }
+    
+    #preview-image {
+        max-width: 100%;
+        max-height: 300px;
+        margin-top: 20px;
+        border-radius: 8px;
+        display: none;
+    }
+    
+    .loading-spinner {
+        display: none;
+        margin: 20px auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <h1 class="mb-4">上传题目</h1>
+        
+        <div class="card">
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data" id="upload-form">
+                    <div class="upload-area" id="upload-area">
+                        <div class="upload-icon">
+                            <i class="bi bi-cloud-arrow-up"></i>
+                        </div>
+                        <h5>点击或拖拽文件到此处上传</h5>
+                        <p class="text-muted">支持 PNG、JPG、JPEG 和 WEBP 格式的图片，最大 10MB</p>
+                        <input type="file" name="file" id="file-input" accept=".png,.jpg,.jpeg,.webp" style="display: none;">
+                    </div>
+                    
+                    <img id="preview-image" src="" alt="预览图">
+                    
+                    <div class="text-center mt-4">
+                        <div class="spinner-border text-primary loading-spinner" id="loading-spinner" role="status">
+                            <span class="visually-hidden">加载中...</span>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-lg" id="submit-btn">开始分析</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5>使用说明</h5>
+            </div>
+            <div class="card-body">
+                <ol>
+                    <li>上传包含题目和学生答案的图片</li>
+                    <li>系统会自动识别题目内容和学生答案</li>
+                    <li>系统会提供正确解法和错误分析</li>
+                    <li>分析完成后，结果会自动保存到您的错题本中</li>
+                </ol>
+                <div class="alert alert-info">
+                    <strong>提示：</strong> 为了获得最佳识别效果，请确保图片清晰、光线充足，且题目和答案内容完整可见。
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const uploadArea = document.getElementById('upload-area');
+        const fileInput = document.getElementById('file-input');
+        const previewImage = document.getElementById('preview-image');
+        const uploadForm = document.getElementById('upload-form');
+        const submitBtn = document.getElementById('submit-btn');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        
+        // 点击上传区域触发文件选择
+        uploadArea.addEventListener('click', function() {
+            fileInput.click();
+        });
+        
+        // 拖拽文件到上传区域
+        uploadArea.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            uploadArea.style.borderColor = '#0d6efd';
+            uploadArea.style.backgroundColor = '#f1f8ff';
+        });
+        
+        uploadArea.addEventListener('dragleave', function() {
+            uploadArea.style.borderColor = '#ccc';
+            uploadArea.style.backgroundColor = '#f8f9fa';
+        });
+        
+        uploadArea.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadArea.style.borderColor = '#ccc';
+            uploadArea.style.backgroundColor = '#f8f9fa';
+            
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                handleFileSelect();
+            }
+        });
+        
+        // 文件选择后预览
+        fileInput.addEventListener('change', handleFileSelect);
+        
+        function handleFileSelect() {
+            if (fileInput.files && fileInput.files[0]) {
+                const file = fileInput.files[0];
+                
+                // 检查文件类型
+                const fileType = file.type;
+                if (!fileType.match('image/jpeg') && !fileType.match('image/png') && !fileType.match('image/webp')) {
+                    alert('请选择 PNG、JPG、JPEG 或 WEBP 格式的图片');
+                    fileInput.value = '';
+                    return;
+                }
+                
+                // 检查文件大小
+                if (file.size > 10 * 1024 * 1024) {
+                    alert('文件大小不能超过 10MB');
+                    fileInput.value = '';
+                    return;
+                }
+                
+                // 显示预览
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImage.src = e.target.result;
+                    previewImage.style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+        
+        // 表单提交时显示加载动画
+        uploadForm.addEventListener('submit', function() {
+            if (!fileInput.files || !fileInput.files[0]) {
+                alert('请选择一个文件');
+                return false;
+            }
+            
+            submitBtn.disabled = true;
+            loadingSpinner.style.display = 'inline-block';
+            return true;
+        });
+    });
+</script>
+{% endblock %} 

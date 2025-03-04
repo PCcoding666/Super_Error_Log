@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+
+{% block title %}知识点搜索 - 超级错题本{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <h1 class="mb-4">知识点搜索</h1>
+        
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label for="level-select" class="form-label">标题级别</label>
+                            <select class="form-select" id="level-select">
+                                <option value="1">学科类型</option>
+                                <option value="2">知识模块</option>
+                                <option value="3">具体知识点</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="mb-3">
+                            <label for="title-select" class="form-label">选择标题</label>
+                            <select class="form-select" id="title-select">
+                                <option value="">请先选择标题级别</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-end">
+                    <button class="btn btn-primary" id="search-btn">搜索</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">搜索结果</h5>
+            </div>
+            <div class="card-body">
+                <div id="results-container">
+                    <div class="text-center py-5">
+                        <p>请选择标题级别和具体标题进行搜索</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // 获取DOM元素
+        const levelSelect = document.getElementById('level-select');
+        const titleSelect = document.getElementById('title-select');
+        const searchBtn = document.getElementById('search-btn');
+        const resultsContainer = document.getElementById('results-container');
+        
+        // 存储所有标题数据
+        const titleData = {
+            '1': JSON.parse('{{ level_1_titles|tojson }}'),
+            '2': JSON.parse('{{ level_2_titles|tojson }}'),
+            '3': JSON.parse('{{ level_3_titles|tojson }}')
+        };
+        
+        // 当标题级别改变时，更新标题选择框
+        levelSelect.addEventListener('change', function() {
+            const level = levelSelect.value;
+            const titles = titleData[level] || [];
+            
+            // 清空并重新填充标题选择框
+            titleSelect.innerHTML = '';
+            
+            if (titles.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = '暂无数据';
+                titleSelect.appendChild(option);
+            } else {
+                const defaultOption = document.createElement('option');
+                defaultOption.value = '';
+                defaultOption.textContent = '请选择';
+                titleSelect.appendChild(defaultOption);
+                
+                titles.forEach(function(title) {
+                    const option = document.createElement('option');
+                    option.value = title;
+                    option.textContent = title;
+                    titleSelect.appendChild(option);
+                });
+            }
+        });
+        
+        // 触发一次change事件，初始化标题选择框
+        levelSelect.dispatchEvent(new Event('change'));
+        
+        // 搜索按钮点击事件
+        searchBtn.addEventListener('click', function() {
+            const level = levelSelect.value;
+            const title = titleSelect.value;
+            
+            if (!title) {
+                alert('请选择一个标题');
+                return;
+            }
+            
+            // 显示加载中
+            resultsContainer.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">加载中...</span></div><p class="mt-3">正在搜索，请稍候...</p></div>';
+            
+            // 发送AJAX请求
+            fetch('/api/search', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    level: level,
+                    title: title
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                // 显示搜索结果
+                if (data.length === 0) {
+                    resultsContainer.innerHTML = '<div class="text-center py-5"><p>未找到匹配的记录</p></div>';
+                } else {
+                    let html = '<div class="table-responsive"><table class="table table-hover"><thead><tr><th>ID</th><th>题目预览</th><th>学科类型</th><th>知识点</th><th>日期</th><th>操作</th></tr></thead><tbody>';
+                    
+                    data.forEach(function(log) {
+                        html += `
+                            <tr>
+                                <td>${log.id}</td>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <img src="${log.image_path.startsWith('/') ? log.image_path : '/static/' + log.image_path}" alt="题目图片" class="me-3" style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px;">
+                                        <div>${log.question.substring(0, 100)}${log.question.length > 100 ? '...' : ''}</div>
+                                    </div>
+                                </td>
+                                <td>${log.level_1_title}</td>
+                                <td>${log.level_3_title}</td>
+                                <td>${new Date(log.created_at).toLocaleString()}</td>
+                                <td>
+                                    <a href="/logs/${log.id}" class="btn btn-sm btn-primary">查看</a>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                    
+                    html += '</tbody></table></div>';
+                    resultsContainer.innerHTML = html;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                resultsContainer.innerHTML = '<div class="text-center py-5"><p class="text-danger">搜索出错，请重试</p></div>';
+            });
+        });
+    });
+</script>
+{% endblock %} 
