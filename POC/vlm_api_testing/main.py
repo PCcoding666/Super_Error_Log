@@ -1,11 +1,16 @@
 # main.py
-from Gradio_frontend import demo
+from Gradio_frontend import GradioApp
+from config.config_manager import ConfigManager
 
 if __name__ == "__main__":
-    # 启动 Gradio Web 界面
-    demo.launch(
-        server_name="0.0.0.0", 
-        server_port=7860, 
-        share=True,  # 这将创建一个公共链接
-        show_error=True  # 显示任何可能的错误
+    # 初始化配置
+    config = ConfigManager()
+    
+    # 创建并启动 Gradio 应用
+    app = GradioApp()
+    app.launch(
+        server_name=config.get('server_host'),
+        server_port=config.get('server_port'),
+        share=config.get('share'),
+        show_error=True
     )
