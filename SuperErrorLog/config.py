@@ -1,24 +1,31 @@
 import os
+from pathlib import Path
 
-# API密钥配置
-QWEN_API_KEY = os.getenv("QWEN_API_KEY", "sk-684e72cf6479433cad644344f537ef5f")  # 默认使用环境变量，如果没有则使用默认值
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-d4d0ca7b5bc04c5d8b0c3c37e323f005")  # 默认使用环境变量，如果没有则使用默认值
 
-# 应用配置
+BASE_DIR = Path(__file__).resolve().parent
+
 APP_NAME = "超级错题本"
-APP_VERSION = "1.0.0"
+APP_VERSION = "0.2.0"
 
-# 服务器配置
-HOST = "0.0.0.0"
-PORT = 8080
+HOST = os.getenv("HOST", "0.0.0.0")
+PORT = int(os.getenv("PORT", "8080"))
+DEBUG = os.getenv("DEBUG", "False").lower() in {"1", "true", "t", "yes"}
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
 
-# 静态文件配置
-STATIC_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-TEMPLATES_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+STATIC_FOLDER = BASE_DIR / "static"
+TEMPLATES_FOLDER = BASE_DIR / "templates"
+DATABASE_PATH = Path(os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "error_log.db")))
+UPLOAD_FOLDER = Path(os.getenv("UPLOAD_FOLDER", str(STATIC_FOLDER / "uploads")))
+MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024)))
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 
-# 数据库配置
-DATABASE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "error_log.db")
+AI_MODE = os.getenv("AI_MODE", "mock").lower()
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
+DASHSCOPE_BASE_URL = os.getenv(
+    "DASHSCOPE_BASE_URL",
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+)
+DASHSCOPE_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3.7-plus")
 
-# 上传文件配置
-UPLOAD_FOLDER = os.path.join(STATIC_FOLDER, "uploads")
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'} 
+LOG_DIR = Path(os.getenv("LOG_DIR", str(BASE_DIR / "logs")))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

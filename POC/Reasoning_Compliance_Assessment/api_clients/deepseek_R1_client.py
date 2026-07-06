@@ -49,8 +49,9 @@ class DeepSeekR1Client:
             raise
 
 if __name__ == "__main__":
-    api_key = os.getenv("deepseek_api_key", 'sk-d4d0ca7b5bc04c5d8b0c3c37e323f005')
-    print(f"API Key: {api_key}")  # 检查 API Key 是否正确获取
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise ValueError("DEEPSEEK_API_KEY must be set")
     client = DeepSeekR1Client(api_key=api_key)
     qwen_vl_max_result='{"question": "如图1，在平行四边形ABCD中，AB=2BC=4，∠ABC=60°，E为CD的中点。将△ADE沿AE折起，连接BD与CE，如图2。\n(1) 当BD为何值时，平面ADE⊥平面ABCE？\n(2) 设BF=λBD(0≤λ≤1)，当BE⊥DE时，是否存在实数λ，使得直线AF与平面ABCE所成角的正弦值为√3/2？若存在，求出λ的值；若不存在，请说明理由。\n(3) 当三棱锥B-CDE的体积最大时，求三棱锥D-ABE的内切球的半径。",  "student_answer": "AP=DE=2，∠ADE\n△ADE≌△DAE，AE=AD=2\nCBE=120\nBE²=12\nBE=2√3 BE=2 AB=4\n则AE²+BE²=AB²\n故BE⊥AE\n若平面ADE⊥平面ABCE\n由平面ADE⊥平面ABCE→AE\nBEC平面ABCE，BE⊥AE BD=4\n∴BE=2√3 DE=2 BD=4\n则BE²+DE²=BD²\n∴BE⊥DE且BE⊥AE，AE∩DE=E，DE⊂平面ADE\n∴BE⊥平面ADE\n又BE⊂平面ABCE ∴平面ADE⊥平面ABCE\n∴EG⊥AE EG⊂平面ABCE\n∴EG⊥平面ABCE BE⊂平面ADE 则EG⊥BE"}'
     try:

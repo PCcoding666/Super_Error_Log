@@ -23,10 +23,14 @@ def pipeline_inference(image_path: str) -> dict:
     3. 将二者合并后，返回最终 JSON。
     """
 
-    # 1. 初始化客户端（此处写死 key，仅供示例，实际应从环境变量或安全服务获取）
+    # 1. 初始化客户端，密钥必须从环境变量读取
     try:
-        qwen_client = QwenVLMaxClient(api_key="sk-684e72cf6479433cad644344f537ef5f")
-        deepseek_client = DeepSeekR1Client(api_key="sk-d4d0ca7b5bc04c5d8b0c3c37e323f005")
+        qwen_api_key = os.getenv("QWEN_API_KEY")
+        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not qwen_api_key or not deepseek_api_key:
+            raise ValueError("QWEN_API_KEY and DEEPSEEK_API_KEY must be set")
+        qwen_client = QwenVLMaxClient(api_key=qwen_api_key)
+        deepseek_client = DeepSeekR1Client(api_key=deepseek_api_key)
     except Exception as e:
         print(f"[调试信息] 初始化客户端时出现异常: {e}")
         raise

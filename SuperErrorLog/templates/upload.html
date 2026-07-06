@@ -1,175 +1,100 @@
 {% extends "base.html" %}
 
-{% block title %}上传题目 - 超级错题本{% endblock %}
-
-{% block extra_css %}
-<style>
-    .upload-area {
-        border: 2px dashed #ccc;
-        border-radius: 8px;
-        padding: 40px;
-        text-align: center;
-        background-color: #f8f9fa;
-        cursor: pointer;
-        transition: all 0.3s;
-    }
-    
-    .upload-area:hover {
-        border-color: #0d6efd;
-        background-color: #f1f8ff;
-    }
-    
-    .upload-icon {
-        font-size: 48px;
-        color: #6c757d;
-        margin-bottom: 15px;
-    }
-    
-    #preview-image {
-        max-width: 100%;
-        max-height: 300px;
-        margin-top: 20px;
-        border-radius: 8px;
-        display: none;
-    }
-    
-    .loading-spinner {
-        display: none;
-        margin: 20px auto;
-    }
-</style>
-{% endblock %}
+{% block title %}上传错题 - {{ app_name }}{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-8">
-        <h1 class="mb-4">上传题目</h1>
-        
-        <div class="card">
-            <div class="card-body">
-                <form method="post" enctype="multipart/form-data" id="upload-form">
-                    <div class="upload-area" id="upload-area">
-                        <div class="upload-icon">
-                            <i class="bi bi-cloud-arrow-up"></i>
-                        </div>
-                        <h5>点击或拖拽文件到此处上传</h5>
-                        <p class="text-muted">支持 PNG、JPG、JPEG 和 WEBP 格式的图片，最大 10MB</p>
-                        <input type="file" name="file" id="file-input" accept=".png,.jpg,.jpeg,.webp" style="display: none;">
-                    </div>
-                    
-                    <img id="preview-image" src="" alt="预览图">
-                    
-                    <div class="text-center mt-4">
-                        <div class="spinner-border text-primary loading-spinner" id="loading-spinner" role="status">
-                            <span class="visually-hidden">加载中...</span>
-                        </div>
-                        <button type="submit" class="btn btn-primary btn-lg" id="submit-btn">开始分析</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-        
-        <div class="card mt-4">
-            <div class="card-header">
-                <h5>使用说明</h5>
-            </div>
-            <div class="card-body">
-                <ol>
-                    <li>上传包含题目和学生答案的图片</li>
-                    <li>系统会自动识别题目内容和学生答案</li>
-                    <li>系统会提供正确解法和错误分析</li>
-                    <li>分析完成后，结果会自动保存到您的错题本中</li>
-                </ol>
-                <div class="alert alert-info">
-                    <strong>提示：</strong> 为了获得最佳识别效果，请确保图片清晰、光线充足，且题目和答案内容完整可见。
-                </div>
-            </div>
-        </div>
+<div class="page-header">
+    <div>
+        <p class="text-muted mb-1">学生每日入口</p>
+        <h1 class="h3 mb-0">今天先做哪一步</h1>
     </div>
+    <a href="{{ url_for('review_queue') }}" class="btn btn-outline-primary">
+        <i class="bi bi-calendar-check"></i>
+        <span>去复习</span>
+    </a>
 </div>
+
+<section class="surface">
+    <form method="post" enctype="multipart/form-data" id="upload-form">
+        <label class="upload-panel" for="file-input">
+            <i class="bi bi-camera fs-1"></i>
+            <strong>学生拍照或选择错题图片</strong>
+            <span>系统先保存原图，再用 AI 生成待确认错题信息</span>
+            <input
+                type="file"
+                name="file"
+                id="file-input"
+                accept="image/png,image/jpeg,image/webp"
+                capture="environment"
+                required
+            >
+        </label>
+
+        <img id="preview-image" class="preview-image" src="" alt="错题图片预览">
+
+        <div class="mt-3">
+            <label class="form-label fw-semibold">识别范围</label>
+            <div class="focus-grid" role="group" aria-label="识别范围">
+                <input class="btn-check" type="radio" name="focus_region" id="focus-full" value="full" checked>
+                <label class="btn btn-outline-secondary" for="focus-full">整张图片</label>
+
+                <input class="btn-check" type="radio" name="focus_region" id="focus-left" value="left">
+                <label class="btn btn-outline-secondary" for="focus-left">左半部分</label>
+
+                <input class="btn-check" type="radio" name="focus_region" id="focus-right" value="right">
+                <label class="btn btn-outline-secondary" for="focus-right">右半部分</label>
+
+                <input class="btn-check" type="radio" name="focus_region" id="focus-upper-left" value="upper_left">
+                <label class="btn btn-outline-secondary" for="focus-upper-left">左上区域</label>
+
+                <input class="btn-check" type="radio" name="focus_region" id="focus-upper-right" value="upper_right">
+                <label class="btn btn-outline-secondary" for="focus-upper-right">右上区域</label>
+
+                <input class="btn-check" type="radio" name="focus_region" id="focus-lower-left" value="lower_left">
+                <label class="btn btn-outline-secondary" for="focus-lower-left">左下区域</label>
+
+                <input class="btn-check" type="radio" name="focus_region" id="focus-lower-right" value="lower_right">
+                <label class="btn btn-outline-secondary" for="focus-lower-right">右下区域</label>
+            </div>
+            <div class="form-text">整张图有多道题时，先选错题所在区域，再上传识别。</div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg w-100 mt-3" id="submit-btn">
+            <i class="bi bi-magic"></i>
+            <span>保存原图并生成待确认错题</span>
+        </button>
+    </form>
+</section>
+
+<section class="mt-4">
+    <div class="info-strip">
+        <div><strong>先上传</strong><span>拍清楚题目、学生答案和批改痕迹</span></div>
+        <div><strong>再校对</strong><span>学生快速检查 AI 识别内容，不准就改</span></div>
+        <div><strong>按期复习</strong><span>确认后的错题会进入学生复习队列</span></div>
+    </div>
+</section>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const uploadArea = document.getElementById('upload-area');
-        const fileInput = document.getElementById('file-input');
-        const previewImage = document.getElementById('preview-image');
-        const uploadForm = document.getElementById('upload-form');
-        const submitBtn = document.getElementById('submit-btn');
-        const loadingSpinner = document.getElementById('loading-spinner');
-        
-        // 点击上传区域触发文件选择
-        uploadArea.addEventListener('click', function() {
-            fileInput.click();
-        });
-        
-        // 拖拽文件到上传区域
-        uploadArea.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            uploadArea.style.borderColor = '#0d6efd';
-            uploadArea.style.backgroundColor = '#f1f8ff';
-        });
-        
-        uploadArea.addEventListener('dragleave', function() {
-            uploadArea.style.borderColor = '#ccc';
-            uploadArea.style.backgroundColor = '#f8f9fa';
-        });
-        
-        uploadArea.addEventListener('drop', function(e) {
-            e.preventDefault();
-            uploadArea.style.borderColor = '#ccc';
-            uploadArea.style.backgroundColor = '#f8f9fa';
-            
-            if (e.dataTransfer.files.length) {
-                fileInput.files = e.dataTransfer.files;
-                handleFileSelect();
-            }
-        });
-        
-        // 文件选择后预览
-        fileInput.addEventListener('change', handleFileSelect);
-        
-        function handleFileSelect() {
-            if (fileInput.files && fileInput.files[0]) {
-                const file = fileInput.files[0];
-                
-                // 检查文件类型
-                const fileType = file.type;
-                if (!fileType.match('image/jpeg') && !fileType.match('image/png') && !fileType.match('image/webp')) {
-                    alert('请选择 PNG、JPG、JPEG 或 WEBP 格式的图片');
-                    fileInput.value = '';
-                    return;
-                }
-                
-                // 检查文件大小
-                if (file.size > 10 * 1024 * 1024) {
-                    alert('文件大小不能超过 10MB');
-                    fileInput.value = '';
-                    return;
-                }
-                
-                // 显示预览
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    previewImage.src = e.target.result;
-                    previewImage.style.display = 'block';
-                };
-                reader.readAsDataURL(file);
-            }
-        }
-        
-        // 表单提交时显示加载动画
-        uploadForm.addEventListener('submit', function() {
-            if (!fileInput.files || !fileInput.files[0]) {
-                alert('请选择一个文件');
-                return false;
-            }
-            
-            submitBtn.disabled = true;
-            loadingSpinner.style.display = 'inline-block';
-            return true;
-        });
-    });
+const fileInput = document.getElementById("file-input");
+const preview = document.getElementById("preview-image");
+const form = document.getElementById("upload-form");
+const submitBtn = document.getElementById("submit-btn");
+
+fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) {
+        preview.style.display = "none";
+        return;
+    }
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = "block";
+});
+
+form.addEventListener("submit", () => {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>处理中';
+});
 </script>
-{% endblock %} 
+{% endblock %}

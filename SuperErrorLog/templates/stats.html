@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}统计 - {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <p class="text-muted mb-1">家长/哥哥视图</p>
+        <h1 class="h3 mb-0">基础统计</h1>
+    </div>
+    <a href="{{ url_for('upload') }}" class="btn btn-primary">
+        <i class="bi bi-plus-lg"></i>
+        <span>继续录入</span>
+    </a>
+</div>
+
+<div class="metric-grid">
+    <section class="metric-card">
+        <span>待确认</span>
+        <strong>{{ stats.pending_count }}</strong>
+    </section>
+    <section class="metric-card">
+        <span>今日待复习</span>
+        <strong>{{ stats.today_due_count }}</strong>
+    </section>
+</div>
+
+<div class="detail-grid mt-4">
+    <section class="surface">
+        <h2 class="h5">常错知识点</h2>
+        {% if stats.top_knowledge_points %}
+        <ol class="rank-list">
+            {% for item in stats.top_knowledge_points %}
+            <li>
+                <span>{{ item.knowledge_point }}</span>
+                <strong>{{ item.count }} 次</strong>
+            </li>
+            {% endfor %}
+        </ol>
+        {% else %}
+        <p class="text-muted mb-0">确认错题后会生成知识点统计。</p>
+        {% endif %}
+    </section>
+
+    <section class="surface">
+        <h2 class="h5">重复错因</h2>
+        {% if stats.repeated_error_reasons %}
+        <ol class="rank-list">
+            {% for item in stats.repeated_error_reasons %}
+            <li>
+                <span>{{ item.error_reason }}</span>
+                <strong>{{ item.count }} 次</strong>
+            </li>
+            {% endfor %}
+        </ol>
+        {% else %}
+        <p class="text-muted mb-0">同一错因出现 2 次以上后会显示在这里。</p>
+        {% endif %}
+    </section>
+</div>
+
+<section class="surface mt-4">
+    <h2 class="h5">最近复习完成情况</h2>
+    {% if stats.recent_reviews %}
+    <div class="table-responsive">
+        <table class="table align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>反馈</th>
+                    <th>知识点</th>
+                    <th>题目</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in stats.recent_reviews %}
+                <tr>
+                    <td>{{ record.reviewed_at|format_date }}</td>
+                    <td>{{ review_labels.get(record.result, record.result) }}</td>
+                    <td>{{ record.knowledge_point or "未标注" }}</td>
+                    <td>{{ record.question|truncate(36) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted mb-0">学生完成复习反馈后，这里会显示最近记录。</p>
+    {% endif %}
+</section>
+{% endblock %}
