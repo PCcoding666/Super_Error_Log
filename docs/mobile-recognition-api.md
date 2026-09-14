@@ -1,0 +1,248 @@
+# Mobile Recognition API v1
+
+This local API connects the SwiftUI student app to the Mac-hosted Bailian recognition worker. It is a separate collection from the web app database and listens on `127.0.0.1:3101` by default. Every `/v1` request, including health, requires the local pairing token:
+
+```http
+Authorization: Bearer <SEL_MOBILE_PAIRING_TOKEN>
+```
+
+All responses use `Cache-Control: private, no-store`. A successful job response is `{ "job": RecognitionJob }`; the collection response is `{ "jobs": RecognitionJob[] }`; errors are always:
+
+```json
+{
+  "error": {
+    "code": "invalid_request",
+    "message": "请求正文不合法。"
+  }
+}
+```
+
+## Configuration and startup
+
+The service reads the repository-root `.env` without printing credentials. Real mode is fail-closed: it requires `SEL_MOBILE_AI_MODE=bailian` (or `SEL_AI_MODE=bailian`), the exact Beijing endpoint `https://dashscope.aliyuncs.com/compatible-mode/v1`, a nonempty key, a nonempty model for every stage, and a pairing token of at least 16 characters. It never falls back to mock data.
+
+| Variable | Default or fallback |
+| --- | --- |
+| `SEL_MOBILE_PAIRING_TOKEN` | required; independent of the Bailian key |
+| `SEL_MOBILE_AI_BASE_URL` | falls back to `SEL_AI_BASE_URL`; must equal the Beijing endpoint |
+| `SEL_MOBILE_AI_API_KEY` | `SEL_AI_API_KEY`, then `DASHSCOPE_API_KEY` |
+| `SEL_MOBILE_AI_MODEL` | falls back to `SEL_AI_MODEL` |
+| `SEL_MOBILE_AI_MODEL_INVENTORY` | mobile common model |
+| `SEL_MOBILE_AI_MODEL_TRANSCRIBE` | mobile common model |
+| `SEL_MOBILE_AI_MODEL_VERIFY` | mobile common model |
+| `SEL_MOBILE_AI_MODEL_GROUND` | mobile common model |
+| `SEL_MOBILE_AI_TIMEOUT_MS` | `1800000` (30 minutes per model call) |
+| `SEL_MOBILE_DATA_DIR` | `data/mobile-recognition` |
+| `SEL_MOBILE_PORT` | `3101` |
+| `SEL_MOBILE_HOST` | `127.0.0.1`; other values are rejected |
+
+Development: `npm run mobile:dev`. Built service: `npm run build && npm run mobile:start`.
+
+For a pilot launch, the pairing token may be injected into the launch process from a local mode-`0600` token file instead of editing the repository `.env`. Do not place either token or Bailian key in command-line arguments or print them to terminal output. The startup message contains only the loopback address and port. Keep the token file outside version control and load it into the process environment before starting the service.
+
+## Data types
+
+`RecognitionJob`:
+
+```json
+{
+  "version": 1,
+  "id": "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+  "revision": 8,
+  "photoName": "IMG_5517.JPG",
+  "sourceHash": "74f97e2d65ed1fa0a6357fb952817417a062c3ddf71b8cc9d94a35d5930cbc69",
+  "sourceMediaId": "6ddc034b-b0f8-4288-b9c1-4f496cfb90df",
+  "status": "partial",
+  "phase": "complete",
+  "inventoryWarnings": ["页面右缘有残缺候选"],
+  "questions": [
+    {
+      "id": "a42b4eb2-12ff-499f-92de-e49d7cb36ef7",
+      "number": "4",
+      "revision": 3,
+      "status": "ready",
+      "selectionEvidence": "marked_wrong",
+      "evidence": {
+        "version": 1,
+        "questionNumber": "4",
+        "questionText": "求 x 的值。",
+        "subject": "数学",
+        "chapter": "",
+        "knowledgeTags": ["方程"],
+        "questionType": "计算",
+        "questionRegion": { "x": 0.08, "y": 0.2, "width": 0.84, "height": 0.3 },
+        "requiresDiagram": false,
+        "regions": [
+          {
+            "id": "student-1",
+            "kind": "student_work",
+            "box": { "x": 0.2, "y": 0.35, "width": 0.4, "height": 0.12 },
+            "confidence": 0.8,
+            "cleanForPrint": false
+          }
+        ],
+        "observations": [
+          {
+            "id": "observation-1",
+            "kind": "student_work",
+            "text": "2x = 8",
+            "regionId": "student-1",
+            "confidence": 0.8
+          }
+        ],
+        "uncertainties": []
+      },
+      "verification": {
+        "textComplete": true,
+        "questionCropComplete": true,
+        "questionCropPure": true,
+        "transcriptionMatches": true,
+        "diagramSafe": true,
+        "issues": []
+      },
+      "questionMediaId": "1800c1bc-47ab-42bc-a46d-315005bdc695",
+      "diagramMediaIds": [],
+      "error": null,
+      "confirmedAt": null
+    }
+  ],
+  "error": {
+    "code": "partial",
+    "message": "识别暂未完成，已完成的题目已保留。",
+    "stage": "questions",
+    "retryable": true
+  },
+  "createdAt": "2026-09-14T10:00:00.000Z",
+  "updatedAt": "2026-09-14T10:01:30.000Z"
+}
+```
+
+Job statuses are `queued`, `processing`, `completed`, `partial`, `failed`, or `interrupted`; phases are `inventory`, `questions`, or `complete`. Question statuses are `queued`, `processing`, `needs_check`, `ready`, `failed`, `confirmed`, or `skipped`. `selectionEvidence` is one of `marked_wrong`, `corrected`, `unmarked`, or `unclear`; it is evidence about markings, not a declaration that the candidate is an error.
+
+Every failure has `code`, a student-safe Chinese `message`, `stage`, and `retryable`. Additive `recoverable` describes eligibility for an explicit user-requested failed-stage recovery, not the adapter's automatic retry loop. For example, a repaired verification schema failure is `{ "code": "invalid_output", "message": "模型输出字段不合法", "stage": "verify", "retryable": false, "recoverable": true }`. Old records may lack the field; the service derives it without changing historical attempts, and clients must not infer automatic recovery from absence. Verification booleans are independent and are never inferred from missing data. `questionCropPure` means that the evidence crop does not contain an unrelated neighboring question; this question's own work or correction may still be present. Printable diagrams have the stronger `diagramSafe` gate and must contain no answer/work/correction contamination.
+
+Questions may additionally expose `candidateBox`, e.g. `{ "x": 0.6, "y": 0.1, "width": 0.3, "height": 0.7 }`: the original inventory position in normalized full-source coordinates, NOT a verified question crop. The question UUID identifies the occurrence; a repeated printed number does not. Verification receives the immutable original candidate, UUID and position even after a saved checkpoint; `transcriptionMatches` includes matching this intended occurrence, not just a self-consistent crop elsewhere. Two disjoint same-number inventory candidates whose returned question boxes overlap with IoU ≥0.8 are conservatively held needs_check; neither unconfirmed ambiguous result may be confirmed. Initial and corrected boxes need not be identical. Until other disjoint same-number candidates finish successfully, confirmation is also blocked. Missing legacy position is displayed as unavailable, never invented.
+
+`questionText` is clean Chinese/Unicode text with real line breaks, not Markdown or LaTeX: the model prompt requests unambiguous parentheses for fractions where needed and no fenced code or dollar-delimited formulas. The deterministic validator rejects code fences and clear LaTeX commands/delimiters such as `\frac{...}`, `\(...)`, and `\[...]`; it does not try to parse every dollar sign. Literal source dollars and ordinary text such as `Book A costs $5. Book B costs $10.` or `价格分别是$5和$10，求总价。` are preserved exactly. `questionText` contains only the printed question and never a student's filled-in answer. Handwritten work, handwritten mistakes, correction, teacher notes, and reference answers remain faithful source observations under their separate `kind`; the worker never repairs mathematical content for prettier formatting. A valid intermediate transcription is published in `evidence` as soon as it is durable, so a failed question may have non-null evidence with null or prior verification while its crop media IDs are still null/empty.
+
+## Health
+
+```http
+GET /v1/health
+Authorization: Bearer <pairing token>
+```
+
+```json
+{ "version": 1, "realVisionConfigured": true }
+```
+
+This reports validated local configuration only. It is not proof that a model call, credential, or model permission currently works.
+
+If any service-owned durable read/write needed by recognition fails after startup—including source/media, model-attempt, or checkpoint I/O—health immediately changes to `503 storage_unavailable` and the process stops accepting submissions, retries, and confirmations. The storage error is not rewritten as an ordinary model failure even if a later job-record write could have succeeded. Restart only after correcting the storage fault; recovery then marks any still-pending question interrupted rather than pretending the lost mutation completed.
+
+## Submit one photo
+
+```http
+POST /v1/recognitions
+Authorization: Bearer <pairing token>
+Content-Type: image/jpeg
+Idempotency-Key: 8b411cca-f903-4d8c-a5d0-41435e2a66bb
+X-Photo-Name: IMG_5517.JPG
+
+<raw JPEG bytes>
+```
+
+`X-Photo-Name` is optional UTF-8 text encoded with percent encoding. The response is `202 Accepted` only after the queued job, original bytes, direction-correct JPEG, and hashes are durable. Repeating the same UUID with the same source bytes returns the same job. Reusing the UUID with different bytes returns `409 idempotency_conflict`. The bytes themselves must decode as JPEG; a PNG/WebP/HEIF body labelled `image/jpeg` is rejected. Empty, damaged, non-JPEG, over-15-MB, or over-40-megapixel inputs are rejected before a job ID is issued.
+
+```json
+{
+  "job": {
+    "version": 1,
+    "id": "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+    "revision": 1,
+    "photoName": "IMG_5517.JPG",
+    "sourceHash": "74f97e2d65ed1fa0a6357fb952817417a062c3ddf71b8cc9d94a35d5930cbc69",
+    "sourceMediaId": "6ddc034b-b0f8-4288-b9c1-4f496cfb90df",
+    "status": "queued",
+    "phase": "inventory",
+    "inventoryWarnings": [],
+    "questions": [],
+    "error": null,
+    "createdAt": "2026-09-14T10:00:00.000Z",
+    "updatedAt": "2026-09-14T10:00:00.000Z"
+  }
+}
+```
+
+The client submits at most ten photos as ten independent requests. Processing is asynchronous; it should poll with short GET requests rather than hold the upload request open.
+
+## List and read jobs
+
+```http
+GET /v1/recognitions
+GET /v1/recognitions/3f7b69dc-9d37-4aaa-b965-bb61243445a0
+Authorization: Bearer <pairing token>
+```
+
+The collection endpoint returns `{ "jobs": [...] }` newest first. The item endpoint returns `{ "job": ... }`. A missing or malformed job ID returns `404 not_found`. This collection is local to the paired mobile service and does not read student cookies or the web database.
+
+## Retry only failed work
+
+Retry a failed/interrupted inventory stage:
+
+```http
+POST /v1/recognitions/3f7b69dc-9d37-4aaa-b965-bb61243445a0/retry
+Authorization: Bearer <pairing token>
+Content-Type: application/json
+
+{ "questionId": null }
+```
+
+Retry one retryable failed question:
+
+```json
+{ "questionId": "aa16756c-44cc-4a1f-a2dc-93605cbd0b31" }
+```
+
+The response is `202 { "job": ... }`. Inventory `null` is accepted only while the job is failed/interrupted in the inventory phase and explicitly recoverable. A question UUID selects only that failed, recoverable question. Schema/truncation and repaired authentication/permission/unsupported-model failures remain excluded from automatic attempts but can be deliberately recovered through this endpoint after repair. This can incur a new model request; the native UI explains that and asks for confirmation. Ready, confirmed and skipped questions, internal/storage/invalid-image failures and unsupported local crop failures return `409 not_retryable`. Existing successful candidate IDs, evidence, crops, and revisions are preserved. A question recovery resumes its exact durable next stage: for example, a valid transcription followed by a verification schema failure restarts at verification without retranscribing or paying for that completed stage. Corrected evidence and the incremented grounding count are checkpointed immediately after a successful grounding response, before local crop rendering. Old records are not automatically resumed on launch/restart; known older schema-field stage labels remain eligible only for an explicit endpoint call. Historical attempts are never replaced.
+
+Each new retained attempt also includes `request.promptHash`: lowercase SHA-256 of `JSON.stringify` of the actual ordered request messages, before image redaction. It is content-derived (including the actual image-message contents), not a manually asserted release version. Model, sourceHash, sanitized full messages, raw response and earlier attempts remain independently retained; historical records without this additive hash are unchanged. Private images/base64 and authorization are still excluded from retained message bodies.
+
+## Confirm or skip a candidate
+
+Confirm the exact current question revision after comparing the source:
+
+```http
+POST /v1/recognitions/3f7b69dc-9d37-4aaa-b965-bb61243445a0/questions/a42b4eb2-12ff-499f-92de-e49d7cb36ef7/confirm
+Authorization: Bearer <pairing token>
+Content-Type: application/json
+
+{ "revision": 3, "action": "confirm", "sourceCompared": true }
+```
+
+Confirmation succeeds only for a `ready` question when all five verification booleans are explicitly true, `issues` and `evidence.uncertainties` are empty, the inventory candidate is not edge-partial, and `sourceCompared` is true. When `requiresDiagram` is true, every declared diagram region must also have a real allocated diagram crop; model booleans alone cannot substitute for missing media. A `needs_check` question cannot bypass these gates. The API does not accept replacement evidence in this request. A stale revision or an unmet gate returns `409`.
+
+Skipping needs no evidence or source acknowledgement:
+
+```json
+{ "revision": 3, "action": "skip" }
+```
+
+A success is `200 { "job": ... }`. The returned job contains the incremented question and job revisions. Skip is rejected with `409 question_active` while that question is queued or processing, preventing an in-flight worker result from silently overwriting the user action.
+
+## Read source and crop media
+
+```http
+GET /v1/recognitions/3f7b69dc-9d37-4aaa-b965-bb61243445a0/media/1800c1bc-47ab-42bc-a46d-315005bdc695
+Authorization: Bearer <pairing token>
+```
+
+The response is `image/jpeg`. Use `sourceMediaId`, `questionMediaId`, and `diagramMediaIds` only. IDs are allocated UUIDs looked up within that job; paths, encoded traversal, and remote URLs are never accepted.
+
+## Recovery, attempts, and privacy
+
+The service runs one photo job at a time and no more than two question model boundaries concurrently. A job cannot become `completed`, `partial`, or `failed` while any question is still queued/processing. A restart never automatically repeats a paid call: every pending question is marked as an explicit interruption even if an older parent record incorrectly claimed a terminal state. Already durable candidates and stage checkpoints remain readable and can be explicitly retried from their exact next stage. One failed question does not roll back successful questions.
+
+Provider calls make at most three total attempts, and only network failures, timeouts, rate limits, HTTP 408, and transient 5xx responses are retried. Authentication, permissions, unsupported requests, truncation, invalid JSON, and schema rejection stop explicitly.
+
+Local attempt files retain full prompts, bounded response bodies, usage, image byte counts/hashes, stage, and error classification. Each received provider result is offered to durable recording exactly once. If that write fails, its storage error propagates without being remapped or re-recorded as a model failure; health becomes unavailable and restart recovery exposes the pending stage for explicit retry. The final serialized file is also bounded to 3,000,000 bytes; when JSON escaping would cross that bound, `responseRaw` keeps the largest fitting prefix and the record adds `responseTruncatedForStorage: true` plus `responseOriginalBytes`. Attempt files never retain authorization headers or image base64, and configured keys are redacted even if a provider echoes one. Attempt dumps are never returned by the mobile API. The data root and subdirectories use mode `0700`, files use `0600`, and macOS backup exclusion is applied when the store opens. The repository ignores `data/`; tests and acceptance runs should use unique data roots. No claim is made here about provider-side retention.

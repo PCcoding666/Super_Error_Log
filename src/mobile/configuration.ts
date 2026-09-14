@@ -1,0 +1,35 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+const BEIJING_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+
+export interface MobileConfiguration {
+  host: '127.0.0.1';
+  port: number;
+  dataDir: string;
+  pairingToken: string;
+  vision: { baseUrl: string; apiKey: string; timeoutMs: number; bailianOnly: true; models: { inventory: string; transcribe: string; verify: string; ground: string } };
+}
+
+export function loadMobileConfiguration(root = process.cwd()): MobileConfiguration {
+  const envPath = path.join(root, '.env'); if (fs.existsSync(envPath)) process.loadEnvFile(envPath);
+  const mode = process.env.SEL_MOBILE_AI_MODE ?? process.env.SEL_AI_MODE;
+  if (mode !== 'bailian') throw new Error('移动识别要求 SEL_MOBILE_AI_MODE 或 SEL_AI_MODE=bailian，禁止 Mock 降级');
+  const baseUrl = process.env.SEL_MOBILE_AI_BASE_URL ?? process.env.SEL_AI_BASE_URL ?? '';
+  if (baseUrl.replace(/\/$/, '') !== BEIJING_ENDPOINT) throw new Error(`移动识别只允许百炼北京接口 ${BEIJING_ENDPOINT}`);
+  const apiKey = process.env.SEL_MOBILE_AI_API_KEY || process.env.SEL_AI_API_KEY || process.env.DASHSCOPE_API_KEY || '';
+  if (!apiKey.trim()) throw new Error('移动识别缺少百炼密钥');
+  const commonModel = process.env.SEL_MOBILE_AI_MODEL || process.env.SEL_AI_MODEL || '';
+  const model = (stage: string) => process.env[`SEL_MOBILE_AI_MODEL_${stage}`] || commonModel;
+  const models = { inventory: model('INVENTORY'), transcribe: model('TRANSCRIBE'), verify: model('VERIFY'), ground: model('GROUND') };
+  if (Object.values(models).some(value => !value.trim())) throw new Error('移动识别缺少一个或多个阶段模型配置');
+  const pairingToken = process.env.SEL_MOBILE_PAIRING_TOKEN ?? '';
+  if (pairingToken.length < 16) throw new Error('SEL_MOBILE_PAIRING_TOKEN 至少需要16个字符');
+  const timeoutMs = Number(process.env.SEL_MOBILE_AI_TIMEOUT_MS ?? 1_800_000);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error('SEL_MOBILE_AI_TIMEOUT_MS 必须是正整数毫秒');
+  const port = Number(process.env.SEL_MOBILE_PORT ?? 3101);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error('SEL_MOBILE_PORT 不合法');
+  const host = process.env.SEL_MOBILE_HOST ?? '127.0.0.1'; if (host !== '127.0.0.1') throw new Error('移动识别本轮只允许监听 127.0.0.1');
+  return { host, port, dataDir: path.resolve(root, process.env.SEL_MOBILE_DATA_DIR ?? 'data/mobile-recognition'), pairingToken,
+    vision: { baseUrl: BEIJING_ENDPOINT, apiKey, timeoutMs, bailianOnly: true, models } };
+}

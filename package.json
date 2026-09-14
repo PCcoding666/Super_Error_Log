@@ -1,0 +1,44 @@
+{
+  "name": "super-error-log",
+  "version": "0.1.0",
+  "private": true,
+  "description": "纸错题延迟重做闭环 MVP：周末数字化，工作日纸质复习，下周结果回传",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "mobile:dev": "tsx watch src/mobile/server.ts",
+    "mobile:start": "node dist/mobile/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "seed": "tsx src/seed.ts",
+    "fixtures:generate": "tsx src/fixtures/generate.ts",
+    "demo": "tsx src/fixtures/generate.ts && tsx watch src/server.ts",
+    "verify": "npm run typecheck && npm run test && npm run build && npm run test:e2e"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "sharp": "^0.34.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0",
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
