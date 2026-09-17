@@ -43,7 +43,21 @@ For a pilot launch, the pairing token may be injected into the launch process fr
 
 ## Pairing (cloud mode)
 
-In cloud mode the shared pairing token is disabled. Phones pair by scanning a one-time QR code; the public app gains `POST /v1/pairing/redeem` in the next task. This task provides the server-side pairing core and the machine-local admin entry.
+In cloud mode the shared pairing token is disabled: `/v1` authentication uses per-device tokens, and the public app exposes the pairing redemption endpoint:
+
+```http
+POST /v1/pairing/redeem
+Content-Type: application/json
+X-Real-IP: (set by Caddy header_up — clients cannot spoof it)
+```
+
+```json
+{ "payload": { /* PairingCodePayload from the QR code */ }, "clientId": "8b411cca-f903-4d8c-a5d0-41435e2a66bb", "deviceInfo": "iPhone 17 Pro" }
+```
+
+`clientId` is a UUID the phone generates once and persists. The request body is capped at 16 KB. Success returns `RedeemResult` (200). Same client + same secret within the validity window returns the identical result (idempotent recovery). A different concurrent client on one session: exactly one wins, the other gets `409 pairing_used`; an expired session is `410 pairing_expired`; a malformed payload is `400`. The endpoint needs no Authorization header; every redeem failure counts toward the pairing rate limits.
+
+Rate limits (cloud mode, per rolling minute, 429 + `Retry-After`): pairing failures 10 per source IP plus 60 global; authentication failures 30 per source IP; authenticated queries 300 per device. Source IP is derived only from the local reverse proxy's overwritten `X-Real-IP` header when the app runs with `cloudProxy` and the direct peer is loopback; forged headers from any other path are ignored and the direct peer address is used.
 
 ### Admin entry (Unix domain socket only)
 
@@ -55,7 +69,7 @@ node dist/mobile/admin-cli.js --data-dir /var/lib/super-error-log devices
 node dist/mobile/admin-cli.js --data-dir /var/lib/super-error-log revoke <deviceId>
 ```
 
-The `serve` subcommand is how the admin entry runs today: until the cloud-mode main process is wired up (device-token auth on the public routes, planned with `POST /v1/pairing/redeem`), the main `server.ts` exits with an explicit message in cloud mode and does not listen. In cloud mode today, start the admin entry with `admin-cli serve`; the loopback main process is unchanged.
+The `serve` subcommand runs the admin entry standalone. Since Task 2 the cloud-mode main process (`assembleCloudService`, used by `server.ts` with `SEL_MOBILE_MODE=cloud`) embeds both: the public app with device-token auth and the admin socket in one process.
 
 `GET /pairing-code` (over the socket) returns a fresh one-time QR payload:
 
@@ -165,14 +179,27 @@ Questions may additionally expose `candidateBox`, e.g. `{ "x": 0.6, "y": 0.1, "w
 
 ```http
 GET /v1/health
-Authorization: Bearer <pairing token>
+Authorization: Bearer <pairing token | device token>
 ```
 
 ```json
 { "version": 1, "realVisionConfigured": true }
 ```
 
-This reports validated local configuration only. It is not proof that a model call, credential, or model permission currently works.
+In cloud mode the same endpoint (device-token authenticated) returns the extended shape:
+
+```json
+{
+  "version": 1,
+  "serviceId": "e8383d01-d47e-40e0-b0a1-61a7d81b8665",
+  "storageAvailable": true,
+  "visionConfigured": true,
+  "acceptingJobs": true,
+  "protocolVersion": 1
+}
+```
+
+`acceptingJobs` reflects entry capacity only (storage gate); admission control for job capacity lands with the capacity task. A healthy response proves connection, authorization, and entry readiness only — it is not proof that a model call, credential, or model permission currently works.
 
 If any service-owned durable read/write needed by recognition fails after startup—including source/media, model-attempt, or checkpoint I/O—health immediately changes to `503 storage_unavailable` and the process stops accepting submissions, retries, and confirmations. The storage error is not rewritten as an ordinary model failure even if a later job-record write could have succeeded. Restart only after correcting the storage fault; recovery then marks any still-pending question interrupted rather than pretending the lost mutation completed.
 
