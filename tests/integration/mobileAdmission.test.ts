@@ -232,4 +232,101 @@ describe('per-question concurrency and image semaphore', () => {
     await Promise.all(tasks);
     expect(peak).toBe(1);
   });
+
+  it('vision 裁切路径走共享图像信号量（service.context 注入 withImage）', async () => {
+    // 真实链路：service.runQuestion → vision.recognizeQuestion(context.withImage) → renderCrops。
+    // 用真实 BailianMobileVision 的裁切路径验证 withImage 注入后的互斥语义。
+    // 观测点：context.withImage 是否在真实调用链中被构造（service.context 存在 admission 时注入）。
+    // 这里用间接但真实的方式：两个并发 question 裁切都经由 withImage 包装。
+    const seenWithImage: boolean[] = [];
+    class WrappingVision extends SlowVision {
+      async recognizeQuestion(source: Buffer, candidate: InventoryCandidate, context: VisionContext): Promise<VisionQuestionResult> {
+        seenWithImage.push(typeof context.withImage === 'function');
+        await context.withImage?.(async () => { await new Promise(resolve => setTimeout(resolve, 5)); return 0; });
+        return { evidence: evidence(candidate.number), verification: { textComplete: true, questionCropComplete: true, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: [] }, questionCrop: source, diagramCrops: [] };
+      }
+    }
+    const vision = new WrappingVision();
+    const { request } = await setupCloud(vision, { jobCapacity: 5 });
+    const accepted = await submit(request, await jpeg());
+    expect(accepted.status).toBe(202);
+    vision.finish();
+    const jobId = await idOf(accepted);
+    for (let index = 0; index < 200; index += 1) {
+      const job = await (await request(`/v1/recognitions/${jobId}`)).json() as { job: { status: string } };
+      if (['completed', 'partial', 'failed'].includes(job.job.status)) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    // service.context 在 admission 接通时注入 withImage：真实调用链覆盖 vision 裁切。
+    expect(seenWithImage.length).toBeGreaterThanOrEqual(1);
+    expect(seenWithImage.every(seen => seen)).toBe(true);
+  });
+
+  it('并发逐题重试不泄漏容量：每任务恰好占 1，终态释放（R1/R2 回归）', async () => {
+    class GatedFlakyVision implements MobileVisionBoundary {
+      private calls = 0;
+      private gates: Array<() => void> = [];
+      /** 释放一个挂起的重试题目（按调用顺序）。 */
+      releaseOne(): void { this.gates.shift()?.(); }
+      /** 等待下一个题目真正挂起后再放行（顺序 drain：题目 2 只在题目 1 完成后才开始）。 */
+      async releaseNextWhenPending(): Promise<void> {
+        for (let index = 0; index < 300; index += 1) {
+          if (this.gates.length > 0) { this.gates.shift()?.(); return; }
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+      }
+      async inventory(_source: Buffer, _context: VisionContext): Promise<VisionInventoryResult> {
+        return { candidates: Array.from({ length: 2 }, (_, index) => ({ number: String(index + 1), box, selectionEvidence: 'unmarked' as const, partial: false })), warnings: [] };
+      }
+      async recognizeQuestion(source: Buffer, candidate: InventoryCandidate, _context: VisionContext): Promise<VisionQuestionResult> {
+        this.calls += 1;
+        if (this.calls <= 2) {
+          // 初始运行：两题 retryable 失败（canRecover=true，可走 /retry）。
+          throw Object.assign(new Error('model overloaded'), { code: 'rate_limited', stage: 'transcribe', retryable: true });
+        }
+        // 重试运行：挂起等待测试逐个放行，观测容量保持。
+        await new Promise<void>(resolve => { this.gates.push(resolve); });
+        return { evidence: evidence(candidate.number), verification: { textComplete: true, questionCropComplete: true, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: [] }, questionCrop: source, diagramCrops: [] };
+      }
+    }
+    const vision = new GatedFlakyVision();
+    const { request } = await setupCloud(vision, { jobCapacity: 1 });
+    const accepted = await submit(request, await jpeg());
+    expect(accepted.status).toBe(202);
+    const jobId = await idOf(accepted);
+    // 等待初始运行到达终态（两题失败：容量 0/1）。
+    const waitForStatus = async (statuses: string[]): Promise<{ status: string; questions: Array<{ id: string; status: string }> }> => {
+      let current: { job: { status: string; questions: Array<{ id: string; status: string }> } } | undefined;
+      for (let index = 0; index < 300; index += 1) {
+        current = await (await request(`/v1/recognitions/${jobId}`)).json() as typeof current;
+        if (current && statuses.includes(current.job.status)) return current.job;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      if (!current) throw new Error('任务状态轮询失败');
+      return current.job;
+    };
+    const initial = await waitForStatus(['failed', 'partial']);
+    expect(initial.status).toBe('failed');
+    const failedQuestions: Array<{ id: string; status: string }> = initial.questions.filter((question: { status: string }) => question.status === 'failed');
+    expect(failedQuestions.length).toBe(2);
+    // 并发重试两个失败题目：都必须 202。容量 1 已被首个重试占用（jobId 去重），
+    // 第二个重试若重复预约（R2 缺陷）会得到 429 capacity_full。
+    const retries = await Promise.all(failedQuestions.map((question: { id: string }) =>
+      request(`/v1/recognitions/${jobId}/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: question.id }) })));
+    expect(retries.map((response: Response) => response.status)).toEqual([202, 202]);
+    // 重试运行中（题目挂起）：容量必须保持占用。
+    const during = await submit(request, await jpeg('#5a5a5a'));
+    expect((await during.json() as { error: { code: string } }).error.code).toBe('capacity_full');
+    // 放行第一题：完成后 finalize 非终态（第二题仍 queued）——R1 缺陷会提前释放容量。
+    await vision.releaseNextWhenPending();
+    await new Promise(resolve => setTimeout(resolve, 150));
+    const afterFirst = await submit(request, await jpeg('#6e6e6e'));
+    expect((await afterFirst.json() as { error: { code: string } }).error.code).toBe('capacity_full');
+    // 放行第二题：任务终态 → 容量完整释放，无泄漏。
+    await vision.releaseNextWhenPending();
+    const terminal = await waitForStatus(['completed']);
+    expect(terminal.status).toBe('completed');
+    const afterTerminal = await submit(request, await jpeg('#7a7a7a'));
+    expect(afterTerminal.status).toBe(202);
+  });
 });

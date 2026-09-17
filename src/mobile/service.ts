@@ -70,6 +70,8 @@ export class MobileRecognitionService {
   private accepting = true;
   private storageAvailable = true;
   private admission: AdmissionController | null = null;
+  /** 当前占用任务容量的 jobId 集合：非终态任务恰好占 1（重试不重复计照片数）。 */
+  private readonly activeCapacityJobs = new Set<string>();
 
   constructor(readonly store: MobileRecognitionStore, readonly vision: MobileVisionBoundary) {}
 
@@ -110,7 +112,7 @@ export class MobileRecognitionService {
       if (error instanceof MobileRequestError || error instanceof IdempotencyConflictError) throw error;
       this.failStorage(); throw new MobileRequestError(503, 'storage_unavailable', '本地存储暂时不可用，未接受新的识别任务。');
     }
-    if (result.created) this.enqueue({ jobId: result.job.id, kind: 'inventory' });
+    if (result.created) { this.activeCapacityJobs.add(result.job.id); this.enqueue({ jobId: result.job.id, kind: 'inventory' }); }
     return { job: result.job, created: result.created };
   }
 
@@ -132,7 +134,7 @@ export class MobileRecognitionService {
     if (questionId === null) {
       if (job.phase !== 'inventory' || !['failed', 'interrupted'].includes(job.status) || !canRecover(job.error)) throw new MobileRequestError(409, 'not_retryable', '清单阶段当前不能恢复。');
       // 容量预约先于状态改写：预约失败时任务保持 failed/interrupted，不会卡在 queued。
-      this.reserveRetryCapacity();
+      this.reserveRetryCapacity(jobId);
       job = await this.persistTransition(() => this.store.updateJob(jobId, current => { current.status = 'queued'; current.error = null; this.touch(current) }));
       this.enqueue({ jobId, kind: 'inventory' });
       return publicJob(job);
@@ -140,18 +142,21 @@ export class MobileRecognitionService {
     const question = job.questions.find(item => item.id === questionId);
     if (!question) throw new MobileRequestError(404, 'not_found', '题目不存在。');
     if (question.status !== 'failed' || !canRecover(question.error)) throw new MobileRequestError(409, 'not_retryable', '这道题当前不能恢复。');
-    this.reserveRetryCapacity();
+    this.reserveRetryCapacity(jobId);
     job = await this.persistTransition(() => this.store.updateJob(jobId, current => { const target = current.questions.find(item => item.id === questionId)!;
       target.status = 'queued'; target.error = null; target.revision += 1; current.status = 'processing'; current.phase = 'questions'; current.error = null; this.touch(current); }));
     this.enqueue({ jobId, kind: 'question', questionId });
     return publicJob(job);
   }
 
-  /** 重试重新占用一个任务容量位（终态时释放）；容量满时保守拒绝，不排队。 */
-  private reserveRetryCapacity(): void {
+  /** 重试重新占用一个任务容量位：非终态任务恰好占用 1（按 jobId 去重，不重复计照片数）；满则保守拒绝。 */
+  private reserveRetryCapacity(jobId: string): void {
     if (!this.admission) return;
-    const capacity = this.admission.tryAcquireJobCapacity();
-    if (!capacity.accepted) throw new MobileRequestError(429, 'capacity_full', '识别队列已满，请稍后再试。');
+    if (!this.activeCapacityJobs.has(jobId)) {
+      const capacity = this.admission.tryAcquireJobCapacity();
+      if (!capacity.accepted) throw new MobileRequestError(429, 'capacity_full', '识别队列已满，请稍后再试。');
+      this.activeCapacityJobs.add(jobId);
+    }
   }
 
   async confirm(jobId: string, questionId: string, input: { revision: number; action: 'confirm' | 'skip'; sourceCompared?: boolean }): Promise<RecognitionJob> {
@@ -217,7 +222,7 @@ export class MobileRecognitionService {
       if (error instanceof MobileStorageError) throw error;
       await this.ownedStorage(() => this.store.updateJob(jobId, current => { current.status = 'failed'; current.phase = 'inventory'; current.error = failure(error, 'inventory'); this.touch(current); }));
       // 清单失败即任务终态：释放入口容量，避免容量泄漏。
-      this.admission?.releaseJobCapacity();
+      this.admission?.releaseJobCapacity(); this.activeCapacityJobs.delete(jobId);
       return;
     }
     await this.processQuestions(job.id, job.questions.map(question => question.id));
@@ -260,6 +265,7 @@ export class MobileRecognitionService {
   }
 
   private async finalize(jobId: string): Promise<void> {
+    let terminal = false;
     await this.ownedStorage(() => this.store.updateJob(jobId, job => { const failed = job.questions.filter(question => question.status === 'failed');
       if (job.questions.some(question => question.status === 'queued' || question.status === 'processing')) return;
       for (const question of job.questions) {
@@ -271,10 +277,12 @@ export class MobileRecognitionService {
       if (failed.length === 0) { job.status = 'completed'; job.error = null; }
       else if (usable.length > 0) { job.status = 'partial'; job.error = { code: 'partial', message: '识别暂未完成，已完成的题目已保留。', stage: 'questions', retryable: failed.some(question => question.error?.retryable) }; }
       else { job.status = 'failed'; job.error = failed[0]?.error ?? { code: 'failed', message: '识别暂未完成。', stage: 'questions', retryable: false }; }
+      terminal = true;
       this.touch(job);
     }));
-    // 任务到达终态：释放入口容量（重试经 retry 路径重新预约，不重复计照片数）。
-    this.admission?.releaseJobCapacity();
+    // 仅在真正到达终态时释放容量：并发重试的中间态（仍有 queued/processing 题目）保持占用，
+    // 由最后一次 finalize 释放，避免容量提前归还导致的超发。
+    if (terminal) { this.admission?.releaseJobCapacity(); this.activeCapacityJobs.delete(jobId); }
   }
 
   private context(job: StoredRecognitionJob, questionId: string | null) {
