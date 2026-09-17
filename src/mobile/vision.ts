@@ -32,6 +32,8 @@ export interface VisionContext {
   recordAttempt?: (attempt: VisionAttempt) => void | Promise<void>;
   checkpoint?: (checkpoint: RecognitionStageCheckpoint) => void | Promise<void>;
   resumeCheckpoint?: RecognitionStageCheckpoint;
+  /** 共享图像信号量（Task 3）：题图/图示裁切在互斥内执行。 */
+  withImage?: <T>(section: () => Promise<T>) => Promise<T>;
 }
 export interface MobileVisionBoundary {
   readonly configured?: boolean;
@@ -184,7 +186,7 @@ export class BailianMobileVision implements MobileVisionBoundary {
       nextStage = 'verify'; checked = null; groundingPasses = 0;
       await context.checkpoint?.({ evidence: current, verification: null, nextStage, groundingPasses });
     }
-    let rendered = await this.renderCrops(source, current);
+    let rendered = await this.renderCrops(source, current, context);
     while (true) {
       if (nextStage === 'verify') {
         checked = await this.verify(source, candidate, current, rendered.questionCrop, rendered.diagramCrops, context);
@@ -197,8 +199,20 @@ export class BailianMobileVision implements MobileVisionBoundary {
         text(`第1张图是完整原图，第2张图是实际题目裁图，第3张及之后的图是实际图示裁图。坐标只参照第1张完整原图，绝不能使用裁图坐标。${BOX} 只读取候选题号 ${JSON.stringify(candidate.number)}，仅返回该候选的完整Evidence顶层JSON对象，不是数组；不得改换题号。找不到该候选时不得读取其他题目；缺失或看不清的内容仍须放入uncertainties。不得隐瞒检查失败、原样返回有问题的旧裁框并宣称成功。${EVIDENCE_CONTRACT}`)]), context, value => this.validateCandidateEvidence(value, candidate, 'ground'));
       groundingPasses += 1; checked = null; nextStage = 'verify';
       await context.checkpoint?.({ evidence: current, verification: null, nextStage, groundingPasses });
-      rendered = await this.renderCrops(source, current);
+      rendered = await this.renderCrops(source, current, context);
     }
+  }
+
+  private async renderCrops(source: Buffer, evidence: Evidence, context: VisionContext): Promise<{ questionCrop: Buffer; diagramCrops: Buffer[] }> {
+    const render = async (): Promise<{ questionCrop: Buffer; diagramCrops: Buffer[] }> => {
+      try {
+        const questionCrop = await cropPhoto(source, evidence.questionRegion);
+        const diagramCrops = await Promise.all(evidence.regions.filter(region => region.kind === 'diagram').map(region => cropPhoto(source, region.box)));
+        return { questionCrop, diagramCrops };
+      } catch { throw new MobileVisionError('invalid_output', '模型返回的裁图位置无法安全读取。', 'crop', false); }
+    };
+    // 共享图像信号量：题图/图示裁切互斥执行（未提供 withImage 时直接执行——测试 Fixture 等场景）。
+    return context.withImage ? context.withImage(render) : render();
   }
 
   private validateCandidateEvidence(value: unknown, candidate: InventoryCandidate, stage: 'transcribe' | 'ground'): Evidence {
@@ -210,14 +224,6 @@ export class BailianMobileVision implements MobileVisionBoundary {
     }
     evidence.regions.forEach(region => { region.cleanForPrint = false; });
     return evidence;
-  }
-
-  private async renderCrops(source: Buffer, evidence: Evidence): Promise<{ questionCrop: Buffer; diagramCrops: Buffer[] }> {
-    try {
-      const questionCrop = await cropPhoto(source, evidence.questionRegion);
-      const diagramCrops = await Promise.all(evidence.regions.filter(region => region.kind === 'diagram').map(region => cropPhoto(source, region.box)));
-      return { questionCrop, diagramCrops };
-    } catch { throw new MobileVisionError('invalid_output', '模型返回的裁图位置无法安全读取。', 'crop', false); }
   }
 
   private async verify(source: Buffer, candidate: InventoryCandidate, evidence: Evidence, questionCrop: Buffer, diagramCrops: Buffer[], context: VisionContext): Promise<RecognitionVerification> {

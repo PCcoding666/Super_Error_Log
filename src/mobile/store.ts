@@ -133,6 +133,8 @@ export class MobileRecognitionStore {
 
   async getJob(id: string): Promise<RecognitionJob | null> { const job = this.jobs.get(id); return job ? publicJob(job) : null; }
   async getStoredJob(id: string): Promise<StoredRecognitionJob | null> { const job = this.jobs.get(id); return job ? structuredClone(job) : null; }
+  /** Task 3：容量预约前的幂等键查验（只读内存索引，不触发 IO）。 */
+  async hasJob(idempotencyKey: string): Promise<boolean> { return this.idempotency.has(idempotencyKey); }
   async listJobs(): Promise<RecognitionJob[]> {
     return [...this.jobs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(publicJob);
   }

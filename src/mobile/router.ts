@@ -5,6 +5,7 @@ import { IdempotencyConflictError, MobileRecognitionStore } from './store.js';
 import type { MobileVisionBoundary } from './vision.js';
 import { PairingError, type PairingManager } from './pairing.js';
 import { RateLimiter, clientIp } from './rateLimit.js';
+import { AdmissionController } from './admission.js';
 
 export interface CreateMobileAppOptions {
   dataDir: string;
@@ -17,9 +18,14 @@ export interface CreateMobileAppOptions {
   /** 仅云端：是否信任本机反代覆写的 X-Real-IP（Caddy header_up）。 */
   cloudProxy?: boolean;
   rateLimiter?: RateLimiter;
+  /** 入口容量控制（Task 3）：云端缺省构造默认容量；回环模式不启用。 */
+  admission?: AdmissionController;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** POST /v1/recognitions 的预约状态（挂 response.locals；handler finally 与 close 兜底按标志幂等释放）。 */
+interface AdmissionReserve { slot: boolean; capacity: boolean; handoff: boolean }
 
 function equalToken(actual: string, expected: string): boolean {
   const left = Buffer.from(actual); const right = Buffer.from(expected);
@@ -56,6 +62,9 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
   const store = await MobileRecognitionStore.open(options.dataDir);
   const service = new MobileRecognitionService(store, options.vision);
   const limiter = options.rateLimiter ?? new RateLimiter();
+  const admission = options.admission ?? (mode === 'cloud' ? new AdmissionController({ dataDir: options.dataDir }) : null);
+  // Task 3：service 终态释放容量与图像信号量依赖注入（云端必须接通，否则容量永不归还）。
+  if (mode === 'cloud' && admission) service.useAdmission(admission);
   const app = express(); app.disable('x-powered-by'); app.locals.mobileRecognitionService = service;
   app.use((_request, response, next) => { response.setHeader('cache-control', 'private, no-store'); response.setHeader('pragma', 'no-cache'); next(); });
 
@@ -116,22 +125,89 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
     } catch (error) { next(error); }
   });
 
-  app.get('/v1/health', (_request, response) => {
-    if (!service.isStorageAvailable()) { response.status(503).json({ error: { code: 'storage_unavailable', message: '本地存储暂时不可用，服务已停止接受识别任务。' } }); return; }
-    if (mode === 'cloud') {
-      response.json({ version: 1, serviceId: options.pairing!.serviceId, storageAvailable: true, visionConfigured: options.vision.configured !== false, acceptingJobs: true, protocolVersion: 1 });
-      return;
-    }
-    response.json({ version: 1, realVisionConfigured: options.vision.configured !== false });
+  app.get('/v1/health', async (_request, response, next) => {
+    try {
+      if (!service.isStorageAvailable()) { response.status(503).json({ error: { code: 'storage_unavailable', message: '本地存储暂时不可用，服务已停止接受识别任务。' } }); return; }
+      if (mode === 'cloud') {
+        const acceptingJobs = service.acceptingJobs() && (!admission || (await admission.accepting()));
+        response.json({ version: 1, serviceId: options.pairing!.serviceId, storageAvailable: true, visionConfigured: options.vision.configured !== false, acceptingJobs, protocolVersion: 1 });
+        return;
+      }
+      response.json({ version: 1, realVisionConfigured: options.vision.configured !== false });
+    } catch (error) { next(error); }
+  });
+
+  // ── POST /v1/recognitions：容量/槽位/磁盘门槛预约先于正文解析（Task 3 原子预约）────
+  // 第一段（app.use 过滤器，鉴权之后）：检查幂等重放、磁盘门槛、解析槽位与任务容量；
+  // 429/503 短路时 express.raw 尚未开始缓冲，被拒正文不进入内存。预留态挂 response.locals，
+  // close 兜底覆盖 413（raw 中间件抛错不进 handler）与客户端中断两条不进 finally 的路径。
+  app.use((request, response, next) => {
+    if (!admission || request.method !== 'POST' || request.originalUrl.split('?')[0] !== '/v1/recognitions') { next(); return; }
+    const reserve: AdmissionReserve = { slot: false, capacity: false, handoff: false };
+    response.locals.selAdmission = reserve;
+    const backstop = (): void => {
+      if (reserve.slot) { reserve.slot = false; admission.releaseUploadSlot('upload'); }
+      if (reserve.capacity && !reserve.handoff) { reserve.capacity = false; admission.releaseJobCapacity(); }
+    };
+    response.on('close', backstop);
+    void (async (): Promise<void> => {
+      const keyHeader = request.headers['idempotency-key'];
+      // 满队列时相同幂等键的旧任务仍可查验并按字节恢复：同键跳过容量与磁盘门槛（store 幂等处理），
+      // 但正文仍要解析，仍占用解析槽位。
+      if (typeof keyHeader === 'string' && UUID.test(keyHeader) && (await service.hasJob(keyHeader))) {
+        const replaySlot = admission.tryAcquireUploadSlot('upload');
+        if (!replaySlot.accepted) {
+          response.setHeader('retry-after', String(replaySlot.retryAfterSeconds));
+          response.status(429).json({ error: { code: 'busy', message: '服务器正在处理另一个上传，请稍后重试。' } });
+          return;
+        }
+        reserve.slot = true;
+        next();
+        return;
+      }
+      const gate = await admission.storageGate();
+      if (!gate.ok) {
+        const message = gate.reason === 'disk_low' ? '服务器磁盘空间不足，已停止接收新照片，请联系管理员。' : '错题本数据存储已达到上限，请联系管理员处理。';
+        response.status(503).json({ error: { code: gate.reason ?? 'storage_full', message } });
+        return;
+      }
+      const slot = admission.tryAcquireUploadSlot('upload');
+      if (!slot.accepted) {
+        response.setHeader('retry-after', String(slot.retryAfterSeconds));
+        response.status(429).json({ error: { code: 'busy', message: '服务器正在处理另一个上传，请稍后重试。' } });
+        return;
+      }
+      reserve.slot = true;
+      const capacity = admission.tryAcquireJobCapacity();
+      if (!capacity.accepted) {
+        admission.releaseUploadSlot('upload'); reserve.slot = false;
+        response.setHeader('retry-after', String(capacity.retryAfterSeconds));
+        response.status(429).json({ error: { code: 'capacity_full', message: '识别队列已满，请稍后再试。' } });
+        return;
+      }
+      reserve.capacity = true;
+      // 异步检查期间客户端已消失：立即归还，不进入正文解析。
+      if (response.writableEnded || response.destroyed) { backstop(); return; }
+      next();
+    })().catch(next);
   });
   app.post('/v1/recognitions', express.raw({ type: 'image/jpeg', limit: '15mb' }), async (request, response, next) => {
+    const keyHeader = request.headers['idempotency-key'];
+    const reserve = (response.locals.selAdmission as AdmissionReserve | undefined) ?? null;
     try {
       if (!request.is('image/jpeg') || !Buffer.isBuffer(request.body)) throw new MobileRequestError(415, 'unsupported_media_type', '只接受原始 image/jpeg 照片字节。');
-      const key = request.headers['idempotency-key'];
-      if (typeof key !== 'string' || !UUID.test(key)) throw new MobileRequestError(400, 'invalid_idempotency_key', 'Idempotency-Key 必须是 UUID。');
-      const job = await service.submit({ idempotencyKey: key, photoName: photoName(request.headers['x-photo-name']), sourceBytes: request.body });
-      response.status(202).json({ job });
+      if (typeof keyHeader !== 'string' || !UUID.test(keyHeader)) throw new MobileRequestError(400, 'invalid_idempotency_key', 'Idempotency-Key 必须是 UUID。');
+      const submitted = await service.submit({ idempotencyKey: keyHeader, photoName: photoName(request.headers['x-photo-name']), sourceBytes: request.body });
+      // 容量移交：新任务受理成功后由 service 在任务终态释放；幂等重放（created=false）无容量可移交。
+      if (submitted.created && reserve?.capacity) reserve.handoff = true;
+      response.status(202).json({ job: submitted.job });
     } catch (error) { next(error); }
+    finally {
+      if (reserve && admission) {
+        if (reserve.slot) { reserve.slot = false; admission.releaseUploadSlot('upload'); }
+        if (reserve.capacity && !reserve.handoff) { reserve.capacity = false; admission.releaseJobCapacity(); }
+      }
+    }
   });
   app.get('/v1/recognitions', async (_request, response, next) => { try { response.json({ jobs: await service.listJobs() }); } catch (error) { next(error); } });
   app.get('/v1/recognitions/:id', async (request, response, next) => { try { response.json({ job: await service.getJob(id(request.params.id)) }); } catch (error) { next(error); } });

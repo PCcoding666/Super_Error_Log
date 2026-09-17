@@ -199,7 +199,7 @@ In cloud mode the same endpoint (device-token authenticated) returns the extende
 }
 ```
 
-`acceptingJobs` reflects entry capacity only (storage gate); admission control for job capacity lands with the capacity task. A healthy response proves connection, authorization, and entry readiness only — it is not proof that a model call, credential, or model permission currently works.
+`acceptingJobs` reflects the full entry gates: storage availability, the service's RSS observation threshold, pending job capacity, and the disk/data-quota gates. A healthy response proves connection, authorization, and entry readiness only — it is not proof that a model call, credential, or model permission currently works.
 
 If any service-owned durable read/write needed by recognition fails after startup—including source/media, model-attempt, or checkpoint I/O—health immediately changes to `503 storage_unavailable` and the process stops accepting submissions, retries, and confirmations. The storage error is not rewritten as an ordinary model failure even if a later job-record write could have succeeded. Restart only after correcting the storage fault; recovery then marks any still-pending question interrupted rather than pretending the lost mutation completed.
 
@@ -216,6 +216,16 @@ X-Photo-Name: IMG_5517.JPG
 ```
 
 `X-Photo-Name` is optional UTF-8 text encoded with percent encoding. The response is `202 Accepted` only after the queued job, original bytes, direction-correct JPEG, and hashes are durable. Repeating the same UUID with the same source bytes returns the same job. Reusing the UUID with different bytes returns `409 idempotency_conflict`. The bytes themselves must decode as JPEG; a PNG/WebP/HEIF body labelled `image/jpeg` is rejected. Empty, damaged, non-JPEG, over-15-MB, or over-40-megapixel inputs are rejected before a job ID is issued.
+
+Cloud-mode admission (checked in order, before the request body is consumed):
+
+1. Idempotent replay: a key that already maps to a job skips the storage gates and capacity; the body is still parsed under the upload slot.
+2. Storage gates: system disk below 3 GiB free → `503 disk_low`; data directory at/over 10 GiB → `503 data_quota`. Both messages direct the user to contact the administrator.
+3. Upload slot: at most one request body being parsed at a time; a second concurrent upload gets `429 busy` + `Retry-After` and should retry, not queue.
+4. Job capacity: at most 10 pending photos (running ones included); a full queue gets `429 capacity_full` + `Retry-After`. Capacity is released when a job reaches a terminal state (completed/partial/failed), by the service itself.
+5. Single-process RSS observation: above 768 MiB the service stops accepting new jobs (`health.acceptingJobs=false`) until memory falls back; this is an application-level admission threshold, not a kernel throttling claim.
+
+Per-question model concurrency is 1 (one question boundary at a time), and image work (upload decode/normalize, question/diagram crops) is serialized by a shared image semaphore, because `sharp.concurrency(1)` alone does not guarantee cross-request serialization.
 
 ```json
 {
@@ -304,7 +314,7 @@ The response is `image/jpeg`. Use `sourceMediaId`, `questionMediaId`, and `diagr
 
 ## Recovery, attempts, and privacy
 
-The service runs one photo job at a time and no more than two question model boundaries concurrently. A job cannot become `completed`, `partial`, or `failed` while any question is still queued/processing. A restart never automatically repeats a paid call: every pending question is marked as an explicit interruption even if an older parent record incorrectly claimed a terminal state. Already durable candidates and stage checkpoints remain readable and can be explicitly retried from their exact next stage. One failed question does not roll back successful questions.
+The service runs one photo job at a time and no more than one question model boundary concurrently (Task 3: cloud 2 GiB machine resource protection; the loopback mode converges to the same limit). A job cannot become `completed`, `partial`, or `failed` while any question is still queued/processing. A restart never automatically repeats a paid call: every pending question is marked as an explicit interruption even if an older parent record incorrectly claimed a terminal state. Already durable candidates and stage checkpoints remain readable and can be explicitly retried from their exact next stage. One failed question does not roll back successful questions.
 
 Provider calls make at most three total attempts, and only network failures, timeouts, rate limits, HTTP 408, and transient 5xx responses are retried. Authentication, permissions, unsupported requests, truncation, invalid JSON, and schema rejection stop explicitly.
 

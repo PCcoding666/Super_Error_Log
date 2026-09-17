@@ -5,6 +5,7 @@ import { canRecover, publicJob, type RecognitionFailure, type RecognitionJob, ty
 import type { Box } from '../media/images.js';
 import { IdempotencyConflictError, MobileRecognitionStore, UnknownMediaError } from './store.js';
 import { MobileVisionError, type InventoryCandidate, type MobileVisionBoundary } from './vision.js';
+import type { AdmissionController } from './admission.js';
 
 export class MobileRequestError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) { super(message); this.name = 'MobileRequestError'; }
@@ -59,32 +60,58 @@ function allChecksPass(question: RecognitionQuestion, candidate?: InventoryCandi
       && question.diagramMediaIds.length === question.evidence.regions.filter(region => region.kind === 'diagram').length)));
 }
 
+/** 单进程 RSS 观测阈值（应用层新任务准入，不是内核节流声明）。 */
+const RSS_ADMISSION_THRESHOLD_BYTES = 768 * 1024 * 1024;
+
 export class MobileRecognitionService {
   private readonly queue: Array<{ jobId: string; kind: 'inventory' | 'question'; questionId?: string }> = [];
   private readonly queued = new Set<string>();
   private running = false;
   private accepting = true;
   private storageAvailable = true;
+  private admission: AdmissionController | null = null;
 
   constructor(readonly store: MobileRecognitionStore, readonly vision: MobileVisionBoundary) {}
 
-  async submit(input: { idempotencyKey: string; photoName: string; sourceBytes: Buffer }): Promise<RecognitionJob> {
+  /** 云端模式：接入入口容量控制（上传图像信号量 + 任务容量释放）。 */
+  useAdmission(admission: AdmissionController): void { this.admission = admission; }
+
+  acceptingJobs(): boolean {
+    if (!this.accepting) return false;
+    // 单进程 RSS 观测：超过 768MiB 阈值时停止接收新任务并记日志（可恢复：内存回落后恢复）。
+    const rss = process.memoryUsage.rss();
+    if (rss > RSS_ADMISSION_THRESHOLD_BYTES) {
+      console.warn(`[admission] 单进程 RSS ${Math.round(rss / 1024 / 1024)}MiB 超过 768MiB 阈值，暂停接收新任务。`);
+      return false;
+    }
+    return true;
+  }
+
+  async hasJob(idempotencyKey: string): Promise<boolean> { return this.store.hasJob(idempotencyKey); }
+
+  async submit(input: { idempotencyKey: string; photoName: string; sourceBytes: Buffer }): Promise<{ job: RecognitionJob; created: boolean }> {
     this.assertStorageAvailable();
-    let normalized: Buffer;
+    let normalized: Buffer | undefined;
     try {
-      const metadata = await sharp(input.sourceBytes, { failOn: 'error', limitInputPixels: 40_000_000 }).metadata();
-      if (metadata.format !== 'jpeg') throw new Error('not jpeg');
-      normalized = await normalizePhoto(input.sourceBytes);
+      // 共享图像信号量：metadata 检查与归一化在互斥内执行（sharp.concurrency(1) 不保证跨请求串行）。
+      const decode = async (): Promise<void> => {
+        const metadata = await sharp(input.sourceBytes, { failOn: 'error', limitInputPixels: 40_000_000 }).metadata();
+        if (metadata.format !== 'jpeg') throw new Error('not jpeg');
+        normalized = await normalizePhoto(input.sourceBytes);
+      };
+      if (this.admission) await this.admission.withImage(decode);
+      else await decode();
     }
     catch { throw new MobileRequestError(400, 'invalid_image', '照片无法读取、已损坏或超过大小限制。'); }
+    if (!normalized) throw new MobileRequestError(400, 'invalid_image', '照片无法读取、已损坏或超过大小限制。');
     let result;
-    try { result = await this.store.createJob({ ...input, normalizedBytes: normalized }); }
+    try { result = await this.store.createJob({ idempotencyKey: input.idempotencyKey, photoName: input.photoName, sourceBytes: input.sourceBytes, normalizedBytes: normalized }); }
     catch (error) {
       if (error instanceof MobileRequestError || error instanceof IdempotencyConflictError) throw error;
       this.failStorage(); throw new MobileRequestError(503, 'storage_unavailable', '本地存储暂时不可用，未接受新的识别任务。');
     }
     if (result.created) this.enqueue({ jobId: result.job.id, kind: 'inventory' });
-    return result.job;
+    return { job: result.job, created: result.created };
   }
 
   async getJob(id: string): Promise<RecognitionJob> {
@@ -104,16 +131,27 @@ export class MobileRecognitionService {
     let job = await this.requireStored(jobId);
     if (questionId === null) {
       if (job.phase !== 'inventory' || !['failed', 'interrupted'].includes(job.status) || !canRecover(job.error)) throw new MobileRequestError(409, 'not_retryable', '清单阶段当前不能恢复。');
-      job = await this.persistTransition(() => this.store.updateJob(jobId, current => { current.status = 'queued'; current.error = null; this.touch(current); })); this.enqueue({ jobId, kind: 'inventory' });
+      // 容量预约先于状态改写：预约失败时任务保持 failed/interrupted，不会卡在 queued。
+      this.reserveRetryCapacity();
+      job = await this.persistTransition(() => this.store.updateJob(jobId, current => { current.status = 'queued'; current.error = null; this.touch(current) }));
+      this.enqueue({ jobId, kind: 'inventory' });
       return publicJob(job);
     }
     const question = job.questions.find(item => item.id === questionId);
     if (!question) throw new MobileRequestError(404, 'not_found', '题目不存在。');
     if (question.status !== 'failed' || !canRecover(question.error)) throw new MobileRequestError(409, 'not_retryable', '这道题当前不能恢复。');
+    this.reserveRetryCapacity();
     job = await this.persistTransition(() => this.store.updateJob(jobId, current => { const target = current.questions.find(item => item.id === questionId)!;
       target.status = 'queued'; target.error = null; target.revision += 1; current.status = 'processing'; current.phase = 'questions'; current.error = null; this.touch(current); }));
     this.enqueue({ jobId, kind: 'question', questionId });
     return publicJob(job);
+  }
+
+  /** 重试重新占用一个任务容量位（终态时释放）；容量满时保守拒绝，不排队。 */
+  private reserveRetryCapacity(): void {
+    if (!this.admission) return;
+    const capacity = this.admission.tryAcquireJobCapacity();
+    if (!capacity.accepted) throw new MobileRequestError(429, 'capacity_full', '识别队列已满，请稍后再试。');
   }
 
   async confirm(jobId: string, questionId: string, input: { revision: number; action: 'confirm' | 'skip'; sourceCompared?: boolean }): Promise<RecognitionJob> {
@@ -178,6 +216,8 @@ export class MobileRecognitionService {
     } catch (error) {
       if (error instanceof MobileStorageError) throw error;
       await this.ownedStorage(() => this.store.updateJob(jobId, current => { current.status = 'failed'; current.phase = 'inventory'; current.error = failure(error, 'inventory'); this.touch(current); }));
+      // 清单失败即任务终态：释放入口容量，避免容量泄漏。
+      this.admission?.releaseJobCapacity();
       return;
     }
     await this.processQuestions(job.id, job.questions.map(question => question.id));
@@ -185,8 +225,9 @@ export class MobileRecognitionService {
 
   private async processQuestions(jobId: string, questionIds: string[]): Promise<void> {
     let cursor = 0;
+    // Task 3：逐题并发降为 1（云端 2GB 机器资源保护；回环模式同样收敛）。
     const worker = async () => { while (cursor < questionIds.length) { const id = questionIds[cursor++]; if (id) await this.runQuestion(jobId, id); } };
-    await Promise.all(Array.from({ length: Math.min(2, questionIds.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(1, questionIds.length) }, worker));
     await this.finalize(jobId);
   }
 
@@ -232,10 +273,15 @@ export class MobileRecognitionService {
       else { job.status = 'failed'; job.error = failed[0]?.error ?? { code: 'failed', message: '识别暂未完成。', stage: 'questions', retryable: false }; }
       this.touch(job);
     }));
+    // 任务到达终态：释放入口容量（重试经 retry 路径重新预约，不重复计照片数）。
+    this.admission?.releaseJobCapacity();
   }
 
   private context(job: StoredRecognitionJob, questionId: string | null) {
-    return { jobId: job.id, sourceHash: job.sourceHash, questionId, recordAttempt: (attempt: unknown) => this.ownedStorage(() => this.store.writeAttempt(job.id, questionId, attempt)),
+    return { jobId: job.id, sourceHash: job.sourceHash, questionId,
+      // 共享图像信号量：vision 题图/图示裁切互斥执行（Task 3）。
+      ...(this.admission ? { withImage: <T,>(section: () => Promise<T>) => this.admission!.withImage(section) } : {}),
+      recordAttempt: (attempt: unknown) => this.ownedStorage(() => this.store.writeAttempt(job.id, questionId, attempt)),
       ...(questionId ? { resumeCheckpoint: job.questionCheckpoints[questionId], checkpoint: (checkpoint: StoredRecognitionJob['questionCheckpoints'][string]) => this.ownedStorage(() => this.store.updateJob(job.id, current => {
         const question = current.questions.find(item => item.id === questionId); if (!question) throw new Error('题目不存在');
         current.questionCheckpoints[questionId] = structuredClone(checkpoint); question.evidence = structuredClone(checkpoint.evidence);

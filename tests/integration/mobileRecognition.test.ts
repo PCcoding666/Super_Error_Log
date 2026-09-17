@@ -357,11 +357,12 @@ describe('mobile recognition HTTP contract', () => {
     expect((await request(`/v1/recognitions/${job.id}/media/..%2Fjob.json`)).status).toBe(404);
   });
 
-  it('runs one photo job with no more than two simultaneous per-question model boundaries', async () => {
+  it('runs one photo job with only one simultaneous per-question model boundary (Task 3 concurrency=1)', async () => {
     const vision = new FixtureVision(); vision.fail.clear(); vision.delayMs = 30;
     vision.candidates = Array.from({ length: 5 }, (_, index) => ({ number: String(index + 1), box, selectionEvidence: 'unmarked' as const, partial: false }));
     const { request } = await setup(vision); const accepted = await json(await submit(request, await jpeg())); await waitFor(request, accepted.job.id, 'completed');
-    expect(vision.maximumActive).toBe(2);
+    // Task 3：逐题并发降为 1（云端 2GB 机器资源保护；回环同样收敛）。
+    expect(vision.maximumActive).toBe(1);
   });
 
   it('marks unfinished work interrupted after process restart and never calls vision until explicit retry', async () => {
