@@ -16,6 +16,15 @@ final class StudyStore {
   private(set) var syncing = false
   private(set) var mediaRevision = 0
   private(set) var readableMedia: Set<URL> = []
+  // Task 4: 连接状态机（云端模式；回环模式保持 nil，由既有 UI 表达）。
+  private(set) var connectionState: ConnectionState?
+  private var connectionTracker = ConnectionTracker()
+  private var connectionGeneration = 0
+  private var lastConnectionCheck: Date?
+  private var connectionCheckInFlight: Task<Void, Never>?
+  /// 归属当前云服务的任务 ID 集合。云端模式下旧 Mac 来源任务（不在集合内）仅离线可看，
+  /// 不自动向新服务查询或混并。
+  private var ownedTasks: Set<UUID> = []
   private var isActive = false
   private var client: RecognitionClient?
   private var polling: Task<Void, Never>?
@@ -115,7 +124,65 @@ final class StudyStore {
       pairing = try PairingStore.load(scope: persistence.directory.lastPathComponent)
       client?.close()
       client = pairing.map { RecognitionClient(configuration: $0) }
+      if pairing?.isCloud == true {
+        connectionTracker = ConnectionTracker()
+        connectionGeneration = connectionTracker.paired()
+        connectionState = .pairedNeedsCheck
+      } else { connectionState = nil }
     } catch { errorMessage = "无法读取配对信息，请在连接设置中重新输入。" }
+  }
+
+  /// 云端配对落库（扫码兑换成功后调用）。同 service 重配触发代次 +1，迟到旧响应按代次丢弃。
+  func adoptCloudPairing(_ configuration: PairingConfiguration) {
+    client?.close()
+    client = RecognitionClient(configuration: configuration)
+    pairing = configuration
+    connectionTracker = ConnectionTracker()
+    connectionGeneration = connectionTracker.paired()
+    connectionState = .pairedNeedsCheck
+    resumePolling()
+  }
+
+  /// 连接检查：合并并发检查；30 秒缓存仅用于状态显示。
+  /// `force=true`（每批提交前、回前台、打开确认页）绕过缓存强制重查。
+  /// 后台、网络失败、授权失效会立即清除 ready 状态（由 classify 输出非 ready 态实现）。
+  @discardableResult
+  func checkConnection(force: Bool = false) async -> ConnectionState? {
+    guard pairing?.isCloud == true, let client else { return nil }
+    if !force, let lastConnectionCheck, Date().timeIntervalSince(lastConnectionCheck) < 30,
+      connectionState == .ready || connectionState == .busy || connectionState == .failed
+    { return connectionState }
+    if let connectionCheckInFlight { await connectionCheckInFlight.value; return connectionState }
+    let completion = connectionTracker.beginCheck()
+    let generation = connectionGeneration
+    connectionState = .checking
+    let task = Task<Void, Never> { [weak self] in
+      do {
+        let snapshot = try await client.health()
+        guard let self, self.connectionGeneration == generation else { return } // 迟到响应：丢弃
+        if snapshot.acceptingJobs { completion(.success(true)) }
+        else { completion(.success(false)) }
+      } catch {
+        guard let self, self.connectionGeneration == generation else { return }
+        completion(.failure(error))
+      }
+      guard let self, self.connectionGeneration == generation else { return }
+      self.lastConnectionCheck = Date()
+      self.connectionState = self.connectionTracker.currentState
+    }
+    connectionCheckInFlight = task
+    await task.value
+    connectionCheckInFlight = nil
+    return connectionState
+  }
+
+  /// 供 UI 使用的上传门槛：云端必须 ready（force 重查）；回环沿用旧语义（已配对即可）。
+  func canSubmitNow() async -> Bool {
+    guard pairing != nil else { return false }
+    if pairing?.isCloud == true {
+      return await checkConnection(force: true) == .ready
+    }
+    return true
   }
 
   func savePairing(address: String, token: String) -> Bool {
@@ -150,7 +217,11 @@ final class StudyStore {
 
   func refreshJobs(onlyActive: Bool = false, requireActive: Bool = false) async {
     guard let client, !cannotLoad, !requireActive || isActive else { return }
-    let tasks = state.recognitionTasks.filter { $0.job != nil && (!onlyActive || $0.job?.active == true) }
+    let tasks = state.recognitionTasks.filter { task in
+      // 云端模式：只刷新归属当前服务的任务；旧 Mac 来源（无归属）仅离线可看。
+      task.job != nil && (pairing?.isCloud != true || ownedTasks.contains(task.id))
+        && (!onlyActive || task.job?.active == true)
+    }
     for task in tasks {
       guard !Task.isCancelled, !requireActive || isActive, let job = task.job else { return }
       do {
@@ -170,6 +241,7 @@ final class StudyStore {
   }
 
   // Explicit read-only collection sync: never submits photos or grants upload consent.
+  // 云端模式下仅读取归属当前服务的任务（由本次会话提交）；旧来源任务不自动向新服务查询。
   func syncExistingJobs() async {
     guard let client, !cannotLoad, !syncing else {
       if client == nil { errorMessage = "请先填写本机连接设置。" }
@@ -180,10 +252,17 @@ final class StudyStore {
     do {
       let jobs = try await client.listJobs()
       for job in jobs {
+        // 归属校验：云端模式下，服务返回的 serviceId 无法从 job 自身获得（job 无该字段），
+        // 因此以「本次配对期间主动提交或同步过」为边界；旧 Mac 来源任务不在此列。
+        if pairing?.isCloud == true, !ownedTasks.contains(where: { id in
+          state.recognitionTasks.first(where: { $0.id == id })?.job?.id == job.id
+        }), !state.recognitionTasks.contains(where: { $0.job?.id == job.id && ownedTasks.contains($0.id) }) {
+          continue
+        }
         if let existing = state.recognitionTasks.first(where: { $0.job?.id == job.id }) {
           _ = change { try $0.ingest(job, photoName: existing.photoName) }
-        } else {
-          // Allocate a local UUID; remote filenames are display text, never filesystem paths.
+        } else if pairing?.isCloud != true {
+          // 回环模式保留原有全量读取行为。
           let name = UUID().uuidString + ".jpg"
           let bytes = try await client.media(job.id, mediaID: job.sourceMediaId)
           let directory = photoDirectory
@@ -195,7 +274,6 @@ final class StudyStore {
             try bytes.write(to: directory.appendingPathComponent(String(name.dropLast(4)) + ".source"), options: .atomic)
           }.value
           guard change({ state in
-            // Another in-flight refresh may have already added it. Never duplicate by server ID.
             if !state.recognitionTasks.contains(where: { $0.job?.id == job.id }) { state.importedPhotos.append(name) }
             try state.ingest(job, photoName: name)
           }) else { return }
@@ -211,7 +289,14 @@ final class StudyStore {
     guard let client else { errorMessage = "请先在连接设置中填写本机地址和配对口令。"; return }
     guard !names.isEmpty, names.count <= 10, Set(names).count == names.count,
       names.allSatisfy({ StudyPersistence.isSafePhotoName($0) && state.importedPhotos.contains($0) }) else {
-      errorMessage = "每次最多选择 10 张本机照片。请重新核对本次照片后再上传，没有发送任何照片。"
+        errorMessage = "每次最多选择 10 张本机照片。请重新核对本次照片后再上传，没有发送任何照片。"
+        return
+      }
+    // Task 4：每批提交前强制重新 health 检查（不是仅 30 秒缓存）；ready 才上传。
+    guard await canSubmitNow() else {
+      errorMessage = connectionState == .busy
+        ? "识别服务当前繁忙，请稍后再试。照片仍保存在本机。"
+        : "连接检查未通过，请检查网络或重新配对。照片仍保存在本机。"
       return
     }
     for name in names {
@@ -224,6 +309,8 @@ final class StudyStore {
         }
       }), let task = state.recognitionTasks.first(where: { $0.photoName == name }), task.job == nil,
         !busyTasks.contains(task.id) else { continue }
+      // Task 4：记录归属——云端模式下本批提交的任务属于当前服务，此后可自动刷新。
+      ownedTasks.insert(task.id)
       busyTasks.insert(task.id)
       do {
         let job = try await client.upload(file: photoURL(task.uploadName), idempotencyKey: task.id, photoName: name)

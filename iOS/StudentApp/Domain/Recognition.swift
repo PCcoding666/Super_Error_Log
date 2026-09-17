@@ -191,9 +191,21 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
   var lastError: String?
 }
 
+/// 双模式配对（Task 4）：
+/// - loopback：现有回环校验不变（http + 127.0.0.1/localhost/[::1] + 16 位口令）。
+/// - cloud：固定云域名 HTTPS + 设备令牌 + deviceId（UUID）+ 可选到期。
+/// 注意：Codable 按模式存储；`baseURL`/`token` 提供模式无关访问。
 struct PairingConfiguration: Codable, Equatable, Sendable {
-  let baseURL: URL
-  let token: String
+  private let mode: Mode
+  private let loopbackURL: URL?
+  private let loopbackToken: String?
+  private let cloudServiceId: String?
+  private let cloudToken: String?
+  private let cloudDeviceId: String?
+  private let cloudExpiresAt: Date?
+
+  enum Mode: String, Codable, Sendable { case loopback, cloud }
+
   init(baseURL: String, token: String) throws {
     guard let parts = URLComponents(string: baseURL), parts.scheme == "http",
       ["127.0.0.1", "localhost", "[::1]", "::1"].contains(parts.host ?? ""),
@@ -201,8 +213,91 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
       parts.query == nil, parts.fragment == nil, ["", "/"].contains(parts.path),
       let url = parts.url, token.count >= 16, !token.contains("\n"), !token.contains("\r")
     else { throw RecognitionClientError.invalidPairing }
-    self.baseURL = url
-    self.token = token
+    mode = .loopback
+    loopbackURL = url
+    loopbackToken = token
+    cloudServiceId = nil; cloudToken = nil; cloudDeviceId = nil; cloudExpiresAt = nil
+  }
+
+  static func cloud(serviceId: String, token: String, deviceId: String, expiresAt: Date?) throws -> PairingConfiguration {
+    guard UUID(uuidString: serviceId) != nil,
+      token.count >= 16, !token.contains("\n"), !token.contains("\r"),
+      UUID(uuidString: deviceId) != nil
+    else { throw RecognitionClientError.invalidPairing }
+    return PairingConfiguration(mode: .cloud, loopbackURL: nil, loopbackToken: nil,
+      cloudServiceId: serviceId, cloudToken: token, cloudDeviceId: deviceId, cloudExpiresAt: expiresAt)
+  }
+
+  private init(mode: Mode, loopbackURL: URL?, loopbackToken: String?,
+    cloudServiceId: String?, cloudToken: String?, cloudDeviceId: String?, cloudExpiresAt: Date?) {
+    self.mode = mode
+    self.loopbackURL = loopbackURL
+    self.loopbackToken = loopbackToken
+    self.cloudServiceId = cloudServiceId
+    self.cloudToken = cloudToken
+    self.cloudDeviceId = cloudDeviceId
+    self.cloudExpiresAt = cloudExpiresAt
+  }
+
+  var isCloud: Bool { mode == .cloud }
+
+  /// 模式无关的请求基地址（回环：本机 URL；云端：固定云域名）。
+  var baseURL: URL {
+    switch mode {
+    case .loopback: loopbackURL!
+    case .cloud: URL(string: CloudPairing.allowedURL)!
+    }
+  }
+
+  /// 模式无关的鉴权令牌（回环：共享口令；云端：设备令牌）。
+  var token: String {
+    switch mode {
+    case .loopback: loopbackToken!
+    case .cloud: cloudToken!
+    }
+  }
+
+  /// 云端归属三件套：serviceId / deviceId / 到期。回环模式全部为 nil。
+  var serviceId: String? { isCloud ? cloudServiceId : nil }
+  var deviceId: String? { isCloud ? cloudDeviceId : nil }
+  var expiresAt: Date? { isCloud ? cloudExpiresAt : nil }
+
+  /// 编码兼容：回环模式按旧的 { baseURL, token } 形状存储（老数据可读）；
+  /// 云端模式按显式模式字段存储。
+  private enum CodingKeys: String, CodingKey {
+    case baseURL, token, mode, serviceId, deviceId, expiresAt
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    if let mode = try values.decodeIfPresent(Mode.self, forKey: .mode) {
+      guard mode == .cloud else { throw RecognitionClientError.invalidPairing }
+      let serviceId = try values.decode(String.self, forKey: .serviceId)
+      let token = try values.decode(String.self, forKey: .token)
+      let deviceId = try values.decode(String.self, forKey: .deviceId)
+      let expiresAt = try values.decodeIfPresent(Date.self, forKey: .expiresAt)
+      self = try PairingConfiguration.cloud(serviceId: serviceId, token: token, deviceId: deviceId, expiresAt: expiresAt)
+      return
+    }
+    // 旧形状（回环）：重新走完整校验，不信任磁盘上的任何字段。
+    let baseURL = try values.decode(String.self, forKey: .baseURL)
+    let token = try values.decode(String.self, forKey: .token)
+    self = try PairingConfiguration(baseURL: baseURL, token: token)
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    switch mode {
+    case .loopback:
+      try container.encode(loopbackURL!.absoluteString, forKey: .baseURL)
+      try container.encode(loopbackToken!, forKey: .token)
+    case .cloud:
+      try container.encode(Mode.cloud, forKey: .mode)
+      try container.encode(cloudServiceId!, forKey: .serviceId)
+      try container.encode(cloudToken!, forKey: .token)
+      try container.encode(cloudDeviceId!, forKey: .deviceId)
+      if let cloudExpiresAt { try container.encode(cloudExpiresAt, forKey: .expiresAt) }
+    }
   }
 }
 

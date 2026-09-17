@@ -1,27 +1,73 @@
 import Foundation
 
 // A dedicated ephemeral session never follows redirects with the pairing credential.
+// Task 4: dual-mode (loopback token / cloud device token), health check, redeem,
+// and per-purpose timeouts: checks 15s, uploads 180s.
 final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
   let configuration: PairingConfiguration
   private var session: URLSession!
+  private var uploadSession: URLSession!
 
   init(configuration: PairingConfiguration, sessionConfiguration: URLSessionConfiguration = .ephemeral) {
     self.configuration = configuration
     super.init()
-    sessionConfiguration.timeoutIntervalForRequest = 25
+    sessionConfiguration.timeoutIntervalForRequest = 15
     sessionConfiguration.timeoutIntervalForResource = 60
     sessionConfiguration.urlCache = nil
     sessionConfiguration.httpCookieStorage = nil
     session = URLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: nil)
+    let uploadConfiguration = sessionConfiguration.copy() as! URLSessionConfiguration
+    uploadConfiguration.timeoutIntervalForRequest = 180
+    uploadConfiguration.timeoutIntervalForResource = 300
+    uploadSession = URLSession(configuration: uploadConfiguration, delegate: self, delegateQueue: nil)
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask,
     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
     completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+    // 云端入口只接受固定域名；任何重定向（可能携带凭据）一律拒绝。
     completionHandler(nil)
   }
 
-  func close() { session.invalidateAndCancel() }
+  func close() { session.invalidateAndCancel(); uploadSession.invalidateAndCancel() }
+
+  // MARK: - Task 4: health check & redeem
+
+  /// 已鉴权健康检查（GET /v1/health）。云端模式下同时是归属校验：
+  /// 返回的 serviceId 必须与配对一致，否则视为不兼容。
+  func health() async throws -> HealthSnapshot {
+    let (data, _) = try await send(makeRequest("v1/health"))
+    let snapshot: HealthSnapshot
+    do { snapshot = try RecognitionCodec.decoder().decode(HealthSnapshot.self, from: data) }
+    catch { throw RecognitionClientError.invalidResponse }
+    if let expected = configuration.serviceId, snapshot.serviceId != expected {
+      throw RecognitionClientError.service("健康检查返回的服务与配对不一致，请重新配对。")
+    }
+    return snapshot
+  }
+
+  /// 兑换配对码（POST /v1/pairing/redeem）——唯一免鉴权入口。
+  /// 按相同 clientId 幂等重试：服务端同 clientId + 同 secret 返回相同结果。
+  func redeem(qr: CloudPairing.ParsedQR, clientId: String, deviceInfo: String) async throws -> RedeemResult {
+    guard configuration.isCloud else { throw RecognitionClientError.invalidPairing }
+    var request = makeRequest("v1/pairing/redeem", method: "POST")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    // 本方法在配对令牌就位前调用：不携带 Authorization 头。
+    request.setValue(nil, forHTTPHeaderField: "Authorization")
+    let body: [String: Any] = [
+      "payload": ["v": qr.v, "serviceId": qr.serviceId, "httpsUrl": qr.httpsUrl,
+        "sessionId": qr.sessionId, "secret": qr.secret],
+      "clientId": clientId,
+      "deviceInfo": deviceInfo,
+    ]
+    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+    let (data, http) = try await send(request, authenticated: false)
+    do {
+      return try RecognitionCodec.decoder().decode(RedeemResult.self, from: data)
+    } catch { throw RecognitionClientError.invalidResponse }
+  }
+
+  // MARK: - Existing job operations
 
   func upload(file: URL, idempotencyKey: UUID, photoName: String) async throws -> RecognitionJob {
     let data = try await Task.detached { try Data(contentsOf: file) }.value
@@ -33,7 +79,7 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
     request.setValue(idempotencyKey.uuidString, forHTTPHeaderField: "Idempotency-Key")
     request.setValue(photoName.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: ".-_"))), forHTTPHeaderField: "X-Photo-Name")
     request.httpBody = data
-    return try await job(request)
+    return try await job(request, via: uploadSession)
   }
 
   func getJob(_ id: String) async throws -> RecognitionJob {
@@ -94,8 +140,8 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
   }
   private struct Envelope: Decodable { let job: RecognitionJob }
   private struct ErrorEnvelope: Decodable { struct Body: Decodable { let message: String }; let error: Body }
-  private func job(_ request: URLRequest) async throws -> RecognitionJob {
-    let (data, _) = try await send(request)
+  private func job(_ request: URLRequest, via session: URLSession? = nil) async throws -> RecognitionJob {
+    let (data, _) = try await send(request, via: session)
     do {
       let job = try RecognitionCodec.decoder().decode(Envelope.self, from: data).job
       guard job.version == 1, job.revision > 0 else { throw RecognitionClientError.invalidResponse }
@@ -103,18 +149,50 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
       return job
     } catch { throw RecognitionClientError.invalidResponse }
   }
-  private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+  private func send(_ request: URLRequest, via session: URLSession? = nil, authenticated: Bool = true) async throws -> (Data, HTTPURLResponse) {
     let data: Data
     let response: URLResponse
-    do { (data, response) = try await session.data(for: request) }
+    do { (data, response) = try await (session ?? self.session).data(for: request) }
     catch is CancellationError { throw CancellationError() }
-    catch { throw RecognitionClientError.service("暂时连不上本机服务。已保存的照片和结果仍可查看，请检查连接后重试。") }
+    catch { throw RecognitionClientError.service("暂时连不上识别服务。已保存的照片和结果仍可查看，请检查连接后重试。") }
     guard let http = response as? HTTPURLResponse, data.count <= 20_000_000 else { throw RecognitionClientError.invalidResponse }
     guard (200...299).contains(http.statusCode) else {
       let message = (try? JSONDecoder().decode(ErrorEnvelope.self, from: data).error.message)
-        ?? "本机服务暂时无法完成操作，请检查连接后重试。"
-      throw RecognitionClientError.service(message.replacingOccurrences(of: configuration.token, with: "[已隐藏]"))
+        ?? "识别服务暂时无法完成操作，请检查连接后重试。"
+      throw RecognitionClientError.service(redact(message))
     }
     return (data, http)
+  }
+  /// 令牌与设备 ID 不进错误文案（脱敏）。
+  private func redact(_ message: String) -> String {
+    var text = message.replacingOccurrences(of: configuration.token, with: "[已隐藏]")
+    if let deviceId = configuration.deviceId {
+      text = text.replacingOccurrences(of: deviceId, with: "[设备已隐藏]")
+    }
+    return text
+  }
+}
+
+/// Task 4: redeem 响应（服务端 RedeemResult 契约）。
+struct RedeemResult: Codable, Equatable, Sendable {
+  let token: String
+  let deviceId: String
+  let serviceId: String
+  let expiresAt: Date
+  let protocolVersion: Int
+
+  enum CodingKeys: String, CodingKey { case token, deviceId, serviceId, expiresAt, protocolVersion }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    token = try values.decode(String.self, forKey: .token)
+    deviceId = try values.decode(String.self, forKey: .deviceId)
+    serviceId = try values.decode(String.self, forKey: .serviceId)
+    expiresAt = try values.decode(Date.self, forKey: .expiresAt)
+    protocolVersion = try values.decode(Int.self, forKey: .protocolVersion)
+    guard protocolVersion == 1,
+      UUID(uuidString: serviceId) != nil, UUID(uuidString: deviceId) != nil,
+      token.count >= 16, !token.contains("\n"), !token.contains("\r")
+    else { throw RecognitionClientError.invalidResponse }
   }
 }

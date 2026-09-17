@@ -16,8 +16,9 @@ enum PairingStore {
     let status = SecItemCopyMatching(query as CFDictionary, &result)
     if status == errSecItemNotFound { return nil }
     guard status == errSecSuccess, let data = result as? Data else { throw RecognitionClientError.service("无法读取本机配对信息，请解锁设备后重试。") }
+    // 双模式解码：云模式新形状 / 回环旧形状（解码器内部均做完整再校验，不信任磁盘字段）。
     let saved = try JSONDecoder().decode(PairingConfiguration.self, from: data)
-    return try PairingConfiguration(baseURL: saved.baseURL.absoluteString, token: saved.token)
+    return saved
   }
   static func save(_ pairing: PairingConfiguration, scope: String) throws {
     let query = try query(scope: scope)
