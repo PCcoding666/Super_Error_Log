@@ -221,6 +221,25 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
 /// - cloud：固定云域名 HTTPS + 设备令牌 + deviceId（UUID）+ 可选到期。
 /// 注意：Codable 按模式存储；`baseURL`/`token` 提供模式无关访问。
 struct PairingConfiguration: Codable, Equatable, Sendable {
+  #if DEBUG
+  /// Task 5（仅 DEBUG）：UI 测试把云模式指向本机合成服务器（`-cloud-loopback` 启动参数）。
+  /// Release 构建此覆盖恒为 nil；生产始终使用固定云域名。覆盖必须是合法回环 http URL，
+  /// 其他任何值（包括远程主机）一律忽略——不能借测试通道绕过固定域名约束。
+  static let testCloudOverride: URL? = {
+    let arguments = ProcessInfo.processInfo.arguments
+    guard let index = arguments.firstIndex(of: "-cloud-loopback"),
+      arguments.indices.contains(index + 1),
+      let parts = URLComponents(string: arguments[index + 1]),
+      parts.scheme == "http", ["127.0.0.1", "localhost", "[::1]", "::1"].contains(parts.host ?? ""),
+      parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+      ["", "/"].contains(parts.path), let url = parts.url
+    else { return nil }
+    return url
+  }()
+  #else
+  static let testCloudOverride: URL? = nil
+  #endif
+
   private let mode: Mode
   private let loopbackURL: URL?
   private let loopbackToken: String?
@@ -266,11 +285,11 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
 
   var isCloud: Bool { mode == .cloud }
 
-  /// 模式无关的请求基地址（回环：本机 URL；云端：固定云域名）。
+  /// 模式无关的请求基地址（回环：本机 URL；云端：固定云域名；DEBUG UI 测试：回环覆盖）。
   var baseURL: URL {
     switch mode {
     case .loopback: loopbackURL!
-    case .cloud: URL(string: CloudPairing.allowedURL)!
+    case .cloud: Self.testCloudOverride ?? URL(string: CloudPairing.allowedURL)!
     }
   }
 

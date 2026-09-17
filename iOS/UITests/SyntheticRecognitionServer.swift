@@ -7,6 +7,16 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
   static let jobID = "3f7b69dc-9d37-4aaa-b965-bb61243445a0"
   static let questionID = "a42b4eb2-12ff-499f-92de-e49d7cb36ef7"
   static let token = "synthetic-pairing-only"
+  static let cloudServiceId = "3f7b69dc-9d37-4aaa-b965-bb61243445a0"
+  static let cloudDeviceId = "8b411cca-f903-4d8c-a5d0-41435e2a66bb"
+  static let cloudDeviceToken = "synthetic-device-token-32-bytes-test!"
+
+  /// Task 5：云端语义的合成 health 行为（供 `-cloud-loopback` DEBUG 注入路径消费）。
+  enum CloudHealth {
+    case accepting, busy, unauthorized, rateLimited
+    var acceptingJobs: Bool { self == .accepting }
+  }
+
   private let descriptor: Int32
   let port: UInt16
   private let lock = NSLock()
@@ -15,18 +25,23 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
   private var count = 0
   private var uploads = 0
   private var recoveries = 0
+  private var redeems = 0
   private let image: Data
   let needsCheck: Bool
   let requiresDiagram: Bool
   let printedStem: String
   let recoveryFailure: Bool
+  let cloudHealth: CloudHealth?
   var requestCount: Int { lock.withLock { count } }
   var uploadCount: Int { lock.withLock { uploads } }
   var recoveryCount: Int { lock.withLock { recoveries } }
+  var redeemCount: Int { lock.withLock { redeems } }
 
-  @MainActor init(needsCheck: Bool = false, longStem: Bool = false, recoveryFailure: Bool = false) throws {
+  @MainActor init(needsCheck: Bool = false, longStem: Bool = false, recoveryFailure: Bool = false,
+    cloudHealth: CloudHealth? = nil) throws {
     self.recoveryFailure = recoveryFailure
     self.needsCheck = needsCheck
+    self.cloudHealth = cloudHealth
     requiresDiagram = longStem
     printedStem = longStem
       ? "合成测试长题干\n" + (1...65).map { "第\($0)小问：已知 x + 3 = 5，求 x 的值。" }.joined(separator: "\n")
@@ -99,6 +114,39 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
     let parts = requestLine.split(separator: " ")
     guard parts.count >= 2 else { return }
     let path = String(parts[1])
+
+    // Task 5：云端语义入口（DEBUG `-cloud-loopback` 注入路径）。仅当构造时给出 cloudHealth
+    // 才启用；回环配对路径完全不受影响。
+    if let cloudHealth {
+      let authorized = header.lowercased().contains("authorization: bearer " + Self.cloudDeviceToken)
+      if path == "/v1/pairing/redeem", parts[0] == "POST" {
+        lock.withLock { redeems += 1 }
+        let body = #"{"token":"\#(Self.cloudDeviceToken)","deviceId":"\#(Self.cloudDeviceId)","serviceId":"\#(Self.cloudServiceId)","expiresAt":"2026-10-17T00:00:00.000Z","protocolVersion":1}"#
+        respond(descriptor, data: Data(body.utf8))
+        return
+      }
+      if path == "/v1/health" {
+        switch cloudHealth {
+        case .accepting, .busy:
+          respond(descriptor, data: Data(#"{"version":1,"serviceId":"\#(Self.cloudServiceId)","storageAvailable":true,"visionConfigured":true,"acceptingJobs":\#(cloudHealth.acceptingJobs),"protocolVersion":1}"#.utf8))
+        case .unauthorized:
+          respond(descriptor, data: Data(#"{"error":{"code":"unauthorized","message":"设备令牌无效。"}}"#.utf8), status: 401)
+        case .rateLimited:
+          respond(descriptor, data: Data(#"{"error":{"code":"rate_limited","message":"请求过于频繁，请稍后再试。"}}"#.utf8), status: 429)
+        }
+        return
+      }
+      if !authorized {
+        respond(descriptor, data: Data(#"{"error":{"code":"unauthorized","message":"设备令牌无效。"}}"#.utf8), status: 401)
+        return
+      }
+      if parts[0] == "POST", path == "/v1/recognitions" { lock.withLock { uploads += 1 } }
+      let envelope: [String: Any] = ["job": cloudJob()]
+      guard let data = try? JSONSerialization.data(withJSONObject: envelope) else { return }
+      respond(descriptor, data: data)
+      return
+    }
+
     if parts[0] == "POST", path == "/v1/recognitions" { lock.withLock { uploads += 1 } }
     guard header.lowercased().contains("authorization: bearer " + Self.token) else {
       respond(descriptor, data: Data(#"{"error":{"message":"合成测试配对失败"}}"#.utf8), status: 401)
@@ -142,5 +190,20 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
         offset += sent
       }
     }
+  }
+
+  /// Task 5：云端语义的合成 job（与回环 fixture 同形，仅字段语义不同）。
+  private func cloudJob() -> [String: Any] {
+    let question: [String: Any] = [
+      "id": Self.questionID, "number": "云1", "revision": 3, "status": "ready", "selectionEvidence": "corrected",
+      "evidence": ["version": 1, "questionNumber": "云1", "questionText": printedStem, "subject": "数学", "chapter": "", "knowledgeTags": ["合成测试"], "questionType": "计算",
+        "questionRegion": ["x": 0.1, "y": 0.1, "width": 0.8, "height": 0.7], "requiresDiagram": false, "regions": [], "observations": [], "uncertainties": []] as [String: Any],
+      "verification": ["textComplete": true, "questionCropComplete": true, "questionCropPure": true, "transcriptionMatches": true, "diagramSafe": true, "issues": []] as [String: Any],
+      "questionMediaId": "1800c1bc-47ab-42bc-a46d-315005bdc695", "diagramMediaIds": [], "error": NSNull(), "confirmedAt": NSNull(),
+    ]
+    return ["version": 1, "id": Self.jobID, "revision": 8, "photoName": "合成测试照片.jpg",
+      "sourceHash": "synthetic", "sourceMediaId": "6ddc034b-b0f8-4288-b9c1-4f496cfb90df",
+      "status": "completed", "phase": "complete", "inventoryWarnings": [], "questions": [question],
+      "error": NSNull(), "createdAt": "2026-09-14T10:00:00.000Z", "updatedAt": "2026-09-14T10:01:30.000Z"]
   }
 }

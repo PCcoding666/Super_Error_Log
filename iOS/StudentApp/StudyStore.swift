@@ -5,6 +5,16 @@ import UIKit
 #endif
 import ImageIO
 
+#if DEBUG
+/// Task 5 UI 测试注入常量（仅 DEBUG；与 UITests/SyntheticRecognitionServer 的合成契约一致）。
+enum CloudPairingTestFixtures {
+  static let serviceId = "3f7b69dc-9d37-4aaa-b965-bb61243445a0"
+  static let httpsUrl = "https://study.pccoding666.com"
+  static let sessionId = "099ea4a5-e4bf-4182-b986-a9fc7db383e9"
+  static let secret = "2_39bX4iG76643WfiJRfvW-jYJVxbBdm9ACmHrgGjJ0"
+}
+#endif
+
 @MainActor @Observable
 final class StudyStore {
   private(set) var state = StudyState()
@@ -22,6 +32,10 @@ final class StudyStore {
   private var connectionGeneration = 0
   private var lastConnectionCheck: Date?
   private var connectionCheckInFlight: Task<Void, Never>?
+  #if DEBUG
+  /// Task 5 UI 测试注入防抖：自动兑换每进程只发起一次（phase 变化会重复触发 loadPairing）。
+  private var cloudAutoRedeemStarted = false
+  #endif
   private var isActive = false
   private var client: RecognitionClient?
   private var polling: Task<Void, Never>?
@@ -118,26 +132,94 @@ final class StudyStore {
       #if DEBUG
       try PairingStore.consumeBootstrap(in: persistence.directory)
       #endif
-      pairing = try PairingStore.load(scope: persistence.directory.lastPathComponent)
-      client?.close()
-      client = pairing.map { RecognitionClient(configuration: $0) }
-      if pairing?.isCloud == true {
-        connectionTracker = ConnectionTracker()
-        connectionGeneration = connectionTracker.paired()
-        connectionState = .pairedNeedsCheck
-      } else { connectionState = nil }
+      let saved = try PairingStore.load(scope: persistence.directory.lastPathComponent)
+      // 幂等：磁盘上的配对与当前一致（云模式自动兑换后 phase 变化会再次触发 loadPairing）
+      // 时不重建客户端——重建会作废在途请求（health/上传中途被 invalidate 导致崩溃）。
+      if saved != pairing {
+        client?.close()
+        pairing = saved
+        client = pairing.map { RecognitionClient(configuration: $0) }
+        if pairing?.isCloud == true {
+          connectionTracker = ConnectionTracker()
+          connectionGeneration = connectionTracker.paired()
+          connectionState = .pairedNeedsCheck
+        } else { connectionState = nil }
+      }
     } catch { errorMessage = "无法读取配对信息，请在连接设置中重新输入。" }
+    #if DEBUG
+    // Task 5 UI 测试注入：`-cloud-loopback` 存在且尚未配对时，用合成二维码自动兑换
+    //（redeem 免鉴权；合成服务器只在测试进程内监听回环端口）。真实启动不受影响：
+    // 覆盖仅 DEBUG 存在，且只在没有任何配对时触发；每进程至多一次，防止 phase
+    // 变化重复触发双重兑换/双重 close。
+    if pairing == nil, !cloudAutoRedeemStarted, PairingConfiguration.testCloudOverride != nil {
+      cloudAutoRedeemStarted = true
+      let qr = #"{"v":1,"serviceId":"\#(CloudPairingTestFixtures.serviceId)","httpsUrl":"\#(CloudPairingTestFixtures.httpsUrl)","sessionId":"\#(CloudPairingTestFixtures.sessionId)","secret":"\#(CloudPairingTestFixtures.secret)"}"#
+      Task { await redeemCloudPairing(qrText: qr) }
+    }
+    #endif
   }
 
   /// 云端配对落库（扫码兑换成功后调用）。同 service 重配触发代次 +1，迟到旧响应按代次丢弃。
   func adoptCloudPairing(_ configuration: PairingConfiguration) {
+    if pairing == configuration { return } // 幂等：重复兑换同一结果不重建会话。
     client?.close()
     client = RecognitionClient(configuration: configuration)
     pairing = configuration
     connectionTracker = ConnectionTracker()
     connectionGeneration = connectionTracker.paired()
     connectionState = .pairedNeedsCheck
+    do { try PairingStore.save(configuration, scope: persistence.directory.lastPathComponent) }
+    catch { errorMessage = "配对信息未保存，请解锁设备后重试。" }
     resumePolling()
+    // 配对成功即自动做首次健康检查（不需要用户再点一次「检查连接」）。
+    Task { await checkConnection(force: true) }
+  }
+
+  /// Task 5：扫码配对——解析二维码 → 兑换设备令牌 → 落库。
+  /// 兑换失败时把服务器的中文错误透传给用户（不含任何令牌字节）。
+  func redeemCloudPairing(qrText: String) async {
+    let qr: CloudPairing.ParsedQR
+    do { qr = try CloudPairing.parse(qrText) }
+    catch { errorMessage = (error as? CloudPairing.QRParseError)?.errorDescription ?? "二维码无法识别，请重新扫码。"; return }
+    // 兑换免鉴权：用占位云配置发起（redeem 不携带 Authorization 头）。
+    guard let bootstrap = try? PairingConfiguration.cloud(
+      serviceId: qr.serviceId, token: String(repeating: "x", count: 32),
+      deviceId: UUID().uuidString, expiresAt: nil)
+    else { errorMessage = "配对请求无法构造，请重试。"; return }
+    let client = RecognitionClient(configuration: bootstrap)
+    defer { client.close() }
+    do {
+      let result = try await client.redeem(qr: qr, clientId: UUID().uuidString, deviceInfo: "iPhone")
+      let configuration = try PairingConfiguration.cloud(
+        serviceId: result.serviceId, token: result.token,
+        deviceId: result.deviceId, expiresAt: result.expiresAt)
+      adoptCloudPairing(configuration)
+    } catch { errorMessage = error.localizedDescription }
+  }
+
+  /// Task 5 UI：连接操作入口。unauthorized/incompatible → 重新配对（清空配对回到扫码）；
+  /// 其余非 ready 态 → 强制重查。
+  func connectionAction() async {
+    switch connectionState {
+    case .unauthorized, .incompatible:
+      // 重新配对入口由 UI 呈现扫码页；这里先清凭据回到未配对态。
+      _ = connectionTracker.repair()
+      connectionGeneration += 1
+      connectionState = .unpaired
+      PairingStore.remove(scope: persistence.directory.lastPathComponent)
+      client?.close(); client = nil; pairing = nil
+    case .ready, .busy, .failed, .pairedNeedsCheck, .checking, .unpaired, .none:
+      _ = await checkConnection(force: true)
+    }
+  }
+
+  /// 退出云端配对（用户主动断开，回到未配对态）。
+  func clearCloudPairing() {
+    PairingStore.remove(scope: persistence.directory.lastPathComponent)
+    client?.close(); client = nil; pairing = nil
+    connectionTracker = ConnectionTracker()
+    connectionGeneration = connectionTracker.repair()
+    connectionState = nil
   }
 
   /// 连接检查：合并并发检查；30 秒缓存仅用于状态显示。

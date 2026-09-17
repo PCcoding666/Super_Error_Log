@@ -102,6 +102,20 @@ struct HealthSnapshot: Codable, Equatable, Sendable {
 enum ConnectionState: Equatable, Sendable {
   case unpaired, pairedNeedsCheck, checking, ready, busy, failed, unauthorized, incompatible
 
+  /// UI 稳定标识（accessibility identifier 用）。
+  var key: String {
+    switch self {
+    case .unpaired: "unpaired"
+    case .pairedNeedsCheck: "paired_needs_check"
+    case .checking: "checking"
+    case .ready: "ready"
+    case .busy: "busy"
+    case .failed: "failed"
+    case .unauthorized: "unauthorized"
+    case .incompatible: "incompatible"
+    }
+  }
+
   var canUpload: Bool {
     switch self {
     case .ready: true

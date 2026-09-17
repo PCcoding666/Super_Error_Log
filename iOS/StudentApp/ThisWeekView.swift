@@ -11,6 +11,7 @@ struct ThisWeekView: View {
   @State private var source: PhotoReference?
   @State private var selectedPhotos: Set<String> = []
   @State private var consentBatch: UploadConsentBatch?
+  @State private var showScanner = false
 
   var body: some View {
     ScrollView {
@@ -21,6 +22,9 @@ struct ThisWeekView: View {
           Button { settings = true } label: { Image(systemName: "gearshape") }
             .accessibilityLabel("连接设置").accessibilityIdentifier("recognition-settings")
         }.foregroundStyle(Palette.teal)
+        if let state = store.connectionState {
+          CloudConnectionRow(state: state)
+        }
         VStack(alignment: .leading, spacing: 12) {
           Eyebrow(text: "周末整理一下")
           Text("想一想，\n下周更轻松。")
@@ -63,7 +67,7 @@ struct ThisWeekView: View {
                 VStack(alignment: .leading, spacing: 5) {
                   Text("照片 \(index + 1) · 已保存在本机").font(.subheadline.weight(.semibold))
                   Text(task?.job?.statusTitle ?? (task.map { store.busyTasks.contains($0.id) } == true
-                    ? "正在上传已同意的照片" : task?.consentedAt == nil ? "仅保存在本机，尚未上传" : "上传待重试"))
+                    ? "正在提交到识别服务" : task?.consentedAt == nil ? "仅保存在本机，尚未上传" : "上传待重试，照片仍在本机"))
                     .font(.caption).foregroundStyle(Palette.teal)
                   Button("查看完整原图") { source = PhotoReference(url: store.originalURL(name), title: "照片 \(index + 1)") }.font(.caption)
                 }
@@ -109,6 +113,12 @@ struct ThisWeekView: View {
         }
       }
       .sheet(isPresented: $settings) { PairingSettingsView() }
+      .sheet(isPresented: $showScanner) {
+        CameraScanner { payload in
+          showScanner = false
+          Task { await store.redeemCloudPairing(qrText: payload) }
+        }
+      }
       .sheet(isPresented: $showCamera) { CameraCapture { data in Task { await store.importPhoto(data); selectPending() } } }
       .sheet(item: $source) { SourcePhotoView(reference: $0) }
       .sheet(item: $consentBatch) { batch in
@@ -171,11 +181,17 @@ struct UploadConsentView: View {
             LocalPhotoThumbnail(url: store.photoURL(name)).frame(maxHeight: 180)
               .accessibilityLabel("待上传的本机照片").accessibilityIdentifier("consent-photo-\(name)")
           }
-          Text("照片将先发送到这台 Mac 的本机识别服务，再由阿里云百炼处理。图片可能包含姓名、笔迹或其他个人信息，请先检查所选照片。")
+          if store.pairing?.isCloud == true {
+            Text("照片将上传到你的广州云服务器，再由阿里云百炼处理。图片可能包含姓名、笔迹或其他个人信息，请先检查所选照片。")
+          } else {
+            Text("照片将先发送到这台 Mac 的本机识别服务，再由阿里云百炼处理。图片可能包含姓名、笔迹或其他个人信息，请先检查所选照片。")
+          }
           Text("原始照片保存在本机。上传使用一次生成并保存的 JPEG 副本，可能改变压缩和方向表示；重试会发送同一份副本。服务商的数据处理不由本应用控制。")
             .font(.subheadline).foregroundStyle(Palette.muted)
           if store.pairing == nil {
-            Text("尚未连接本机服务，请返回连接设置后再上传。").font(.subheadline).foregroundStyle(Palette.teal)
+            Text("尚未连接识别服务，请返回连接设置或扫码配对后再上传。").font(.subheadline).foregroundStyle(Palette.teal)
+          } else if store.pairing?.isCloud == true, let state = store.connectionState, state != .ready {
+            Text("当前云端连接状态：\(state.title)。上传前会重新检查连接。").font(.subheadline).foregroundStyle(Palette.teal)
           }
           Button("同意上传并识别", action: agree).buttonStyle(PrimaryButton())
             .disabled(names.isEmpty || store.pairing == nil).accessibilityIdentifier("consent-upload")
@@ -199,6 +215,11 @@ struct PairingSettingsView: View {
   var body: some View {
     NavigationStack {
       Form {
+        if let state = store.connectionState {
+          Section("云端识别服务") {
+            CloudConnectionRow(state: state)
+          }
+        }
         Section("连接本机服务") {
           if store.pairing != nil { Text("已保存本机配对").accessibilityIdentifier("pairing-saved") }
           TextField("本机地址", text: $address).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("pairing-address")
@@ -209,5 +230,63 @@ struct PairingSettingsView: View {
           .disabled((try? PairingConfiguration(baseURL: address, token: token)) == nil).accessibilityIdentifier("save-pairing")
       }.navigationTitle("连接设置").toolbar { Button("关闭") { dismiss() } }
     }.onAppear { address = store.pairing?.baseURL.absoluteString ?? address }
+  }
+}
+
+/// Task 5：云端连接状态行——状态徽标 + 按状态给出中文操作（重试连接 / 重新配对 / 开始上传）。
+/// 每个状态既有文案也有可点操作，绝不出现「灰色不可用死按钮」。
+struct CloudConnectionRow: View {
+  let state: ConnectionState
+  @Environment(StudyStore.self) private var store
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 8) {
+        Image(systemName: icon).foregroundStyle(Palette.teal)
+        Text(state.title).font(.subheadline.weight(.semibold))
+        Spacer(minLength: 0)
+      }
+      .accessibilityIdentifier("connection-state-\(state.key)")
+      if state == .unpaired {
+        Text("扫码连接这台 Mac 上的识别服务，或使用下方本机地址手动连接。")
+          .font(.caption).foregroundStyle(Palette.muted)
+      } else if state == .incompatible {
+        Text("服务版本或归属与配对不一致，需要重新扫码。")
+          .font(.caption).foregroundStyle(Palette.muted)
+      }
+      actionButton
+    }
+    .padding(14)
+    .background(Palette.mint.opacity(0.4), in: RoundedRectangle(cornerRadius: 14))
+    .task { 
+      // 已配对待检查 / 打开设置页时自动触发一次检查（强制绕过 30 秒显示缓存）。
+      if state == .pairedNeedsCheck { await store.checkConnection(force: true) }
+    }
+  }
+
+  private var icon: String {
+    switch state {
+    case .unpaired: "icloud.slash"
+    case .pairedNeedsCheck: "icloud.and.arrow.up"
+    case .checking: "arrow.triangle.2.circlepath.icloud"
+    case .ready: "checkmark.icloud.fill"
+    case .busy: "hourglass"
+    case .failed: "wifi.exclamationmark"
+    case .unauthorized: "person.crop.circle.badge.exclamationmark"
+    case .incompatible: "exclamationmark.arrow.triangle.2.circlepath"
+    }
+  }
+
+  @ViewBuilder
+  private var actionButton: some View {
+    switch state {
+    case .unpaired, .pairedNeedsCheck, .checking, .ready, .busy, .failed:
+      Button(state.actionTitle) { Task { await store.connectionAction() } }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("retry-connection")
+    case .unauthorized, .incompatible:
+      Button(state.actionTitle) { Task { await store.connectionAction() } }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("repair-connection")
+    }
   }
 }

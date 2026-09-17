@@ -32,6 +32,12 @@ enum PairingStore {
     guard status == errSecSuccess else { throw RecognitionClientError.service("配对信息未保存，请解锁设备后重试。") }
   }
 
+  /// Task 5：主动断开云配对（重新配对/解绑）。
+  static func remove(scope: String) {
+    guard let query = try? query(scope: scope) else { return }
+    SecItemDelete(query as CFDictionary)
+  }
+
   #if DEBUG
   // QA only: root may place this one scoped file in the app collection. No launch token or bundle secret.
   static func consumeBootstrap(in directory: URL) throws {
