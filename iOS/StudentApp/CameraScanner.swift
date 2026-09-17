@@ -43,6 +43,7 @@ final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMe
   var onCancel: (() -> Void)?
   private let session = AVCaptureSession()
   private var previewLayer: AVCaptureVideoPreviewLayer?
+  private var layoutObservation: NSKeyValueObservation?
   private var didReport = false
 
   override func viewDidLoad() {
@@ -97,6 +98,10 @@ final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMe
     preview.frame = view.bounds
     view.layer.insertSublayer(preview, at: 0)
     previewLayer = preview
+    // Task 4 review R3：旋转/布局变化后预览层跟随边界，避免取景错位。
+    layoutObservation = view.observe(\.bounds, options: [.new]) { [weak self] observed, _ in
+      Task { @MainActor in self?.previewLayer?.frame = observed.bounds }
+    }
     let hint = UILabel()
     hint.text = "对准 Mac 管理界面上的配对二维码"
     hint.textColor = .white

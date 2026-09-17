@@ -175,10 +175,16 @@ final class ConnectionTracker: @unchecked Sendable {
 
   var currentState: ConnectionState { state }
 
+  /// Task 4 review R1：按结构化错误分类——HTTP 状态码与协议不兼容是唯一可信依据，
+  /// 服务器中文文案（可变更）不参与分类。
   static func classify(_ error: Error) -> ConnectionState {
-    if let clientError = error as? RecognitionClientError, case .service(let message) = clientError,
-      message.contains("401") || message.contains("授权") || message.contains("令牌")
-    { return .unauthorized }
+    if let clientError = error as? RecognitionClientError {
+      switch clientError {
+      case .server(let status, _) where status == 401: return .unauthorized
+      case .incompatiblePairing: return .incompatible
+      default: break
+      }
+    }
     return .failed
   }
 }

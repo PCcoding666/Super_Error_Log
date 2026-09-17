@@ -189,6 +189,31 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
   var consentedAt: Date?
   var job: RecognitionJob?
   var lastError: String?
+  /// Task 4 review R2：归属服务（云端提交时随任务持久化；nil = 回环来源或旧文档）。
+  /// 重启后凭此字段判断任务是否可向当前配对的服务自动刷新。
+  var ownedServiceId: String?
+
+  init(id: UUID, photoName: String, uploadName: String, consentedAt: Date? = nil,
+    job: RecognitionJob? = nil, lastError: String? = nil, ownedServiceId: String? = nil) {
+    self.id = id; self.photoName = photoName; self.uploadName = uploadName
+    self.consentedAt = consentedAt; self.job = job; self.lastError = lastError
+    self.ownedServiceId = ownedServiceId
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId
+  }
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    id = try values.decode(UUID.self, forKey: .id)
+    photoName = try values.decode(String.self, forKey: .photoName)
+    uploadName = try values.decode(String.self, forKey: .uploadName)
+    consentedAt = try values.decodeIfPresent(Date.self, forKey: .consentedAt)
+    job = try values.decodeIfPresent(RecognitionJob.self, forKey: .job)
+    lastError = try values.decodeIfPresent(String.self, forKey: .lastError)
+    // 旧文档无归属字段：解码为 nil（回环语义），不拒绝加载。
+    ownedServiceId = try values.decodeIfPresent(String.self, forKey: .ownedServiceId)
+  }
 }
 
 /// 双模式配对（Task 4）：
@@ -303,12 +328,18 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
 
 enum RecognitionClientError: Error, LocalizedError {
   case invalidPairing, invalidResponse, service(String), missingMedia
+  /// Task 4 review R1：携带 HTTP 状态码的服务错误——状态机按状态分类，不再依赖文案子串。
+  case server(status: Int, message: String)
+  /// 协议/归属不兼容（health version/protocolVersion 不符、serviceId 不一致）。
+  case incompatiblePairing
   var errorDescription: String? {
     switch self {
     case .invalidPairing: "请输入本机回环地址（如 http://127.0.0.1:3101）和至少 16 位配对口令。"
     case .invalidResponse: "本机服务返回的内容无法安全使用，请检查连接后重试。"
     case .service(let message): message
     case .missingMedia: "题目需要的安全图示尚未完整保存在本机，暂时不能生成练习包。"
+    case .server(_, let message): message
+    case .incompatiblePairing: "识别服务版本或归属与配对不一致，请重新扫码配对。"
     }
   }
 }

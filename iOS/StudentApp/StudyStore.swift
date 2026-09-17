@@ -22,9 +22,6 @@ final class StudyStore {
   private var connectionGeneration = 0
   private var lastConnectionCheck: Date?
   private var connectionCheckInFlight: Task<Void, Never>?
-  /// 归属当前云服务的任务 ID 集合。云端模式下旧 Mac 来源任务（不在集合内）仅离线可看，
-  /// 不自动向新服务查询或混并。
-  private var ownedTasks: Set<UUID> = []
   private var isActive = false
   private var client: RecognitionClient?
   private var polling: Task<Void, Never>?
@@ -218,8 +215,9 @@ final class StudyStore {
   func refreshJobs(onlyActive: Bool = false, requireActive: Bool = false) async {
     guard let client, !cannotLoad, !requireActive || isActive else { return }
     let tasks = state.recognitionTasks.filter { task in
-      // 云端模式：只刷新归属当前服务的任务；旧 Mac 来源（无归属）仅离线可看。
-      task.job != nil && (pairing?.isCloud != true || ownedTasks.contains(task.id))
+      // 云端模式：只刷新归属当前服务的任务（随任务持久化，重启后依然有效）；
+      // 旧 Mac 来源（ownedServiceId != 当前服务）仅离线可看。
+      task.job != nil && (pairing?.isCloud != true || task.ownedServiceId == pairing?.serviceId)
         && (!onlyActive || task.job?.active == true)
     }
     for task in tasks {
@@ -252,12 +250,14 @@ final class StudyStore {
     do {
       let jobs = try await client.listJobs()
       for job in jobs {
-        // 归属校验：云端模式下，服务返回的 serviceId 无法从 job 自身获得（job 无该字段），
-        // 因此以「本次配对期间主动提交或同步过」为边界；旧 Mac 来源任务不在此列。
-        if pairing?.isCloud == true, !ownedTasks.contains(where: { id in
-          state.recognitionTasks.first(where: { $0.id == id })?.job?.id == job.id
-        }), !state.recognitionTasks.contains(where: { $0.job?.id == job.id && ownedTasks.contains($0.id) }) {
-          continue
+        // 归属校验（云端）：serviceId 无法从 job 自身获得，以「随任务持久化的归属」为边界——
+        // 只更新归属当前服务或回环导入的本地条目；归属其他服务的任务既不新增也不查询。
+        if pairing?.isCloud == true {
+          let matched = state.recognitionTasks.contains { task in
+            guard task.job?.id == job.id else { return false }
+            return task.ownedServiceId == pairing?.serviceId || task.ownedServiceId == nil
+          }
+          if !matched { continue }
         }
         if let existing = state.recognitionTasks.first(where: { $0.job?.id == job.id }) {
           _ = change { try $0.ingest(job, photoName: existing.photoName) }
@@ -303,14 +303,15 @@ final class StudyStore {
       guard change({ state in
         if let index = state.recognitionTasks.firstIndex(where: { $0.photoName == name }) {
           state.recognitionTasks[index].consentedAt = Date()
+          // Task 4 review R2：归属随任务持久化（云端提交 = 归属当前服务），重启后仍可自动刷新。
+          if pairing?.isCloud == true { state.recognitionTasks[index].ownedServiceId = pairing?.serviceId }
         } else {
           state.recognitionTasks.append(LocalRecognitionTask(id: UUID(), photoName: name,
-            uploadName: name, consentedAt: Date()))
+            uploadName: name, consentedAt: Date(),
+            ownedServiceId: pairing?.isCloud == true ? pairing?.serviceId : nil))
         }
       }), let task = state.recognitionTasks.first(where: { $0.photoName == name }), task.job == nil,
         !busyTasks.contains(task.id) else { continue }
-      // Task 4：记录归属——云端模式下本批提交的任务属于当前服务，此后可自动刷新。
-      ownedTasks.insert(task.id)
       busyTasks.insert(task.id)
       do {
         let job = try await client.upload(file: photoURL(task.uploadName), idempotencyKey: task.id, photoName: name)

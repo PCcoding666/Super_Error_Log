@@ -38,10 +38,11 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
   func health() async throws -> HealthSnapshot {
     let (data, _) = try await send(makeRequest("v1/health"))
     let snapshot: HealthSnapshot
+    // 解码失败即协议形状变化：归入不兼容（版本/字段/归属任一不符）。
     do { snapshot = try RecognitionCodec.decoder().decode(HealthSnapshot.self, from: data) }
-    catch { throw RecognitionClientError.invalidResponse }
+    catch { throw RecognitionClientError.incompatiblePairing }
     if let expected = configuration.serviceId, snapshot.serviceId != expected {
-      throw RecognitionClientError.service("健康检查返回的服务与配对不一致，请重新配对。")
+      throw RecognitionClientError.incompatiblePairing
     }
     return snapshot
   }
@@ -61,7 +62,7 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
       "deviceInfo": deviceInfo,
     ]
     request.httpBody = try JSONSerialization.data(withJSONObject: body)
-    let (data, http) = try await send(request, authenticated: false)
+    let (data, _) = try await send(request, authenticated: false)
     do {
       return try RecognitionCodec.decoder().decode(RedeemResult.self, from: data)
     } catch { throw RecognitionClientError.invalidResponse }
@@ -159,7 +160,8 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
     guard (200...299).contains(http.statusCode) else {
       let message = (try? JSONDecoder().decode(ErrorEnvelope.self, from: data).error.message)
         ?? "识别服务暂时无法完成操作，请检查连接后重试。"
-      throw RecognitionClientError.service(redact(message))
+      // Task 4 review R1：状态码随错误传递——状态机按 401→unauthorized 分类，不靠文案。
+      throw RecognitionClientError.server(status: http.statusCode, message: redact(message))
     }
     return (data, http)
   }
