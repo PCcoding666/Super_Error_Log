@@ -113,10 +113,15 @@ async function createOrLoadServiceId(dataDir: string): Promise<string> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   }
-  const raw = (await fs.promises.readFile(filename, 'utf8')).trim();
-  await fs.promises.chmod(filename, 0o600);
-  if (!isUuid(raw)) throw new PairingError('pairing_unavailable', '服务 ID 记录无法读取。');
-  return raw;
+  // 胜者写入前存在空文件窗口：读空或非法时做有界退避重试，避免把创建中误判为损坏。
+  // 若进程恰在写入前被杀留下永久空文件，同样经重试后 fail closed（需人工处置，不悄悄换 ID）。
+  for (let attempt = 0; ; attempt += 1) {
+    const raw = (await fs.promises.readFile(filename, 'utf8')).trim();
+    await fs.promises.chmod(filename, 0o600);
+    if (isUuid(raw)) return raw;
+    if (attempt >= 20) throw new PairingError('pairing_unavailable', '服务 ID 记录无法读取。');
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
 }
 
 export class PairingManager {

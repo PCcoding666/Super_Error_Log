@@ -55,7 +55,7 @@ node dist/mobile/admin-cli.js --data-dir /var/lib/super-error-log devices
 node dist/mobile/admin-cli.js --data-dir /var/lib/super-error-log revoke <deviceId>
 ```
 
-The `serve` subcommand exists for standalone runs, but the main service process embeds the admin server automatically in cloud mode.
+The `serve` subcommand is how the admin entry runs today: until the cloud-mode main process is wired up (device-token auth on the public routes, planned with `POST /v1/pairing/redeem`), the main `server.ts` exits with an explicit message in cloud mode and does not listen. In cloud mode today, start the admin entry with `admin-cli serve`; the loopback main process is unchanged.
 
 `GET /pairing-code` (over the socket) returns a fresh one-time QR payload:
 

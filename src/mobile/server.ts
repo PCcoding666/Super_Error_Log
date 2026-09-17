@@ -1,25 +1,16 @@
 import { loadMobileConfiguration } from './configuration.js';
 import { createMobileApp } from './router.js';
 import { BailianMobileVision } from './vision.js';
-import { PairingManager } from './pairing.js';
-import { createAdminServer } from './adminServer.js';
 
+// Task 1（配对核心 + admin Unix socket 入口）只覆盖回环模式主进程装配。
+// 云端模式的主进程装配（PairingManager 内嵌、设备令牌鉴权、/v1/pairing/redeem 路由）
+// 属于 Task 2 的范围。在此之前云端的 admin 入口由 admin-cli serve 承担。
 const configuration = loadMobileConfiguration();
-const app = await createMobileApp({ dataDir: configuration.dataDir, pairingToken: configuration.pairingToken, vision: new BailianMobileVision(configuration.vision) });
-let admin: Awaited<ReturnType<typeof createAdminServer>> | null = null;
 if (configuration.mode === 'cloud') {
-  // 云端模式：打开设备令牌管理入口（Unix socket，仅本机）。公网 /v1 路由的设备令牌鉴权在 Task 2 接入；
-  // 当前公网入口沿用共享令牌校验，但云端模式下不配置共享令牌即无法通过校验，等价于不对外提供公网服务。
-  const pairing = await PairingManager.open(configuration.dataDir);
-  admin = await createAdminServer(pairing);
-  console.log(`云端管理入口已监听：${admin.socketPath}（serviceId ${pairing.serviceId}）`);
+  console.error('云端模式主进程尚未接入（Task 2 落地设备令牌鉴权后启用）。当前管理入口请使用 admin-cli serve。');
+  process.exit(1);
 }
+const app = await createMobileApp({ dataDir: configuration.dataDir, pairingToken: configuration.pairingToken, vision: new BailianMobileVision(configuration.vision) });
 app.listen(configuration.port, configuration.host, () => {
-  console.log(`移动识别服务已启动：http://${configuration.host}:${configuration.port}（模式：${configuration.mode}）`);
+  console.log(`移动识别服务已启动：http://${configuration.host}:${configuration.port}`);
 });
-const shutdown = async (): Promise<void> => {
-  if (admin) await admin.close();
-  process.exit(0);
-};
-process.once('SIGINT', () => void shutdown());
-process.once('SIGTERM', () => void shutdown());

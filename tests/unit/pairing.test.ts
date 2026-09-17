@@ -168,6 +168,35 @@ describe('PairingManager sessions and device tokens', () => {
     expect(first.createSession().payload.serviceId).toBe(second.createSession().payload.serviceId);
   });
 
+  it('胜者写入前的空文件窗口：重试读取最终成功且两实例 serviceId 一致', async () => {
+    const dir = await tempDir();
+    // 模拟：A 实例已独占创建空 service-id、尚未写入；B 实例并发 open 进入读取分支。
+    const serviceIdPath = path.join(dir, 'service-id');
+    const handle = fs.openSync(serviceIdPath, 'w', 0o600);
+    const writer = (async () => {
+      await new Promise(resolve => setTimeout(resolve, 120));
+      fs.writeSync(handle, crypto.randomUUID());
+      fs.fsyncSync(handle);
+      fs.closeSync(handle);
+    })();
+    const [winner, reader] = await Promise.all([
+      (async () => { await writer; return crypto.randomUUID(); })(),
+      PairingManager.open(dir),
+    ]);
+    void winner;
+    expect(reader.createSession().payload.serviceId).toBe(fs.readFileSync(serviceIdPath, 'utf8').trim());
+  });
+
+  it('永久空 service-id 在有界重试后 fail closed，不悄悄更换服务 ID', async () => {
+    const dir = await tempDir();
+    fs.writeFileSync(path.join(dir, 'service-id'), '', { mode: 0o600 });
+    const startedAt = Date.now();
+    await expect(PairingManager.open(dir)).rejects.toMatchObject({ code: 'pairing_unavailable' });
+    // 20 次 × 50ms 退避：确保确实经过有界重试而不是立即失败。
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
+    expect(fs.readFileSync(path.join(dir, 'service-id'), 'utf8')).toBe('');
+  });
+
   it('devices.json 只保存令牌哈希与脱敏记录，不出现明文令牌或会话秘密', async () => {
     const dir = await tempDir();
     const manager = await PairingManager.open(dir);
