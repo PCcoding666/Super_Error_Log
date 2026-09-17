@@ -90,8 +90,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
   }
 
   // /v1 鉴权：回环共享令牌 或 云端设备令牌（鉴权成功后按设备计数）。
-  app.use('/v1', async (request, response, next) => {
-    try {
+  app.use('/v1', async (request, response, next) => {    try {
       if (mode === 'cloud') {
         const ip = ipOf(request);
         let deviceId: string;
@@ -154,11 +153,16 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
     catch (error) { next(error); }
   });
   app.use((_request, response) => response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }));
-  const errors: ErrorRequestHandler = (error, _request, response, _next) => {
+  const errors: ErrorRequestHandler = (error, request, response, _next) => {
     if (response.headersSent) return;
     if (error instanceof IdempotencyConflictError) { response.status(409).json({ error: { code: 'idempotency_conflict', message: error.message } }); return; }
     if (error instanceof MobileRequestError) { response.status(error.status).json({ error: { code: error.code, message: error.message } }); return; }
-    if ((error as { type?: string }).type === 'entity.too.large') { response.status(413).json({ error: { code: 'payload_too_large', message: '照片超过15 MB上传限制。' } }); return; }
+    if ((error as { type?: string }).type === 'entity.too.large') {
+      // 按入口区分超限文案：照片上传 vs 配对兑换（16kb JSON）。
+      const message = request.path === '/v1/pairing/redeem' ? '配对请求超过16 KB限制。' : '照片超过15 MB上传限制。';
+      response.status(413).json({ error: { code: 'payload_too_large', message } });
+      return;
+    }
     if (error instanceof SyntaxError) { response.status(400).json({ error: { code: 'invalid_json', message: '请求 JSON 无法解析。' } }); return; }
     response.status(500).json({ error: { code: 'internal', message: '本地服务暂时无法完成请求。' } });
   };

@@ -1,11 +1,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
+import net from 'node:net';
 import path from 'node:path';
 import type { Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMobileApp } from '../../src/mobile/router.js';
 import { PairingManager, type PairingCodePayload } from '../../src/mobile/pairing.js';
+import { assembleCloudService } from '../../src/mobile/cloudAssembly.js';
 import type { MobileVisionBoundary, VisionContext, VisionInventoryResult, VisionQuestionResult, InventoryCandidate } from '../../src/mobile/vision.js';
 
 const roots: string[] = [];
@@ -120,12 +122,15 @@ describe('POST /v1/pairing/redeem', () => {
     expect((await response.json() as { error: { code: string } }).error.code).toBe('pairing_expired');
   });
 
-  it('请求体上限 16kb：超限 413', async () => {
+  it('请求体上限 16kb：超限 413，文案指向配对而非照片', async () => {
     const { anonymous, manager } = await setupCloud();
     const { payload } = manager.createSession();
     const large = { payload, clientId: crypto.randomUUID(), deviceInfo: 'x'.repeat(20_000) };
     const response = await anonymous('/v1/pairing/redeem', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(large) });
     expect(response.status).toBe(413);
+    const body = await response.json() as { error: { message: string } };
+    expect(body.error.message).toContain('16 KB');
+    expect(body.error.message).not.toContain('照片');
   });
 
   it('redeem 失败计入配对限流：每 IP 10/分钟后 429 + Retry-After', async () => {
@@ -189,6 +194,49 @@ describe('cloud device-token authentication on /v1', () => {
     }
     expect(blocked).not.toBeNull();
     expect(blocked?.headers.get('retry-after')).toBeTruthy();
+  });
+});
+
+describe('cloud assembly close semantics', () => {
+  it('close() 释放 HTTP 端口与 admin socket，不泄漏监听（review V1 回归）', async () => {
+    const probe = net;
+    const freePort = await new Promise<number>((resolve, reject) => {
+      const server = probe.createServer();
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => { const port = (server.address() as { port: number }).port; server.close(() => resolve(port)); });
+    });
+    const dataDir = await tempRoot();
+    const configuration = { mode: 'cloud' as const, host: '127.0.0.1' as const, port: freePort, dataDir, pairingToken: '', vision: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: 'synthetic', timeoutMs: 1000, bailianOnly: true as const, models: { inventory: 'm', transcribe: 'm', verify: 'm', ground: 'm' } } };
+    const service = await assembleCloudService(configuration);
+    await service.listen();
+    const listening = await new Promise<boolean>(resolve => {
+      const socket = probe.connect({ port: freePort, host: '127.0.0.1' });
+      socket.once('connect', () => { socket.destroy(); resolve(true); });
+      socket.once('error', () => resolve(false));
+    });
+    expect(listening).toBe(true);
+    await service.close();
+    const stillOpen = await new Promise<boolean>(resolve => {
+      const socket = probe.connect({ port: freePort, host: '127.0.0.1' });
+      socket.once('connect', () => { socket.destroy(); resolve(true); });
+      socket.once('error', () => resolve(false));
+    });
+    expect(stillOpen).toBe(false);
+    expect(fs.existsSync(path.join(dataDir, 'admin.sock'))).toBe(false);
+  });
+
+  it('重复 listen 拒绝，不产生双监听', async () => {
+    const probe = net;
+    const freePort = await new Promise<number>((resolve, reject) => {
+      const server = probe.createServer();
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => { const port = (server.address() as { port: number }).port; server.close(() => resolve(port)); });
+    });
+    const configuration = { mode: 'cloud' as const, host: '127.0.0.1' as const, port: freePort, dataDir: await tempRoot(), pairingToken: '', vision: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: 'synthetic', timeoutMs: 1000, bailianOnly: true as const, models: { inventory: 'm', transcribe: 'm', verify: 'm', ground: 'm' } } };
+    const service = await assembleCloudService(configuration);
+    await service.listen();
+    await expect(service.listen()).rejects.toThrow('重复');
+    await service.close();
   });
 });
 
