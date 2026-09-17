@@ -23,7 +23,7 @@ struct ThisWeekView: View {
             .accessibilityLabel("连接设置").accessibilityIdentifier("recognition-settings")
         }.foregroundStyle(Palette.teal)
         if let state = store.connectionState {
-          CloudConnectionRow(state: state)
+          CloudConnectionRow(state: state, onScan: { showScanner = true })
         }
         VStack(alignment: .leading, spacing: 12) {
           Eyebrow(text: "周末整理一下")
@@ -212,13 +212,12 @@ struct PairingSettingsView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var address = "http://127.0.0.1:3101"
   @State private var token = ""
+  @State private var showScanner = false
   var body: some View {
     NavigationStack {
       Form {
-        if let state = store.connectionState {
-          Section("云端识别服务") {
-            CloudConnectionRow(state: state)
-          }
+        Section("云端识别服务") {
+          CloudConnectionRow(state: store.connectionState ?? .unpaired, onScan: { showScanner = true })
         }
         Section("连接本机服务") {
           if store.pairing != nil { Text("已保存本机配对").accessibilityIdentifier("pairing-saved") }
@@ -229,7 +228,13 @@ struct PairingSettingsView: View {
         Button("保存连接") { if store.savePairing(address: address, token: token) { dismiss() } }
           .disabled((try? PairingConfiguration(baseURL: address, token: token)) == nil).accessibilityIdentifier("save-pairing")
       }.navigationTitle("连接设置").toolbar { Button("关闭") { dismiss() } }
-    }.onAppear { address = store.pairing?.baseURL.absoluteString ?? address }
+      .sheet(isPresented: $showScanner) {
+        CameraScanner { payload in
+          showScanner = false
+          Task { await store.redeemCloudPairing(qrText: payload) }
+        }
+      }
+    }.onAppear { if store.pairing?.isCloud != true { address = store.pairing?.baseURL.absoluteString ?? address } }
   }
 }
 
@@ -237,6 +242,8 @@ struct PairingSettingsView: View {
 /// 每个状态既有文案也有可点操作，绝不出现「灰色不可用死按钮」。
 struct CloudConnectionRow: View {
   let state: ConnectionState
+  /// 未配对/重新配对操作打开扫码页（由宿主视图提供；缺省时退化为仅重查）。
+  var onScan: (() -> Void)? = nil
   @Environment(StudyStore.self) private var store
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -257,7 +264,7 @@ struct CloudConnectionRow: View {
     }
     .padding(14)
     .background(Palette.mint.opacity(0.4), in: RoundedRectangle(cornerRadius: 14))
-    .task { 
+    .task {
       // 已配对待检查 / 打开设置页时自动触发一次检查（强制绕过 30 秒显示缓存）。
       if state == .pairedNeedsCheck { await store.checkConnection(force: true) }
     }
@@ -279,14 +286,25 @@ struct CloudConnectionRow: View {
   @ViewBuilder
   private var actionButton: some View {
     switch state {
-    case .unpaired, .pairedNeedsCheck, .checking, .ready, .busy, .failed:
+    case .unpaired:
+      // 未配对的「扫码配对」必须真的打开扫码页，绝不做无声无操作的死按钮。
+      Button(state.actionTitle) { onScan?() }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("scan-to-pair")
+    case .pairedNeedsCheck, .checking, .ready, .busy, .failed:
       Button(state.actionTitle) { Task { await store.connectionAction() } }
         .buttonStyle(.borderedProminent)
         .accessibilityIdentifier("retry-connection")
     case .unauthorized, .incompatible:
-      Button(state.actionTitle) { Task { await store.connectionAction() } }
-        .buttonStyle(.borderedProminent)
-        .accessibilityIdentifier("repair-connection")
+      Button(state.actionTitle) {
+        // 先清凭据回到未配对，再弹出扫码页让用户立即重新配对。
+        Task {
+          await store.connectionAction()
+          onScan?()
+        }
+      }
+      .buttonStyle(.borderedProminent)
+      .accessibilityIdentifier("repair-connection")
     }
   }
 }

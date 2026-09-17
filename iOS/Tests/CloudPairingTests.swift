@@ -275,6 +275,39 @@ final class CloudPairingTests: XCTestCase {
   }
 
   @MainActor
+  func testRedemptionsReuseStableClientIDForIdempotentRecovery() async throws {
+    // 服务端契约：同 clientId + 同 secret 重试返回同一设备令牌；换 clientId 会得到
+    // pairing_used 409（响应丢失后无法恢复）。客户端标识必须按安装稳定。
+    CloudStoreProtocol.reset()
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("CloudClientID-" + UUID().uuidString)
+    let persistence = StudyPersistence(directory: directory)
+    try persistence.prepareDirectory()
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [CloudStoreProtocol.self]
+    // 注入合成传输：占位云配置（URL 固定云域名，但 URLProtocol 拦截该会话的全部请求）。
+    let redeemTransport = RecognitionClient(configuration: try PairingConfiguration.cloud(
+      serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+      token: "synthetic-device-token-32-bytes-test!",
+      deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb", expiresAt: nil),
+      sessionConfiguration: configuration)
+    let client = RecognitionClient(configuration: try PairingConfiguration.cloud(
+      serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+      token: "synthetic-device-token-32-bytes-test!",
+      deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb", expiresAt: nil),
+      sessionConfiguration: configuration)
+    let store = StudyStore(persistence: persistence, client: client)
+    let qrText = #"{"v":1,"serviceId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","httpsUrl":"https://study.pccoding666.com","sessionId":"099ea4a5-e4bf-4182-b986-a9fc7db383e9","secret":"2_39bX4iG76643WfiJRfvW-jYJVxbBdm9ACmHrgGjJ0"}"#
+    await store.redeemCloudPairing(qrText: qrText, transport: redeemTransport)
+    let first = try XCTUnwrap(CloudStoreProtocol.redeemBodies().last)
+    // 模拟响应丢失后的用户重试：同一 QR 再兑换一次（同一 store，同一安装标识）。
+    await store.redeemCloudPairing(qrText: qrText, transport: redeemTransport)
+    let second = try XCTUnwrap(CloudStoreProtocol.redeemBodies().last)
+    XCTAssertEqual(first["clientId"] as? String, second["clientId"] as? String,
+                   "重试必须复用同一 clientId，否则服务端按新设备拒绝恢复")
+  }
+
+  @MainActor
   func testCloudOwnershipPersistsAcrossRelaunchAndServiceBoundary() async throws {
     CloudStoreProtocol.reset()
     let directory = FileManager.default.temporaryDirectory
@@ -332,8 +365,10 @@ final class CloudStoreProtocol: URLProtocol, @unchecked Sendable {
   }()
   private static let lock = NSLock()
   nonisolated(unsafe) private static var recorded: [URLRequest] = []
+  nonisolated(unsafe) private static var redeemJSON: [[String: Any]] = []
   static func requests() -> [URLRequest] { lock.withLock { recorded } }
-  static func reset() { lock.withLock { recorded = [] } }
+  static func redeemBodies() -> [[String: Any]] { lock.withLock { redeemJSON } }
+  static func reset() { lock.withLock { recorded = []; redeemJSON = [] } }
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
   override func startLoading() {
@@ -344,6 +379,27 @@ final class CloudStoreProtocol: URLProtocol, @unchecked Sendable {
       .replacingOccurrences(of: "\"photoName\":\"Synthetic.jpg\"", with: "\"photoName\":\"\(photoName)\"")
     if path == "/v1/health" {
       respond(status: 200, body: #"{"version":1,"serviceId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","storageAvailable":true,"visionConfigured":true,"acceptingJobs":true,"protocolVersion":1}"#)
+    } else if path == "/v1/pairing/redeem" {
+      // 记录请求体里的 clientId（幂等恢复断言用）。
+      if let stream = request.httpBodyStream {
+        stream.open()
+        var bytes = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+          let count = stream.read(&buffer, maxLength: buffer.count)
+          if count <= 0 { break }
+          bytes.append(buffer, count: count)
+        }
+        stream.close()
+        if let json = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] {
+          Self.lock.withLock { Self.redeemJSON.append(json) }
+        }
+      } else if let body = request.httpBody,
+        let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+        Self.lock.withLock { Self.redeemJSON.append(json) }
+      }
+      let body = #"{"token":"issued-device-token-32-bytes-test!","deviceId":"8b411cca-f903-4d8c-a5d0-41435e2a66bb","serviceId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","expiresAt":"2026-10-17T00:00:00.000Z","protocolVersion":1}"#
+      respond(status: 200, body: body)
     } else if path.hasPrefix("/v1/recognitions/") && path.contains("/media/") {
       let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
         headerFields: ["Content-Type": "image/jpeg"])!

@@ -265,7 +265,7 @@ final class LiveRecognitionJourneyTests: XCTestCase {
     XCTAssertTrue(app.staticTexts["这次将发送 1 张照片。"].exists, "Consent must describe the exact selected batch")
     XCTAssertEqual(app.images.matching(NSPredicate(format: "identifier BEGINSWITH %@", "consent-photo-")).count, 1)
     XCTAssertTrue(app.images[localThumbnail.replacingOccurrences(of: "local-photo-", with: "consent-photo-")].exists)
-    XCTAssertTrue(app.staticTexts["尚未连接本机服务，请返回连接设置后再上传。"].exists)
+    XCTAssertTrue(app.staticTexts["尚未连接识别服务，请返回连接设置或扫码配对后再上传。"].exists)
     XCTAssertFalse(app.buttons["consent-upload"].isEnabled)
     app.buttons["暂不上传"].tap()
     XCTAssertTrue(app.staticTexts["仅保存在本机，尚未上传"].exists)

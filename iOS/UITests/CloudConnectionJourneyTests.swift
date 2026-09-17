@@ -29,6 +29,11 @@ final class CloudConnectionJourneyTests: XCTestCase {
     let repair = app.buttons["repair-connection"]
     XCTAssertTrue(repair.waitForExistence(timeout: 5))
     XCTAssertEqual(app.buttons["retry-connection"].exists, false, "授权失效必须引导重新配对，而不是原地重试")
+    // 重新配对先清凭据回到未配对，未配对态必须提供真实的扫码入口（不得是死按钮）。
+    repair.tap()
+    XCTAssertTrue(app.staticTexts["connection-state-unpaired"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["scan-to-pair"].waitForExistence(timeout: 5),
+                  "未配对状态必须提供「扫码配对」入口")
   }
 
   @MainActor

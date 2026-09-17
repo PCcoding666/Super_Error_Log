@@ -177,19 +177,25 @@ final class StudyStore {
 
   /// Task 5：扫码配对——解析二维码 → 兑换设备令牌 → 落库。
   /// 兑换失败时把服务器的中文错误透传给用户（不含任何令牌字节）。
-  func redeemCloudPairing(qrText: String) async {
+  /// `transport`：测试注入合成传输（默认自建占位客户端；redeem 免鉴权）。
+  func redeemCloudPairing(qrText: String, transport: RecognitionClient? = nil) async {
     let qr: CloudPairing.ParsedQR
     do { qr = try CloudPairing.parse(qrText) }
     catch { errorMessage = (error as? CloudPairing.QRParseError)?.errorDescription ?? "二维码无法识别，请重新扫码。"; return }
-    // 兑换免鉴权：用占位云配置发起（redeem 不携带 Authorization 头）。
-    guard let bootstrap = try? PairingConfiguration.cloud(
+    // 兑换免鉴权：默认用占位云配置发起（redeem 不携带 Authorization 头）。
+    let client: RecognitionClient
+    let ownsClient: Bool
+    if let transport { client = transport; ownsClient = false }
+    else if let bootstrap = try? PairingConfiguration.cloud(
       serviceId: qr.serviceId, token: String(repeating: "x", count: 32),
-      deviceId: UUID().uuidString, expiresAt: nil)
-    else { errorMessage = "配对请求无法构造，请重试。"; return }
-    let client = RecognitionClient(configuration: bootstrap)
-    defer { client.close() }
+      deviceId: UUID().uuidString, expiresAt: nil) {
+      client = RecognitionClient(configuration: bootstrap); ownsClient = true
+    } else { errorMessage = "配对请求无法构造，请重试。"; return }
+    defer { if ownsClient { client.close() } }
     do {
-      let result = try await client.redeem(qr: qr, clientId: UUID().uuidString, deviceInfo: "iPhone")
+      // clientId 按安装稳定：响应在网络丢失后重试时，服务端按同 clientId 幂等返回
+      // 同一设备令牌（换新 clientId 会得到 pairing_used 409，无法恢复）。
+      let result = try await client.redeem(qr: qr, clientId: Self.clientIdentifier, deviceInfo: "iPhone")
       let configuration = try PairingConfiguration.cloud(
         serviceId: result.serviceId, token: result.token,
         deviceId: result.deviceId, expiresAt: result.expiresAt)
@@ -197,7 +203,16 @@ final class StudyStore {
     } catch { errorMessage = error.localizedDescription }
   }
 
-  /// Task 5 UI：连接操作入口。unauthorized/incompatible → 重新配对（清空配对回到扫码）；
+  /// 设备级客户端标识（非秘密；服务端兑换幂等键）。首次使用生成后稳定保存。
+  private static let clientIdentifier: String = {
+    let key = "sel-client-identifier"
+    if let existing = UserDefaults.standard.string(forKey: key) { return existing }
+    let fresh = UUID().uuidString
+    UserDefaults.standard.set(fresh, forKey: key)
+    return fresh
+  }()
+
+  /// Task 5 UI：连接操作入口。unauthorized/incompatible → 重新配对（清空凭据，UI 随后弹出扫码页）；
   /// 其余非 ready 态 → 强制重查。
   func connectionAction() async {
     switch connectionState {
@@ -211,15 +226,6 @@ final class StudyStore {
     case .ready, .busy, .failed, .pairedNeedsCheck, .checking, .unpaired, .none:
       _ = await checkConnection(force: true)
     }
-  }
-
-  /// 退出云端配对（用户主动断开，回到未配对态）。
-  func clearCloudPairing() {
-    PairingStore.remove(scope: persistence.directory.lastPathComponent)
-    client?.close(); client = nil; pairing = nil
-    connectionTracker = ConnectionTracker()
-    connectionGeneration = connectionTracker.repair()
-    connectionState = nil
   }
 
   /// 连接检查：合并并发检查；30 秒缓存仅用于状态显示。
