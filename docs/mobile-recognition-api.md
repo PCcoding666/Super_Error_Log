@@ -23,7 +23,8 @@ The service reads the repository-root `.env` without printing credentials. Real 
 
 | Variable | Default or fallback |
 | --- | --- |
-| `SEL_MOBILE_PAIRING_TOKEN` | required; independent of the Bailian key |
+| `SEL_MOBILE_MODE` | `loopback`; `cloud` enables the Guangzhou cloud deployment profile; any other value is rejected |
+| `SEL_MOBILE_PAIRING_TOKEN` | required in loopback mode; unused in cloud mode (device tokens replace it); independent of the Bailian key |
 | `SEL_MOBILE_AI_BASE_URL` | falls back to `SEL_AI_BASE_URL`; must equal the Beijing endpoint |
 | `SEL_MOBILE_AI_API_KEY` | `SEL_AI_API_KEY`, then `DASHSCOPE_API_KEY` |
 | `SEL_MOBILE_AI_MODEL` | falls back to `SEL_AI_MODEL` |
@@ -39,6 +40,41 @@ The service reads the repository-root `.env` without printing credentials. Real 
 Development: `npm run mobile:dev`. Built service: `npm run build && npm run mobile:start`.
 
 For a pilot launch, the pairing token may be injected into the launch process from a local mode-`0600` token file instead of editing the repository `.env`. Do not place either token or Bailian key in command-line arguments or print them to terminal output. The startup message contains only the loopback address and port. Keep the token file outside version control and load it into the process environment before starting the service.
+
+## Pairing (cloud mode)
+
+In cloud mode the shared pairing token is disabled. Phones pair by scanning a one-time QR code; the public app gains `POST /v1/pairing/redeem` in the next task. This task provides the server-side pairing core and the machine-local admin entry.
+
+### Admin entry (Unix domain socket only)
+
+The admin entry listens on `<dataDir>/admin.sock` (parent directory `0700`, socket file `0600`) inside the same service process. It is reachable only from the server machine itself — over SSH — and the public app exposes **no** admin routes. The admin CLI client is `src/mobile/admin-cli.ts` (built: `dist/mobile/admin-cli.js`):
+
+```sh
+node dist/mobile/admin-cli.js --data-dir /var/lib/super-error-log pairing-code
+node dist/mobile/admin-cli.js --data-dir /var/lib/super-error-log devices
+node dist/mobile/admin-cli.js --data-dir /var/lib/super-error-log revoke <deviceId>
+```
+
+The `serve` subcommand exists for standalone runs, but the main service process embeds the admin server automatically in cloud mode.
+
+`GET /pairing-code` (over the socket) returns a fresh one-time QR payload:
+
+```json
+{
+  "payload": {
+    "v": 1,
+    "serviceId": "e8383d01-d47e-40e0-b0a1-61a7d81b8665",
+    "httpsUrl": "https://study.pccoding666.com",
+    "sessionId": "099ea4a5-e4bf-4182-b986-a9fc7db383e9",
+    "secret": "2_39bX4iG76643WfiJRfvW-jYJVxbBdm9ACmHrgGjJ0"
+  },
+  "expiresAt": "2026-09-17T11:15:42.517Z"
+}
+```
+
+Semantics: the secret is 32 bytes base64url, valid 5 minutes, single use. `serviceId` is atomically initialized once per data directory and never rotates. Redeeming with the same client ID and secret within the validity window returns the identical result (in-memory recovery only; after a service restart the session is gone and the phone must rescan). Two different concurrent redeemers on one session: exactly one wins, the other gets `pairing_used`.
+
+Each redeemed device receives a 32-byte token (30-day expiry, individually revocable). Tokens are persisted as SHA-256 hashes only — `devices.json` (mode `0600`) never contains a plaintext token, and admin responses never echo one. A durable write must succeed before the token is returned; on failure the session stays unredeemed and the redeem can be retried. `GET /devices` lists device records without hashes; `POST /devices/:id/revoke` invalidates one device immediately and idempotently. Unknown paths return `404`; all other methods are rejected.
 
 ## Data types
 

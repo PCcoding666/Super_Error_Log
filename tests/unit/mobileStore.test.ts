@@ -120,7 +120,7 @@ describe('MobileRecognitionStore', () => {
 });
 
 describe('mobile production configuration', () => {
-  const names = ['SEL_MOBILE_AI_MODE', 'SEL_AI_MODE', 'SEL_MOBILE_AI_BASE_URL', 'SEL_AI_BASE_URL', 'SEL_MOBILE_AI_API_KEY', 'SEL_AI_API_KEY', 'DASHSCOPE_API_KEY', 'SEL_MOBILE_AI_MODEL', 'SEL_AI_MODEL', 'SEL_MOBILE_PAIRING_TOKEN', 'SEL_MOBILE_AI_TIMEOUT_MS', 'SEL_MOBILE_PORT', 'SEL_MOBILE_HOST', 'SEL_MOBILE_DATA_DIR'] as const;
+  const names = ['SEL_MOBILE_MODE', 'SEL_MOBILE_AI_MODE', 'SEL_AI_MODE', 'SEL_MOBILE_AI_BASE_URL', 'SEL_AI_BASE_URL', 'SEL_MOBILE_AI_API_KEY', 'SEL_AI_API_KEY', 'DASHSCOPE_API_KEY', 'SEL_MOBILE_AI_MODEL', 'SEL_AI_MODEL', 'SEL_MOBILE_PAIRING_TOKEN', 'SEL_MOBILE_AI_TIMEOUT_MS', 'SEL_MOBILE_PORT', 'SEL_MOBILE_HOST', 'SEL_MOBILE_DATA_DIR'] as const;
   const withEnvironment = <T>(values: Partial<Record<typeof names[number], string>>, callback: () => T): T => {
     const before = Object.fromEntries(names.map(name => [name, process.env[name]]));
     try {
@@ -145,6 +145,19 @@ describe('mobile production configuration', () => {
 
   it('keeps the dedicated mobile timeout at 30 minutes without changing web configuration', () => {
     const configuration = withEnvironment(valid, () => loadMobileConfiguration(root()));
-    expect(configuration).toMatchObject({ host: '127.0.0.1', port: 3101, vision: { timeoutMs: 1_800_000, bailianOnly: true } });
+    expect(configuration).toMatchObject({ host: '127.0.0.1', port: 3101, mode: 'loopback', vision: { timeoutMs: 1_800_000, bailianOnly: true } });
+  });
+
+  it('loopback is the default mode and requires a shared pairing token', () => {
+    const { SEL_MOBILE_PAIRING_TOKEN: _token, ...withoutToken } = valid;
+    expect(() => withEnvironment(withoutToken, () => loadMobileConfiguration(root()))).toThrow(/回环模式/);
+  });
+
+  it('cloud mode rejects the shared pairing token requirement and unknown modes fail closed', () => {
+    const { SEL_MOBILE_PAIRING_TOKEN: _token, ...withoutToken } = valid;
+    const cloud = withEnvironment({ ...withoutToken, SEL_MOBILE_MODE: 'cloud' }, () => loadMobileConfiguration(root()));
+    expect(cloud.mode).toBe('cloud');
+    expect(cloud.pairingToken).toBe('');
+    expect(() => withEnvironment({ ...valid, SEL_MOBILE_MODE: 'lan' }, () => loadMobileConfiguration(root()))).toThrow(/loopback 或 cloud/);
   });
 });
