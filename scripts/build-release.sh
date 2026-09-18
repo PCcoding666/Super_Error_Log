@@ -39,6 +39,11 @@ done
 
 # --version 未给出时在项目根内解析 package.json 的 version 字段。
 if [[ -z "${version}" ]]; then version="$(default_version)"; fi
+# 解析失败（如 node 不在 PATH）必须 fail-hard，绝不产 unspecified 兜底包。
+if [[ "${version}" == "unspecified" ]]; then
+  echo "错误：无法从 package.json 解析版本号（node 不在 PATH？）；用 --version 显式指定" >&2
+  exit 1
+fi
 
 # 前置检查：dist 产物必须存在且非空（fail-fast，绝不产空包）。
 if [[ ! -d "${dist_dir}" ]]; then

@@ -25,6 +25,10 @@ mkdir -p /opt/super-error-log/releases
 # 数据目录（专用用户私有，0700）
 install -d -o supererrorlog -g supererrorlog -m 0700 /var/lib/super-error-log
 
+# Caddy ACME 存储目录（caddy 用户可写；证书私钥落这里，见 §4）
+useradd --system --no-create-home --shell /usr/sbin/nologin caddy 2>/dev/null || true
+install -d -o caddy -g caddy -m 0700 /var/lib/super-error-log/caddy
+
 # 环境变量文件（0600 root:root，内容见 §2）
 install -d -m 0755 /etc/super-error-log
 touch /etc/super-error-log/env && chmod 0600 /etc/super-error-log/env
@@ -96,6 +100,10 @@ ExecStart=/usr/bin/caddy run --config /opt/super-error-log/current/deploy/caddy/
 Restart=on-failure
 # 443 需要权限：Debian 的 caddy 包自带 setcap；自装二进制用
 #   setcap cap_net_bind_service=+ep /usr/bin/caddy
+# ACME 证书存储必须显式指定可写目录（caddy 用户无家目录时 XDG 路径不可用）。
+# 目录属主 caddy:034/05 权限；证书/私钥都落在这里，备份见 §6。
+Environment=XDG_DATA_HOME=/var/lib/super-error-log/caddy
+ReadWritePaths=/var/lib/super-error-log/caddy
 User=caddy
 
 [Install]
@@ -139,6 +147,8 @@ systemctl restart super-error-log
 ```bash
 # 数据目录整体快照（照片+SQLite+配对状态）
 tar -czf /root/backup-sel-$(date +%Y%m%d-%H%M).tar.gz -C /var/lib/super-error-log mobile-recognition
+# Caddy ACME 证书存储（回滚重装 Caddy 后可恢复证书，避免重新走 ACME 质询）
+tar -czf /root/backup-sel-caddy-$(date +%Y%m%d-%H%M).tar.gz -C /var/lib/super-error-log/caddy .
 # 环境文件
 cp -p /etc/super-error-log/env /root/backup-sel-env-$(date +%Y%m%d-%H%M)
 ```

@@ -153,4 +153,24 @@ describe('release packager (scripts/build-release.sh)', () => {
     // package.json version 是 0.1.0：文件名必须含真实版号。
     expect(tarballName).toMatch(/0\.1\.0/);
   });
+
+  it('版号无法解析（node 不可用）时 fail-hard，不产 unspecified 兜底包', () => {
+    const output = makeTempDir();
+    const synthetic = makeSyntheticDist();
+    // PATH 清空到只剩系统目录：node 不在 PATH → default_version 解析失败。
+    const args = [scriptPath, '--output', output, '--dist', synthetic.relative];
+    let status = 0; let stderr = ''; let stdout = '';
+    try {
+      stdout = execFileSync('/bin/bash', args, {
+        cwd: projectRoot, encoding: 'utf8',
+        env: { ...process.env, PATH: '/usr/bin:/bin' }, timeout: 120_000
+      });
+    } catch (error) {
+      const err = error as { status?: number; stdout?: string; stderr?: string };
+      status = err.status ?? 1; stderr = err.stderr ?? ''; stdout = err.stdout ?? '';
+    }
+    expect(status).not.toBe(0);
+    expect(stderr).toMatch(/版本号|version/i);
+    expect(fs.existsSync(output) ? fs.readdirSync(output).filter(name => name.endsWith('.tar.gz')) : []).toHaveLength(0);
+  });
 });
