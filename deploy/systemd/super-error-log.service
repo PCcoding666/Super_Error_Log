@@ -1,0 +1,47 @@
+# Super Error Log 移动识别服务（Task 6）
+# 目标机：广州 ECS（239），systemd 230+，cgroup v1
+# 管理说明见 deploy/README.md；改本文件后 systemctl daemon-reload。
+
+[Unit]
+Description=Super Error Log mobile recognition service (cloud mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 专用低权限用户（无登录 shell、无家目录写入；由部署脚本创建）。
+User=supererrorlog
+Group=supererrorlog
+
+# 受控发布目录内锁定的 Node 24 LTS 绝对路径——不使用 /usr/bin/node。
+# /opt/super-error-log/current 是指向 releases/<版号> 的软链（回滚=切链）。
+ExecStart=/opt/super-error-log/node-v24/bin/node /opt/super-error-log/current/dist/mobile/server.js
+
+# 密钥只进 EnvironmentFile（0600 root:root），不进单元文件、不进命令行。
+EnvironmentFile=/etc/super-error-log/env
+# 进程标题与崩溃转储中不含用户照片/密钥；只服务移动识别入口。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/super-error-log
+
+# 资源限制（cgroup v1 语法；systemd 239 支持）：
+# - MemoryLimit=1G：cgroup 级内存上限（含 sharp 原生缓冲）。
+# - CPUQuota=150%：1.5 核。
+# 注意：Task 3 实现的 768MiB 是【应用层准入阈值】（AdmissionController 拒绝新照片），
+# 不宣称内核在 768MiB 节流；内核级节流只由 MemoryLimit=1G 决定。
+MemoryLimit=1G
+CPUQuota=150%
+
+# 进程退出即重启；固定 5s 间隔（systemd 自带 StartLimit 防快连环重启）。
+Restart=on-failure
+RestartSec=5s
+
+# 工作目录（专用用户私有；数据目录在 SEL_MOBILE_DATA_DIR 里指这里）。
+WorkingDirectory=/var/lib/super-error-log/
+
+# 日志走 journald（其自身限流兜底）。
+SyslogIdentifier=super-error-log
+
+[Install]
+WantedBy=multi-user.target

@@ -83,8 +83,11 @@ async function submit(request: RequestFn, bytes: Buffer, key = crypto.randomUUID
 }
 async function json(response: Response) { return response.json() as Promise<any>; }
 async function waitFor(request: RequestFn, id: string, status: string) {
+  // 等待预算按墙钟时间（30s）而非迭代次数：并发全套件/磁盘高负载下 durableWrite
+  // 单次可达 70-90ms，5 题串行任务完成需 10s+（环境慢≠死锁；预算只防真挂死）。
   let last: any = null;
-  for (let i = 0; i < 200; i += 1) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
     const body = await json(await request(`/v1/recognitions/${id}`));
     last = body.job;
     if (body.job.status === status) return body.job;
@@ -94,7 +97,8 @@ async function waitFor(request: RequestFn, id: string, status: string) {
 }
 async function waitForJob(request: RequestFn, id: string, predicate: (job: any) => boolean) {
   let last: any = null;
-  for (let i = 0; i < 200; i += 1) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
     last = (await json(await request(`/v1/recognitions/${id}`))).job;
     if (predicate(last)) return last;
     await new Promise(resolve => setTimeout(resolve, 10));
@@ -102,8 +106,10 @@ async function waitForJob(request: RequestFn, id: string, predicate: (job: any) 
   throw new Error(`job ${id} did not reach predicate; last=${JSON.stringify(last)}`);
 }
 async function waitForStorageUnavailable(request: RequestFn): Promise<Response> {
+  // 与 waitFor 相同的墙钟预算（30s）：全套件并发/高磁盘负载下 1s 迭代预算不够（环境慢≠故障未传播）。
+  const deadline = Date.now() + 30_000;
   let response = await request('/v1/health');
-  for (let i = 0; i < 100 && response.status !== 503; i += 1) {
+  while (response.status !== 503 && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 10)); response = await request('/v1/health');
   }
   return response;

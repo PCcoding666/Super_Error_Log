@@ -1,0 +1,36 @@
+# Super Error Log 云端入口（Task 6）
+# 域名：study.pccoding666.com（广州 ECS）
+# 上游：127.0.0.1:3101（super-error-log 移动识别服务，仅回环监听）
+# 依赖：Caddy >= 2.10（request_body 指令 v2.10.0 起支持，实验性）
+
+# 全局选项：关闭 admin API（改配置需重启 Caddy，不接受运行时改写）；
+# 保留证书自动化，只关 HTTP→HTTPS 跳转——80 端口仍属原网站，不抢跳转。
+{
+	admin off
+	auto_https disable_redirects
+}
+
+study.pccoding666.com {
+	# TLS：ACME 默认签发，禁用 HTTP-01 质询（80 不在 Caddy 手里，走 DNS/TLS-ALPN）。
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+
+	# 站点层请求体上限：15,000,000 字节（与服务端 express.raw 15mb 一致）。
+	# 注意：request_body 是站点级指令，必须放在 reverse_proxy 外面。
+	request_body {
+		max_size 15000000
+	}
+
+	reverse_proxy 127.0.0.1:3101 {
+		# 覆盖客户端可能伪造的 X-Real-IP，仅信任 Caddy 观测到的远端地址。
+		# 服务端仅在 peer 为 127.0.0.1 且 cloud 模式时才读取该头（src/mobile/rateLimit.ts clientIp）。
+		header_up X-Real-IP {remote_host}
+		transport http {
+			# 百炼多阶段识别耗时长，上游读取超时放宽到 180s。
+			read_timeout 180s
+		}
+	}
+}

@@ -14,3 +14,5 @@ playwright-report/
 .ai/legacy/preserved/
 
 .DS_Store
+
+releases/

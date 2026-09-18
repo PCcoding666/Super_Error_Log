@@ -207,12 +207,17 @@ describe('per-question concurrency and image semaphore', () => {
     expect(accepted.status).toBe(202);
     const jobId = await idOf(accepted);
     vision.finish();
-    // 等任务完成后断言峰值并发。
+    // 等任务完成后断言峰值并发。墙钟预算 30s。
+    // 轮询间隔必须尊重云端真实限流（300 次/分钟/设备）：20ms 轮询 ~6s 就打满 429，
+    // 之后响应无 job 字段（限流体），任务状态永远读不到。250ms 间隔 ≈ 240 次/分钟 < 300。
+    // 瞬时限流/错误响应（无 job 字段）跳过该轮。
     let job: { job: { status: string } } | null = null;
-    for (let index = 0; index < 200; index += 1) {
-      job = await (await request(`/v1/recognitions/${jobId}`)).json() as { job: { status: string } };
-      if (job.job.status === 'completed' || job.job.status === 'partial' || job.job.status === 'failed') break;
-      await new Promise(resolve => setTimeout(resolve, 20));
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const polled = await (await request(`/v1/recognitions/${jobId}`)).json() as { job?: { status: string } };
+      if (polled?.job) job = polled as { job: { status: string } };
+      if (job && ['completed', 'partial', 'failed'].includes(job.job.status)) break;
+      await new Promise(resolve => setTimeout(resolve, 250));
     }
     expect(['completed', 'partial', 'failed']).toContain(job?.job.status);
     expect(vision.maximumActive).toBe(1);
@@ -252,10 +257,14 @@ describe('per-question concurrency and image semaphore', () => {
     expect(accepted.status).toBe(202);
     vision.finish();
     const jobId = await idOf(accepted);
-    for (let index = 0; index < 200; index += 1) {
-      const job = await (await request(`/v1/recognitions/${jobId}`)).json() as { job: { status: string } };
-      if (['completed', 'partial', 'failed'].includes(job.job.status)) break;
-      await new Promise(resolve => setTimeout(resolve, 20));
+    {
+      // 同上：轮询间隔 250ms 尊重云端限流（300 次/分钟/设备）；瞬时限流响应跳过。
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const polled = await (await request(`/v1/recognitions/${jobId}`)).json() as { job?: { status: string } };
+        if (polled?.job && ['completed', 'partial', 'failed'].includes(polled.job.status)) break;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
     }
     // service.context 在 admission 接通时注入 withImage：真实调用链覆盖 vision 裁切。
     expect(seenWithImage.length).toBeGreaterThanOrEqual(1);
@@ -270,7 +279,8 @@ describe('per-question concurrency and image semaphore', () => {
       releaseOne(): void { this.gates.shift()?.(); }
       /** 等待下一个题目真正挂起后再放行（顺序 drain：题目 2 只在题目 1 完成后才开始）。 */
       async releaseNextWhenPending(): Promise<void> {
-        for (let index = 0; index < 300; index += 1) {
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline) {
           if (this.gates.length > 0) { this.gates.shift()?.(); return; }
           await new Promise(resolve => setTimeout(resolve, 10));
         }
@@ -297,10 +307,13 @@ describe('per-question concurrency and image semaphore', () => {
     // 等待初始运行到达终态（两题失败：容量 0/1）。
     const waitForStatus = async (statuses: string[]): Promise<{ status: string; questions: Array<{ id: string; status: string }> }> => {
       let current: { job: { status: string; questions: Array<{ id: string; status: string }> } } | undefined;
-      for (let index = 0; index < 300; index += 1) {
-        current = await (await request(`/v1/recognitions/${jobId}`)).json() as typeof current;
+      // 同上：250ms 轮询间隔尊重云端限流；瞬时限流/错误响应（无 job 字段）跳过该轮。
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const polled = await (await request(`/v1/recognitions/${jobId}`)).json() as typeof current;
+        if (polled?.job) current = polled;
         if (current && statuses.includes(current.job.status)) return current.job;
-        await new Promise(resolve => setTimeout(resolve, 20));
+        await new Promise(resolve => setTimeout(resolve, 250));
       }
       if (!current) throw new Error('任务状态轮询失败');
       return current.job;
