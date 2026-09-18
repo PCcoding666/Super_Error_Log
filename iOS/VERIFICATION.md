@@ -1,3 +1,16 @@
+# 云端识别版本验证（2026-09-18）
+
+计划 `docs/superpowers/plans/2026-09-17-iphone-cloud-recognition.md`（Task 1–7）的 iOS 侧验证。完整清单与边界见 `docs/quality/2026-09-17-cloud-recognition-acceptance.md`。
+
+| 项 | 结果 |
+| --- | --- |
+| `swift test`（域/客户端） | 51/51 通过（Xcode 26.6） |
+| 模拟器 UI 全套（含 CloudConnectionJourney 合成服务器旅程） | 19/19 通过、0 失败 0 跳过，约 515 秒；`build/ui-task7-cloud-200607.xcresult`（iPhone 17 Pro / iOS 26.3.1） |
+| 真机目标构建 | BUILD SUCCEEDED（`-target SuperErrorLog -sdk iphoneos CODE_SIGNING_ALLOWED=NO`）。如实记录：计划原文的 `-scheme` 形式在本机无法解析 destination，用等价 `-target` 构建；真实签名安装与真机相机验收属部署阶段 |
+| 后端全量门 | `npm run verify` exit 0（Vitest 357/357 含十照片合成压测 3 项、Playwright 9/9、typecheck、构建） |
+
+如前几轮一样：以上是合成与本地证据。真实域名 TLS、真实百炼返回、实体设备扫码与蜂窝上传验收未执行，不以本地通过冒充。任务/媒体缓存按 serviceId 隔离、旧 Mac 来源任务仅离线可看、每批提交前强制 health 重查等行为由上述测试覆盖。
+
 # 中文 iPhone 真实识别：阶段验收（2026-09-15）
 
 ## 一句话结论

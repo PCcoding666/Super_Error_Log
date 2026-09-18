@@ -248,11 +248,11 @@ Run: `env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -p
 - Modify: `iOS/VERIFICATION.md`、本计划勾选框
 
 **步骤：**
-- [ ] 本地：`npm run verify`（typecheck+test+build+e2e）与 `swift test`、模拟器 UI 测试、真机目标构建 `xcodebuild -project SuperErrorLog.xcodeproj -scheme SuperErrorLog -sdk iphoneos build CODE_SIGNING_ALLOWED=NO`；无法执行的测试如实记录
-- [ ] 十张合成高分辨率照片压测（临时目录，含并发上传、幂等冲突、队列满、磁盘注入、中断恢复），只评估资源，不当识别质量结论
-- [ ] 部署后服务器检查清单：标准 TLS 证书链、无令牌访问拒绝、授权 health 正常、媒体保护、内存/磁盘水位、cgroup 实测值
-- [ ] 真机验收：同一 iPhone 更新应用保留数据 → 扫码 → 蜂窝网络明确同意上传 1 张真实照片 → 核对 手机提交/ECS 任务/百炼返回/手机结果 四方对应；之后用户选定 10 张逐张报告结果与人工确认；无任务在跑时验证断线恢复、单设备撤销、服务重启
-- [ ] 最终报告分别覆盖：域名/HTTPS、授权、上传、真实返回、内容质量、故障恢复；完成后由主控推送既有 GitHub 分支（不强推、不含私有制品/密钥/照片）
+- [x] 本地：`npm run verify`（typecheck+test+build+e2e）与 `swift test`、模拟器 UI 测试、真机目标构建 `xcodebuild -project SuperErrorLog.xcodeproj -scheme SuperErrorLog -sdk iphoneos build CODE_SIGNING_ALLOWED=NO`；无法执行的测试如实记录（357/357 + e2e 9/9；swift 51/51；UI 19/19；真机构建以等价 `-target` 形式成功，`-scheme` 形式在本机无法解析 destination，已如实记录于验收文档）
+- [x] 十张合成高分辨率照片压测（临时目录，含并发上传、幂等冲突、队列满、磁盘注入、中断恢复），只评估资源，不当识别质量结论（`tests/integration/stressTenPhotos.test.ts` 3/3）
+- [ ] 部署后服务器检查清单：标准 TLS 证书链、无令牌访问拒绝、授权 health 正常、媒体保护、内存/磁盘水位、cgroup 实测值（清单已写入 `docs/quality/2026-09-17-cloud-recognition-acceptance.md`，部署阶段逐项勾选）
+- [ ] 真机验收：同一 iPhone 更新应用保留数据 → 扫码 → 蜂窝网络明确同意上传 1 张真实照片 → 核对 手机提交/ECS 任务/百炼返回/手机结果 四方对应；之后用户选定 10 张逐张报告结果与人工确认；无任务在跑时验证断线恢复、单设备撤销、服务重启（清单已写入验收文档，真机阶段逐项勾选）
+- [x] 最终报告分别覆盖：域名/HTTPS、授权、上传、真实返回、内容质量、故障恢复；完成后由主控推送既有 GitHub 分支（不强推、不含私有制品/密钥/照片）（六项报告见 `docs/quality/2026-09-17-cloud-recognition-acceptance.md`；GitHub 推送按会话约定在全部工作收尾时一次执行）
 
 ## Preflight review
 
