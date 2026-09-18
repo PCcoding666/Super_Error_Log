@@ -10,11 +10,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  * 与 mobileRecognition.test.ts 的差异：这里测【规模与资源】——10 张高分辨率（4000×3000）
  * 合成照片并发上传、队列满 429、幂等重放 202/409、磁盘门槛 503、进程中断恢复。
  * 只断言容量/磁盘/恢复语义与资源水位；任何通过都不构成识别质量或真实照片验收结论。
- * 服务跑在独立子进程（真实 dist 构建产物），测试经真实 HTTP 访问。
+ * 服务跑在独立子进程（真实 dist 构建产物，先 `npm run build`），测试经真实 HTTP 访问。
  */
 
 const NODE = process.execPath;
 const PROJECT = path.resolve('.');
+// verify 顺序已改为先 build 再 test；单独跑 `npm test` 时若 dist 缺失（如新 clone），显式跳过而不是误导性失败。
+const DIST_READY = fs.existsSync(path.join(PROJECT, 'dist/mobile/router.js'));
+const describeWithGuard = DIST_READY ? describe : describe.skip;
 
 function makeTempDir(): string { return fs.mkdtempSync(path.join(os.tmpdir(), 'sel-stress-')); }
 
@@ -27,8 +30,6 @@ async function bigJpeg(color: string): Promise<Buffer> {
 /** 子进程服务：云端模式 + 1 题 FixtureVision + 可配容量/磁盘探测，READY 行带 port 与 redeem payload。 */
 function serviceScript(): string {
   return `
-import fs from 'node:fs';
-import path from 'node:path';
 import { createMobileApp } from ${JSON.stringify(path.resolve(PROJECT, 'dist/mobile/router.js'))};
 import { PairingManager } from ${JSON.stringify(path.resolve(PROJECT, 'dist/mobile/pairing.js'))};
 import { AdmissionController } from ${JSON.stringify(path.resolve(PROJECT, 'dist/mobile/admission.js'))};
@@ -117,7 +118,7 @@ async function submit(request: StressService['request'], bytes: Buffer, key = cr
 
 const release = (svc: StressService): void => { svc.proc.stdin!.write('release\n'); };
 
-describe('ten-photo synthetic stress (resource behaviour only)', () => {
+describeWithGuard('ten-photo synthetic stress (resource behaviour only)', () => {
   let svc: StressService;
   beforeAll(async () => { svc = await startService({ capacity: 5 }); procs.push(svc.proc); });
 
@@ -125,13 +126,14 @@ describe('ten-photo synthetic stress (resource behaviour only)', () => {
     const photos = await Promise.all(Array.from({ length: 10 }, (_, index) => bigJpeg(`#${(index * 23 + 0x40).toString(16).padStart(6, '0')}`)));
     const keys = Array.from({ length: 10 }, () => crypto.randomUUID());
     // Task 3 语义：同时最多 1 个上传正文在解析——并发 10 个会收到 429 busy（槽位，可重试）。
-    // 真实客户端对 busy 重试；这里同样带退避重试，直到 202 或 capacity_full（容量 429 不可重试）。
-    const submitWithRetry = async (index: number): Promise<{ status: number; body: { job?: { id: string } } }> => {
+    // 真实客户端对 busy 与瞬时 rate_limited 都退避重试；只有容量裁决 capacity_full 不可重试。
+    const submitWithRetry = async (index: number): Promise<{ status: number; body: { job?: { id: string }, error?: { code?: string } } }> => {
       for (let attempt = 0; ; attempt += 1) {
         const response = await submit(svc.request, photos[index]!, keys[index]);
         const body = await response.json() as { job?: { id: string }, error?: { code?: string } };
         if (response.status === 202) return { status: response.status, body };
-        if (response.status === 429 && body.error?.code === 'busy' && attempt < 40) {
+        const retryable = response.status === 429 && body.error?.code !== 'capacity_full';
+        if (retryable && attempt < 40) {
           await new Promise(resolve => setTimeout(resolve, 250 + Math.random() * 250));
           continue;
         }
@@ -140,10 +142,13 @@ describe('ten-photo synthetic stress (resource behaviour only)', () => {
     };
     const results = await Promise.all(photos.map((_, index) => submitWithRetry(index)));
     const statuses = results.map(result => result.status);
-    // 容量 5：恰好 5 张 202，5 张 429 capacity_full（busy 重试后全部进入容量裁决）。
-    const accepted = statuses.filter(status => status === 202).length;
-    const capacityRejected = statuses.filter(status => status === 429).length;
-    expect({ accepted, capacityRejected }).toEqual({ accepted: 5, capacityRejected: 5 });
+    // 容量 5：恰 5 张 202 + 5 张 429，其余状态一律不存在（多重集精确断言）；429 一律是容量裁决而非槽位/限流。
+    expect(statuses.filter(status => status === 202)).toHaveLength(5);
+    expect(statuses.filter(status => status === 429)).toHaveLength(5);
+    expect(statuses).toHaveLength(10);
+    for (const result of results) {
+      if (result.status === 429) expect(result.body.error?.code).toBe('capacity_full');
+    }
     // 幂等重放：同键重放已受理任务应 202（可查），同 jobId，不占新容量。
     const firstAccepted = results.findIndex(result => result.status === 202);
     const replay = await submit(svc.request, photos[firstAccepted]!, keys[firstAccepted]!);
@@ -178,7 +183,7 @@ describe('ten-photo synthetic stress (resource behaviour only)', () => {
   });
 });
 
-describe('disk gate and interrupted recovery under stress', () => {
+describeWithGuard('disk gate and interrupted recovery under stress', () => {
   it('磁盘门槛（系统盘 <3GiB）拒收 503，不产生半受理任务', { timeout: 120_000 }, async () => {
     const svc = await startService({ capacity: 5, diskFree: (2 * 1024 ** 3).toString() });
     procs.push(svc.proc);
@@ -230,12 +235,13 @@ describe('disk gate and interrupted recovery under stress', () => {
     });
     expect(ok.status).toBe(202);
     const { job } = await ok.json() as { job: { id: string } };
-    // 等任务进入 processing（挂起在识别门上）。
+    // 等到【题目级】processing 再杀：job 级 processing 的窗口可能仍在清单阶段（两次持久化之间），
+    // 杀在窗口内会让重启后 questions 为空、走清单阶段的 interrupted 路径，与"题目挂在识别中"的意图不符。
     const processing = await new Promise<boolean>(resolve => {
-      const deadline = Date.now() + 15_000;
+      const deadline = Date.now() + 30_000;
       const poll = async (): Promise<void> => {
-        const body = await (await request(firstInfo.port, `/v1/recognitions/${job.id}`)).json() as { job?: { status: string } };
-        if (body.job?.status === 'processing') { resolve(true); return; }
+        const body = await (await request(firstInfo.port, `/v1/recognitions/${job.id}`)).json() as { job?: { status: string; phase: string; questions: Array<{ status: string }> } };
+        if (body.job?.phase === 'questions' && body.job.questions.some(question => question.status === 'processing')) { resolve(true); return; }
         if (Date.now() > deadline) { resolve(false); return; }
         // 250ms 轮询尊重云端 300 次/分钟/设备限流（200ms=300/分钟恰在边界）。
         setTimeout(poll, 250);

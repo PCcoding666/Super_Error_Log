@@ -20,7 +20,7 @@
     "fixtures:generate": "tsx src/fixtures/generate.ts",
     "demo": "tsx src/fixtures/generate.ts && tsx watch src/server.ts",
     "release:build": "npm run build && scripts/build-release.sh --output releases",
-    "verify": "npm run typecheck && npm run test && npm run build && npm run test:e2e"
+    "verify": "npm run typecheck && npm run build && npm run test && npm run test:e2e"
   },
   "dependencies": {
     "express": "^5.1.0",

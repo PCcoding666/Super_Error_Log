@@ -10,7 +10,7 @@
 
 | 验证项 | 结果 | 证据 |
 | --- | --- | --- |
-| `npm run verify`（typecheck + 测试 + 构建 + e2e） | 全绿，exit 0：typecheck PASS；Vitest **357/357**（33 文件，含本计划新增 stressTenPhotos 3 项）；构建成功；Playwright **9/9** | 2026-09-18 完整运行（注：Playwright globalSetup 清理自用 `data-e2e/` 目录需在沙箱外运行） |
+| `npm run verify`（typecheck + 构建 + 测试 + e2e） | 全绿，exit 0：typecheck PASS；构建成功；Vitest **357/357**（33 文件，含本计划新增 stressTenPhotos 3 项，压测消费当前构建的 `dist/`，故 verify 顺序为 build→test）；Playwright **9/9** | 2026-09-18 完整运行（注：Playwright globalSetup 清理自用 `data-e2e/` 目录需在沙箱外运行） |
 | `swift test`（iOS 域/客户端） | **51/51** 通过 | 本机 Xcode 26.6，`env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` |
 | 模拟器 UI 全套 | **19/19** 通过，0 失败 0 跳过，约 515 秒 | `iOS/build/ui-task7-cloud-200607.xcresult`（iPhone 17 Pro / iOS 26.3.1） |
 | 真机目标构建 | BUILD SUCCEEDED | `xcodebuild -project SuperErrorLog.xcodeproj -target SuperErrorLog -configuration Debug -sdk iphoneos CODE_SIGNING_ALLOWED=NO SYMROOT=build/Device`。如实记录：计划原文的 `-scheme SuperErrorLog` 形式在本机报 "Found no destinations"，`-target` 形式是等价的构建门；签名与真机安装属部署阶段 |
