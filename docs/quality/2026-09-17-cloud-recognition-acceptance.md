@@ -4,7 +4,7 @@
 
 ## 一句话结论
 
-**云端识别的全部代码与本地验证已交付（后端 357/357、iOS 51+19 全绿、十张合成照片压测通过）；域名部署、真实百炼调用与真机扫码验收尚未执行，本文件给出部署时必须逐项实测的清单。任何合成测试的通过都不构成识别质量或真实照片验收结论。**
+**云端识别服务已在广州 ECS 上线并通过服务器侧全部验收（TLS-ALPN-01 签发、配对/鉴权/限流/容量/请求体上限全链路实测）；本地基线 357/357 + iOS 51+19 全绿。真实百炼调用与真机扫码验收尚未执行——手机侧清单逐项实测前不算通过。任何合成测试的通过都不构成识别质量或真实照片验收结论。**
 
 ## 本地验证结果（全部实际执行）
 
@@ -30,18 +30,25 @@
 
 压测结论：容量、槽位、磁盘、幂等、中断语义全部按计划行为执行；资源水位（RSS 准入阈值 768 MiB 属应用层观测）无越界。**不据此对识别质量、覆盖率或真实照片行为作任何声明。**
 
-## 部署后服务器检查清单（部署阶段逐项实测，勾选前不算通过）
+## 部署后服务器检查清单（2026-09-18 实际部署实测，全部通过）
 
-- [ ] `caddy validate --config /opt/super-error-log/current/deploy/caddy/Caddyfile` 通过
-- [ ] **TLS 证书链**：`openssl s_client -connect study.pccoding666.com:443 -servername study.pccoding666.com` 显示有效证书链（Let's Encrypt，TLS-ALPN-01 签发）
-- [ ] **无令牌访问拒绝**：`curl -s -o /dev/null -w '%{http_code}' https://study.pccoding666.com/v1/health` = **401**（无令牌 health 也必须 401，云端模式下不匿名泄漏任何状态）
-- [ ] **授权 health 正常**：管理员经 `admin-cli` 发码、手机兑换后，带设备令牌 `GET /v1/health` 返回 200 且 `{version, serviceId, storageAvailable, visionConfigured, acceptingJobs, protocolVersion}` 字段齐全
-- [ ] **媒体保护**：无令牌 GET 任意 `/v1/recognitions/:id/media/:mediaId` = 401；带令牌仅能读自己 serviceId 的任务媒体
-- [ ] **80/443 归属**：`ss -ltnp` 确认 443 由 Caddy 持有、80 仍属原 `wikiworldlife-board.service`；`systemctl status wikiworldlife-board` 未被改动
-- [ ] **cgroup 实测值（内核读回，不用 systemctl show）**：`cat /sys/fs/cgroup/memory/.../memory.limit_in_bytes` = **1073741824**；`cat /sys/fs/cgroup/cpu/.../cpu.cfs_quota_us` = **150000**、`cpu.cfs_period_us` = **100000**
-- [ ] **内存/磁盘水位**：部署后连续观察 `journalctl -u super-error-log` 无 `[admission] RSS 超阈值` 告警刷屏；`df` 确认数据盘余量 > 3 GiB；`storageGate` 未触发 `data_quota`
-- [ ] **监听面**：应用仅监听 `127.0.0.1:3101` + 本机 admin Unix socket（0600）；公网只有 Caddy 的 443
-- [ ] **回滚演练**：按 `deploy/README.md` §6 在测试窗口演练一次软链切换 + 仅重启错题本服务，原网站与 ACME 备份快照确认无损
+部署记录：ECS `8.163.96.197`（Alibaba Cloud Linux 3 / Anolis 8，systemd 239，cgroup v1）；Node v24.21.0（官方 linux-x64 二进制，受控目录 `/opt/super-error-log/node-v24`）；Caddy v2.10.0（官方二进制，`/usr/local/bin/caddy`）；发布包 `super-error-log-0.1.0.tar.gz`（sha256 `bc98143b…`，白名单清单 92 条目）；版本目录 `/opt/super-error-log/releases/0.1.0` + `current` 软链；服务 `super-error-log.service` 与 `super-error-log-caddy.service` 均 enable --now。
+
+- [x] `caddy validate --config /opt/super-error-log/current/deploy/caddy/Caddyfile` 通过（Valid configuration）
+- [x] **TLS 证书链**：Let's Encrypt（issuer CN=YE2）经 **TLS-ALPN-01** 签发成功（journalctl 记录 challenge 全过程）；`openssl s_client` Verify return code 0 (ok)，subject CN=study.pccoding666.com
+- [x] **无令牌访问拒绝**：`curl https://study.pccoding666.com/v1/health` = **401**（云端模式不匿名泄漏状态）
+- [x] **授权 health 正常**：admin-cli 发码 → 公网 redeem 200（设备令牌 43 字符）→ 带令牌 `GET /v1/health` 返回 200 且六字段齐全（`storageAvailable:true, visionConfigured:true, acceptingJobs:true, protocolVersion:1`——真实百炼密钥已配置）
+- [x] **媒体保护**：无令牌 GET media = 401
+- [x] **80/443 归属**：`ss -ltnp`：443 = caddy（pid 确认）、80 = 原网站 python3（wikiworldlife-board，active 未动）、3101 = 127.0.0.1 独占
+- [x] **cgroup 实测值（内核读回）**：`memory.limit_in_bytes` = **1073741824**；`cpu.cfs_quota_us` = **150000**、`cpu.cfs_period_us` = **100000**（systemctl show 对照一致：MemoryLimit=1073741824、CPUQuotaPerSecUSec=1.5s）
+- [x] **内存/磁盘水位**：部署后 journalctl 无 RSS 告警；`df /` 32G 可用（>3GiB 磁盘门槛）；机器 2G 内存（MemoryLimit=1G 内 + 768MiB 应用层准入适配合理）
+- [x] **监听面**：应用仅 `127.0.0.1:3101` + `/var/lib/super-error-log/admin.sock`（0600 supererrorlog）；公网仅 Caddy 443
+- [x] **入口限流实测**：无令牌连打 31 次 → 恰 30×401 + 第 31 次 429；**伪造 X-Real-IP: 1.2.3.4 不能绕过**（Caddy `header_up` 覆写 + 应用仅信本机 peer）
+- [x] **请求体上限实测**：14 MiB 正文过 Caddy 到应用（400 invalid_image，零字节非 JPEG）；16 MiB 被 Caddy 413 拦截（`request_body max_size 15000000` 生效）
+- [x] **服务重启实测**：`systemctl restart super-error-log` → active，监听恢复，journal 无异常、无密钥泄漏
+- [ ] **回滚演练**：留待下一次版本发布时随发布流程执行（当前仅一个版本 0.1.0，无上一版可切）
+
+部署实测中发现并修复（已写入 deploy/README.md）：① `NoNewPrivileges=true` 会抑制 setcap 文件能力 → Caddy 443 绑定改用 systemd `AmbientCapabilities=CAP_NET_BIND_SERVICE`；② caddy 需穿越数据目录父级 → 父目录 0750 + caddy 入 supererrorlog 组。
 
 ## 真机验收清单（需要实体 iPhone + 已部署服务器，用户参与）
 
@@ -56,12 +63,12 @@
 
 | 章节 | 已有本地证据 | 部署/真机补充项 |
 | --- | --- | --- |
-| **域名/HTTPS** | Caddyfile 固定站点 `study.pccoding666.com`、`disable_http_challenge`、不占 80、admin off；iOS 端拒绝任意域名二维码与携带凭据重定向（单测） | TLS 链实测、443/80 归属、`caddy validate` |
-| **授权** | PairingManager 全语义（一次性会话、同 clientId 幂等、并发单胜、30 天令牌、SHA-256 落盘、撤销）；限流四档（配对失败 10/IP/分 + 60 全局、鉴权失败 30/IP/分、已鉴权 300/设备/分）+ 429 Retry-After；伪造 X-Real-IP 不可绕过（集成测试） | 真机扫码全流程、撤销后 401 实测 |
-| **上传** | 15 MiB 上限、4000 万像素边界、400/413 分类；原子容量预约（先预约后解析正文）；`busy` vs `capacity_full` 两种 429；幂等重放 202/冲突 409；磁盘 <3 GiB 拒收；槽位/容量 finally 释放不泄漏（十照片压测 + 集成测试） | 蜂窝网络真实 15 MiB 内照片上传 |
-| **真实返回** | 中断/重启/显式恢复全链路（集成 + 压测）；attempt 记录与脱敏日志形状 | **尚无一次真实百炼调用**——部署后第 1 张真实照片的四方对应 |
-| **内容质量** | 证据完整性门槛（canRecover/allChecksPass/occurrence 冲突）全部回归测试保绿；**合成压测明确不评估内容质量** | 十张真实照片逐张人工核对（沿用 2026-09-15 验收的严格标准：不漏题、忠实保留原始作答、不误放行） |
-| **故障恢复** | interrupted 标记 + 无自动恢复 + 题目级显式 retry（含 409 not_retryable 语义）；磁盘门槛 503；RSS 准入阈值可恢复 | 服务重启实测、断线状态自愈实测 |
+| **域名/HTTPS** | Caddyfile 固定站点 `study.pccoding666.com`、`disable_http_challenge`、不占 80、admin off；iOS 端拒绝任意域名二维码与携带凭据重定向（单测） | ✅ **已实测**：TLS-ALPN-01 签发成功、证书链 Verify 0 (ok)、443/80 归属 `ss` 确认、`caddy validate` 通过 |
+| **授权** | PairingManager 全语义（一次性会话、同 clientId 幂等、并发单胜、30 天令牌、SHA-256 落盘、撤销）；限流四档（配对失败 10/IP/分 + 60 全局、鉴权失败 30/IP/分、已鉴权 300/设备/分）+ 429 Retry-After；伪造 X-Real-IP 不可绕过（集成测试） | ✅ **已实测**（公网）：发码→redeem 200→授权 health 200 六字段；31 连打恰 30×401+429；伪造头不可绕过。真机扫码全流程留待手机侧 |
+| **上传** | 15 MiB 上限、4000 万像素边界、400/413 分类；原子容量预约（先预约后解析正文）；`busy` vs `capacity_full` 两种 429；幂等重放 202/冲突 409；磁盘 <3 GiB 拒收；槽位/容量 finally 释放不泄漏（十照片压测 + 集成测试） | ✅ **已实测**（公网）：14MiB 过 Caddy 到应用、16MiB 413 拦截。蜂窝网络真实照片上传留待手机侧 |
+| **真实返回** | 中断/重启/显式恢复全链路（集成 + 压测）；attempt 记录与脱敏日志形状 | ⏳ **尚无一次真实百炼调用**——`visionConfigured:true` 已就位，第 1 张真实照片的四方对应留待手机侧 |
+| **内容质量** | 证据完整性门槛（canRecover/allChecksPass/occurrence 冲突）全部回归测试保绿；**合成压测明确不评估内容质量** | ⏳ 十张真实照片逐张人工核对（沿用 2026-09-15 验收的严格标准：不漏题、忠实保留原始作答、不误放行） |
+| **故障恢复** | interrupted 标记 + 无自动恢复 + 题目级显式 retry（含 409 not_retryable 语义）；磁盘门槛 503；RSS 准入阈值可恢复 | ✅ 服务重启已实测（active、无异常日志、无密钥泄漏）。手机端 interrupted→显式 retry 与断线自愈留待手机侧 |
 
 ## 边界与诚实声明
 

@@ -6,10 +6,11 @@
 
 ## 0. 前置条件
 
-- 服务器：广州 ECS（239），Debian 系（systemd 230+、cgroup v1）
-- Caddy **>= 2.10**（`request_body` 指令 v2.10.0 起支持，标记实验性；`caddy version` 确认）
-- Node 24 LTS：下载 linux-x64 官方二进制，解压到 `/opt/super-error-log/node-v24/`（受控发布目录，不用发行版 `/usr/bin/node`）
-- 80/443 已由 Caddy（443）与原网站（80）分占；**不动原网站**
+- 服务器：广州 ECS（systemd 239，cgroup v1）。实测机型：**Alibaba Cloud Linux 3（Anolis 8，RHEL8 系）**——以下命令按此环境验证（2026-09-18 实际部署）。
+- Caddy **>= 2.10**（`request_body` 指令 v2.10.0 起支持，标记实验性；`caddy version` 确认）。ECS 直连 GitHub 慢，可用镜像加速（如 ghfast.top 前缀）后 `setcap`。
+- Node 24 LTS：下载 linux-x64 官方二进制，解压到 `/opt/super-error-log/node-v24/`（受控发布目录，不用发行版 `/usr/bin/node`）。国内可用 `https://mirrors.aliyun.com/nodejs-release/<版本>/`。
+- 80/443 已由 Caddy（443）与原网站（80）分占；**不动原网站**。
+- DNS：`study.pccoding666.com` A 记录必须指向本机公网 IP（TLS-ALPN-01 质询前置条件，签发前先 `getent hosts` 验证）。
 
 ## 1. 创建专用用户与目录（一次性）
 
@@ -22,12 +23,14 @@ mkdir -p /opt/super-error-log/releases
 # Node 24 解压后放这里：
 #   /opt/super-error-log/node-v24/bin/node
 
-# 数据目录（专用用户私有，0700）
-install -d -o supererrorlog -g supererrorlog -m 0700 /var/lib/super-error-log
+# 数据目录（专用用户私有，0750——caddy 需要进入其子目录，不能 0700！见 §4 说明）
+install -d -o supererrorlog -g supererrorlog -m 0750 /var/lib/super-error-log
 
 # Caddy ACME 存储目录（caddy 用户可写；证书私钥落这里，见 §4）
 useradd --system --no-create-home --shell /usr/sbin/nologin caddy 2>/dev/null || true
 install -d -o caddy -g caddy -m 0700 /var/lib/super-error-log/caddy
+# caddy 需要能穿越数据目录父级到达自己的子目录：
+usermod -aG supererrorlog caddy
 
 # 环境变量文件（0600 root:root，内容见 §2）
 install -d -m 0755 /etc/super-error-log
@@ -42,11 +45,15 @@ touch /etc/super-error-log/env && chmod 0600 /etc/super-error-log/env
 SEL_MOBILE_MODE=cloud
 SEL_MOBILE_PORT=3101
 SEL_MOBILE_HOST=127.0.0.1
-SEL_MOBILE_DATA_DIR=/var/lib/super-error-log/mobile-recognition
+SEL_MOBILE_DATA_DIR=/var/lib/super-error-log
 SEL_MOBILE_AI_MODE=bailian
 SEL_MOBILE_AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 SEL_MOBILE_AI_API_KEY=<百炼密钥>
 SEL_MOBILE_AI_MODEL=<模型名>
+SEL_MOBILE_AI_MODEL_INVENTORY=<模型名>
+SEL_MOBILE_AI_MODEL_TRANSCRIBE=<模型名>
+SEL_MOBILE_AI_MODEL_VERIFY=<模型名>
+SEL_MOBILE_AI_MODEL_GROUND=<模型名>
 SEL_MOBILE_AI_TIMEOUT_MS=1800000
 ```
 
@@ -95,16 +102,23 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/caddy run --config /opt/super-error-log/current/deploy/caddy/Caddyfile
+ExecStart=/usr/local/bin/caddy run --config /opt/super-error-log/current/deploy/caddy/Caddyfile
 # Caddyfile 里 admin off：caddy reload 走 admin API 不可用，改配置一律 restart 本服务。
 Restart=on-failure
-# 443 需要权限：Debian 的 caddy 包自带 setcap；自装二进制用
-#   setcap cap_net_bind_service=+ep /usr/bin/caddy
+RestartSec=5s
+# 443 绑定能力：setcap 文件能力会被 NoNewPrivileges 抑制（实测踩坑），
+# 必须由 systemd 在 exec 前注入环境能力——两行同时存在才生效：
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
 # ACME 证书存储必须显式指定可写目录（caddy 用户无家目录时 XDG 路径不可用）。
-# 目录属主 caddy:034/05 权限；证书/私钥都落在这里，备份见 §6。
+# 注意父目录 /var/lib/super-error-log 须为 0750 且 caddy 属 supererrorlog 组，
+# 否则 caddy 无法穿越到自己的子目录（实测踩坑：open key: permission denied）。
 Environment=XDG_DATA_HOME=/var/lib/super-error-log/caddy
 ReadWritePaths=/var/lib/super-error-log/caddy
 User=caddy
+Group=caddy
 
 [Install]
 WantedBy=multi-user.target
@@ -146,7 +160,7 @@ systemctl restart super-error-log
 
 ```bash
 # 数据目录整体快照（照片+SQLite+配对状态）
-tar -czf /root/backup-sel-$(date +%Y%m%d-%H%M).tar.gz -C /var/lib/super-error-log mobile-recognition
+tar -czf /root/backup-sel-$(date +%Y%m%d-%H%M).tar.gz -C /var/lib/super-error-log .
 # Caddy ACME 证书存储（回滚重装 Caddy 后可恢复证书，避免重新走 ACME 质询）
 tar -czf /root/backup-sel-caddy-$(date +%Y%m%d-%H%M).tar.gz -C /var/lib/super-error-log/caddy .
 # 环境文件
