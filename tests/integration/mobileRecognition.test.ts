@@ -272,8 +272,9 @@ describe('mobile recognition HTTP contract', () => {
     expect(job.questions.map((question: any) => question.status)).toEqual(['needs_check', 'needs_check']);
     expect(verified).toHaveLength(2);
     expect(new Set(verified.map(value => value.candidateId)).size).toBe(2);
-    expect(verified.map(value => value.candidate.box.x).sort()).toEqual([0, .6]);
-    expect(verified.every(value => value.evidence.questionRegion.x === 0)).toBe(true);
+    // model-conversation layer encodes boxes as 0-1000 diagonal corners: {x:0,w:.4}→x1:0, {x:.6,w:.4}→x1:600
+    expect(verified.map(value => value.candidate.box.x1).sort()).toEqual([0, 600]);
+    expect(verified.every(value => value.evidence.questionRegion.x1 === 0)).toBe(true);
     for (const question of job.questions) expect((await request(`/v1/recognitions/${job.id}/questions/${question.id}/confirm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ revision: question.revision, action: 'confirm', sourceCompared: true }) })).status).toBe(409);
   });
 

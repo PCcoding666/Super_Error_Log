@@ -70,6 +70,7 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
 
   it.each([
     { label: 'absent', value: undefined },
+    { label: 'null', value: null },
     { label: 'empty', value: '' },
     { label: 'whitespace', value: ' \t\n ' },
   ])('keeps every inventory candidate and partial flag with $label optional warning', async ({ value }) => {
@@ -93,7 +94,10 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
     expect(result.warnings).toEqual(['页面右缘残缺', '  合成警告：右缘不完整  ']);
   });
 
-  it.each([null, 7, {}, [], false])('rejects nonstring optional inventory warning %j without retry and retains raw evidence', async value => {
+  // null warning is accepted as absent since 2026-09-20: real-device inventory
+  // (job bee5ecb3, qwen3.8-max) emits "warning": null on 8/13 candidates and the
+  // strict rejection killed the whole job. Real nonstring values stay rejected.
+  it.each([7, {}, [], false])('rejects nonstring optional inventory warning %j without retry and retains raw evidence', async value => {
     mode = 'inventory-warning'; optionalWarning = value; requests.length = 0; const attempts: VisionAttempt[] = [];
     await expect(make(attempts).inventory(source, context)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
     expect(requests).toHaveLength(1);
@@ -126,7 +130,9 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
       resumeCheckpoint: { evidence: validateEvidence(evidence()), verification: null, nextStage: 'verify', groundingPasses: 0 } });
     expect(requests.map(request => request.model)).toEqual(['verify-model']);
     const verifyInput = JSON.parse(requests[0].messages[1].content[0].text);
-    expect(verifyInput.candidate).toEqual(candidate);
+    // model-conversation layer encodes boxes as 0-1000 diagonal corners; the 0-1
+    // contract box {x:.6,y:.1,width:.3,height:.7} becomes {x1:600,y1:100,x2:900,y2:800}
+    expect(verifyInput.candidate).toEqual({ number: '4', box: { x1: 600, y1: 100, x2: 900, y2: 800 }, selectionEvidence: 'unmarked', partial: false });
     expect(verifyInput.candidateId).toBe(questionId);
     expect(requests[0].messages[1].content.at(-1).text).toContain('同题号不代表同一处');
     expect(requests[0].messages[1].content.at(-1).text).toContain('本题自己的原作过程或订正可以在题目裁图内');
