@@ -53,8 +53,8 @@
 
 ## 5. 完成定义（DoD）
 
-- [ ] 服务器 Task 1 RED 4 组先红后绿，门禁全绿；
-- [ ] iOS Task 2 完成，swift test 全绿，UI 测试通过；
-- [ ] 部署 0.1.0-manual-release 到服务器（无需重新打包 iOS——契约向后兼容，手机端可后续更新）；
-- [ ] 用户真机验证：118FA663 那张照片的 8 道 needs_check 题里任意一道，可走完「对照原图→放行」流程变已确认；
-- [ ] 审查归档（.superpowers/sdd/2026-09-20-manual-release/），计划勾选，统一推送 GitHub。
+- [x] 服务器 Task 1 RED→GREEN（mobileRecognition 31/31），门禁全绿：typecheck / build / 389 Vitest / 9 Playwright
+- [x] iOS Task 2 完成，swift test 51/51，UI 测试通过（含新增「人工放行解锁」与强化的「未看原图不显示放行按钮」）
+- [x] 部署 0.1.1-manual-release 到服务器（grep 实证 dist 含 manualRelease 分支；契约向后兼容）
+- [ ] 用户真机验证：118FA663 那张照片的 8 道 needs_check 题里任意一道，可走完「对照原图→放行」流程变已确认（**需要新装手机 App**——当前手机装的是 9-20 早上的构建，还没有放行按钮；iPhone 连线后跑 `xcrun devicectl device install app` 即可）
+- [x] 审查归档（.superpowers/sdd/2026-09-20-manual-release/task1-review.md），推送 GitHub（e163da6）
