@@ -1,6 +1,6 @@
 {
   "name": "super-error-log",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "纸错题延迟重做闭环 MVP：周末数字化，工作日纸质复习，下周结果回传",
   "type": "module",

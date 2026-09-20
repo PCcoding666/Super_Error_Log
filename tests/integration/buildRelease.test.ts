@@ -150,8 +150,9 @@ describe('release packager (scripts/build-release.sh)', () => {
     expect(run.status).toBe(0);
     expect(run.stdout).not.toMatch(/unspecified/);
     const tarballName = run.artifacts.find(name => name.endsWith('.tar.gz'))!;
-    // package.json version 是 0.1.0：文件名必须含真实版号。
-    expect(tarballName).toMatch(/0\.1\.0/);
+    // 文件名必须含 package.json 的真实版号（动态读取，不随发版腐烂）。
+    const pkgVersion = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')).version as string;
+    expect(tarballName).toContain(pkgVersion);
   });
 
   it('版号无法解析（node 不可用）时 fail-hard，不产 unspecified 兜底包', () => {

@@ -141,7 +141,10 @@ describe('mobile recognition HTTP contract', () => {
   });
 
   it('keeps successful candidates when another question fails and retries only the named failed question', async () => {
-    const vision = new FixtureVision(); const { request } = await setup(vision); const accepted = await json(await submit(request, await jpeg()));
+    const vision = new FixtureVision(); const { app, request } = await setup(vision);
+    // 本测试聚焦人工重试路径：关闭自动重试（自动重试由 mobileRecovery.test.ts 覆盖）。
+    (app.locals.mobileRecognitionService as MobileRecognitionService).autoRetryDelaysMs = [];
+    const accepted = await json(await submit(request, await jpeg()));
     const partial = await waitFor(request, accepted.job.id, 'partial');
     expect(partial.questions[0]).toMatchObject({ number: '1', status: 'ready', evidence: { questionText: '求 x 的值。' } });
     expect(partial.questions[1]).toMatchObject({ number: '2', status: 'failed' });
@@ -156,7 +159,10 @@ describe('mobile recognition HTTP contract', () => {
 
   it('publishes a valid transcription checkpoint and retries only the unfinished verification stage', async () => {
     const vision = new FixtureVision(); vision.fail.clear(); vision.candidates = [vision.candidates[0]!]; vision.checkpointFailure = true;
-    const { request } = await setup(vision); const accepted = await json(await submit(request, await jpeg())); const failed = await waitFor(request, accepted.job.id, 'failed');
+    // 本测试聚焦人工重试路径与检查点续跑：关闭自动重试（自动重试由 mobileRecovery.test.ts 覆盖）。
+    const { app, request } = await setup(vision);
+    (app.locals.mobileRecognitionService as MobileRecognitionService).autoRetryDelaysMs = [];
+    const accepted = await json(await submit(request, await jpeg())); const failed = await waitFor(request, accepted.job.id, 'failed');
     expect(failed.questions[0]).toMatchObject({ status: 'failed', evidence: { questionText: '求 x 的值。' }, verification: null, error: { stage: 'verify' } });
     expect(vision.transcribeCalls).toBe(1);
     vision.checkpointFailure = false;
@@ -173,9 +179,8 @@ describe('mobile recognition HTTP contract', () => {
     const first = await setup(firstVision); const accepted = await json(await submit(first.request, await jpeg()));
     const processing = await waitForJob(first.request, accepted.job.id, job => job.questions[0]?.evidence?.questionText === '求 x 的值。' && job.questions[0]?.status === 'processing');
     const secondVision = new FixtureVision(); secondVision.fail.clear(); secondVision.candidates = [secondVision.candidates[0]!];
-    const second = await setup(secondVision, first.root); const recovered = await json(await second.request(`/v1/recognitions/${processing.id}`));
-    expect(recovered.job.questions[0]).toMatchObject({ status: 'failed', evidence: { questionText: '求 x 的值。' }, error: { code: 'interrupted' } });
-    await second.request(`/v1/recognitions/${processing.id}/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: processing.questions[0].id }) });
+    const second = await setup(secondVision, first.root);
+    // 2026-09-20 起：自愈扫描在启动时自动恢复被中断的题目（检查点续跑、不重复转写），无需人工点重试。
     await waitFor(second.request, processing.id, 'completed');
     expect(secondVision.transcribeCalls).toBe(0);
     release();
@@ -372,25 +377,30 @@ describe('mobile recognition HTTP contract', () => {
     expect(vision.maximumActive).toBe(1);
   });
 
-  it('marks unfinished work interrupted after process restart and never calls vision until explicit retry', async () => {
+  it('marks unfinished work interrupted after process restart and auto-resumes it without manual retry', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-mobile-restart-')); roots.push(root); const bytes = await jpeg();
     const store = await MobileRecognitionStore.open(root); const { job } = await store.createJob({ idempotencyKey: crypto.randomUUID(), photoName: 'restart.jpg', sourceBytes: bytes, normalizedBytes: bytes });
     job.status = 'processing'; await store.saveJob(job);
-    const vision = new FixtureVision(); const { request } = await setup(vision, root);
-    const recovered = await json(await request(`/v1/recognitions/${job.id}`));
-    expect(recovered.job.status).toBe('interrupted'); expect(vision.inventoryCalls).toBe(0);
-    const retry = await request(`/v1/recognitions/${job.id}/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: null }) });
-    expect(retry.status).toBe(202);
-    await waitFor(request, job.id, 'partial'); expect(vision.inventoryCalls).toBe(1);
+    const vision = new FixtureVision(); const { app, request } = await setup(vision, root);
+    // 自动重试默认 2s/8s 退避会拖慢本测试；聚焦恢复语义，置零延迟。
+    (app.locals.mobileRecognitionService as MobileRecognitionService).autoRetryDelaysMs = [1, 1];
+    // 2026-09-20 起：启动即自愈扫描，被中断的任务自动回到队列跑完（Q2 恒失败 → partial），无需人工点重试。
+    await waitFor(request, job.id, 'partial');
+    expect(vision.inventoryCalls).toBe(1);
   });
 
-  it('marks pending questions interrupted even if a stale parent status says completed', async () => {
+  it('marks pending questions interrupted even if a stale parent status says completed, then auto-resumes them', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-mobile-stale-parent-')); roots.push(root); const bytes = await jpeg(); const store = await MobileRecognitionStore.open(root);
     const { job } = await store.createJob({ idempotencyKey: crypto.randomUUID(), photoName: 'stale.jpg', sourceBytes: bytes, normalizedBytes: bytes });
     job.status = 'completed'; job.phase = 'complete'; job.questions = [{ id: crypto.randomUUID(), number: '1', revision: 1, status: 'processing', selectionEvidence: 'unmarked', evidence: null, verification: null, questionMediaId: null, diagramMediaIds: [], error: null, confirmedAt: null }];
-    await store.saveJob(job); const vision = new FixtureVision(); const { request } = await setup(vision, root); const recovered = await json(await request(`/v1/recognitions/${job.id}`));
-    expect(recovered.job).toMatchObject({ status: 'interrupted', phase: 'questions', questions: [{ status: 'failed', error: { code: 'interrupted' } }] });
-    expect(vision.inventoryCalls).toBe(0);
+    await store.saveJob(job);
+    const vision = new FixtureVision(); vision.fail.clear(); const { request } = await setup(vision, root);
+    // 自愈扫描自动恢复孤儿子题：该合成记录缺少清单候选，恢复后干净地失败一次即停（不无限循环、不跑清单）。
+    const done = await waitFor(request, job.id, 'failed');
+    expect(done.questions[0].status).toBe('failed');
+    expect(done.questions[0].error.code).toBe('invalid_output');
+    expect(vision.inventoryCalls).toBe(0); // 题目级恢复不重复跑清单
+    expect(vision.questionCalls).toEqual([]); // 缺清单候选在模型调用前失败；不可重试错误不自动重试
   });
 
   it('stops reporting healthy or accepting submissions after an asynchronous storage fault', async () => {
@@ -456,11 +466,11 @@ describe('mobile recognition HTTP contract', () => {
     const questionAttempts = fs.readdirSync(path.join(first.root, 'jobs', accepted.job.id, 'attempts')).filter(filename => filename.includes(beforeRestart.questions[0].id));
     expect(questionAttempts).toEqual([]);
     service.stop();
-    const second = await setup(adapter(), first.root); const recovered = (await json(await second.request(`/v1/recognitions/${accepted.job.id}`))).job;
-    expect(recovered).toMatchObject({ status: 'interrupted', phase: 'questions', questions: [{ status: 'failed', error: { code: 'interrupted', retryable: true } }] });
-    const retry = await second.request(`/v1/recognitions/${accepted.job.id}/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: recovered.questions[0].id }) });
-    expect(retry.status).toBe(202);
+    const second = await setup(adapter(), first.root);
+    // 2026-09-20 起：自愈扫描在启动时自动恢复 interrupted 的可重试题目，无需人工点重试即跑完。
     await waitFor(second.request, accepted.job.id, 'completed');
+    const recovered = (await json(await second.request(`/v1/recognitions/${accepted.job.id}`))).job;
+    expect(recovered.questions[0].status).toBe('ready');
   });
 
   it('fails closed when persisting a model checkpoint hits storage EIO', async () => {

@@ -195,7 +195,7 @@ describeWithGuard('disk gate and interrupted recovery under stress', () => {
     expect(list.jobs).toHaveLength(0);
   });
 
-  it('服务进程中断后重启：在途任务标记 interrupted，不做自动恢复，显式 retry 可走通', { timeout: 180_000 }, async () => {
+  it('服务进程中断后重启：在途任务被自愈扫描自动恢复（无需人工重试）', { timeout: 180_000 }, async () => {
     const dataDir = makeTempDir();
     tempDirs.push(dataDir);
     const script = path.join(dataDir, 'stress-service.mjs');
@@ -255,28 +255,27 @@ describeWithGuard('disk gate and interrupted recovery under stress', () => {
     // 重启：同 dataDir、同 token 应失效前的设备令牌仍有效（令牌库持久化）。
     const second = start(); procs.push(second.proc);
     const secondInfo = await second.ready;
-    const recovered = await (await request(secondInfo.port, `/v1/recognitions/${job.id}`)).json() as { job?: { status: string; error?: { code: string }; questions: Array<{ id: string; status: string; error?: { code: string } }> } };
-    expect(recovered.job?.status).toBe('interrupted');
-    expect(recovered.job?.error?.code).toBe('interrupted');
-    // 不自动恢复：重启后任务停在 interrupted，不自行回到队列（等待 2s 再查仍是 interrupted）。
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    const still = await (await request(secondInfo.port, `/v1/recognitions/${job.id}`)).json() as { job?: { status: string } };
-    expect(still.job?.status).toBe('interrupted');
-    // 在途题目被标记 failed（error.code=interrupted，可恢复）。
-    const failedQuestion = recovered.job?.questions.find(question => question.status === 'failed');
-    expect(failedQuestion?.error?.code).toBe('interrupted');
-    // 显式恢复走【题目级】retry：null 整单重试只适用清单阶段（questions 阶段必须按题恢复）。
+    // 2026-09-20 起（真机验收反馈）：自愈扫描在启动时自动恢复被中断的任务，不再停在 interrupted 等人工点重试。
+    const resumed = await new Promise<boolean>(resolve => {
+      const deadline = Date.now() + 30_000;
+      const poll = async (): Promise<void> => {
+        const body = await (await request(secondInfo.port, `/v1/recognitions/${job.id}`)).json() as { job?: { status: string } };
+        if (body.job && body.job.status !== 'interrupted') { resolve(true); return; }
+        if (Date.now() > deadline) { resolve(false); return; }
+        // 250ms 轮询尊重云端 300 次/分钟/设备限流（200ms=300/分钟恰在边界）。
+        setTimeout(poll, 250);
+      };
+      void poll();
+    });
+    expect(resumed).toBe(true);
+    // 整单重试仍被拒（null questionId 只适用清单阶段；questions 阶段已由自愈接管）。
     const nullRetry = await request(secondInfo.port, `/v1/recognitions/${job.id}/retry`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: null })
     });
     expect(nullRetry.status).toBe(409);
     const nullBody = await nullRetry.json() as { error: { code: string } };
     expect(nullBody.error.code).toBe('not_retryable');
-    // 题目级 retry 走通（释放识别门在第二进程内：发 release 指令）。
-    const retry = await request(secondInfo.port, `/v1/recognitions/${job.id}/retry`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: failedQuestion!.id })
-    });
-    expect(retry.status).toBe(202);
+    // 释放识别门（第二进程内）：自动恢复的题名直接跑完，全程无人工重试。
     second.proc.stdin!.write('release\n');
     const terminal = await new Promise<{ status: string } | null>(resolve => {
       const deadline = Date.now() + 30_000;

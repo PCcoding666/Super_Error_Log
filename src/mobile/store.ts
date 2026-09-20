@@ -138,6 +138,10 @@ export class MobileRecognitionStore {
   async listJobs(): Promise<RecognitionJob[]> {
     return [...this.jobs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(publicJob);
   }
+  /** 自愈扫描用：返回含内部字段的完整任务快照（不做状态改写）。 */
+  async listStoredJobs(): Promise<StoredRecognitionJob[]> {
+    return [...this.jobs.values()].map(job => structuredClone(job));
+  }
 
   async saveJob(job: RecognitionJob | StoredRecognitionJob): Promise<void> {
     await this.locked(async () => {

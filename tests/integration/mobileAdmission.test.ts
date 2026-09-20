@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createMobileApp } from '../../src/mobile/router.js';
 import { PairingManager } from '../../src/mobile/pairing.js';
 import type { MobileVisionBoundary, VisionContext, VisionInventoryResult, VisionQuestionResult, InventoryCandidate } from '../../src/mobile/vision.js';
+import type { MobileRecognitionService } from '../../src/mobile/service.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
 
 const roots: string[] = [];
@@ -48,7 +49,7 @@ async function tempRoot(): Promise<string> {
   return root;
 }
 
-async function setupCloud(vision: MobileVisionBoundary, options: SetupOptions = {}): Promise<{ request: RequestFn; manager: PairingManager; base: string; token: string }> {
+async function setupCloud(vision: MobileVisionBoundary, options: SetupOptions = {}): Promise<{ request: RequestFn; manager: PairingManager; base: string; token: string; app: import('express').Express }> {
   const dataDir = await tempRoot();
   const manager = await PairingManager.open(dataDir);
   const admission = new AdmissionController({
@@ -62,7 +63,7 @@ async function setupCloud(vision: MobileVisionBoundary, options: SetupOptions = 
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const paired = await manager.redeem(manager.createSession().payload, crypto.randomUUID(), 'iPhone');
   const request: RequestFn = (url, init = {}) => fetch(`${base}${url}`, { ...init, headers: { authorization: `Bearer ${paired.token}`, ...init.headers } });
-  return { request, manager, base, token: paired.token };
+  return { request, manager, base, token: paired.token, app };
 }
 
 async function jpeg(color = '#ffffff'): Promise<Buffer> {
@@ -300,7 +301,9 @@ describe('per-question concurrency and image semaphore', () => {
       }
     }
     const vision = new GatedFlakyVision();
-    const { request } = await setupCloud(vision, { jobCapacity: 1 });
+    const { app, request } = await setupCloud(vision, { jobCapacity: 1 });
+    // 本测试聚焦人工重试的容量账目：关闭自动重试（自动重试由 mobileRecovery.test.ts 覆盖）。
+    (app.locals.mobileRecognitionService as MobileRecognitionService).autoRetryDelaysMs = [];
     const accepted = await submit(request, await jpeg());
     expect(accepted.status).toBe(202);
     const jobId = await idOf(accepted);
