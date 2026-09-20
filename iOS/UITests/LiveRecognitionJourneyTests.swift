@@ -228,10 +228,12 @@ final class LiveRecognitionJourneyTests: XCTestCase {
     app.buttons["完成"].tap()
     // 原图已打开 → 人工放行按钮出现；确认后走 manualRelease 通道
     reveal(app.buttons["manual-release"], in: app); app.buttons["manual-release"].tap()
-    XCTAssertTrue(app.alerts.buttons["确认放行"].waitForExistence(timeout: 5))
-    app.alerts.buttons["确认放行"].tap()
-    // 确认后回到列表；合成服务器收到了 manualRelease 请求
-    XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recognition-job-")).firstMatch.waitForExistence(timeout: 10))
+    // SwiftUI alert 按钮在辅助树里出现两次（含 DisclosureTriangle 幻影），用 firstMatch（与 confirm-stage-recovery 测试同款规避）。
+    let affirm = app.alerts.buttons.matching(identifier: "confirm-manual-release").firstMatch
+    XCTAssertTrue(affirm.waitForExistence(timeout: 5))
+    affirm.tap()
+    // 确认后题目页显示已确认状态；合成服务器收到了 manualRelease 请求
+    XCTAssertTrue(app.staticTexts["已确认，可去“复盘”回想这道题"].waitForExistence(timeout: 10))
     XCTAssertEqual(server.manualReleaseCount, 1)
   }
 
