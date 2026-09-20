@@ -3,7 +3,7 @@ import { AiError } from '../ai/errors.js';
 import { ChatClient, type ChatTrace, type Message, type ModelStage } from '../ai/chatClient.js';
 import { validateEvidence, type Evidence } from '../ai/evidence.js';
 import { cropPhoto, type Box } from '../media/images.js';
-import { decodeModelBox, decodeModelEvidence, encodeModelBox, encodeModelCandidate, encodeModelEvidence, reconcileBox } from './modelBox.js';
+import { decodeModelBox, decodeModelEvidence, encodeModelBox, encodeModelCandidate, encodeModelEvidence, expandCropMargin, reconcileBox } from './modelBox.js';
 import type { RecognitionStageCheckpoint, RecognitionVerification, SelectionEvidence } from './contracts.js';
 
 export interface InventoryCandidate {
@@ -217,7 +217,12 @@ export class BailianMobileVision implements MobileVisionBoundary {
   private async renderCrops(source: Buffer, evidence: Evidence, context: VisionContext): Promise<{ questionCrop: Buffer; diagramCrops: Buffer[] }> {
     const render = async (): Promise<{ questionCrop: Buffer; diagramCrops: Buffer[] }> => {
       try {
-        const questionCrop = await cropPhoto(source, evidence.questionRegion);
+        // Task 4: deterministic crop margin — the crop rectangle breathes slightly
+        // wider than the model's (candidate-anchored) questionRegion so tight boxes do
+        // not truncate printed numbers or the last line. Evidence stays untouched;
+        // diagram crops are NOT expanded (verify checks them for pollution and the
+        // student re-crops diagrams deliberately).
+        const questionCrop = await cropPhoto(source, expandCropMargin(evidence.questionRegion));
         const diagramCrops = await Promise.all(evidence.regions.filter(region => region.kind === 'diagram').map(region => cropPhoto(source, region.box)));
         return { questionCrop, diagramCrops };
       } catch { throw new MobileVisionError('invalid_output', '模型返回的裁图位置无法安全读取。', 'crop', false); }

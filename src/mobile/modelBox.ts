@@ -190,3 +190,43 @@ export function reconcileBox(modelBox: Box, candidateBox: Box): ReconciledBox {
   if (iou(box, candidateBox) < 0.1) warnings.push('题目区域与候选定位漂移，请核对裁图是否为本题。');
   return { box: round6Box(box), warnings };
 }
+
+/**
+ * Plan 2026-09-20 Task 4: deterministic crop-margin expansion (the "自动放大一圈" fix).
+ *
+ * Real-device regression (job 300D31DF) showed the model now anchors questionRegion
+ * field-for-field to the tight inventory candidate boxes — the old random drift that
+ * accidentally expanded crops is gone, so tight candidates produce truncated question
+ * crops (missing printed question numbers, missing second lines). The crop rectangle
+ * is expanded by a small deterministic margin BEFORE cropping:
+ *
+ * - left/right each +6% of box width, clamped to [1%, 3%] of the page;
+ * - top/bottom each +20% of box height, clamped to [0.4%, 1.2%] of the page.
+ *
+ * Rationale for the ratios (measured on real photo 300D31DF, width 3024px):
+ * - a printed question number ("7.") needs ≈3% of page width → 1.5%/side minimum
+ *   headroom is not enough, 6%-of-width on a 0.6-wide box lands at the 3% cap and
+ *   covers the observed number offsets (170→103-120 in 0-1000 units, i.e. up to 6%);
+ * - one text line ≈1.2% of page height → 20%-of-height on a 0.05-tall box = 1% reaches
+ *   just above one extra line (Q12's missing second line sat 4% below the box bottom);
+ * - symmetric ratios to 25%/25% in the web-side expandCropBox (cropAudit.ts) but
+ *   tighter: question crops are re-checked by the verify stage against neighbour
+ *   pollution, and an over-wide crop mostly risks questionCropPure, which the loop
+ *   then corrects downward.
+ *
+ * Expansion applies ONLY at crop time: evidence.questionRegion stays the model's
+ * auditable proposal (AI proposes, student verifies). The function is pure and
+ * clamps into [0,1] so the result always passes validateBox; margins never compound
+ * across grounding passes because they are never written back into evidence.
+ */
+export function expandCropMargin(box: Box): Box {
+  const dx = Math.min(0.03, Math.max(0.01, box.width * 0.06));
+  const dy = Math.min(0.012, Math.max(0.004, box.height * 0.2));
+  const x = Math.max(0, box.x - dx);
+  const y = Math.max(0, box.y - dy);
+  return round6Box({
+    x, y,
+    width: Math.min(1, box.x + box.width + dx) - x,
+    height: Math.min(1, box.y + box.height + dy) - y,
+  });
+}

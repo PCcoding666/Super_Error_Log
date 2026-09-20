@@ -202,3 +202,98 @@ describe('mobile vision coordinate post-processing (reconcileBox)', () => {
     expect(result.verification.issues.join('')).toContain('高度异常');
   });
 });
+
+// Plan 2026-09-20 Task 4 RED: deterministic crop-margin expansion before cropping.
+// Real-device regression (job 300D31DF) showed the model now anchors to the tight
+// inventory candidate boxes (model box == candidate box field-for-field) — the old
+// random drift that accidentally expanded crops is gone, so tight candidates produce
+// truncated question crops. The fix expands the CROP rectangle (not the stored
+// evidence box) by a small deterministic margin before renderCrops: left/right each
+// +6% of box width (min 1%, max 3% of the page), top/bottom each +20% of box height
+// (min 0.4%, max 1.2%), clamped to the image. Evidence stays the model's auditable
+// proposal (AI proposes, student verifies) — only the rendered crop breathes.
+describe('mobile vision crop-margin expansion (expandCropMargin)', () => {
+  let server: http.Server; let baseUrl = ''; let source: Buffer; const requests: any[] = [];
+  let transcribeRegion: Record<string, unknown> = { x: 0.19, y: 0.148, width: 0.66, height: 0.035 };
+  let verifyPasses = true;
+  const evidenceWith = (region: Record<string, unknown>) => ({
+    version: 1, questionNumber: '2', questionText: '若 x=0 是一元二次方程的根，求 a 的值。', subject: '数学', chapter: '', knowledgeTags: [], questionType: '填空题',
+    questionRegion: region, requiresDiagram: false,
+    regions: [], observations: [], uncertainties: [] });
+  // 120x90 source: dx = clamp(width*6%, 1%, 3%); dy = clamp(height*20%, 0.4%, 1.2%).
+  const candidate = { number: '2', box: { x: 0.235, y: 0.162, width: 0.68, height: 0.025 }, confidence: 0.95, selectionEvidence: 'corrected' as const, partial: false };
+  // The expanded crop box mirrors the production formula (the implementation under test).
+  const expand = (region: { x: number; y: number; width: number; height: number }) => {
+    const dx = Math.min(0.03, Math.max(0.01, region.width * 0.06));
+    const dy = Math.min(0.012, Math.max(0.004, region.height * 0.2));
+    const x = Math.max(0, region.x - dx); const y = Math.max(0, region.y - dy);
+    return { x, y, width: Math.min(1, region.x + region.width + dx) - x, height: Math.min(1, region.y + region.height + dy) - y };
+  };
+  // cropPhoto's pixel mapping on the 120x90 fixture (floor left/top, ceil right/bottom).
+  const pixels = (region: { x: number; y: number; width: number; height: number }): { width: number; height: number } => ({
+    width: Math.min(120, Math.ceil((region.x + region.width) * 120)) - Math.floor(region.x * 120),
+    height: Math.min(90, Math.ceil((region.y + region.height) * 90)) - Math.floor(region.y * 90),
+  });
+
+  beforeAll(async () => {
+    source = await sharp({ create: { width: 120, height: 90, channels: 3, background: { r: 245, g: 235, b: 225 } } }).jpeg().toBuffer();
+    server = http.createServer(async (req, res) => {
+      let raw = ''; for await (const chunk of req) raw += chunk; const body = JSON.parse(raw); requests.push(body);
+      const value = body.model === 'verify-model'
+        ? (verifyPasses
+          ? { textComplete: true, questionCropComplete: true, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: [] }
+          : { textComplete: true, questionCropComplete: false, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: ['题目裁图右缘疑似截断'] })
+        : evidenceWith(transcribeRegion);
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(value) } }], usage: { prompt_tokens: 31, completion_tokens: 17 } }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
+  });
+  afterAll(() => server.close());
+  const make = () => new BailianMobileVision({ baseUrl, apiKey: 'synthetic-secret', timeoutMs: 2000, bailianOnly: false,
+    models: { inventory: 'inventory-model', transcribe: 'transcribe-model', verify: 'verify-model', ground: 'ground-model' } });
+  const context = { jobId: crypto.randomUUID(), sourceHash: crypto.createHash('sha256').update('source').digest('hex'), questionId: 'q1' };
+
+  it('crops with a margin wider than the raw evidence box, while evidence.questionRegion stays untouched', async () => {
+    transcribeRegion = { x: 0.19, y: 0.148, width: 0.66, height: 0.035 }; requests.length = 0;
+    const result = await make().recognizeQuestion(source, candidate, context);
+    // stored evidence box must remain the model's raw (reconciled) proposal — the
+    // margin exists only at crop time (auditable; web-side expandCropBox precedent)
+    expect(result.evidence.questionRegion).toEqual({ x: 0.19, y: 0.148, width: 0.66, height: 0.035 });
+    const expected = pixels(expand({ x: 0.19, y: 0.148, width: 0.66, height: 0.035 }));
+    const actual = await sharp(result.questionCrop).metadata();
+    expect(actual.width).toBe(expected.width);
+    expect(actual.height).toBe(expected.height);
+  });
+
+  it('clamps the margin at the page edge (box near the right/bottom edge)', async () => {
+    // x+width+dx = 0.995+0.01 > 1 and y+height+dy = 0.998+0.004 > 1 — both edges
+    // get clamped to the image boundary instead of overflowing it.
+    transcribeRegion = { x: 0.965, y: 0.978, width: 0.03, height: 0.02 }; requests.length = 0;
+    const result = await make().recognizeQuestion(source, candidate, context);
+    const expected = pixels(expand({ x: 0.965, y: 0.978, width: 0.03, height: 0.02 }));
+    const actual = await sharp(result.questionCrop).metadata();
+    expect(actual.width).toBe(expected.width);
+    expect(actual.height).toBe(expected.height);
+    // clamped at the page: crop never exceeds the image bounds
+    expect(actual.width).toBeLessThanOrEqual(120);
+    expect(actual.height).toBeLessThanOrEqual(90);
+  });
+
+  it('does not compound the margin across grounding passes (ground echoes the same box)', async () => {
+    // First verify fails → ground runs; ground ECHOES the same region (model box ==
+    // candidate-anchored box, the observed anchoring behaviour). The final crop after
+    // grounding must equal a SINGLE margin expansion of the echoed region, not two
+    // stacked expansions (margins apply at crop time, never rewritten into evidence).
+    transcribeRegion = { x: 0.19, y: 0.148, width: 0.66, height: 0.035 }; requests.length = 0; verifyPasses = false;
+    const result = await make().recognizeQuestion(source, candidate, context);
+    verifyPasses = true;
+    const groundRequest = requests.find(request => request.model === 'ground-model');
+    expect(groundRequest).toBeDefined();
+    const expected = pixels(expand({ x: 0.19, y: 0.148, width: 0.66, height: 0.035 }));
+    const actual = await sharp(result.questionCrop).metadata();
+    expect(actual.width).toBe(expected.width);
+    expect(actual.height).toBe(expected.height);
+  });
+});

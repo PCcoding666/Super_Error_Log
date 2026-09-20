@@ -54,6 +54,19 @@
 - 通过标准：新照片 cropComplete 失败 ≤10%，needs_check 题 verify issues 无「截断/混入邻题」类坐标错误；
 - 结果回写 `docs/quality/2026-09-17-cloud-recognition-acceptance.md` 真机清单。
 
+## 4b. Task 4：裁图边距扩展（锚定问题的确定性修复，2026-09-20 增补）
+
+Task 3 中期报告暴露「锚定」新失败模式：模型框与候选框逐字段一致，旧随机漂移的意外放大消失，紧凑候选框导致裁图截断（缺印刷题号、缺第二行）。用户拍板方案 B：服务端确定性边距扩展。
+
+**设计**（裁图时刻变换，不写回证据——AI 提建议、学生核对的不变量不动）：
+- 左右各 +6% 框宽（页宽钳制 [1%, 3%]）；上下各 +20% 框高（页高钳制 [0.4%, 1.2%]）；
+- 系数依据：题号 "7." 需 ≈3% 页宽；一行文字 ≈1.2% 页高（300D31DF 实测）；web 管线先例 expandCropBox 25%/25% 收紧而来（verify 会复核邻题污染，过宽风险由闭环纠回）；
+- 只作用于题目裁图（questionCrop）；图示裁图不扩展；边距永不复合（grounding 回声裁图=单次扩展，有回归测试）。
+
+**RED→GREEN**：3 组测试（扩展且证据框不变、页边钳制、grounding 不复合）先红后绿；2 个旧测试的期望裁图同步应用 expandCropMargin。
+
+**审查**：`.superpowers/sdd/2026-09-20-bbox-format/task4-review.md`——无 F1 缺陷；F2×2 核对闭环；边界对抗探测（全页框/退化窄条）全过。
+
 ## 5. 风险与对策
 
 | 风险 | 对策 |
@@ -67,6 +80,7 @@
 
 - [x] Task 1 RED 测试 5 组全部先红后绿（实际 7 组：计划 5 + 审查发现 2 组回归守护；审查报告 `.superpowers/sdd/2026-09-20-bbox-format/task1-review.md`，F1×2 已闭环）
 - [x] Task 2 RED 测试 3 组全部先红后绿（审查报告 `.superpowers/sdd/2026-09-20-bbox-format/task2-review.md`，F1 陈旧警告 + F2 测试隔离已闭环）
-- [x] 全量门禁绿：typecheck / build / 368 Vitest / 9 Playwright（Task 1/2/3 三轮均达成；368 含 Task 3 的题号规则与 null 容忍测试）
-- [ ] Task 3 真机回归：新照片坐标类失败 ≤10%（**未达成，中期报告 `.superpowers/sdd/2026-09-20-bbox-format/task3-interim-report.md`**：0-1000 词表消除了随机漂移、A613 坐标类失败 5→3，但暴露「锚定」新模式（模型框=候选框）与 5 处照片物理右缘截断；两个计划外 F1（warning:null 崩死、候选框不含题号）已修复。待用户决策：重拍新照片 / 方向 B 确定性边距扩展立新计划）
+- [x] Task 4（增补）RED 测试 3 组先红后绿（审查报告 `.superpowers/sdd/2026-09-20-bbox-format/task4-review.md`，无 F1；裁图边距扩展上线）
+- [x] 全量门禁绿：typecheck / build / 381 Vitest / 9 Playwright（Task 4 后：378+3 新增；stressTenPhotos 并行墙钟超时为负载假失败，单独复跑全过）
+- [ ] Task 3 真机回归：新照片坐标类失败 ≤10%（**未达成，中期报告 `.superpowers/sdd/2026-09-20-bbox-format/task3-interim-report.md`**：0-1000 词表消除了随机漂移、A613 坐标类失败 5→3，但暴露「锚定」新模式（模型框=候选框）与 5 处照片物理右缘截断；两个计划外 F1（warning:null 崩死、候选框不含题号）已修复。Task 4 边距扩展已上线，待部署后重跑两张照片验证)
 - [ ] 实验报告已归档，计划勾选，会话结束统一推送 GitHub

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import sharp from 'sharp';
 import { cropPhoto } from '../../src/media/images.js';
 import { validateEvidence } from '../../src/ai/evidence.js';
+import { expandCropMargin } from '../../src/mobile/modelBox.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BailianMobileVision, MobileVisionError, type VisionAttempt } from '../../src/mobile/vision.js';
 
@@ -173,7 +174,9 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
     expect(parts.at(-1).text).toContain('顶层JSON对象，不是数组');
     for (const field of ['textComplete', 'questionCropComplete', 'questionCropPure', 'transcriptionMatches', 'diagramSafe', 'issues']) expect(parts.at(-1).text).toContain(`"${field}"`);
     expect(parts.at(-1).text).toContain('不得因字段存在就判定成功');
-    const expected = [source, await cropPhoto(source, evidence().questionRegion), await cropPhoto(source, evidence().regions[0]!.box)];
+    // Task 4: question crops render with the deterministic margin expansion; diagram
+    // crops stay on the raw model box.
+    const expected = [source, await cropPhoto(source, expandCropMargin(evidence().questionRegion)), await cropPhoto(source, evidence().regions[0]!.box)];
     expect(parts.filter((part: any) => part.type === 'image_url').map((part: any) => Buffer.from(part.image_url.url.split(',')[1], 'base64'))).toEqual(expected);
     expect(requests.filter(request => request.model === 'verify-model')).toHaveLength(1);
     expect(attempts.filter(attempt => attempt.stage === 'verify')).toHaveLength(1);
@@ -194,7 +197,7 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
     expect(parts.at(-1).text).toContain('坐标只参照第1张完整原图，绝不能使用裁图坐标');
     expect(parts.at(-1).text).toContain('原样返回有问题的旧裁框并宣称成功');
     expect(parts.at(-1).text).toContain('完整Evidence JSON契约');
-    const expected = [source, await cropPhoto(source, previous.questionRegion), await cropPhoto(source, previous.regions[0]!.box)];
+    const expected = [source, await cropPhoto(source, expandCropMargin(previous.questionRegion)), await cropPhoto(source, previous.regions[0]!.box)];
     expect(parts.filter((part: any) => part.type === 'image_url').map((part: any) => Buffer.from(part.image_url.url.split(',')[1], 'base64'))).toEqual(expected);
     expect(requests).toHaveLength(1); expect(attempts).toHaveLength(1);
     expect(attempts[0]).toMatchObject({ stage: 'ground', error: { code: 'invalid_output' } });
