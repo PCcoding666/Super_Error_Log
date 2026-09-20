@@ -82,5 +82,5 @@ Task 3 中期报告暴露「锚定」新失败模式：模型框与候选框逐�
 - [x] Task 2 RED 测试 3 组全部先红后绿（审查报告 `.superpowers/sdd/2026-09-20-bbox-format/task2-review.md`，F1 陈旧警告 + F2 测试隔离已闭环）
 - [x] Task 4（增补）RED 测试 3 组先红后绿（审查报告 `.superpowers/sdd/2026-09-20-bbox-format/task4-review.md`，无 F1；裁图边距扩展上线）
 - [x] 全量门禁绿：typecheck / build / 381 Vitest / 9 Playwright（Task 4 后：378+3 新增；stressTenPhotos 并行墙钟超时为负载假失败，单独复跑全过）
-- [ ] Task 3 真机回归：新照片坐标类失败 ≤10%（**未达成，且在这两张照片上结构性不可达**：300D31DF 有 5 题物理右缘截断（上限 62% ready）、A6132DE8 有 3 题紧凑列候选重叠（上限 50% ready）。Task 4 边距修复已交付并验证：同图重跑 ready 4→7（A613 1→3、300D 3→4），Q7 题号回收实证左边距设计正确。剩余失败分类与下一步选项见 `.superpowers/sdd/2026-09-20-bbox-format/task4-regression.md`；达成该目标需要外部条件改变：重拍 300D31DF（含右列）或做 inventory 行切分（方向 C））
+- [ ] Task 3 真机回归：新照片坐标类失败 ≤10%（**未达成，且在这两张照片上结构性不可达**：300D31DF 有 5 题物理右缘截断（上限 62% ready）、A6132DE8 有 3 题紧凑列候选重叠（上限 50% ready）。Task 4 边距修复已交付并验证：同图重跑 ready 4→7（A613 1→3、300D 3→4），Q7 题号回收实证左边距设计正确。剩余失败分类与下一步选项见 `.superpowers/sdd/2026-09-20-bbox-format/task4-regression.md`。**2026-09-20 23:22 用户拍板：接受现状，剩余 needs_check 题目走 App 内人工核对——本计划就此关闭，重拍/行切分留作未来选项，不再排期**）
 - [x] 实验报告已归档（task1/2/4-review + task3-interim + task4-regression），计划勾选，会话结束统一推送 GitHub（已推 07dba2f，无强推）
