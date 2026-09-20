@@ -113,6 +113,8 @@ struct RecognitionQuestion: Codable, Equatable, Identifiable, Sendable {
   let diagramMediaIds: [String]
   var error: RecognitionFailure?
   let confirmedAt: Date?
+  /// 人工放行标记（可选，旧记录无此字段则解码为 nil 视同 false）：needs_check 时学生对照原图后主动确认。
+  var manualRelease: Bool? = nil
 
   var coreValue: RecognitionQuestion {
     var copy = self; copy.candidateBox = nil; copy.error?.recoverable = nil; return copy
@@ -124,6 +126,16 @@ struct RecognitionQuestion: Codable, Equatable, Identifiable, Sendable {
   var active: Bool { status == "queued" || status == "processing" }
   var marked: Bool { selectionEvidence == "marked_wrong" || selectionEvidence == "corrected" }
   var canAccept: Bool {
+    // 人工放行（Task 2）：学生对照原图后主动拍板替代 AI 核对。仍需证据与题目裁图真实存在
+    // （没有可核对对象不能进复盘），图示仍要求媒体齐备——缺图的题放了也看不了。
+    if manualRelease == true, status == "confirmed",
+      let evidence, evidence.version == 1, !evidence.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      let questionMediaId, UUID(uuidString: questionMediaId) != nil {
+      let diagrams = evidence.regions.filter { $0.kind == "diagram" }
+      return (!evidence.requiresDiagram || !diagrams.isEmpty)
+        && diagrams.count == diagramMediaIds.count
+        && diagramMediaIds.allSatisfy { UUID(uuidString: $0) != nil }
+    }
     guard ["ready", "confirmed"].contains(status), verification?.passed == true,
       let evidence, evidence.version == 1, !evidence.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       evidence.uncertainties.isEmpty, let questionMediaId, UUID(uuidString: questionMediaId) != nil

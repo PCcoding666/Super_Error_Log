@@ -120,14 +120,14 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
     return try await job(request)
   }
 
-  func confirm(_ id: String, question: RecognitionQuestion, skip: Bool, sourceCompared: Bool) async throws -> RecognitionJob {
+  func confirm(_ id: String, question: RecognitionQuestion, skip: Bool, sourceCompared: Bool, manualRelease: Bool = false) async throws -> RecognitionJob {
     try validateID(id); try validateID(question.id)
-    guard skip ? !question.active : question.status == "ready" && question.canAccept && sourceCompared
+    guard skip ? !question.active : sourceCompared && (question.status == "ready" && question.canAccept || manualRelease && question.status == "needs_check")
     else { throw StudyError.selectionNotReady }
     var request = makeRequest("v1/recognitions/\(id)/questions/\(question.id)/confirm", method: "POST")
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.httpBody = try JSONSerialization.data(withJSONObject: ["revision": question.revision,
-      "action": skip ? "skip" : "confirm", "sourceCompared": sourceCompared])
+      "action": skip ? "skip" : "confirm", "sourceCompared": sourceCompared, "manualRelease": manualRelease])
     return try await job(request)
   }
 

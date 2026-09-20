@@ -22,6 +22,7 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
   private let lock = NSLock()
   private var stopped = false
   private var confirmed = false
+  private var manualReleases = 0
   private var count = 0
   private var uploads = 0
   private var recoveries = 0
@@ -36,6 +37,7 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
   var uploadCount: Int { lock.withLock { uploads } }
   var recoveryCount: Int { lock.withLock { recoveries } }
   var redeemCount: Int { lock.withLock { redeems } }
+  var manualReleaseCount: Int { lock.withLock { manualReleases } }
 
   @MainActor init(needsCheck: Bool = false, longStem: Bool = false, recoveryFailure: Bool = false,
     cloudHealth: CloudHealth? = nil) throws {
@@ -153,14 +155,22 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
       return
     }
     if path.contains("/media/") { respond(descriptor, data: image, mime: "image/jpeg"); return }
-    if path.hasSuffix("/confirm") { lock.withLock { confirmed = true } }
+    if path.hasSuffix("/confirm") {
+      // manualRelease 请求体携带 manualRelease:true；回环/云两种通道都从这里统计。
+      let bodyText = String(data: input[bodyStart...], encoding: .utf8) ?? ""
+      if bodyText.contains("\"manualRelease\":true") { lock.withLock { manualReleases += 1 } }
+      lock.withLock { confirmed = true }
+    }
     if path.hasSuffix("/retry"), parts[0] == "POST" { lock.withLock { recoveries += 1 } }
     let accepted = lock.withLock { confirmed }
     let failed = recoveryFailure && recoveryCount == 0
     let status = failed ? "failed" : accepted ? "confirmed" : needsCheck ? "needs_check" : "ready"
+    // manualRelease 标记在已确认题上：合成服务器在 confirm 请求时已收到该标志，GET 时透传。
+    let released = lock.withLock { manualReleases > 0 }
     let question: [String: Any] = [
       "id": Self.questionID, "number": "合成1", "revision": accepted ? 5 : recoveryCount > 0 ? 4 : 3,
       "status": status, "selectionEvidence": "corrected",
+      "manualRelease": released,
       "candidateBox": ["x": 0.6, "y": 0.1, "width": 0.3, "height": 0.7],
       "evidence": ["version": 1, "questionNumber": "合成1", "questionText": printedStem, "subject": "数学", "chapter": "", "knowledgeTags": ["合成测试"], "questionType": "计算",
         "questionRegion": ["x": 0.1, "y": 0.1, "width": 0.8, "height": 0.7],

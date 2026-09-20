@@ -57,6 +57,8 @@ export interface RecognitionQuestion {
   diagramMediaIds: string[];
   error: RecognitionFailure | null;
   confirmedAt: string | null;
+  /** 人工放行标记：needs_check 时学生对照原图后主动确认（AI 未通过完整性核对）。 */
+  manualRelease?: boolean;
 }
 
 export interface RecognitionJob {

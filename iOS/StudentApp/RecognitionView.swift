@@ -51,6 +51,7 @@ struct RecognitionQuestionView: View {
   @State private var source: PhotoReference?
   @State private var originalOpened = false
   @State private var compared = false
+  @State private var manualReleaseRequested = false
   private var task: LocalRecognitionTask? { store.state.recognitionTasks.first { $0.id == taskID } }
   private var question: RecognitionQuestion? { task?.job?.questions.first { $0.id == questionID } }
 
@@ -124,6 +125,19 @@ struct RecognitionQuestionView: View {
           if question.status == "confirmed" { Label("已确认，可去“复盘”回想这道题", systemImage: "checkmark.circle").foregroundStyle(Palette.teal) }
           if question.status == "needs_check" {
             Button("保留待核对，稍后再看") { dismiss() }.accessibilityIdentifier("keep-unclear")
+            // Task 2（人工放行）：学生对照原图后主动拍板。按钮仅在看过完整原图后出现；
+            // 点击后弹确认（明确这是人工放行、AI 没把握），确认后走 manualRelease 通道。
+            if originalOpened, question.evidence != nil {
+              Button("我已对照原图，确认放行这道题") { manualReleaseRequested = true }
+                .accessibilityIdentifier("manual-release")
+                .alert("确认人工放行？", isPresented: $manualReleaseRequested) {
+                  Button("确认放行") { Task { await store.act(taskID: taskID, questionID: questionID, sourceCompared: true, manualRelease: true) } }
+                    .accessibilityIdentifier("confirm-manual-release")
+                  Button("暂不放行", role: .cancel) {}
+                } message: { Text("AI 没有把握这题的裁图是否完整准确。你刚才已对照过完整原图；确认后这道题将标记为已确认并进入复盘。") }
+            } else if question.evidence != nil {
+              Text("对照完整原图后，可选择放行这道题进入复盘。").font(.caption).foregroundStyle(Palette.muted)
+            }
           }
           if question.status == "failed", question.error?.canRecover == true {
             RecoveryButton(title: "重新识别这道题", scope: "这道题") { await store.act(taskID: taskID, questionID: questionID, retry: true) }

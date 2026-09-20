@@ -168,7 +168,7 @@ export class MobileRecognitionService {
     }
   }
 
-  async confirm(jobId: string, questionId: string, input: { revision: number; action: 'confirm' | 'skip'; sourceCompared?: boolean }): Promise<RecognitionJob> {
+  async confirm(jobId: string, questionId: string, input: { revision: number; action: 'confirm' | 'skip'; sourceCompared?: boolean; manualRelease?: boolean }): Promise<RecognitionJob> {
     this.assertStorageAvailable();
     await this.requireStored(jobId);
     const job = await this.persistTransition(() => this.store.updateJob(jobId, current => {
@@ -177,9 +177,19 @@ export class MobileRecognitionService {
       if (question.revision !== input.revision) throw new MobileRequestError(409, 'stale_revision', '题目已更新，请重新查看后再确认。');
       if (input.action === 'confirm') {
         const candidate = current.inventoryCandidates[questionId];
-        if (input.sourceCompared !== true || !allChecksPass(question, candidate) || question.status !== 'ready'
-          || unresolvedOccurrence(current, question) || occurrenceConflict(current, question)) throw new MobileRequestError(409, 'confirmation_required', '请先对照原图并解决所有不确定项。');
-        question.status = 'confirmed'; question.confirmedAt = now();
+        if (input.sourceCompared !== true) throw new MobileRequestError(409, 'confirmation_required', '请先对照原图并解决所有不确定项。');
+        if (input.manualRelease === true) {
+          // 人工放行（needs_check）：学生对照原图后主动拍板。不要求 AI 五项全过，
+          // 但保留原 issues 并追加审计标记；同题号冲突与未决冲突仍不放行。
+          if (question.status !== 'needs_check') throw new MobileRequestError(409, 'confirmation_required', '该题无需人工放行，请按常规流程确认。');
+          if (unresolvedOccurrence(current, question) || occurrenceConflict(current, question)) throw new MobileRequestError(409, 'confirmation_required', '同题号定位存在冲突，请先对照原图解决。');
+          if (question.verification && !question.verification.issues.includes('人工放行：学生已对照原图确认本题（AI 未通过完整性核对）。')) question.verification.issues.push('人工放行：学生已对照原图确认本题（AI 未通过完整性核对）。');
+          question.status = 'confirmed'; question.confirmedAt = now(); question.manualRelease = true;
+        } else {
+          if (!allChecksPass(question, candidate) || question.status !== 'ready'
+            || unresolvedOccurrence(current, question) || occurrenceConflict(current, question)) throw new MobileRequestError(409, 'confirmation_required', '请先对照原图并解决所有不确定项。');
+          question.status = 'confirmed'; question.confirmedAt = now();
+        }
       } else if (input.action === 'skip') {
         if (question.status === 'queued' || question.status === 'processing') throw new MobileRequestError(409, 'question_active', '题目仍在识别中，请等待本轮完成后再操作。');
         if (question.status === 'confirmed') throw new MobileRequestError(409, 'already_confirmed', '已确认题目不能直接跳过。');

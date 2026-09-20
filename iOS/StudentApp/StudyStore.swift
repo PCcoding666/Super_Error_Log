@@ -424,7 +424,7 @@ final class StudyStore {
     resumePolling()
   }
 
-  func act(taskID: UUID, questionID: String?, skip: Bool = false, sourceCompared: Bool = false, retry: Bool = false) async {
+  func act(taskID: UUID, questionID: String?, skip: Bool = false, sourceCompared: Bool = false, retry: Bool = false, manualRelease: Bool = false) async {
     guard let client, let task = state.recognitionTasks.first(where: { $0.id == taskID }),
       let job = task.job, !busyTasks.contains(taskID) else { return }
     busyTasks.insert(taskID)
@@ -437,7 +437,7 @@ final class StudyStore {
           await validateSavedMedia()
           guard hasCachedDiagrams(job: job, question: question) else { throw RecognitionClientError.missingMedia }
         }
-        updated = try await client.confirm(job.id, question: question, skip: skip, sourceCompared: sourceCompared)
+        updated = try await client.confirm(job.id, question: question, skip: skip, sourceCompared: sourceCompared, manualRelease: manualRelease)
       } else { return }
       if change({ try $0.ingest(updated, photoName: task.photoName) }) {
         try await cacheMedia(updated, client: client)

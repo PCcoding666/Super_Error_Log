@@ -223,7 +223,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
     try {
       const body = bodyObject(request.body);
       if (!Number.isSafeInteger(body.revision) || (body.action !== 'confirm' && body.action !== 'skip') || 'evidence' in body) throw new MobileRequestError(400, 'invalid_request', '确认请求不合法。');
-      response.json({ job: await service.confirm(id(request.params.id), id(request.params.questionId), { revision: body.revision as number, action: body.action, sourceCompared: body.sourceCompared as boolean | undefined }) });
+      response.json({ job: await service.confirm(id(request.params.id), id(request.params.questionId), { revision: body.revision as number, action: body.action, sourceCompared: body.sourceCompared as boolean | undefined, manualRelease: body.manualRelease as boolean | undefined }) });
     } catch (error) { next(error); }
   });
   app.get('/v1/recognitions/:id/media/:mediaId', async (request, response, next) => {

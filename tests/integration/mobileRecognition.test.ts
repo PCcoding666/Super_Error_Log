@@ -208,6 +208,32 @@ describe('mobile recognition HTTP contract', () => {
     expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
   });
 
+  it('lets the student manually release a needs_check question after comparing the original, with an audit trail', async () => {
+    // Manual-release path: a needs_check question (verify found an issue) can be confirmed
+    // when the student explicitly flags sourceCompared + manualRelease. Ready-path and all
+    // existing guards stay untouched. Server keeps the original issues and stamps a
+    // manual-release audit issue on the question for traceability.
+    const vision = new FixtureVision();
+    vision.fail.clear(); vision.candidates = [vision.candidates[0]!];
+    vision.checks = { ...vision.checks, questionCropComplete: false, issues: ['题目裁图右缘疑似截断'] };
+    const { request } = await setup(vision); const accepted = await json(await submit(request, await jpeg()));
+    const job = await waitFor(request, accepted.job.id, 'completed');
+    const question = job.questions[0];
+    expect(question.status).toBe('needs_check');
+    const endpoint = `/v1/recognitions/${job.id}/questions/${question.id}/confirm`;
+    const post = (body: Record<string, unknown>) => request(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    // Without manualRelease: still 409 (existing behaviour, prevents accidental release)
+    expect((await post({ revision: question.revision, action: 'confirm', sourceCompared: true })).status).toBe(409);
+    // With manualRelease but without sourceCompared: 409 (must have opened the original photo)
+    expect((await post({ revision: question.revision, action: 'confirm', manualRelease: true })).status).toBe(409);
+    // Both present: released, audit trail preserved
+    const released = await json(await post({ revision: question.revision, action: 'confirm', sourceCompared: true, manualRelease: true }));
+    expect(released.job.questions[0].status).toBe('confirmed');
+    expect(released.job.questions[0].confirmedAt).not.toBeNull();
+    expect(released.job.questions[0].verification.issues).toContain('题目裁图右缘疑似截断'); // original AI issue kept
+    expect(released.job.questions[0].verification.issues.join('')).toContain('人工放行'); // audit marker
+  });
+
   it('does not finalize a job while another retried question is still queued or processing', async () => {
     const vision = new FixtureVision(); vision.fail = new Set(['1', '2']); const { request } = await setup(vision); const accepted = await json(await submit(request, await jpeg())); const failed = await waitFor(request, accepted.job.id, 'failed');
     vision.fail.clear(); let releaseFirst!: () => void; const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });

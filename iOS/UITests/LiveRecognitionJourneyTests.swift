@@ -205,6 +205,34 @@ final class LiveRecognitionJourneyTests: XCTestCase {
     reveal(app.buttons["skip-question"], in: app)
     XCTAssertTrue(app.staticTexts["合成测试：此处看不清"].exists)
     XCTAssertFalse(app.buttons["confirm-question"].exists)
+    // Task 2 人工放行：没打开原图前不出现放行按钮
+    XCTAssertFalse(app.buttons["manual-release"].exists)
+  }
+
+  @MainActor
+  func testSyntheticNeedsCheckManualReleaseUnlocksAfterViewingOriginal() throws {
+    let server = try SyntheticRecognitionServer(needsCheck: true)
+    defer { server.stop() }
+    let app = XCUIApplication()
+    app.launchArguments = ["-test-session", UUID().uuidString]
+    app.launch(); configure(app, port: server.port); importOnePhoto(app)
+    reveal(app.buttons["recognize-selected"], in: app); app.buttons["recognize-selected"].tap()
+    reveal(app.buttons["consent-upload"], in: app); app.buttons["consent-upload"].tap()
+    let job = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recognition-job-")).firstMatch
+    XCTAssertTrue(job.waitForExistence(timeout: 15))
+    job.tap()
+    app.buttons["candidate-\(SyntheticRecognitionServer.questionID)"].tap()
+    // 打开完整原图（必须点「完成」才算看过）
+    reveal(app.buttons["compare-original"], in: app); app.buttons["compare-original"].tap()
+    XCTAssertTrue(app.images["original-photo"].waitForExistence(timeout: 5))
+    app.buttons["完成"].tap()
+    // 原图已打开 → 人工放行按钮出现；确认后走 manualRelease 通道
+    reveal(app.buttons["manual-release"], in: app); app.buttons["manual-release"].tap()
+    XCTAssertTrue(app.alerts.buttons["确认放行"].waitForExistence(timeout: 5))
+    app.alerts.buttons["确认放行"].tap()
+    // 确认后回到列表；合成服务器收到了 manualRelease 请求
+    XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recognition-job-")).firstMatch.waitForExistence(timeout: 10))
+    XCTAssertEqual(server.manualReleaseCount, 1)
   }
 
   @MainActor private func configure(_ app: XCUIApplication, port: UInt16) {
