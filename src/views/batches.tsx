@@ -79,7 +79,7 @@ export function BatchDetailPage(props: {
   const reviewItems = items.filter((i) => i.status === 'needs_review');
   const pct = batch.total_files === 0 ? 0 : Math.round(((batch.done_files + batch.failed_files) / batch.total_files) * 100);
   return (
-    <Layout title="批次详情" role={props.role} flash={props.flash}>
+    <Layout title="批次详情" role={props.role} flash={props.flash} refreshSeconds={batch.status === 'processing' ? 3 : undefined}>
       <h1>
         批次 {batch.id.slice(-6)}{' '}
         <span className={`badge batch-${batch.status}`}>{BATCH_STATUS_LABEL[batch.status] ?? batch.status}</span>

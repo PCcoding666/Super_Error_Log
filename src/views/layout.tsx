@@ -7,6 +7,8 @@ export function Layout(props: {
   role: Role;
   children: ReactNode;
   flash?: { ok?: string; err?: string };
+  /** 处理中页面每隔 N 秒自动整页刷新（SSR 无 hydration 的进度刷新机制；仅在确有后台进度时传）。 */
+  refreshSeconds?: number;
 }): ReactNode {
   const { title, role, children, flash } = props;
   return (
@@ -15,6 +17,7 @@ export function Layout(props: {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{`${title} · Super Error Log`}</title>
+        {props.refreshSeconds ? <meta httpEquiv="refresh" content={String(props.refreshSeconds)} /> : null}
         <link rel="stylesheet" href="/public/styles.css" />
         <script src="/public/app.js" defer></script>
       </head>

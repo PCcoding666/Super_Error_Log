@@ -16,7 +16,7 @@ export interface HomeData {
 export function HomePage(props: { role: Role; data: HomeData; flash?: { ok?: string; err?: string } }): ReactNode {
   const d = props.data;
   return (
-    <Layout title="首页" role={props.role} flash={props.flash}>
+    <Layout title="首页" role={props.role} flash={props.flash} refreshSeconds={d.recentBatch?.status === 'processing' ? 3 : undefined}>
       <h1>周末好，{d.nickname}</h1>
       <p className="muted">
         当前为{d.aiMode === 'mock' ? '演示模式（未连接真实 AI 服务，所有识别为本地模拟）' : '真实 AI 模式'}
