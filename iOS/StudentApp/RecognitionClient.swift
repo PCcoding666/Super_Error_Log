@@ -7,6 +7,8 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
   let configuration: PairingConfiguration
   private var session: URLSession!
   private var uploadSession: URLSession!
+  /// 上传进度回调（0.0–1.0，delegate 队列触发）。上传串行进行，任一时刻至多一个在传任务。
+  var uploadProgressHandler: (@Sendable (Double) -> Void)?
 
   init(configuration: PairingConfiguration, sessionConfiguration: URLSessionConfiguration = .ephemeral) {
     self.configuration = configuration
@@ -27,6 +29,14 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
     completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
     // 云端入口只接受固定域名；任何重定向（可能携带凭据）一律拒绝。
     completionHandler(nil)
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask,
+    didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+    // 只上报上传通道的真实字节进度；蜂窝大图上让用户看到「在动」而非静止等待。
+    guard session === uploadSession, totalBytesExpectedToSend > 0 else { return }
+    let fraction = min(1, max(0, Double(totalBytesSent) / Double(totalBytesExpectedToSend)))
+    uploadProgressHandler?(fraction)
   }
 
   func close() { session.invalidateAndCancel(); uploadSession.invalidateAndCancel() }

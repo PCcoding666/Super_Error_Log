@@ -259,6 +259,16 @@ struct ReflectionFlow: View {
     ChoiceRow(title: ReflectionOptions.displayTitle(for: title), isSelected: selected == title) {
       action()
       saveDraft()
+      // 点选即推进（第 1–3 问）：短暂停顿让勾选可见，然后自动进入下一问。
+      // 期间用户点「上一个问题」则不推进；重复点选同一问的多个选项只推进一次（绝对目标步）。
+      if step < 3 {
+        let current = step
+        Task { @MainActor in
+          try? await Task.sleep(for: .milliseconds(280))
+          guard self.step == current else { return }
+          withAnimation { self.step = current + 1 }
+        }
+      }
     }
   }
   private func saveDraft() { draftSaveFailed = !store.updateDraft(problem.id, draft) }

@@ -12,12 +12,13 @@ final class StudentJourneyTests: XCTestCase {
     app.buttons["home-start-reflection"].tap()
     app.buttons["reflect-5516-14"].tap()
     XCTAssertFalse(app.buttons["reflection-next"].isEnabled)
+    // 点选即推进：选中后自动进入下一问，无需点「继续」
     app.buttons["当时有思路"].tap()
-    app.buttons["reflection-next"].tap()
+    XCTAssertTrue(app.staticTexts["下次怎样会更有帮助？"].waitForExistence(timeout: 5))
     app.buttons["检查每一步计算"].tap()
-    app.buttons["reflection-next"].tap()
+    XCTAssertTrue(app.staticTexts["再做一次时，你有多大把握？"].waitForExistence(timeout: 5))
     app.buttons["需要一点提示"].tap()
-    app.buttons["reflection-next"].tap()
+    XCTAssertTrue(app.staticTexts["这周还想再看一遍吗？"].waitForExistence(timeout: 5))
     app.buttons["想再做一次"].tap()
     screenshot("02-reflection")
     let saveReflection = app.buttons["Save reflection"]
@@ -78,10 +79,9 @@ final class StudentJourneyTests: XCTestCase {
     app.buttons["home-start-reflection"].tap()
     app.buttons["reflect-5516-14"].tap()
     tapVisibleChoice("一开始就没把握", in: app)
-    XCTAssertTrue(app.buttons["reflection-next"].isEnabled)
+    // 点选即推进：选择后自动进入下一问（「继续」按钮仍保留，但不再是必经路径）
+    XCTAssertTrue(app.staticTexts["下次怎样会更有帮助？"].waitForExistence(timeout: 5))
     screenshot("06-large-text")
-    app.buttons["reflection-next"].tap()
-    XCTAssertTrue(app.staticTexts["下次怎样会更有帮助？"].exists)
   }
 
   @MainActor

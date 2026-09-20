@@ -23,6 +23,8 @@ final class StudyStore {
   let persistence: StudyPersistence
   private(set) var pairing: PairingConfiguration?
   private(set) var busyTasks: Set<UUID> = []
+  /// 各任务的上传进度（0.0–1.0）；无键表示不在上传中。
+  private(set) var uploadProgress: [UUID: Double] = [:]
   private(set) var syncing = false
   private(set) var mediaRevision = 0
   private(set) var readableMedia: Set<URL> = []
@@ -401,6 +403,10 @@ final class StudyStore {
       }), let task = state.recognitionTasks.first(where: { $0.photoName == name }), task.job == nil,
         !busyTasks.contains(task.id) else { continue }
       busyTasks.insert(task.id)
+      uploadProgress[task.id] = 0
+      client.uploadProgressHandler = { [weak self] fraction in
+        Task { @MainActor [weak self] in self?.uploadProgress[task.id] = fraction }
+      }
       do {
         let job = try await client.upload(file: photoURL(task.uploadName), idempotencyKey: task.id, photoName: name)
         _ = change { try $0.ingest(job, photoName: name) }
@@ -411,6 +417,8 @@ final class StudyStore {
           }
         }
       }
+      uploadProgress.removeValue(forKey: task.id)
+      client.uploadProgressHandler = nil
       busyTasks.remove(task.id)
     }
     resumePolling()

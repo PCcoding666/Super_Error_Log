@@ -74,10 +74,10 @@ final class LiveRecognitionJourneyTests: XCTestCase {
     app.tabBars.buttons["复盘"].tap()
     app.buttons["reflect-\(SyntheticRecognitionServer.jobID)/\(SyntheticRecognitionServer.questionID)"].tap()
     inspectReflectionContext(app, stem: server.printedStem)
-    chooseAndContinue("当时有思路", in: app)
-    chooseAndContinue("检查每一步计算", in: app)
-    chooseAndContinue("需要一点提示", in: app)
-    chooseAndContinue("想再做一次", in: app, next: "Save reflection")
+    chooseAndAdvance("当时有思路", in: app, expectNext: "下次怎样会更有帮助？")
+    chooseAndAdvance("检查每一步计算", in: app, expectNext: "再做一次时，你有多大把握？")
+    chooseAndAdvance("需要一点提示", in: app, expectNext: "这周还想再看一遍吗？")
+    chooseAndSave("想再做一次", in: app)
     app.buttons["加入练习包"].tap()
     app.buttons["select-\(SyntheticRecognitionServer.jobID)/\(SyntheticRecognitionServer.questionID)"].tap()
     app.buttons["生成练习包"].tap()
@@ -115,15 +115,26 @@ final class LiveRecognitionJourneyTests: XCTestCase {
     XCTAssertTrue(app.staticTexts["合成订正内容，不进入 PDF"].waitForNonExistence(timeout: 5))
   }
 
-  @MainActor private func chooseAndContinue(_ title: String, in app: XCUIApplication, next: String = "reflection-next") {
+  /// 点选即推进：第 1–3 问选中后自动进入下一问，无需点「继续」。
+  @MainActor private func chooseAndAdvance(_ title: String, in app: XCUIApplication, expectNext prompt: String) {
     let choice = app.buttons[title]
     XCTAssertTrue(choice.waitForExistence(timeout: 5))
     reveal(choice, in: app)
     XCTAssertTrue(choice.wait(for: \.isHittable, toEqual: true, timeout: 5))
     choice.tap()
-    let proceed = app.buttons[next]
-    XCTAssertTrue(proceed.wait(for: \.isEnabled, toEqual: true, timeout: 5))
-    proceed.tap()
+    XCTAssertTrue(app.staticTexts[prompt].waitForExistence(timeout: 5))
+  }
+
+  /// 最后一问：选择后手动「保存复盘」。
+  @MainActor private func chooseAndSave(_ title: String, in app: XCUIApplication) {
+    let choice = app.buttons[title]
+    XCTAssertTrue(choice.waitForExistence(timeout: 5))
+    reveal(choice, in: app)
+    XCTAssertTrue(choice.wait(for: \.isHittable, toEqual: true, timeout: 5))
+    choice.tap()
+    let save = app.buttons["Save reflection"]
+    XCTAssertTrue(save.wait(for: \.isEnabled, toEqual: true, timeout: 5))
+    save.tap()
   }
 
   @MainActor func testCropViewerNeverClaimsFullOriginal() throws {

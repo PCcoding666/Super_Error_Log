@@ -66,9 +66,7 @@ struct ThisWeekView: View {
                   .accessibilityLabel("已导入的本机照片").accessibilityIdentifier("local-photo-\(name)")
                 VStack(alignment: .leading, spacing: 5) {
                   Text("照片 \(index + 1) · 已保存在本机").font(.subheadline.weight(.semibold))
-                  Text(task?.job?.statusTitle ?? (task.map { store.busyTasks.contains($0.id) } == true
-                    ? "正在提交到识别服务" : task?.consentedAt == nil ? "仅保存在本机，尚未上传" : "上传待重试，照片仍在本机"))
-                    .font(.caption).foregroundStyle(Palette.teal)
+                  photoStatusView(task: task)
                   Button("查看完整原图") { source = PhotoReference(url: store.originalURL(name), title: "照片 \(index + 1)") }.font(.caption)
                 }
                 Spacer(minLength: 0)
@@ -143,6 +141,44 @@ struct ThisWeekView: View {
         }
       }
   }
+  /// 每页照片的状态卡：语义五色——灰=仅本机，蓝=系统在工作（上传/识别），橙=待你确认，
+  /// 绿=已确认，红=失败可重试。规则一句话：「看到橙色就是你的活」。
+  @ViewBuilder private func photoStatusView(task: LocalRecognitionTask?) -> some View {
+    if let task, let job = task.job {
+      if job.status == "failed" {
+        statusChip("识别未完成，点进详情可重试", .red)
+      } else if job.status == "interrupted" {
+        statusChip("识别已中断，点进详情可继续", .red)
+      } else if job.active {
+        statusChip(job.statusTitle, .blue)
+      } else {
+        let pending = job.questions.filter { ["ready", "needs_check"].contains($0.status) }.count
+        if pending > 0 { statusChip("待你确认 \(pending) 道题", .orange) }
+        else { statusChip("已全部确认", .green) }
+      }
+    } else if let task, store.busyTasks.contains(task.id) {
+      VStack(alignment: .leading, spacing: 4) {
+        statusChip("正在上传到识别服务", .blue)
+        if let progress = store.uploadProgress[task.id] {
+          ProgressView(value: progress) {
+            Text("已上传 \(Int((progress * 100).rounded()))%")
+              .font(.caption2).foregroundStyle(Palette.muted)
+          }
+        }
+      }
+    } else if task?.consentedAt == nil {
+      statusChip("仅保存在本机，尚未上传", .secondary)
+    } else {
+      statusChip("上传待重试，照片仍在本机", .red)
+    }
+  }
+
+  private func statusChip(_ title: String, _ color: Color) -> some View {
+    Text(title).font(.caption.weight(.medium)).foregroundStyle(color)
+      .padding(.horizontal, 8).padding(.vertical, 3)
+      .background(color.opacity(0.12), in: Capsule())
+  }
+
   private var pendingPhotos: [String] {
     store.state.importedPhotos.filter { name in
       store.state.recognitionTasks.first(where: { $0.photoName == name })?.job == nil
