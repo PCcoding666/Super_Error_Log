@@ -59,18 +59,35 @@ test('J2 校正：3 道低置信题全部订正', async ({ page }) => {
   await expect(page.locator('body')).toContainText('没有需要校正');
 });
 
-test('J3 最小反思：逐项四选，AI 提示不预选', async ({ page }) => {
+test('J3 最小反思：一键采纳或逐项四选，AI 不预选、掌握感永远手选', async ({ page }) => {
+  let adopted = 0;
+  let manual = 0;
   for (let i = 0; i < 25; i++) {
     await page.goto('/reflect');
     if ((await page.locator('form').count()) === 0) break;
-    // AI 提示仅展示：没有任何 radio 被预选
+    // AI 建议仅展示：没有任何 radio 被预选
     expect(await page.locator('input[type="radio"]:checked').count()).toBe(0);
-    await page.locator('input[name="attempt_state"]').first().check();
-    await page.locator('input[name="cause"]').first().check();
-    await page.locator('input[name="mastery_feeling"]').first().check();
-    await page.locator('input[name="review_value"]').first().check();
-    await page.getByRole('button', { name: '确认，下一题' }).click();
+    const adoptBtn = page.getByRole('button', { name: '采纳建议，完成本题' });
+    if ((await adoptBtn.count()) > 0) {
+      // 高置信路径：三项建议已列出，学生只需手选掌握感后一键提交（2 次点击）
+      await page.locator('form.adopt input[name="mastery_feeling"][value="2"]').check();
+      await adoptBtn.click();
+      adopted++;
+    } else {
+      // 低置信/无建议路径：逐项四选
+      const detailsToggle = page.locator('details > summary');
+      if ((await detailsToggle.count()) > 0) await detailsToggle.first().click();
+      await page.locator('form.manual input[name="attempt_state"]').first().check();
+      await page.locator('form.manual input[name="cause"]').first().check();
+      await page.locator('form.manual input[name="mastery_feeling"]').first().check();
+      await page.locator('form.manual input[name="review_value"]').first().check();
+      await page.getByRole('button', { name: '确认，下一题' }).click();
+      manual++;
+    }
   }
+  expect(adopted + manual).toBe(20);
+  expect(adopted).toBeGreaterThan(0); // mock 约 2/3 高置信，采纳路径必须被真实走到
+  expect(manual).toBeGreaterThan(0); // 低置信路径同样走到
   await page.goto('/reflect');
   await expect(page.locator('form')).toHaveCount(0);
 });

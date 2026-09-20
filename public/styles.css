@@ -150,6 +150,13 @@ blockquote { border-left: 3px solid var(--line); margin: 0.6rem 0; padding: 0.2r
 
 .ai-hint { background: #eef2ff; border: 1px dashed #818cf8; border-radius: 0.5rem; padding: 0.6rem 0.8rem; }
 
+/* 反思页 AI 一键采纳卡 */
+.ai-suggest { border: 1px solid #818cf8; background: #eef2ff; }
+.ai-suggest h2 { margin-top: 0; font-size: 1.05rem; }
+.ai-suggest form { border-top: 1px dashed #818cf8; margin-top: 0.6rem; padding-top: 0.4rem; }
+details.card summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+details.card summary:hover { color: var(--accent); }
+
 .privacy li { margin: 0.3rem 0; }
 
 .todo li { margin: 0.5rem 0; }

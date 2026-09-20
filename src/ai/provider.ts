@@ -1,4 +1,4 @@
-import type { Cause, ReviewValue, Subject } from '../domain/types.js';
+import type { AttemptState, Cause, ReviewValue, Subject } from '../domain/types.js';
 import type { Evidence, QuestionRegion } from './evidence.js';
 import type { StageRun } from './chatClient.js';
 import type { CropAuditReport } from './cropAuditor.js';
@@ -42,6 +42,8 @@ export interface FieldSuggestion {
   subject?: { value: Subject; confidence: number };
   knowledgeTags?: { value: string[]; confidence: number };
   questionType?: { value: string; confidence: number };
+  /** 做题状态建议（供反思一键采纳）；掌握感永远不建议——那是学生的校准信号 */
+  attemptState?: { value: AttemptState; confidence: number };
   possibleCause?: { value: Cause; confidence: number };
   reviewValue?: { value: ReviewValue; confidence: number };
 }

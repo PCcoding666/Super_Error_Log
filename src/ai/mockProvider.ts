@@ -10,7 +10,7 @@ import type {
   MatchResult,
   SuggestInput,
 } from './provider.js';
-import type { Subject } from '../domain/types.js';
+import { ATTEMPT_STATES, type Subject } from '../domain/types.js';
 
 export interface FixtureManifestItem {
   filename: string;
@@ -136,11 +136,17 @@ export class MockAiProvider implements AiProvider {
     const base = derive(input.itemId, 'suggest');
     const subject = SUBJECTS[base % 3]!;
     const tag = TAG_POOL[subject][base % 5]!;
+    // 反思三项建议：约 2/3 高置信（可一键采纳），1/3 低置信（仍需逐项判断），便于演示两条路径
+    const adoptable = derive(input.itemId, 'adoptable') % 3 !== 0;
+    const conf = adoptable
+      ? { attempt: 0.9, cause: 0.88, review: 0.86 }
+      : { attempt: 0.55, cause: 0.5, review: 0.52 };
     return {
       subject: { value: subject, confidence: 0.72 },
       knowledgeTags: { value: [tag], confidence: 0.66 },
-      possibleCause: { value: '方法选择', confidence: 0.6 },
-      reviewValue: { value: '可以再做', confidence: 0.62 },
+      attemptState: { value: ATTEMPT_STATES[base % ATTEMPT_STATES.length]!, confidence: conf.attempt },
+      possibleCause: { value: '方法选择', confidence: conf.cause },
+      reviewValue: { value: '可以再做', confidence: conf.review },
     };
   }
 

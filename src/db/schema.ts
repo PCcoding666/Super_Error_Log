@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS error_diagnosis (
   mastery_feeling INTEGER NOT NULL,
   review_value TEXT NOT NULL,
   submitted_by TEXT NOT NULL DEFAULT 'student',
+  adopted_ai INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 

@@ -163,4 +163,47 @@ describe('Slice A：采集到反思', () => {
     expect(r.error).toContain('学生本人');
     expect(getDiagnosis(item.id)).toBeNull();
   });
+
+  it('一键采纳：学生主动提交时记录 adopted_ai=1，默认手动提交为 0', async () => {
+    const db = getDb();
+    const items = listItems(studentId).filter((i) => i.status === 'ready_for_reflection');
+    expect(items.length).toBeGreaterThanOrEqual(2);
+
+    const adopted = submitReflection(items[0]!.id, {
+      attemptState: '本来会但审题计算书写失误',
+      cause: '计算',
+      masteryFeeling: 2,
+      reviewValue: '可以再做',
+    }, 'student', { adoptedAi: true });
+    expect(adopted.ok).toBe(true);
+    const adoptedRow = db
+      .prepare('SELECT adopted_ai, submitted_by FROM error_diagnosis WHERE item_id = ?')
+      .get(items[0]!.id) as { adopted_ai: number; submitted_by: string };
+    expect(adoptedRow.adopted_ai).toBe(1);
+    expect(adoptedRow.submitted_by).toBe('student'); // 采纳仍是学生本人的提交行为
+
+    const manual = submitReflection(items[1]!.id, {
+      attemptState: '完全不会',
+      cause: '知识概念',
+      masteryFeeling: 1,
+      reviewValue: '必须再做',
+    }, 'student');
+    expect(manual.ok).toBe(true);
+    const manualRow = db
+      .prepare('SELECT adopted_ai FROM error_diagnosis WHERE item_id = ?')
+      .get(items[1]!.id) as { adopted_ai: number };
+    expect(manualRow.adopted_ai).toBe(0);
+  });
+
+  it('反思建议装配：演示题给出三项建议；只有诊断错因的真实题不可一键采纳', async () => {
+    const { getReflectionSuggestion } = await import('../../src/services/itemService.js');
+    const item = listItems(studentId).find((i) => i.status === 'ready_for_reflection')!;
+    const s = await getReflectionSuggestion(item);
+    expect(s).not.toBeNull();
+    expect(s!.attemptState).toBeDefined();
+    expect(s!.cause).toBeDefined();
+    expect(s!.reviewValue).toBeDefined();
+    // 建议永远不含掌握感：它是校准信号，必须由学生自己判断
+    expect(JSON.stringify(s)).not.toContain('masteryFeeling');
+  });
 });

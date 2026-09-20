@@ -26,6 +26,10 @@ export function getDb(): DatabaseSync {
   if (!attemptCols.some((c) => c.name === 'performed_at')) {
     db.exec('ALTER TABLE review_attempt ADD COLUMN performed_at TEXT');
   }
+  const diagnosisCols = db.prepare('PRAGMA table_info(error_diagnosis)').all() as Array<{ name: string }>;
+  if (!diagnosisCols.some((c) => c.name === 'adopted_ai')) {
+    db.exec('ALTER TABLE error_diagnosis ADD COLUMN adopted_ai INTEGER NOT NULL DEFAULT 0');
+  }
   return db;
 }
 

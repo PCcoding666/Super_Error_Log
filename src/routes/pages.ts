@@ -10,7 +10,8 @@ import { ATTEMPT_STATES, CAUSES, COMPLETION_LABEL, REVIEW_VALUES, type Cause, ty
 import { recordAttempt, attemptsForPacket } from '../services/attemptService.js';
 import { createBatch, processBatch, retryFailedAssets } from '../services/batchService.js';
 import { audit } from '../services/eventLog.js';
-import { archiveItem, correctItem, getDiagnosis, getItem, listItems, submitReflection, type ItemRow } from '../services/itemService.js';
+import { archiveItem, correctItem, getDiagnosis, getItem, getReflectionSuggestion, listItems, submitReflection, type ItemRow } from '../services/itemService.js';
+import { adoptionMatches } from '../domain/reflectionSuggestion.js';
 import { generatePacketPdf, buildPacketPrintData } from '../services/pdfService.js';
 import { computeRecommendations, createPacket, getPacket, packetItems } from '../services/planService.js';
 import { createProfile, getProfile } from '../services/studentService.js';
@@ -226,32 +227,21 @@ export function pagesRouter(): Router {
   r.get('/media/asset/:assetId', requireStudent, mediaHandler);
 
   // ---------- 反思 ----------
-  r.get('/reflect', requireStudent, async (_req, res) => {
+  r.get('/reflect', requireStudent, async (req, res) => {
     const profile = getProfile()!;
     const db = getDb();
     const items = db
       .prepare("SELECT * FROM error_item WHERE student_id = ? AND status = 'ready_for_reflection' ORDER BY created_at")
       .all(profile.id) as unknown as ItemRow[];
     const first = items[0] ?? null;
-    let aiHint: { possibleCause?: string; reviewValue?: string } | null = null;
-    if (first && getEvidence(first.id)) {
-      const diagnosis = getEvidence(first.id)?.diagnosis;
-      aiHint = diagnosis ? { possibleCause: diagnosis.value.possibleCause ?? '证据不足，请确认' } : null;
-    } else if (first && config.aiMode === 'mock') {
-      try {
-        const s = await getAiProvider().suggestFields({ itemId: first.id, textExcerpt: first.text_excerpt ?? '', subject: first.subject ?? undefined });
-        aiHint = { possibleCause: s.possibleCause?.value, reviewValue: s.reviewValue?.value };
-      } catch {
-        aiHint = null;
-      }
-    }
+    const suggestion = first ? await getReflectionSuggestion(first) : null;
     const total = db
       .prepare("SELECT COUNT(*) AS n FROM error_item WHERE student_id = ? AND status IN ('ready_for_reflection','eligible_for_review')")
       .get(profile.id) as { n: number };
-    sendHtml(res, ReflectPage({ role: 'student', item: first, remaining: items.length, total: total.n, aiHint }));
+    sendHtml(res, ReflectPage({ role: 'student', item: first, remaining: items.length, total: total.n, suggestion, flash: flash(req) }));
   });
 
-  r.post('/reflect/:itemId', requireStudent, (req, res) => {
+  r.post('/reflect/:itemId', requireStudent, async (req, res) => {
     const attemptState = String(req.body.attempt_state ?? '');
     const cause = String(req.body.cause ?? '');
     const masteryFeeling = Number(req.body.mastery_feeling ?? -1);
@@ -265,12 +255,22 @@ export function pagesRouter(): Router {
       res.redirect('/reflect?err=' + encodeURIComponent('四项都需要选择'));
       return;
     }
+    // 一键采纳：提交的三项必须与服务器当前建议完全一致（防篡改/防过期）
+    const adoptedAi = String(req.body.adopted_ai ?? '') === '1';
+    if (adoptedAi) {
+      const item = getItem(String(req.params.itemId));
+      const suggestion = item ? await getReflectionSuggestion(item) : null;
+      if (!adoptionMatches(suggestion, { attemptState, cause, reviewValue })) {
+        res.redirect('/reflect?err=' + encodeURIComponent('AI 建议已变化，请重新确认后再提交'));
+        return;
+      }
+    }
     const result = submitReflection(String(req.params.itemId), {
       attemptState: attemptState as AttemptState,
       cause: cause as Cause,
       masteryFeeling: masteryFeeling as MasteryFeeling,
       reviewValue: reviewValue as ReviewValue,
-    }, 'student');
+    }, 'student', { adoptedAi });
     if (!result.ok) {
       res.redirect('/reflect?err=' + encodeURIComponent(result.error ?? '提交失败'));
       return;

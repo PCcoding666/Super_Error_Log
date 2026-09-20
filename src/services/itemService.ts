@@ -1,6 +1,9 @@
 import { getDb, newId, now } from '../db/connection.js';
 import { canArchive, statusAfterReflection } from '../domain/stateMachine.js';
 import type { Cause, ItemStatus, ReflectionInput, Subject } from '../domain/types.js';
+import { isAdoptable, type ReflectionSuggestion } from '../domain/reflectionSuggestion.js';
+import type { FieldSuggestion } from '../ai/provider.js';
+import { getAiProvider } from '../ai/index.js';
 import { audit } from './eventLog.js';
 import { getEvidence, assertEvidenceReady } from './evidenceService.js';
 import { isDemoAsset } from './assetOrigin.js';
@@ -81,8 +84,14 @@ export function correctItem(
   audit('item_corrected', 'item', itemId);
 }
 
-/** 学生提交四项最小反思。submittedBy 只能是 student——AI 不得代写。 */
-export function submitReflection(itemId: string, input: ReflectionInput, submittedBy: string): { ok: boolean; error?: string } {
+/** 学生提交四项最小反思。submittedBy 只能是 student——AI 不得代写。
+ *  adoptedAi=true 表示学生看了 AI 建议后主动一键采纳（仍是学生提交行为），用于采纳率监控。 */
+export function submitReflection(
+  itemId: string,
+  input: ReflectionInput,
+  submittedBy: string,
+  opts: { adoptedAi?: boolean } = {},
+): { ok: boolean; error?: string } {
   if (submittedBy !== 'student') {
     return { ok: false, error: '反思必须由学生本人提交' };
   }
@@ -98,9 +107,9 @@ export function submitReflection(itemId: string, input: ReflectionInput, submitt
   }
 
   db.prepare(
-    `INSERT INTO error_diagnosis (id, item_id, attempt_state, cause, mastery_feeling, review_value, submitted_by, created_at)
-     VALUES (?,?,?,?,?,?,?,?)`,
-  ).run(newId('dia'), itemId, input.attemptState, input.cause, input.masteryFeeling, input.reviewValue, 'student', now());
+    `INSERT INTO error_diagnosis (id, item_id, attempt_state, cause, mastery_feeling, review_value, submitted_by, adopted_ai, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+  ).run(newId('dia'), itemId, input.attemptState, input.cause, input.masteryFeeling, input.reviewValue, 'student', opts.adoptedAi ? 1 : 0, now());
 
   const t = statusAfterReflection(item.status);
   if (t.to !== item.status) {
@@ -108,6 +117,37 @@ export function submitReflection(itemId: string, input: ReflectionInput, submitt
   }
   audit('reflection_submitted', 'item', itemId);
   return { ok: true };
+}
+
+/**
+ * 反思环节的 AI 建议装配。
+ * 真实题：只给出诊断阶段的错因建议（其余字段无证据，不猜）→ 天然不可一键采纳。
+ * 演示题（mock）：走 provider.suggestFields，可给出三项；掌握感永远不建议。
+ */
+export async function getReflectionSuggestion(item: ItemRow): Promise<(ReflectionSuggestion & { adoptable: boolean }) | null> {
+  const evidence = getEvidence(item.id);
+  if (evidence) {
+    const d = evidence.diagnosis?.value;
+    if (!d?.possibleCause) return null;
+    const s: ReflectionSuggestion = { cause: { value: d.possibleCause, confidence: d.confidence } };
+    return { ...s, adoptable: isAdoptable(s) };
+  }
+  if (!isDemoAsset(item.asset_id)) return null;
+  let s: FieldSuggestion;
+  try {
+    s = await getAiProvider().suggestFields({
+      itemId: item.id,
+      textExcerpt: item.text_excerpt ?? '',
+      subject: item.subject ?? undefined,
+    });
+  } catch {
+    return null;
+  }
+  const out: ReflectionSuggestion = {};
+  if (s.attemptState) out.attemptState = s.attemptState;
+  if (s.possibleCause) out.cause = s.possibleCause;
+  if (s.reviewValue) out.reviewValue = s.reviewValue;
+  return { ...out, adoptable: isAdoptable(out) };
 }
 
 export function getDiagnosis(itemId: string): {

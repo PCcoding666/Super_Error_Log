@@ -90,7 +90,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
         {
           role: 'system',
           content:
-            '你是初中错题标注助手。基于题目摘要给出建议（不是事实），输出 JSON：{"subject":{"value":"...","confidence":0.0},"knowledgeTags":{"value":["..."],"confidence":0.0},"questionType":{"value":"...","confidence":0.0},"possibleCause":{"value":"知识概念|方法选择|推理步骤|计算|审题遗漏|表达规范|时间注意力状态","confidence":0.0},"reviewValue":{"value":"必须再做|可以再做|没必要再做","confidence":0.0}}。只输出 JSON。',
+            '你是初中错题标注助手。基于题目摘要给出建议（不是事实），输出 JSON：{"subject":{"value":"...","confidence":0.0},"knowledgeTags":{"value":["..."],"confidence":0.0},"questionType":{"value":"...","confidence":0.0},"attemptState":{"value":"完全不会|知道考什么但没想到方法|方法基本正确但步骤出错|本来会但审题计算书写失误|时间不足|其他","confidence":0.0},"possibleCause":{"value":"知识概念|方法选择|推理步骤|计算|审题遗漏|表达规范|时间注意力状态","confidence":0.0},"reviewValue":{"value":"必须再做|可以再做|没必要再做","confidence":0.0}}。掌握感（masteryFeeling）是学生的自我判断，绝不要输出。只输出 JSON。',
         },
         { role: 'user', content: `题目摘要：${input.textExcerpt}\n当前学科：${input.subject ?? '未知'}` },
       ],
