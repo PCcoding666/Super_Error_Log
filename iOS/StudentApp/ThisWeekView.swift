@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UIKit
 
 struct ThisWeekView: View {
   @Environment(StudyStore.self) private var store
@@ -25,6 +26,7 @@ struct ThisWeekView: View {
         if let state = store.connectionState {
           CloudConnectionRow(state: state, onScan: { showScanner = true })
         }
+        nextStepBar
         VStack(alignment: .leading, spacing: 12) {
           Eyebrow(text: "周末整理一下")
           Text("想一想，\n下周更轻松。")
@@ -47,45 +49,20 @@ struct ThisWeekView: View {
           HStack {
             PhotosPicker(selection: $photos, maxSelectionCount: 10, matching: .images) {
               Label("添加照片", systemImage: "plus").frame(maxWidth: .infinity).padding(16)
-                .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                .background(Palette.card, in: RoundedRectangle(cornerRadius: 16))
             }.disabled(importing).accessibilityIdentifier("add-photos")
             Button {
               CameraCapture.request { allowed in
                 if allowed { showCamera = true }
                 else { store.errorMessage = "无法使用相机。请添加照片，或在系统设置中允许相机访问。" }
               }
-            } label: { Image(systemName: "camera").padding(18).background(.white, in: RoundedRectangle(cornerRadius: 16)) }
+            } label: { Image(systemName: "camera").padding(18).background(Palette.card, in: RoundedRectangle(cornerRadius: 16)) }
               .accessibilityLabel("拍照")
           }
           if importing { ProgressView("正在将照片保存到本机…") }
           ForEach(Array(store.state.importedPhotos.enumerated()), id: \.element) { index, name in
             let task = store.state.recognitionTasks.first { $0.photoName == name }
-            VStack(alignment: .leading, spacing: 12) {
-              HStack(spacing: 12) {
-                LocalPhotoThumbnail(url: store.photoURL(name)).frame(width: 62, height: 76).clipped()
-                  .accessibilityLabel("已导入的本机照片").accessibilityIdentifier("local-photo-\(name)")
-                VStack(alignment: .leading, spacing: 5) {
-                  Text("照片 \(index + 1) · 已保存在本机").font(.subheadline.weight(.semibold))
-                  photoStatusView(task: task)
-                  Button("查看完整原图") { source = PhotoReference(url: store.originalURL(name), title: "照片 \(index + 1)") }.font(.caption)
-                }
-                Spacer(minLength: 0)
-                if task?.job == nil {
-                  Button {
-                    if selectedPhotos.contains(name) { selectedPhotos.remove(name) }
-                    else if selectedPhotos.count < 10 { selectedPhotos.insert(name) }
-                    else { store.errorMessage = "每次最多选择 10 张照片，其余照片仍保留在本机。" }
-                  } label: { Image(systemName: selectedPhotos.contains(name) ? "checkmark.circle.fill" : "circle").font(.title2) }
-                    .accessibilityLabel("选择照片 \(index + 1)")
-                }
-              }
-              if let task, let job = task.job {
-                NavigationLink { RecognitionView(taskID: task.id) } label: {
-                  Label("查看 \(job.questions.count) 道候选题", systemImage: "text.magnifyingglass")
-                }.accessibilityIdentifier("recognition-job-\(task.id)")
-              }
-              if let error = task?.lastError { Text(error).font(.caption).foregroundStyle(Palette.muted) }
-            }.padding(16).background(.white, in: RoundedRectangle(cornerRadius: 18))
+            photoCard(index: index, name: name, task: task)
           }
           if !store.state.importedPhotos.isEmpty {
             Text("每次最多识别 10 张，其余照片保留在本机，可分批选择。")
@@ -141,42 +118,129 @@ struct ThisWeekView: View {
         }
       }
   }
-  /// 每页照片的状态卡：语义五色——灰=仅本机，蓝=系统在工作（上传/识别），橙=待你确认，
-  /// 绿=已确认，红=失败可重试。规则一句话：「看到橙色就是你的活」。
-  @ViewBuilder private func photoStatusView(task: LocalRecognitionTask?) -> some View {
-    if let task, let job = task.job {
-      if job.status == "failed" {
-        statusChip("识别未完成，点进详情可重试", .red)
-      } else if job.status == "interrupted" {
-        statusChip("识别已中断，点进详情可继续", .red)
-      } else if job.active {
-        statusChip(job.statusTitle, .blue)
-      } else {
-        let pending = job.questions.filter { ["ready", "needs_check"].contains($0.status) }.count
-        if pending > 0 { statusChip("待你确认 \(pending) 道题", .orange) }
-        else { statusChip("已全部确认", .green) }
-      }
-    } else if let task, store.busyTasks.contains(task.id) {
-      VStack(alignment: .leading, spacing: 4) {
-        statusChip("正在上传到识别服务", .blue)
-        if let progress = store.uploadProgress[task.id] {
-          ProgressView(value: progress) {
-            Text("已上传 \(Int((progress * 100).rounded()))%")
-              .font(.caption2).foregroundStyle(Palette.muted)
-          }
+  /// M1：顶部「下一步」摘要条。只在有真实待办时橙色可点；有未知状态/仍在识别时如实说明；
+  /// 仅当无待办、无在途、无未知时才绿色。计数全部来自真实任务状态，不伪造百分比。
+  @ViewBuilder private var nextStepBar: some View {
+    let tasks = store.state.recognitionTasks.filter { $0.job != nil }
+    if !tasks.isEmpty {
+      let presentations = tasks.map { TaskPresentation.photoCard(task: $0, uploading: false) }
+      let todo = tasks.reduce(0) { $0 + ($1.job?.questions.filter { ["ready", "needs_check"].contains($0.status) }.count ?? 0) }
+      let failed = tasks.reduce(0) { $0 + ($1.job?.questions.filter { $0.status == "failed" }.count ?? 0) }
+        + tasks.filter { $0.job.map { ["failed", "interrupted"].contains($0.status) } ?? false }.count
+      let active = tasks.filter { $0.job?.active == true }.count
+      let unknown = presentations.filter { $0.needsRefresh }.count
+      if todo + failed > 0, let target = tasks.first(where: {
+        let p = TaskPresentation.photoCard(task: $0, uploading: false)
+        return p.actionable
+      }) {
+        NavigationLink { RecognitionView(taskID: target.id, tab: $tab) } label: {
+          Text("⚑ " + [todo > 0 ? "\(todo) 道题等你核对" : "", failed > 0 ? "\(failed) 项没识别成功" : ""]
+            .filter { !$0.isEmpty }.joined(separator: " · ") + " —— 点这里开始")
+            .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
         }
+        .background(Color(uiColor: .systemOrange).opacity(0.14), in: RoundedRectangle(cornerRadius: 16))
+        .foregroundStyle(Color(uiColor: .systemOrange))
+        .accessibilityIdentifier("next-step-bar")
+      } else if unknown > 0 {
+        // 必须有真实动作：只读刷新已有任务，不新增识别。
+        Button("有题目的状态需要刷新核对——点这里刷新") { Task { await store.refreshJobs() } }
+          .font(.subheadline).foregroundStyle(Palette.muted).frame(minHeight: 44)
+          .accessibilityIdentifier("refresh-stale-status")
+      } else if active > 0 {
+        Text("识别仍在进行，完成后会出现在这里").font(.subheadline).foregroundStyle(Palette.muted)
+      } else {
+        Text("没有待处理的事项").font(.subheadline).foregroundStyle(Palette.teal)
       }
-    } else if task?.consentedAt == nil {
-      statusChip("仅保存在本机，尚未上传", .secondary)
-    } else {
-      statusChip("上传待重试，照片仍在本机", .red)
     }
   }
 
-  private func statusChip(_ title: String, _ color: Color) -> some View {
-    Text(title).font(.caption.weight(.medium)).foregroundStyle(color)
+  /// M1：照片卡。有识别任务的卡整卡可点进同一任务（候选列表）；仅本机未上传的卡保持勾选语义。
+  @ViewBuilder private func photoCard(index: Int, name: String, task: LocalRecognitionTask?) -> some View {
+    if let task, task.job != nil {
+      // busyTasks 也包含确认/重试——只有尚无 job（上传阶段）时才标「上传中」。
+      let presentation = TaskPresentation.photoCard(task: task, uploading: false)
+      NavigationLink { RecognitionView(taskID: task.id, tab: $tab) } label: {
+        photoCardBody(index: index, name: name, presentation: presentation, issue: task.lastIssueKind)
+      }
+      .buttonStyle(.plain)
+      .accessibilityIdentifier("recognition-job-\(task.id)")
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("照片 \(index + 1)，\(presentation.headline)。\(presentation.nextStep)")
+      .accessibilityHint("打开这道任务的题目列表")
+    } else {
+      photoCardLocal(index: index, name: name, task: task)
+    }
+  }
+
+  private func photoCardBody(index: Int, name: String, presentation: PhotoCardPresentation, issue: RefreshIssue?) -> some View {
+    HStack(alignment: .top, spacing: 12) {
+      LocalPhotoThumbnail(url: store.photoURL(name)).frame(width: 62, height: 76).clipped()
+        .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 5) {
+        Text("照片 \(index + 1) · 已保存在本机").font(.subheadline.weight(.semibold))
+        statusChip(presentation.headline, presentation.tone)
+        if !presentation.counts.isEmpty {
+          Text(presentation.counts).font(.caption.weight(.medium)).foregroundStyle(Palette.muted)
+        }
+        if let issue {
+          Text(issue.studentText).font(.caption).foregroundStyle(Palette.muted)
+            .accessibilityIdentifier("photo-issue-\(name)")
+        }
+        Text(presentation.nextStep).font(.caption).foregroundStyle(Palette.teal)
+      }
+      Spacer(minLength: 0)
+    }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+      .background(Palette.card, in: RoundedRectangle(cornerRadius: 18))
+      .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Palette.line.opacity(0.5)))
+  }
+
+  /// 未上传/上传中的本机照片卡：勾选参与下一批上传，保留真实字节进度。
+  @ViewBuilder private func photoCardLocal(index: Int, name: String, task: LocalRecognitionTask?) -> some View {
+    // 上传只发生在尚无 job 的阶段；busyTasks 同时覆盖确认/重试，不能据此标「上传中」。
+    let uploading = task.map { store.busyTasks.contains($0.id) && $0.job == nil } ?? false
+    let presentation = task.map { TaskPresentation.photoCard(task: $0, uploading: uploading) }
+      ?? PhotoCardPresentation(tone: .gray, headline: "仅保存在本机，尚未上传", counts: "", nextStep: "选择后上传识别", actionable: false, needsRefresh: false)
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(spacing: 12) {
+        LocalPhotoThumbnail(url: store.photoURL(name)).frame(width: 62, height: 76).clipped()
+          .accessibilityLabel("已导入的本机照片").accessibilityIdentifier("local-photo-\(name)")
+        VStack(alignment: .leading, spacing: 5) {
+          Text("照片 \(index + 1) · 已保存在本机").font(.subheadline.weight(.semibold))
+          statusChip(presentation.headline, presentation.tone)
+          if uploading, let task, let progress = store.uploadProgress[task.id] {
+            ProgressView(value: progress) {
+              Text("已上传 \(Int((progress * 100).rounded()))%")
+                .font(.caption2).foregroundStyle(Palette.muted)
+            }
+          }
+          Button("查看完整原图") { source = PhotoReference(url: store.originalURL(name), title: "照片 \(index + 1)") }
+            .font(.caption).frame(minHeight: 44)
+        }
+        Spacer(minLength: 0)
+        if task?.job == nil {
+          Button {
+            if selectedPhotos.contains(name) { selectedPhotos.remove(name) }
+            else if selectedPhotos.count < 10 { selectedPhotos.insert(name) }
+            else { store.errorMessage = "每次最多选择 10 张照片，其余照片仍保留在本机。" }
+          } label: {
+            Image(systemName: selectedPhotos.contains(name) ? "checkmark.circle.fill" : "circle")
+              .font(.title2).frame(width: 44, height: 44)
+          }
+          .accessibilityLabel("选择照片 \(index + 1)")
+        }
+      }
+      if let error = task?.lastError { Text(error).font(.caption).foregroundStyle(Palette.muted) }
+    }.padding(16).background(Palette.card, in: RoundedRectangle(cornerRadius: 18))
+      .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Palette.line.opacity(0.5)))
+  }
+
+  /// 每页照片的状态徽标：语义五色——灰=仅本机/待更新，蓝=系统在工作（上传/识别），橙=待你核对，
+  /// 绿=已确认，红=失败可重试。规则一句话：「看到橙色就是你的活」。
+  private func statusChip(_ title: String, _ tone: CardTone) -> some View {
+    Text(title).font(.caption.weight(.medium)).foregroundStyle(tone.color)
       .padding(.horizontal, 8).padding(.vertical, 3)
-      .background(color.opacity(0.12), in: Capsule())
+      .background(tone.color.opacity(0.12), in: Capsule())
   }
 
   private var pendingPhotos: [String] {

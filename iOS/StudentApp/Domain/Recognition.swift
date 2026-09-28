@@ -204,16 +204,20 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
   /// Task 4 review R2：归属服务（云端提交时随任务持久化；nil = 回环来源或旧文档）。
   /// 重启后凭此字段判断任务是否可向当前配对的服务自动刷新。
   var ownedServiceId: String?
+  /// M1：最近一次刷新失败的分类（nil = 无失败或旧文档）。lastError 文案之外的结构化区分：
+  /// 离线/服务暂不可用/配对失效/未知，驱动卡片显示「进度暂未更新」而非误报任务失败。
+  var lastIssueKind: RefreshIssue?
 
   init(id: UUID, photoName: String, uploadName: String, consentedAt: Date? = nil,
-    job: RecognitionJob? = nil, lastError: String? = nil, ownedServiceId: String? = nil) {
+    job: RecognitionJob? = nil, lastError: String? = nil, ownedServiceId: String? = nil,
+    lastIssueKind: RefreshIssue? = nil) {
     self.id = id; self.photoName = photoName; self.uploadName = uploadName
     self.consentedAt = consentedAt; self.job = job; self.lastError = lastError
-    self.ownedServiceId = ownedServiceId
+    self.ownedServiceId = ownedServiceId; self.lastIssueKind = lastIssueKind
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId
+    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId, lastIssueKind
   }
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -225,6 +229,8 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
     lastError = try values.decodeIfPresent(String.self, forKey: .lastError)
     // 旧文档无归属字段：解码为 nil（回环语义），不拒绝加载。
     ownedServiceId = try values.decodeIfPresent(String.self, forKey: .ownedServiceId)
+    // 旧文档无分类字段：解码为 nil，不拒绝加载。
+    lastIssueKind = try values.decodeIfPresent(RefreshIssue.self, forKey: .lastIssueKind)
   }
 }
 
@@ -363,6 +369,8 @@ enum RecognitionClientError: Error, LocalizedError {
   case server(status: Int, message: String)
   /// 协议/归属不兼容（health version/protocolVersion 不符、serviceId 不一致）。
   case incompatiblePairing
+  /// M1：保留底层 URLError 的传输失败——刷新错误分类（离线/超时/服务不可用）依赖它，不再全部塌缩成文案。
+  case networkFailure(URLError)
   var errorDescription: String? {
     switch self {
     case .invalidPairing: "请输入本机回环地址（如 http://127.0.0.1:3101）和至少 16 位配对口令。"
@@ -371,6 +379,7 @@ enum RecognitionClientError: Error, LocalizedError {
     case .missingMedia: "题目需要的安全图示尚未完整保存在本机，暂时不能生成练习包。"
     case .server(_, let message): message
     case .incompatiblePairing: "识别服务版本或归属与配对不一致，请重新扫码配对。"
+    case .networkFailure(let error): "暂时连不上识别服务。已保存的照片和结果仍可查看，请检查连接后重试。（\(error.code.rawValue)）"
     }
   }
 }

@@ -138,7 +138,7 @@ struct ReflectionFlow: View {
                   }
                   TextField("写给下次的自己（可选）", text: $draft.note, axis: .vertical)
                     .lineLimit(2...4).padding(16).background(
-                      .white, in: RoundedRectangle(cornerRadius: 16)
+                      Palette.card, in: RoundedRectangle(cornerRadius: 16)
                     )
                     .onChange(of: draft.note) { _, _ in saveDraft() }
                 }

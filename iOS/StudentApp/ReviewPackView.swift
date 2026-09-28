@@ -63,7 +63,7 @@ struct ReviewPackView: View {
                   }
                   Spacer(minLength: 0)
                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                  .background(.white, in: RoundedRectangle(cornerRadius: 18))
+                  .background(Palette.card, in: RoundedRectangle(cornerRadius: 18))
                   .overlay(
                     RoundedRectangle(cornerRadius: 18).strokeBorder(
                       store.state.selectedIDs.contains(problem.id) ? Palette.teal : Palette.line))

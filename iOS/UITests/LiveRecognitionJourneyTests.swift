@@ -156,7 +156,23 @@ final class LiveRecognitionJourneyTests: XCTestCase {
     XCTAssertTrue(app.images["crop-photo"].waitForExistence(timeout: 5))
     XCTAssertTrue(app.staticTexts["裁剪区域（可能不完整） · 双指缩放"].exists)
     XCTAssertFalse(app.staticTexts["完整原图 · 双指缩放"].exists)
-    XCTAssertFalse(app.images["original-photo"].exists)
+    // 诊断取证（M1 审查）：断言失败前导出屏幕与完整辅助层级，证明 original-photo 命中的是
+    // 下层页内联原图还是 sheet 内元素。附件保留，不作为断言依据。
+    let diagShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    diagShot.name = "crop-viewer-original-photo-diagnostic"; diagShot.lifetime = .keepAlways; add(diagShot)
+    let diagTree = XCTAttachment(string: app.debugDescription)
+    diagTree.name = "crop-viewer-accessibility-hierarchy"; diagTree.lifetime = .keepAlways; add(diagTree)
+    // 取证证实（crop-diagnostic-attachments）：「original-photo」属于下层题目页（y=-202）的
+    // M1 内联原图；裁图查看器是并列分支，含 ScrollView「crop-photo」→ Image「crop-photo」
+    // （label 为「裁剪区域（可能不完整）」），无 Sheet 节点。因此否定断言改为作用于裁图查看器
+    // 作用域：其中不得出现 original-photo；且裁图查看器恰好一个、图片名称如实标注。
+    let cropViewer = app.scrollViews["crop-photo"]
+    XCTAssertTrue(cropViewer.exists)
+    XCTAssertEqual(app.scrollViews.matching(identifier: "crop-photo").count, 1, "裁图查看器恰好一个")
+    XCTAssertFalse(cropViewer.images["original-photo"].exists, "裁图查看器内不得出现完整原图")
+    let cropImage = cropViewer.images["crop-photo"]
+    XCTAssertTrue(cropImage.exists)
+    XCTAssertEqual(cropImage.label, "裁剪区域（可能不完整）", "裁图查看器图片名称不得冒称完整原图")
   }
 
   @MainActor func testFailedStageRecoveryRequiresDeliberateConfirmation() throws {
@@ -201,16 +217,16 @@ final class LiveRecognitionJourneyTests: XCTestCase {
     XCTAssertFalse(app.buttons["recognize-selected"].exists)
     job.tap()
     app.buttons["candidate-\(SyntheticRecognitionServer.questionID)"].tap()
-    XCTAssertTrue(app.buttons["compare-original"].waitForExistence(timeout: 5))
+    // M1：原图页内可读即解锁人工放行；needs_check 永远没有普通确认按钮。
+    XCTAssertTrue(app.images["original-photo"].waitForExistence(timeout: 5), "页内原图应真实解码显示")
     reveal(app.buttons["skip-question"], in: app)
     XCTAssertTrue(app.staticTexts["合成测试：此处看不清"].exists)
     XCTAssertFalse(app.buttons["confirm-question"].exists)
-    // Task 2 人工放行：没打开原图前不出现放行按钮
-    XCTAssertFalse(app.buttons["manual-release"].exists)
+    XCTAssertTrue(app.buttons["manual-release"].waitForExistence(timeout: 5))
   }
 
   @MainActor
-  func testSyntheticNeedsCheckManualReleaseUnlocksAfterViewingOriginal() throws {
+  func testSyntheticNeedsCheckManualReleaseUnlocksWithReadableInlineOriginal() throws {
     let server = try SyntheticRecognitionServer(needsCheck: true)
     defer { server.stop() }
     let app = XCUIApplication()
@@ -222,12 +238,11 @@ final class LiveRecognitionJourneyTests: XCTestCase {
     XCTAssertTrue(job.waitForExistence(timeout: 15))
     job.tap()
     app.buttons["candidate-\(SyntheticRecognitionServer.questionID)"].tap()
-    // 打开完整原图（必须点「完成」才算看过）
-    reveal(app.buttons["compare-original"], in: app); app.buttons["compare-original"].tap()
+    // M1：页内原图真实解码显示后，人工放行按钮出现（不再要求打开全屏模态框）。
     XCTAssertTrue(app.images["original-photo"].waitForExistence(timeout: 5))
-    app.buttons["完成"].tap()
-    // 原图已打开 → 人工放行按钮出现；确认后走 manualRelease 通道
-    reveal(app.buttons["manual-release"], in: app); app.buttons["manual-release"].tap()
+    reveal(app.buttons["manual-release"], in: app)
+    XCTAssertTrue(app.buttons["manual-release"].waitForExistence(timeout: 5))
+    app.buttons["manual-release"].tap()
     // SwiftUI alert 按钮在辅助树里出现两次（含 DisclosureTriangle 幻影），用 firstMatch（与 confirm-stage-recovery 测试同款规避）。
     let affirm = app.alerts.buttons.matching(identifier: "confirm-manual-release").firstMatch
     XCTAssertTrue(affirm.waitForExistence(timeout: 5))
@@ -235,6 +250,43 @@ final class LiveRecognitionJourneyTests: XCTestCase {
     // 确认后题目页显示已确认状态；合成服务器收到了 manualRelease 请求
     XCTAssertTrue(app.staticTexts["已确认，可去“复盘”回想这道题"].waitForExistence(timeout: 10))
     XCTAssertEqual(server.manualReleaseCount, 1)
+  }
+
+  /// M1：整卡进入任务；页内原图可读即可勾选确认（不强制全屏模态框）；确认后出现双出口，
+  /// 「去复盘本题」在同题身份下打开复盘页，返回路径保留。
+  @MainActor
+  func testWholeCardNavigationInlineOriginalAndConfirmedExits() throws {
+    let server = try SyntheticRecognitionServer()
+    defer { server.stop() }
+    let app = XCUIApplication()
+    app.launchArguments = ["-test-session", UUID().uuidString]
+    app.launch(); configure(app, port: server.port)
+    reveal(app.buttons["sync-existing-recognitions"], in: app); app.buttons["sync-existing-recognitions"].tap()
+    let card = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recognition-job-")).firstMatch
+    XCTAssertTrue(card.waitForExistence(timeout: 10))
+    XCTAssertTrue(card.label.contains("待你核对") || card.staticTexts["待你核对 1 道题"].exists,
+      "整卡显示真实计数与状态：\(card.label)")
+    card.tap()
+    app.buttons["candidate-\(SyntheticRecognitionServer.questionID)"].tap()
+    // 页内原图：不打开模态框即可满足「来源可读」
+    XCTAssertTrue(app.images["original-photo"].waitForExistence(timeout: 5))
+    let toggle = app.switches["source-compared"]
+    reveal(toggle, in: app)
+    XCTAssertTrue(toggle.wait(for: \.isEnabled, toEqual: true, timeout: 5), "原图页内解码成功后勾选可用")
+    toggle.tap()
+    app.buttons["confirm-question"].tap()
+    XCTAssertTrue(app.staticTexts["已确认，可去“复盘”回想这道题"].waitForExistence(timeout: 10))
+    // 双出口：本题可复盘；单题任务没有「继续下一道」。
+    XCTAssertFalse(app.buttons["continue-next-question"].exists)
+    let reflect = app.buttons["reflect-this-question"]
+    XCTAssertTrue(reflect.waitForExistence(timeout: 5))
+    reveal(reflect, in: app); reflect.tap()
+    XCTAssertTrue(app.staticTexts["这次做题时是什么状态？"].waitForExistence(timeout: 5))
+    app.buttons["关闭"].tap()
+    // 返回路径：回到题目页 → 返回候选列表。
+    XCTAssertTrue(app.staticTexts["已确认，可去“复盘”回想这道题"].waitForExistence(timeout: 5))
+    app.navigationBars.buttons.element(boundBy: 0).tap()
+    XCTAssertTrue(app.buttons["candidate-\(SyntheticRecognitionServer.questionID)"].waitForExistence(timeout: 5))
   }
 
   @MainActor private func configure(_ app: XCUIApplication, port: UInt16) {

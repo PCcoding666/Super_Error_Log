@@ -165,6 +165,7 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
     let response: URLResponse
     do { (data, response) = try await (session ?? self.session).data(for: request) }
     catch is CancellationError { throw CancellationError() }
+    catch let urlError as URLError { throw RecognitionClientError.networkFailure(urlError) }
     catch { throw RecognitionClientError.service("暂时连不上识别服务。已保存的照片和结果仍可查看，请检查连接后重试。") }
     guard let http = response as? HTTPURLResponse, data.count <= 20_000_000 else { throw RecognitionClientError.invalidResponse }
     guard (200...299).contains(http.statusCode) else {

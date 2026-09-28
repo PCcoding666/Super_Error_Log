@@ -6,7 +6,7 @@ struct SuperErrorLogApp: App {
   var body: some Scene {
     WindowGroup {
       StudentRootView().environment(store)
-        .tint(Palette.teal).preferredColorScheme(.light)
+        .tint(Palette.teal)
     }
   }
 }

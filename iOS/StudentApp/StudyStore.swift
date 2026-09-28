@@ -315,13 +315,22 @@ final class StudyStore {
       do {
         let updated = try await client.getJob(job.id)
         guard !Task.isCancelled, !requireActive || isActive else { return }
-        if change({ try $0.ingest(updated, photoName: task.photoName) }) {
+        if change({ state in
+          try state.ingest(updated, photoName: task.photoName)
+          // 刷新成功：清除该任务此前的失败分类与文案。
+          if let index = state.recognitionTasks.firstIndex(where: { $0.id == task.id }) {
+            state.recognitionTasks[index].lastIssueKind = nil
+          }
+        }) {
           try await cacheMedia(updated, client: client)
         }
       } catch {
         if !Task.isCancelled { change { state in
           if let index = state.recognitionTasks.firstIndex(where: { $0.id == task.id }) {
             state.recognitionTasks[index].lastError = error.localizedDescription
+            // M1：分类失败原因（离线/服务暂不可用/配对失效/未知），卡片据此显示
+            // 「进度暂未更新」而不是把任务误报为识别失败。
+            state.recognitionTasks[index].lastIssueKind = TaskPresentation.classifyRefreshIssue(error)
           }
         } }
       }
@@ -424,7 +433,7 @@ final class StudyStore {
     resumePolling()
   }
 
-  func act(taskID: UUID, questionID: String?, skip: Bool = false, sourceCompared: Bool = false, retry: Bool = false, manualRelease: Bool = false) async {
+  func act(taskID: UUID, questionID: String?, skip: Bool = false, sourceCompared: Bool = false, retry: Bool = false, manualRelease: Bool = false, expectedRevision: Int? = nil) async {
     guard let client, let task = state.recognitionTasks.first(where: { $0.id == taskID }),
       let job = task.job, !busyTasks.contains(taskID) else { return }
     busyTasks.insert(taskID)
@@ -433,6 +442,12 @@ final class StudyStore {
       let updated: RecognitionJob
       if retry { updated = try await client.retry(job.id, questionID: questionID) }
       else if let question = job.questions.first(where: { $0.id == questionID }) {
+        // M1 review：确认/放行的核对对象是呈现那一刻的证据版本。revision 已变（证据更新）
+        // 就不能带着旧核对结论去改最新版本——在真实改动边界按呈现时捕获的 revision 拒绝。
+        if let expectedRevision, question.revision != expectedRevision {
+          errorMessage = "这道题的内容已更新，请重新对照后再操作。"
+          return
+        }
         if !skip {
           await validateSavedMedia()
           guard hasCachedDiagrams(job: job, question: question) else { throw RecognitionClientError.missingMedia }

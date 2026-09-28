@@ -14,14 +14,21 @@ import Observation
       .replacingOccurrences(of: "\"regions\":[]", with: #""regions":[{"id":"d1","kind":"diagram","box":{"x":0.1,"y":0.1,"width":0.2,"height":0.2},"confidence":0.8,"cleanForPrint":false}]"#)
       .replacingOccurrences(of: "\"diagramMediaIds\":[]", with: "\"diagramMediaIds\":[\"\(diagramID)\"]")
   }
-  func makeStore(count: Int = 1, existingJob: Bool = false) throws -> (StudyStore, [String], RecognitionJob) {
+  static var needsCheckJobJSON: String {
+    jobJSON
+      .replacingOccurrences(of: "\"status\":\"ready\"", with: "\"status\":\"needs_check\"")
+      .replacingOccurrences(of: "\"uncertainties\":[]", with: "\"uncertainties\":[\"合成看不清\"]")
+  }
+  // 默认参数不能引用协变 Self（类成员）：改为可选参数在函数体内解析。
+  func makeStore(count: Int = 1, existingJob: Bool = false, jobJSON: String? = nil) throws -> (StudyStore, [String], RecognitionJob) {
+    let jobJSON = jobJSON ?? Self.jobJSON
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("StoreRegression-" + UUID().uuidString)
     let persistence = StudyPersistence(directory: directory)
     try persistence.prepareDirectory()
     var state = StudyState()
     let names = (0..<count).map { String(format: "00000000-0000-4000-8000-%012d.jpg", $0 + 1) }
     state.importedPhotos = names
-    let job = try RecognitionCodec.decoder().decode(RecognitionJob.self, from: Data(Self.jobJSON.utf8))
+    let job = try RecognitionCodec.decoder().decode(RecognitionJob.self, from: Data(jobJSON.utf8))
     if existingJob { try state.ingest(job, photoName: names[0]) }
     try persistence.save(state)
     let photos = directory.appendingPathComponent("Photos")
@@ -110,6 +117,75 @@ import Observation
     await waitUntil { StoreHTTPProtocol.requests.contains { $0.httpMethod == "GET" } }
     XCTAssertTrue(StoreHTTPProtocol.requests.contains { $0.httpMethod == "GET" })
     store.setActive(false)
+  }
+
+  // M1：刷新失败分类为「服务暂不可用」，缓存任务与确认内容保留；恢复成功后清除标记。
+  func testRefreshFailureClassifiesIssueKeepsCacheAndClearsOnRecovery() async throws {
+    StoreHTTPProtocol.reset(job: Self.jobJSON, mode: .uploadFailure)   // 500 on every request
+    let (store, _, job) = try makeStore(existingJob: true)
+    await store.refreshJobs()
+    var task = store.state.recognitionTasks[0]
+    XCTAssertEqual(task.lastIssueKind, .serviceUnavailable)
+    XCTAssertEqual(task.job, job, "刷新失败不得丢弃已缓存任务")
+    XCTAssertNotNil(task.lastError)
+    StoreHTTPProtocol.reset(job: Self.jobJSON, mode: .normal)
+    await store.refreshJobs()
+    task = store.state.recognitionTasks[0]
+    XCTAssertNil(task.lastIssueKind, "恢复成功后清除分类标记")
+  }
+
+  // M1 review：确认/放行按呈现时捕获的 revision 在改动边界校验——旧核对结论不得落在更新后的证据上。
+  func testStaleExpectedRevisionBlocksConfirmBeforeAnyNetworkCall() async throws {
+    StoreHTTPProtocol.reset(job: Self.jobJSON, mode: .normal)
+    let (store, _, job) = try makeStore(existingJob: true)
+    let task = store.state.recognitionTasks[0]
+    // 呈现时 revision 是 999（模拟弹窗期间证据已更新到别的版本）
+    await store.act(taskID: task.id, questionID: job.questions[0].id, sourceCompared: true, expectedRevision: 999)
+    XCTAssertFalse(StoreHTTPProtocol.requests.contains { $0.url!.path.hasSuffix("/confirm") },
+      "revision 不符时不得发出确认请求")
+    XCTAssertEqual(store.errorMessage, "这道题的内容已更新，请重新对照后再操作。")
+  }
+
+  func testStaleExpectedRevisionBlocksManualRelease() async throws {
+    StoreHTTPProtocol.reset(job: Self.needsCheckJobJSON, mode: .normal)
+    // 夹具修正：落库的就是 needs_check 版本（此前误用 Self.jobJSON，放行会在客户端前置校验
+    // 因状态不符被拒，测试将因错误的原因通过）。
+    let (store, _, job) = try makeStore(existingJob: true, jobJSON: Self.needsCheckJobJSON)
+    XCTAssertEqual(job.questions[0].status, "needs_check")
+    let task = store.state.recognitionTasks[0]
+    await store.act(taskID: task.id, questionID: job.questions[0].id, sourceCompared: true,
+      manualRelease: true, expectedRevision: 999)
+    XCTAssertFalse(StoreHTTPProtocol.requests.contains { $0.url!.path.hasSuffix("/confirm") },
+      "放行弹窗期间证据更新后，旧弹窗的确认不得生效")
+    XCTAssertNotNil(store.errorMessage)
+  }
+
+  // M1 review：确认请求真实失败（500）后，本地状态不被污染——题仍 ready、任务仍在、可重试。
+  func testFailedConfirmPreservesQuestionState() async throws {
+    StoreHTTPProtocol.reset(job: Self.jobJSON, mode: .normal)
+    let (store, _, job) = try makeStore(existingJob: true, jobJSON: Self.jobJSON)
+    await store.refreshJobs()   // 先把必要图示缓存到本机（confirm 前置校验需要）
+    let task = store.state.recognitionTasks[0]
+    XCTAssertTrue(store.hasCachedDiagrams(job: job, question: job.questions[0]))
+    StoreHTTPProtocol.reset(job: Self.jobJSON, mode: .uploadFailure)   // 之后全部 500
+    await store.act(taskID: task.id, questionID: job.questions[0].id, sourceCompared: true,
+      expectedRevision: job.questions[0].revision)
+    XCTAssertTrue(StoreHTTPProtocol.requests.contains { $0.url!.path.hasSuffix("/confirm") },
+      "revision 匹配时请求真实发出（区别于此前的边界拒绝）")
+    let after = store.state.recognitionTasks[0]
+    XCTAssertEqual(after.job?.questions[0].status, "ready", "确认失败不得把题目标成已确认")
+    XCTAssertEqual(after.job, job, "确认失败不得改写已缓存任务")
+    XCTAssertNotNil(store.errorMessage)
+  }
+
+  // M1 review：identity 守卫——act 的题目 ID 不在任务中时不发任何请求（对应闭包改用捕获身份的视图修复）。
+  func testActWithUnknownQuestionIDMakesNoNetworkCall() async throws {
+    StoreHTTPProtocol.reset(job: Self.jobJSON, mode: .normal)
+    let (store, _, _) = try makeStore(existingJob: true)
+    let task = store.state.recognitionTasks[0]
+    await store.act(taskID: task.id, questionID: "00000000-0000-4000-8000-0000000000ee",
+      sourceCompared: true, expectedRevision: 3)
+    XCTAssertFalse(StoreHTTPProtocol.requests.contains { $0.url!.path.hasSuffix("/confirm") })
   }
 
   private func waitUntil(_ predicate: () -> Bool) async {
