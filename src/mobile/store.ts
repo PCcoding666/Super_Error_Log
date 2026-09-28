@@ -123,6 +123,7 @@ export class MobileRecognitionStore {
       const sourceFilename = `${sourceMediaId}.jpg`;
       await durableWrite(path.join(directory, 'media', sourceFilename), input.normalizedBytes);
       const stored: StoredRecognitionJob = { version: MOBILE_CONTRACT_VERSION, id, revision: 1, photoName: input.photoName, sourceHash, sourceMediaId,
+        attemptBudgets: { inventory: { currentRoundId: id, rounds: [{ id, reservations: [], retryCount: 0, retryNotBefore: null }] } },
         status: 'queued', phase: 'inventory', inventoryWarnings: [], questions: [], error: null, createdAt: now, updatedAt: now,
         idempotencyKey: input.idempotencyKey, transformedHash: sha256(input.normalizedBytes), media: { [sourceMediaId]: { filename: sourceFilename, kind: 'source' } }, inventoryCandidates: {}, questionCheckpoints: {} };
       await this.persist(stored);

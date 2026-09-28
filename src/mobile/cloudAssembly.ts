@@ -28,6 +28,7 @@ export async function assembleCloudService(configuration: MobileConfiguration): 
     server = app.listen(configuration.port, configuration.host, () => { app.off('error', onError); resolve(); });
   });
   const close = async (): Promise<void> => {
+    await app.locals.mobileRecognitionService.stop();
     await admin.close();
     const current = server;
     server = null;

@@ -6,13 +6,16 @@ import path from 'node:path';
 import type { Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMobileApp } from '../../src/mobile/router.js';
+import type { MobileRecognitionService } from '../../src/mobile/service.js';
 import { PairingManager, type PairingCodePayload } from '../../src/mobile/pairing.js';
 import { assembleCloudService } from '../../src/mobile/cloudAssembly.js';
 import type { MobileVisionBoundary, VisionContext, VisionInventoryResult, VisionQuestionResult, InventoryCandidate } from '../../src/mobile/vision.js';
 
 const roots: string[] = [];
 const servers: Server[] = [];
+const services: MobileRecognitionService[] = [];
 afterEach(async () => {
+  await Promise.all(services.splice(0).map(service => service.stop()));
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }));
 });
@@ -45,6 +48,7 @@ async function setupCloud(vision: MobileVisionBoundary = new FixtureVision(), op
   const dataDir = await tempRoot();
   const manager = await PairingManager.open(dataDir);
   const app = await createMobileApp({ dataDir, vision, mode: 'cloud', pairing: manager, cloudProxy: true });
+  services.push(app.locals.mobileRecognitionService);
   const server = app.listen(0, '127.0.0.1'); servers.push(server);
   await new Promise<void>(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -111,6 +115,7 @@ describe('POST /v1/pairing/redeem', () => {
     const dataDir = await tempRoot();
     const manager = await PairingManager.open(dataDir, { now: () => clock.now });
     const app = await createMobileApp({ dataDir, vision: new FixtureVision(), mode: 'cloud', pairing: manager, cloudProxy: true });
+    services.push(app.locals.mobileRecognitionService);
     const server = app.listen(0, '127.0.0.1'); servers.push(server);
     await new Promise<void>(resolve => server.once('listening', resolve));
     const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;

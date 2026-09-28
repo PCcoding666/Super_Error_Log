@@ -24,7 +24,7 @@ export function canRecover(failure: RecognitionFailure | null | undefined): bool
   // Older schema failures recorded the invalid field instead of the enclosing model stage.
   const legacySchemaField = ['verification', 'textComplete', 'questionCropComplete', 'questionCropPure', 'transcriptionMatches', 'diagramSafe', 'issues', 'candidates', 'capacityReached', 'partial', 'warning', 'warnings', 'selectionEvidence', 'number', 'confidence'].includes(failure.stage)
     || /^candidate\[\d+\]$/.test(failure.stage);
-  return failure.retryable || (modelStage && ['invalid_output', 'output_truncated', 'authentication', 'permission', 'unsupported'].includes(failure.code))
+  return failure.retryable || ['attempt_budget_unknown', 'attempt_budget_exhausted'].includes(failure.code) || (modelStage && ['invalid_output', 'output_truncated', 'authentication', 'permission', 'unsupported'].includes(failure.code))
     || (failure.code === 'invalid_output' && legacySchemaField);
 }
 
@@ -78,11 +78,20 @@ export interface RecognitionJob {
 }
 
 export interface StoredRecognitionJob extends RecognitionJob {
+  /** Missing on legacy data: automatic work must not invent a fresh budget. */
+  attemptBudgets?: Record<string, { currentRoundId: string; rounds: RecognitionAttemptRound[] }>;
   idempotencyKey: string;
   transformedHash: string;
   media: Record<string, { filename: string; kind: 'source' | 'question' | 'diagram' }>;
   inventoryCandidates: Record<string, { number: string; box: Box; confidence?: number; selectionEvidence: SelectionEvidence; partial: boolean; warning?: string }>;
   questionCheckpoints: Record<string, RecognitionStageCheckpoint>;
+}
+
+export interface RecognitionAttemptRound {
+  id: string;
+  reservations: Array<{ id: string; stage: 'inventory' | 'transcribe' | 'verify' | 'ground'; reservedAt: string }>;
+  retryCount: number;
+  retryNotBefore: number | null;
 }
 
 export function publicJob(job: StoredRecognitionJob | RecognitionJob): RecognitionJob {
@@ -98,5 +107,6 @@ export function publicJob(job: StoredRecognitionJob | RecognitionJob): Recogniti
   delete value.media;
   delete value.inventoryCandidates;
   delete value.questionCheckpoints;
+  delete value.attemptBudgets;
   return value;
 }

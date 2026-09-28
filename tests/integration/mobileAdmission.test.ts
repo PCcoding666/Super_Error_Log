@@ -4,16 +4,19 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Server } from 'node:http';
 import sharp from 'sharp';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMobileApp } from '../../src/mobile/router.js';
 import { PairingManager } from '../../src/mobile/pairing.js';
 import type { MobileVisionBoundary, VisionContext, VisionInventoryResult, VisionQuestionResult, InventoryCandidate } from '../../src/mobile/vision.js';
 import type { MobileRecognitionService } from '../../src/mobile/service.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
+import { MobileRecognitionStore } from '../../src/mobile/store.js';
 
 const roots: string[] = [];
 const servers: Server[] = [];
+const services: MobileRecognitionService[] = [];
 afterEach(async () => {
+  await Promise.all(services.splice(0).map(service => service.stop()));
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }));
 });
@@ -41,7 +44,7 @@ class SlowVision implements MobileVisionBoundary {
 
 type RequestFn = (url: string, init?: RequestInit) => Promise<Response>;
 
-interface SetupOptions { jobCapacity?: number; diskFreeBytes?: bigint; dataDirBytes?: bigint; }
+interface SetupOptions { jobCapacity?: number; diskFreeBytes?: bigint; dataDirBytes?: bigint; dataDir?: string }
 
 async function tempRoot(): Promise<string> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-admission-'));
@@ -50,7 +53,7 @@ async function tempRoot(): Promise<string> {
 }
 
 async function setupCloud(vision: MobileVisionBoundary, options: SetupOptions = {}): Promise<{ request: RequestFn; manager: PairingManager; base: string; token: string; app: import('express').Express }> {
-  const dataDir = await tempRoot();
+  const dataDir = options.dataDir ?? await tempRoot();
   const manager = await PairingManager.open(dataDir);
   const admission = new AdmissionController({
     jobCapacity: options.jobCapacity ?? 10,
@@ -58,6 +61,7 @@ async function setupCloud(vision: MobileVisionBoundary, options: SetupOptions = 
     dataUsageProbe: options.dataDirBytes !== undefined ? async () => options.dataDirBytes! : undefined,
   });
   const app = await createMobileApp({ dataDir, vision, mode: 'cloud', pairing: manager, cloudProxy: true, admission });
+  services.push(app.locals.mobileRecognitionService);
   const server = app.listen(0, '127.0.0.1'); servers.push(server);
   await new Promise<void>(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -76,6 +80,24 @@ async function submit(request: RequestFn, bytes: Buffer, key = crypto.randomUUID
 const idOf = async (response: Response): Promise<string> => ((await response.json() as { job: { id: string } }).job).id;
 
 describe('job capacity admission', () => {
+  it.each([10, 12])('reserves all %i restored jobs before uploads while recovery persistence is blocked', async count => {
+    const dataDir = await tempRoot(); const bytes = await jpeg();
+    const store = await MobileRecognitionStore.open(dataDir);
+    const key = crypto.randomUUID();
+    for (let i = 0; i < count; i++) await store.createJob({ idempotencyKey: i === 0 ? key : crypto.randomUUID(), photoName: 'pending.jpg', sourceBytes: bytes, normalizedBytes: bytes });
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = MobileRecognitionStore.prototype.updateJob;
+    const blocked = vi.spyOn(MobileRecognitionStore.prototype, 'updateJob').mockImplementation(async function (this: MobileRecognitionStore, id, change) {
+      await gate; return original.call(this, id, change);
+    });
+    try {
+      const { request, app } = await setupCloud(new SlowVision(), { dataDir });
+      // No health polling: the first request while recovery is at an await boundary must be rejected.
+      expect((await submit(request, bytes)).status).toBe(429);
+      expect(await (app.locals.mobileRecognitionService as MobileRecognitionService).listJobs()).toHaveLength(count);
+      expect((await submit(request, bytes, key)).status).toBe(202);
+    } finally { release(); blocked.mockRestore(); }
+  });
   it('容量满时拒绝新任务而不是假装成功', async () => {
     const vision = new SlowVision();
     const { request } = await setupCloud(vision, { jobCapacity: 1 });
@@ -183,6 +205,7 @@ describe('storage gates', () => {
     const manager = await PairingManager.open(dataDir);
     const admission = new AdmissionController({ jobCapacity: 5, diskProbe: async () => free });
     const app = await createMobileApp({ dataDir, vision: new SlowVision(), mode: 'cloud', pairing: manager, cloudProxy: true, admission });
+    services.push(app.locals.mobileRecognitionService);
     const server = app.listen(0, '127.0.0.1'); servers.push(server);
     await new Promise<void>(resolve => server.once('listening', resolve));
     const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -344,5 +367,129 @@ describe('per-question concurrency and image semaphore', () => {
     expect(terminal.status).toBe('completed');
     const afterTerminal = await submit(request, await jpeg('#7a7a7a'));
     expect(afterTerminal.status).toBe(202);
+  });
+});
+
+describe('restart capacity accounting (Task 01-B)', () => {
+  /** 门闩清单 vision：inventory 逐次放行，question 秒过（观测容量账目的时间窗）。 */
+  class GatedInventoryVision implements MobileVisionBoundary {
+    inventoryCalls = 0;
+    private gates: Array<() => void> = [];
+    async releaseNextWhenPending(): Promise<void> {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        if (this.gates.length > 0) { this.gates.shift()!(); return; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      throw new Error('没有挂起的清单调用可放行');
+    }
+    async inventory(): Promise<VisionInventoryResult> {
+      this.inventoryCalls += 1;
+      await new Promise<void>(resolve => { this.gates.push(resolve); });
+      return { candidates: [{ number: '1', box, selectionEvidence: 'unmarked' as const, partial: false }], warnings: [] };
+    }
+    async recognizeQuestion(source: Buffer, candidate: InventoryCandidate): Promise<VisionQuestionResult> {
+      return { evidence: evidence(candidate.number), verification: { textComplete: true, questionCropComplete: true, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: [] }, questionCrop: source, diagramCrops: [] };
+    }
+  }
+
+  it('重启恢复先建容量账目：满额旧任务在恢复时占位，第十一张新照片被拒；一个旧任务终态恰好释放一个名额', async () => {
+    // 预置 10 个未完成任务（模拟重启前遗留；新建即 queued/inventory，重启加载后转 interrupted 待恢复）。
+    const dataDir = await tempRoot();
+    const store = await MobileRecognitionStore.open(dataDir);
+    for (let index = 0; index < 10; index += 1) {
+      const bytes = await jpeg(index % 2 === 0 ? '#dddddd' : '#eeeeee');
+      await store.createJob({ idempotencyKey: crypto.randomUUID(), photoName: `遗留-${index}.jpg`, sourceBytes: bytes, normalizedBytes: bytes });
+    }
+    const vision = new GatedInventoryVision();
+    const { request } = await setupCloud(vision, { jobCapacity: 10, dataDir });
+    // 等恢复扫描把 10 个旧任务挂到容量账目上（health 翻转为不接收）。
+    const deadline = Date.now() + 30_000;
+    let accepting = true;
+    while (Date.now() < deadline) {
+      accepting = (await (await request('/v1/health')).json() as { acceptingJobs: boolean }).acceptingJobs;
+      if (!accepting) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(accepting, '恢复的旧任务必须占用容量名额').toBe(false);
+    // 第十一张：满额拒收（旧实现恢复不预约容量 → 会错误地 202）。
+    const eleventh = await submit(request, await jpeg('#111111'));
+    expect(eleventh.status).toBe(429);
+    expect((await eleventh.json() as { error: { code: string } }).error.code).toBe('capacity_full');
+    // 放行一个旧任务跑完 → 恰好释放一个名额 → 新照片可入；再下一张仍被拒（只释放一个）。
+    await vision.releaseNextWhenPending();
+    const admitDeadline = Date.now() + 30_000;
+    let admitted = false;
+    while (Date.now() < admitDeadline) {
+      const response = await submit(request, await jpeg('#222222'));
+      if (response.status === 202) { admitted = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    expect(admitted, '一个旧任务终态后应恰好释放一个名额').toBe(true);
+    const twelfth = await submit(request, await jpeg('#333333'));
+    expect((await twelfth.json() as { error: { code: string } }).error.code).toBe('capacity_full');
+  });
+
+  it('对无遗留容量的收拢任务重复 finalize 不释放在途任务的容量', async () => {
+    // jobCapacity=1：B 在途占位；A 是「题目已有结论但任务卡住」的遗留记录（无容量预约）。
+    const vision = new SlowVision();
+    const { request, app } = await setupCloud(vision, { jobCapacity: 1 });
+    const held = await submit(request, await jpeg('#aaaaaa'));
+    expect(held.status).toBe(202);
+    const service = app.locals.mobileRecognitionService as MobileRecognitionService;
+    // 遗留卡住任务：全部题目已失败（非中断，不可恢复）但任务状态停留 interrupted。
+    const bytes = await jpeg('#bbbbbb');
+    const { job: stuck } = await service.store.createJob({ idempotencyKey: crypto.randomUUID(), photoName: 'stuck.jpg', sourceBytes: bytes, normalizedBytes: bytes });
+    await service.store.updateJob(stuck.id, current => {
+      current.phase = 'questions'; current.status = 'interrupted';
+      current.questions = [{ id: crypto.randomUUID(), number: '1', revision: 1, status: 'failed', selectionEvidence: 'unmarked', evidence: null, verification: null,
+        questionMediaId: null, diagramMediaIds: [],
+        error: { code: 'invalid_output', message: '历史失败记录', stage: 'transcribe', retryable: false }, confirmedAt: null }];
+    });
+    // 看门狗对 A 只做 finalize 收拢；A 从未在本进程预约容量，收拢不得释放 B 占的名额。
+    await service.resumeIncompleteJobs();
+    const third = await submit(request, await jpeg('#cccccc'));
+    expect((await third.json() as { error: { code: string } }).error.code, 'B 在途时新照片仍须被拒').toBe('capacity_full');
+    vision.finish();
+  });
+
+  it('重试的容量预约在状态迁移失败时回滚，不泄漏名额', async () => {
+    // 题目可恢复失败（rate_limited）终态 → 容量已释放；重试时预约成功但持久化故障 → 预约必须回滚。
+    class RetryableFailVision implements MobileVisionBoundary {
+      async inventory(): Promise<VisionInventoryResult> {
+        return { candidates: [{ number: '1', box, selectionEvidence: 'marked_wrong' as const, partial: false }], warnings: [] };
+      }
+      async recognizeQuestion(): Promise<VisionQuestionResult> {
+        throw Object.assign(new Error('合成限流'), { code: 'rate_limited', stage: 'transcribe', retryable: true });
+      }
+    }
+    const vision = new RetryableFailVision();
+    const { request, app } = await setupCloud(vision, { jobCapacity: 1 });
+    const service = app.locals.mobileRecognitionService as MobileRecognitionService;
+    service.autoRetryDelaysMs = []; // 关闭自动重试：题目一次性落到 failed 终态
+    const accepted = await submit(request, await jpeg());
+    expect(accepted.status).toBe(202);
+    const jobId = await idOf(accepted);
+    const deadline = Date.now() + 30_000;
+    let failedJob: { status: string; questions: Array<{ id: string; status: string }> } | undefined;
+    while (Date.now() < deadline) {
+      const polled = await (await request(`/v1/recognitions/${jobId}`)).json() as { job?: typeof failedJob };
+      if (polled?.job && polled.job.status === 'failed') { failedJob = polled.job; break; }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    expect(failedJob?.status).toBe('failed');
+    // 注入一次性持久化故障：重试的 updateJob 抛 EIO（服务随后 fail-closed 是既有语义）。
+    const original = service.store.updateJob.bind(service.store);
+    service.store.updateJob = async () => { throw Object.assign(new Error('synthetic EIO'), { code: 'EIO' }); };
+    const retry = await request(`/v1/recognitions/${jobId}/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: failedJob!.questions[0]!.id }) });
+    expect(retry.status).toBe(503);
+    service.store.updateJob = original;
+    // 直接观测容量账目：泄漏的预约会让 pendingJobs 卡在 1（满），回滚后应为 0。
+    // 通过 admission.accepting() 侧信道验证（storageGate 正常 + 未满 → true）。
+    // 注意：storage 故障后服务 fail-closed 是既有语义，这里只验证 admission 计数器本身。
+    const admission = (service as unknown as { admission: AdmissionController | null }).admission;
+    expect(admission).not.toBeNull();
+    const probe = await admission!.accepting();
+    expect(probe, '重试迁移失败必须回滚容量预约').toBe(true);
   });
 });

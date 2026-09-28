@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import sharp from 'sharp';
 import { normalizePhoto } from '../media/images.js';
-import { canRecover, publicJob, type RecognitionFailure, type RecognitionJob, type RecognitionQuestion, type StoredRecognitionJob } from './contracts.js';
+import { canRecover, publicJob, type RecognitionAttemptRound, type RecognitionFailure, type RecognitionJob, type RecognitionQuestion, type StoredRecognitionJob } from './contracts.js';
 import type { Box } from '../media/images.js';
 import { IdempotencyConflictError, MobileRecognitionStore, UnknownMediaError } from './store.js';
 import { MobileVisionError, type InventoryCandidate, type MobileVisionBoundary } from './vision.js';
@@ -13,6 +13,8 @@ export class MobileRequestError extends Error {
 class MobileStorageError extends Error {
   constructor(cause: unknown) { super('mobile recognition storage unavailable', { cause }); this.name = 'MobileStorageError'; }
 }
+class WorkerStopped extends Error {}
+type Work = { jobId: string; kind: 'inventory' | 'question'; questionId?: string };
 
 function failure(error: unknown, fallbackStage: string): RecognitionFailure {
   if (error instanceof MobileVisionError) return { code: error.code, message: error.message, stage: error.stage, retryable: error.retryable };
@@ -76,14 +78,28 @@ export class MobileRecognitionService {
   autoRetryDelaysMs: number[] = [2_000, 8_000];
   /** 看门狗周期：扫描持久化为非终态、但既不在内存队列也不在执行中的僵尸工作单元。 */
   watchdogIntervalMs = 60_000;
-  private readonly autoRetryUsed = new Map<string, number>();
+  private readonly shutdown = new AbortController();
+  private worker: Promise<void> | null = null;
+  private scanning: Promise<void> | null = null;
+  private readonly ownedPersistence = new Set<Promise<unknown>>();
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly inflight = new Set<string>();
+  /** 退避计时器已挂起、尚未重新入队的工作单元键（看门狗不得把这类待重试单元当僵尸）。 */
+  private readonly retryScheduled = new Set<string>();
   private watchdog: ReturnType<typeof setInterval> | null = null;
 
   constructor(readonly store: MobileRecognitionStore, readonly vision: MobileVisionBoundary) {}
 
   /** 云端模式：接入入口容量控制（上传图像信号量 + 任务容量释放）。 */
   useAdmission(admission: AdmissionController): void { this.admission = admission; }
+
+  async initialize(): Promise<void> {
+    // Rebuild all ownership before returning the app to callers/listeners.
+    for (const job of await this.store.listStoredJobs()) {
+      if (!['completed', 'partial', 'failed'].includes(job.status)) this.noteRestoredOccupancy(job.id);
+    }
+    this.startWatchdog();
+  }
 
   acceptingJobs(): boolean {
     if (!this.accepting) return false;
@@ -115,6 +131,8 @@ export class MobileRecognitionService {
     }
     catch { throw new MobileRequestError(400, 'invalid_image', '照片无法读取、已损坏或超过大小限制。'); }
     if (!normalized) throw new MobileRequestError(400, 'invalid_image', '照片无法读取、已损坏或超过大小限制。');
+    this.assertStorageAvailable();
+    if (!this.accepting) throw new MobileRequestError(503, 'service_paused', '识别服务暂时不可用（正在恢复），请稍后再试。照片仍保存在本机。');
     let result;
     try { result = await this.store.createJob({ idempotencyKey: input.idempotencyKey, photoName: input.photoName, sourceBytes: input.sourceBytes, normalizedBytes: normalized }); }
     catch (error) {
@@ -143,29 +161,63 @@ export class MobileRecognitionService {
     if (questionId === null) {
       if (job.phase !== 'inventory' || !['failed', 'interrupted'].includes(job.status) || !canRecover(job.error)) throw new MobileRequestError(409, 'not_retryable', '清单阶段当前不能恢复。');
       // 容量预约先于状态改写：预约失败时任务保持 failed/interrupted，不会卡在 queued。
-      this.reserveRetryCapacity(jobId);
-      job = await this.persistTransition(() => this.store.updateJob(jobId, current => { current.status = 'queued'; current.error = null; this.touch(current) }));
+      const reserved = this.reserveRetryCapacity(jobId);
+      try {
+        job = await this.persistTransition(() => this.store.updateJob(jobId, current => {
+          if (current.phase !== 'inventory' || !['failed', 'interrupted'].includes(current.status)) throw new MobileRequestError(409, 'not_retryable', '清单阶段当前不能恢复。');
+          this.newRound(current, 'inventory'); current.status = 'queued'; current.error = null; this.touch(current) }));
+      } catch (error) {
+        // 迁移失败只回滚本次新预约的名额（若任务本已占位，名额仍归属在途工作单元）。
+        if (reserved) this.releaseCapacityOnce(jobId);
+        throw error;
+      }
       this.enqueue({ jobId, kind: 'inventory' });
       return publicJob(job);
     }
     const question = job.questions.find(item => item.id === questionId);
     if (!question) throw new MobileRequestError(404, 'not_found', '题目不存在。');
     if (question.status !== 'failed' || !canRecover(question.error)) throw new MobileRequestError(409, 'not_retryable', '这道题当前不能恢复。');
-    this.reserveRetryCapacity(jobId);
-    job = await this.persistTransition(() => this.store.updateJob(jobId, current => { const target = current.questions.find(item => item.id === questionId)!;
-      target.status = 'queued'; target.error = null; target.revision += 1; current.status = 'processing'; current.phase = 'questions'; current.error = null; this.touch(current); }));
+    const reserved = this.reserveRetryCapacity(jobId);
+    try {
+      job = await this.persistTransition(() => this.store.updateJob(jobId, current => { const target = current.questions.find(item => item.id === questionId)!;
+        if (target.status !== 'failed') throw new MobileRequestError(409, 'not_retryable', '这道题当前不能恢复。');
+        this.newRound(current, questionId);
+        target.status = 'queued'; target.error = null; target.revision += 1; current.status = 'processing'; current.phase = 'questions'; current.error = null; this.touch(current); }));
+    } catch (error) {
+      if (reserved) this.releaseCapacityOnce(jobId);
+      throw error;
+    }
     this.enqueue({ jobId, kind: 'question', questionId });
     return publicJob(job);
   }
 
-  /** 重试重新占用一个任务容量位：非终态任务恰好占用 1（按 jobId 去重，不重复计照片数）；满则保守拒绝。 */
-  private reserveRetryCapacity(jobId: string): void {
+  /** 重试重新占用一个任务容量位：非终态任务恰好占用 1（按 jobId 去重，不重复计照片数）；满则保守拒绝。
+   *  返回是否为本次调用新预约——失败回滚只撤销自己新占的名额，不动他人既有占位。 */
+  private reserveRetryCapacity(jobId: string): boolean {
+    if (!this.admission) return false;
+    if (this.activeCapacityJobs.has(jobId)) return false;
+    const capacity = this.admission.tryAcquireJobCapacity();
+    if (!capacity.accepted) throw new MobileRequestError(429, 'capacity_full', '识别队列已满，请稍后再试。');
+    this.activeCapacityJobs.add(jobId);
+    return true;
+  }
+
+  /**
+   * 恢复扫描的容量登记：恢复的既有任务必须真实占用容量位（无条件登记，不试满即拒——
+   * 历史超额任务允许继续处理，仅拦新增）。已占位的任务重复扫描不重复登记。
+   */
+  private noteRestoredOccupancy(jobId: string): void {
     if (!this.admission) return;
     if (!this.activeCapacityJobs.has(jobId)) {
-      const capacity = this.admission.tryAcquireJobCapacity();
-      if (!capacity.accepted) throw new MobileRequestError(429, 'capacity_full', '识别队列已满，请稍后再试。');
+      this.admission.noteExistingOccupancy();
       this.activeCapacityJobs.add(jobId);
     }
+  }
+
+  /** 容量恰好释放一次：只有确实占位的任务才归还名额（重复 finalize/收拢不再误伤在途任务）。 */
+  private releaseCapacityOnce(jobId: string): void {
+    if (!this.admission) return;
+    if (this.activeCapacityJobs.delete(jobId)) this.admission.releaseJobCapacity();
   }
 
   async confirm(jobId: string, questionId: string, input: { revision: number; action: 'confirm' | 'skip'; sourceCompared?: boolean; manualRelease?: boolean }): Promise<RecognitionJob> {
@@ -200,15 +252,22 @@ export class MobileRecognitionService {
     return publicJob(job);
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.accepting = false;
     if (this.watchdog) { clearInterval(this.watchdog); this.watchdog = null; }
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear(); this.retryScheduled.clear();
+    this.shutdown.abort(new WorkerStopped('recognition worker stopped'));
+    await Promise.allSettled([this.worker, this.scanning]);
+    // A generic boundary may settle via cancellation before its started storage
+    // callback returns. No new callbacks can enter ownedStorage after stop.
+    await Promise.allSettled([...this.ownedPersistence]);
   }
   isStorageAvailable(): boolean { return this.storageAvailable; }
 
   /** 启动看门狗：立即做一次恢复扫描，随后按周期扫描。 */
   startWatchdog(): void {
-    if (this.watchdog) return;
+    if (this.watchdog || !this.accepting) return;
     this.watchdog = setInterval(() => { void this.resumeIncompleteJobs().catch(() => undefined); }, this.watchdogIntervalMs);
     this.watchdog.unref();
     void this.resumeIncompleteJobs().catch(error => console.warn('[queue] 启动恢复扫描失败：', error));
@@ -220,22 +279,34 @@ export class MobileRecognitionService {
    * 与重启时被标记为 interrupted 的中断工作。幂等，可被看门狗反复调用。
    * 边界：仅自动恢复中断（interrupted）产生的失败；真实模型失败仍走人工/显式重试。
    */
-  async resumeIncompleteJobs(): Promise<void> {
+  resumeIncompleteJobs(): Promise<void> {
+    if (!this.accepting) return Promise.resolve();
+    if (this.scanning) return this.scanning;
+    this.scanning = this.scanIncompleteJobs().finally(() => { this.scanning = null; });
+    return this.scanning;
+  }
+
+  private async scanIncompleteJobs(): Promise<void> {
     if (!this.accepting) return;
     // 队列有积压但没人 drain（异常路径下 running 卡 false 的防御）：补一脚驱动。
-    if (this.queue.length > 0 && !this.running) void this.drain();
+    if (this.queue.length > 0 && !this.running) this.kick();
     let resumed = 0;
     for (const job of await this.store.listStoredJobs()) {
+      if (!this.accepting) return;
       if (['completed', 'partial', 'failed'].includes(job.status)) continue;
+      // 任务级活动守卫：inventory 工作单元在队/在执行时，其逐题阶段由 processInventory 内部
+      // 串行驱动（不占逐题队列键），看门狗不得把这种正常长任务视作僵尸重复入队。
+      if (this.queued.has(`${job.id}:inventory:`) || this.inflight.has(`${job.id}:inventory:`)) continue;
       if (job.phase === 'inventory') {
         const key = `${job.id}:inventory:`;
-        if (this.queued.has(key) || this.inflight.has(key)) continue;
+        if (this.queued.has(key) || this.inflight.has(key) || this.retryScheduled.has(key)) continue;
         if (!['queued', 'processing', 'interrupted'].includes(job.status)) continue;
         if (job.status === 'interrupted' && job.error && !job.error.retryable) continue;
+        if (this.restoreDelay(job, null)) continue;
         if (job.status !== 'queued') {
           await this.ownedStorage(() => this.store.updateJob(job.id, current => { current.status = 'queued'; this.touch(current); }));
         }
-        this.activeCapacityJobs.add(job.id);
+        this.noteRestoredOccupancy(job.id);
         this.enqueue({ jobId: job.id, kind: 'inventory' });
         resumed += 1;
         continue;
@@ -244,15 +315,16 @@ export class MobileRecognitionService {
       let resumedAny = false;
       for (const question of job.questions) {
         const key = `${job.id}:question:${question.id}`;
-        if (this.queued.has(key) || this.inflight.has(key)) continue;
+        if (this.queued.has(key) || this.inflight.has(key) || this.retryScheduled.has(key)) continue;
         const wedged = question.status === 'queued' || question.status === 'processing';
         const interrupted = question.status === 'failed' && question.error?.code === 'interrupted';
         if (!wedged && !interrupted) continue;
+        if (this.restoreDelay(job, question.id)) { resumedAny = true; continue; }
         await this.ownedStorage(() => this.store.updateJob(job.id, current => {
           const target = current.questions.find(item => item.id === question.id);
           if (target) { target.status = 'queued'; target.error = null; target.revision += 1; this.touch(current); }
         }));
-        this.activeCapacityJobs.add(job.id);
+        this.noteRestoredOccupancy(job.id);
         this.enqueue({ jobId: job.id, kind: 'question', questionId: question.id });
         resumed += 1; resumedAny = true;
       }
@@ -268,13 +340,18 @@ export class MobileRecognitionService {
     if (resumed > 0) console.info(`[queue] 自愈扫描：恢复 ${resumed} 个中断/卡死的工作单元。`);
   }
 
-  private enqueue(task: { jobId: string; kind: 'inventory' | 'question'; questionId?: string }): void {
+  private enqueue(task: Work, scheduled = false): void {
     if (!this.accepting) {
       console.warn(`[queue] 服务未在接收状态，任务未能入队：${task.jobId} ${task.kind} ${task.questionId ?? ''}（由看门狗在恢复后重新拾取）`);
       return;
     }
-    const key = `${task.jobId}:${task.kind}:${task.questionId ?? ''}`; if (this.queued.has(key)) return;
-    this.queued.add(key); this.queue.push(task); void this.drain();
+    const key = `${task.jobId}:${task.kind}:${task.questionId ?? ''}`; if (this.queued.has(key) || (!scheduled && this.inflight.has(key))) return;
+    this.queued.add(key); this.queue.push(task); this.kick();
+  }
+
+  private kick(): void {
+    if (this.running || !this.accepting) return;
+    this.worker = this.drain();
   }
 
   private async drain(): Promise<void> {
@@ -287,7 +364,7 @@ export class MobileRecognitionService {
         try {
           if (task.kind === 'inventory') await this.processInventory(task.jobId);
           else await this.processQuestionRetry(task.jobId, task.questionId!);
-        } catch { this.failStorage(); }
+        } catch (error) { if (!(error instanceof WorkerStopped)) this.failStorage(); }
         finally { this.inflight.delete(inflightKey); }
       }
     } finally { this.running = false; }
@@ -298,35 +375,27 @@ export class MobileRecognitionService {
     job = await this.ownedStorage(() => this.store.updateJob(jobId, current => { current.status = 'processing'; current.error = null; this.touch(current); }));
     try {
       const source = await this.ownedStorage(() => this.store.readSource(job.id));
-      const result = await this.vision.inventory(source, this.context(job, null));
+      this.round(job, 'inventory');
+      const result = await this.invoke(() => this.vision.inventory(source, this.context(job, null)));
       job = await this.ownedStorage(() => this.store.updateJob(jobId, current => {
         current.inventoryWarnings = result.warnings;
         current.questions = result.candidates.map(candidate => {
-        const id = crypto.randomUUID(); current.inventoryCandidates[id] = structuredClone(candidate);
+        const id = crypto.randomUUID(); current.inventoryCandidates[id] = structuredClone(candidate); this.newRound(current, id);
         return { id, number: candidate.number, revision: 1, status: 'queued', selectionEvidence: candidate.selectionEvidence,
           evidence: null, verification: null, questionMediaId: null, diagramMediaIds: [], error: null, confirmedAt: null };
       });
         current.phase = 'questions'; current.status = 'processing'; this.touch(current);
       }));
     } catch (error) {
-      if (error instanceof MobileStorageError) throw error;
+      if (error instanceof MobileStorageError || error instanceof WorkerStopped) throw error;
       const f = failure(error, 'inventory');
-      const used = this.autoRetryUsed.get(jobId) ?? 0;
-      if (f.retryable && used < 1 && this.autoRetryDelaysMs.length > 0) {
+      if (f.retryable && await this.scheduleRetry(jobId, null, f, 1)) {
         // 清单级瞬时失败自动重试一次：任务保持 queued，客户端只见「等待识别」。
-        this.autoRetryUsed.set(jobId, used + 1);
-        await this.ownedStorage(() => this.store.updateJob(jobId, current => {
-          current.status = 'queued'; current.error = { ...f, message: '识别暂时失败，正在自动重试…' }; this.touch(current);
-        }));
-        const delay = this.autoRetryDelaysMs[0]!;
-        console.warn(`[queue] 清单自动重试：job=${jobId}，${delay}ms 后执行（${f.code}）。`);
-        const timer = setTimeout(() => this.enqueue({ jobId, kind: 'inventory' }), delay);
-        timer.unref();
         return;
       }
       await this.ownedStorage(() => this.store.updateJob(jobId, current => { current.status = 'failed'; current.phase = 'inventory'; current.error = f; this.touch(current); }));
-      // 清单失败即任务终态：释放入口容量，避免容量泄漏。
-      this.admission?.releaseJobCapacity(); this.activeCapacityJobs.delete(jobId);
+      // 清单失败即任务终态：释放入口容量，避免容量泄漏（恰好一次：未占位的任务不误释放他人名额）。
+      this.releaseCapacityOnce(jobId);
       return;
     }
     await this.processQuestions(job.id, job.questions.map(question => question.id));
@@ -335,7 +404,7 @@ export class MobileRecognitionService {
   private async processQuestions(jobId: string, questionIds: string[]): Promise<void> {
     let cursor = 0;
     // Task 3：逐题并发降为 1（云端 2GB 机器资源保护；回环模式同样收敛）。
-    const worker = async () => { while (cursor < questionIds.length) { const id = questionIds[cursor++]; if (id) await this.runQuestion(jobId, id); } };
+    const worker = async () => { while (cursor < questionIds.length) { this.assertRunning(); const id = questionIds[cursor++]; if (id) await this.runQuestion(jobId, id); } };
     await Promise.all(Array.from({ length: Math.min(1, questionIds.length) }, worker));
     await this.finalize(jobId);
   }
@@ -344,14 +413,15 @@ export class MobileRecognitionService {
 
   private async runQuestion(jobId: string, questionId: string): Promise<void> {
     let job = await this.requireStored(jobId); let question = job.questions.find(item => item.id === questionId);
-    if (!question || question.status !== 'queued') return;
+    if (!question || !(question.status === 'queued' || (question.status === 'failed' && question.error?.code === 'interrupted'))) return;
     job = await this.ownedStorage(() => this.store.updateJob(jobId, current => { const target = current.questions.find(item => item.id === questionId)!;
       target.status = 'processing'; target.error = null; target.revision += 1; this.touch(current); }));
     question = job.questions.find(item => item.id === questionId)!;
     try {
       const source = await this.ownedStorage(() => this.store.readSource(job.id)); const candidate = job.inventoryCandidates[questionId] as InventoryCandidate | undefined;
       if (!candidate) throw new MobileVisionError('invalid_output', '题目候选定位记录缺失。', 'question', false);
-      const result = await this.vision.recognizeQuestion(source, candidate, this.context(job, questionId));
+      this.round(job, questionId);
+      const result = await this.invoke(() => this.vision.recognizeQuestion(source, candidate, this.context(job, questionId)));
       const questionMediaId = await this.ownedStorage(() => this.store.writeMedia(job.id, result.questionCrop, 'question'));
       const diagramMediaIds: string[] = [];
       for (const bytes of result.diagramCrops) diagramMediaIds.push(await this.ownedStorage(() => this.store.writeMedia(job.id, bytes, 'diagram')));
@@ -362,22 +432,10 @@ export class MobileRecognitionService {
         target.status = allChecksPass(target, candidate) && !unresolvedOccurrence(current, target) ? 'ready' : 'needs_check'; target.error = null; target.revision += 1;
         applyOccurrenceConflicts(current); this.touch(current); }));
     } catch (error) {
-      if (error instanceof MobileStorageError) throw error;
+      if (error instanceof MobileStorageError || error instanceof WorkerStopped) throw error;
       const f = failure(error, 'question');
-      const retryKey = `${jobId}:${questionId}`;
-      const used = this.autoRetryUsed.get(retryKey) ?? 0;
-      if (f.retryable && used < this.autoRetryDelaysMs.length) {
+      if (f.retryable && await this.scheduleRetry(jobId, questionId, f, this.autoRetryDelaysMs.length)) {
         // 题级瞬时失败自动退避重试：题目回到 queued，客户端只见「等待识别」，无需人工点重试。
-        this.autoRetryUsed.set(retryKey, used + 1);
-        await this.ownedStorage(() => this.store.updateJob(jobId, current => { const target = current.questions.find(item => item.id === questionId);
-          if (!target) return;
-          target.status = 'queued'; target.revision += 1;
-          target.error = { ...f, message: `识别暂时失败，正在自动重试（第 ${used + 1} 次）…` };
-          this.touch(current); }));
-        const delay = this.autoRetryDelaysMs[used]!;
-        console.warn(`[queue] 题目自动重试：job=${jobId} question=${questionId} 第 ${used + 1} 次，${delay}ms 后执行（${f.code}）。`);
-        const timer = setTimeout(() => this.enqueue({ jobId, kind: 'question', questionId }), delay);
-        timer.unref();
         return;
       }
       await this.ownedStorage(() => this.store.updateJob(jobId, current => { const target = current.questions.find(item => item.id === questionId);
@@ -388,6 +446,9 @@ export class MobileRecognitionService {
   private async finalize(jobId: string): Promise<void> {
     let terminal = false;
     await this.ownedStorage(() => this.store.updateJob(jobId, job => { const failed = job.questions.filter(question => question.status === 'failed');
+      // Reopened pending questions are temporarily marked failed/interrupted. Their
+      // persisted backoff or queued owner still owns capacity until actual settlement.
+      if ([...this.retryScheduled].some(key => key.startsWith(`${jobId}:`)) || this.queue.some(task => task.jobId === jobId)) return;
       if (job.questions.some(question => question.status === 'queued' || question.status === 'processing')) return;
       for (const question of job.questions) {
         if (question.status === 'needs_check' && !unresolvedOccurrence(job, question) && !occurrenceConflict(job, question)
@@ -403,15 +464,31 @@ export class MobileRecognitionService {
     }));
     // 仅在真正到达终态时释放容量：并发重试的中间态（仍有 queued/processing 题目）保持占用，
     // 由最后一次 finalize 释放，避免容量提前归还导致的超发。
+    // 恰好释放一次：只有本进程登记过占位的任务才归还名额（重复 finalize/遗留任务收拢不误伤他人）。
     if (terminal) {
-      this.admission?.releaseJobCapacity(); this.activeCapacityJobs.delete(jobId);
-      // 任务终态后清空该任务的自动重试预算：人工重试开启新一轮时重新获得完整预算。
-      for (const key of [...this.autoRetryUsed.keys()]) if (key === jobId || key.startsWith(`${jobId}:`)) this.autoRetryUsed.delete(key);
+      this.releaseCapacityOnce(jobId);
     }
   }
 
   private context(job: StoredRecognitionJob, questionId: string | null) {
     return { jobId: job.id, sourceHash: job.sourceHash, questionId,
+      signal: this.shutdown.signal,
+      reserveAttempt: async (stage: 'inventory' | 'transcribe' | 'verify' | 'ground') => {
+        this.assertRunning();
+        let reservation!: { roundId: string; reservationId: string; attempt: number };
+        await this.ownedStorage(() => this.store.updateJob(job.id, current => {
+          this.assertRunning();
+          const round = this.round(current, questionId ?? 'inventory');
+          const used = round.reservations.filter(item => item.stage === stage).length;
+          if (used >= 3) throw new MobileVisionError('attempt_budget_exhausted', '本轮该阶段已达到三次调用上限，已保存证据；请手动重试开启新一轮。', stage, false);
+          const id = crypto.randomUUID();
+          round.reservations.push({ id, stage, reservedAt: now() });
+          reservation = { roundId: round.id, reservationId: id, attempt: used + 1 };
+          this.touch(current);
+        }));
+        this.assertRunning();
+        return reservation;
+      },
       // 共享图像信号量：vision 题图/图示裁切互斥执行（Task 3）。
       ...(this.admission ? { withImage: <T,>(section: () => Promise<T>) => this.admission!.withImage(section) } : {}),
       recordAttempt: (attempt: unknown) => this.ownedStorage(() => this.store.writeAttempt(job.id, questionId, attempt)),
@@ -436,15 +513,110 @@ export class MobileRecognitionService {
     }
   }
   private async ownedStorage<T>(operation: () => Promise<T>): Promise<T> {
-    try { return await operation(); }
+    this.assertRunning();
+    const pending = Promise.resolve().then(operation);
+    this.ownedPersistence.add(pending);
+    try { return await pending; }
     catch (error) {
+      if (error instanceof MobileVisionError || error instanceof WorkerStopped) throw error;
       const storageError = error instanceof MobileStorageError ? error : new MobileStorageError(error);
       this.failStorage(); throw storageError;
     }
+    finally { this.ownedPersistence.delete(pending); }
   }
   private failStorage(): void {
     this.storageAvailable = false; this.accepting = false;
+    void this.stop();
     console.error('[storage] 存储故障：服务停止接收新任务与队列处理（检查磁盘/权限后重启恢复）。');
+  }
+  private assertRunning(): void {
+    if (!this.accepting || this.shutdown.signal.aborted) throw new WorkerStopped('recognition worker stopped');
+  }
+
+  private async invoke<T>(operation: () => Promise<T>): Promise<T> {
+    this.assertRunning();
+    if (this.vision.supportsCancellation) {
+      const result = await operation();
+      this.assertRunning();
+      return result;
+    }
+    let abort!: () => void;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(this.shutdown.signal.reason);
+      this.shutdown.signal.addEventListener('abort', abort, { once: true });
+    });
+    try { const result = await Promise.race([operation(), cancelled]); this.assertRunning(); return result; }
+    finally { this.shutdown.signal.removeEventListener('abort', abort); }
+  }
+
+  private newRound(job: StoredRecognitionJob, unit: string): void {
+    if (!job.attemptBudgets || typeof job.attemptBudgets !== 'object' || Array.isArray(job.attemptBudgets)) job.attemptBudgets = {};
+    const previous = job.attemptBudgets[unit];
+    const rounds = Array.isArray(previous?.rounds) ? previous.rounds : [];
+    let id: string;
+    do { id = crypto.randomUUID(); } while (rounds.some(round => round?.id === id));
+    job.attemptBudgets[unit] = { currentRoundId: id, rounds: [
+      ...rounds,
+      { id, reservations: [], retryCount: 0, retryNotBefore: null },
+    ] };
+  }
+
+  private round(job: StoredRecognitionJob, unit: string): RecognitionAttemptRound {
+    const budget = job.attemptBudgets?.[unit];
+    const matches = typeof budget?.currentRoundId === 'string' && budget.currentRoundId.trim() && Array.isArray(budget.rounds)
+      ? budget.rounds.filter(item => item?.id === budget.currentRoundId) : [];
+    // Old ambiguous evidence remains auditable after an explicit new round. Only
+    // one nonempty identity may select the active budget; never choose a first match.
+    const round = matches.length === 1 ? matches[0] : undefined;
+    if (!round || typeof round.id !== 'string' || !Array.isArray(round.reservations)
+      || !Number.isSafeInteger(round.retryCount) || round.retryCount < 0
+      || !(round.retryNotBefore === null || (Number.isFinite(round.retryNotBefore) && round.retryNotBefore >= 0))
+      || round.reservations.some(item => !item || typeof item.id !== 'string' || !['inventory', 'transcribe', 'verify', 'ground'].includes(item.stage) || !Number.isFinite(Date.parse(item.reservedAt)))
+      || new Set(round.reservations.map(item => item.id)).size !== round.reservations.length) {
+      throw new MobileVisionError('attempt_budget_unknown', '历史调用次数无法可靠确认，已停止自动处理；请手动重试开启新一轮。', unit === 'inventory' ? 'inventory' : 'question', false);
+    }
+    return round;
+  }
+
+  private async scheduleRetry(jobId: string, questionId: string | null, error: RecognitionFailure, limit: number): Promise<boolean> {
+    const job = await this.requireStored(jobId);
+    const round = this.round(job, questionId ?? 'inventory');
+    const delay = this.autoRetryDelaysMs[round.retryCount];
+    if (round.retryCount >= limit || delay === undefined) return false;
+    const deadline = Date.now() + delay;
+    await this.ownedStorage(() => this.store.updateJob(jobId, current => {
+      const active = this.round(current, questionId ?? 'inventory');
+      active.retryCount += 1; active.retryNotBefore = deadline;
+      const f = { ...error, message: '识别暂时失败，正在自动重试…' };
+      if (questionId) {
+        const question = current.questions.find(item => item.id === questionId)!;
+        question.status = 'queued'; question.error = f; question.revision += 1;
+      } else { current.status = 'queued'; current.error = f; }
+      this.touch(current);
+    }));
+    this.schedule({ jobId, kind: questionId ? 'question' : 'inventory', ...(questionId ? { questionId } : {}) }, deadline);
+    return true;
+  }
+
+  private restoreDelay(job: StoredRecognitionJob, questionId: string | null): boolean {
+    // Unknown legacy budget is handled by normal work as a recoverable terminal error.
+    let deadline: number | null;
+    try { deadline = this.round(job, questionId ?? 'inventory').retryNotBefore; } catch { return false; }
+    if (!deadline || deadline <= Date.now()) return false;
+    this.schedule({ jobId: job.id, kind: questionId ? 'question' : 'inventory', ...(questionId ? { questionId } : {}) }, deadline);
+    return true;
+  }
+
+  private schedule(task: Work, deadline: number): void {
+    if (!this.accepting) return;
+    const key = `${task.jobId}:${task.kind}:${task.questionId ?? ''}`;
+    if (this.retryTimers.has(key)) return;
+    this.retryScheduled.add(key);
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(key); this.retryScheduled.delete(key);
+      this.enqueue(task, true);
+    }, Math.max(0, deadline - Date.now()));
+    timer.unref(); this.retryTimers.set(key, timer);
   }
   private touch(job: StoredRecognitionJob): void { job.revision += 1; job.updatedAt = now(); }
 }

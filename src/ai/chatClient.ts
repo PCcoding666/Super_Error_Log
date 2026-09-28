@@ -15,7 +15,7 @@ export interface ChatTrace {
   usage: { prompt_tokens: number | null; completion_tokens: number | null };
   error: { kind: string; message: string } | null;
 }
-export interface ChatOptions { baseUrl: string; apiKey: string; models: Record<string, string>; timeoutMs: number; bailianOnly: boolean; maxTokens?: number; trace?: (trace: ChatTrace) => void | Promise<void> }
+export interface ChatOptions { baseUrl: string; apiKey: string; models: Record<string, string>; timeoutMs: number; bailianOnly: boolean; maxTokens?: number; trace?: (trace: ChatTrace) => void | Promise<void>; signal?: AbortSignal; beforeRequest?: () => Promise<void> }
 export interface Message { role: 'system' | 'user'; content: unknown }
 export const PROMPT_VERSION = 'evidence-v1-20260907';
 export const MAX_INPUT_TOKEN_RESERVATION = 100_000;
@@ -97,6 +97,10 @@ export class ChatClient {
     if (!Number.isInteger(maxTokens) || maxTokens < 128 || maxTokens > 16384 || !Number.isFinite(o.timeoutMs) || o.timeoutMs < 1) throw new AiError('unsupported', '模型 token/超时限制无效');
     const request = { model, messages: traceMessages(messages), temperature: 0, max_tokens: maxTokens,
       response_format: { type: 'json_object' }, ...(o.bailianOnly || model.startsWith('qwen') ? { enable_thinking: false } : {}) };
+    // Reservation errors must never be classified as provider failures.
+    o.signal?.throwIfAborted();
+    await o.beforeRequest?.();
+    o.signal?.throwIfAborted();
     const started = Date.now(); const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), o.timeoutMs);
     let raw: string | null = null; let httpStatus: number | null = null;
@@ -104,7 +108,7 @@ export class ChatClient {
     let reportedError: { kind: string; message: string } | null = null;
     try {
       const res = await fetch(`${o.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST', redirect: 'error', signal: controller.signal,
+        method: 'POST', redirect: 'error', signal: o.signal ? AbortSignal.any([controller.signal, o.signal]) : controller.signal,
         headers: { 'content-type': 'application/json', authorization: `Bearer ${o.apiKey}` },
         body: JSON.stringify({ model, messages, temperature: 0, max_tokens: maxTokens,
           response_format: { type: 'json_object' }, ...(o.bailianOnly || model.startsWith('qwen') ? { enable_thinking: false } : {}) }),
@@ -129,6 +133,7 @@ export class ChatClient {
       let value: unknown; try { value = JSON.parse(choice.message.content); } catch { throw new AiError('invalid_json', '模型正文不符合 JSON 契约'); }
       return { value, run: { stage, model, durationMs: Date.now() - started, promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, maxTokens, thinking: false, promptVersion: PROMPT_VERSION } };
     } catch (e) {
+      if (o.signal?.aborted) throw o.signal.reason;
       if (e instanceof AiError) { reportedError = { kind: e.kind, message: e.message }; throw e; }
       // Provider exceptions may contain echoed user material/credentials. Never propagate them.
       const safe = new AiError(controller.signal.aborted ? 'timeout' : 'provider_error', controller.signal.aborted ? '模型调用超时' : '模型连接失败');

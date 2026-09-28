@@ -82,6 +82,11 @@ export class AdmissionController {
     if (this.pendingJobs > 0) this.pendingJobs -= 1;
   }
 
+  /** 恢复扫描登记的既有任务占用：无条件 +1（历史超额任务允许继续处理，只拦新增）。 */
+  noteExistingOccupancy(): void {
+    this.pendingJobs += 1;
+  }
+
   /** 图片处理互斥：覆盖 normalizePhoto、上传 metadata 检查与 vision 裁切。 */
   async acquireImage(): Promise<Release> {
     if (this.imageBusy) {

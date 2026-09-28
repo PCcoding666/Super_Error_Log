@@ -14,7 +14,9 @@ import { BailianMobileVision, type InventoryCandidate, type MobileVisionBoundary
 
 const roots: string[] = [];
 const servers: Server[] = [];
+const services: MobileRecognitionService[] = [];
 afterEach(async () => {
+  await Promise.all(services.splice(0).map(service => service.stop()));
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }));
 });
@@ -68,6 +70,7 @@ async function setup(vision: MobileVisionBoundary, dataDir?: string) {
   if (!dataDir) roots.push(root);
   const token = 'pairing-token-for-tests';
   const app = await createMobileApp({ dataDir: root, pairingToken: token, vision });
+  services.push(app.locals.mobileRecognitionService);
   const server = app.listen(0, '127.0.0.1'); servers.push(server);
   await new Promise<void>(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -334,7 +337,7 @@ describe('mobile recognition HTTP contract', () => {
     expect(calls.filter(call => call.stage === 'verify' && call.number === '2')).toHaveLength(1);
     const attemptsDir = path.join(first.root, 'jobs', job.id, 'attempts');
     const retained = fs.readdirSync(attemptsDir).map(name => [name, fs.readFileSync(path.join(attemptsDir, name))] as const);
-    (first.app.locals.mobileRecognitionService as MobileRecognitionService).stop();
+    await (first.app.locals.mobileRecognitionService as MobileRecognitionService).stop();
     const reopened = await setup(adapter(), first.root); repaired = true;
     await new Promise(resolve => setTimeout(resolve, 35)); const count = calls.length;
     expect((await json(await reopened.request(`/v1/recognitions/${job.id}`))).job.questions[1].status).toBe('failed');
@@ -491,7 +494,7 @@ describe('mobile recognition HTTP contract', () => {
     expect(beforeRestart).toMatchObject({ status: 'processing', phase: 'questions', questions: [{ status: 'processing', error: null }] });
     const questionAttempts = fs.readdirSync(path.join(first.root, 'jobs', accepted.job.id, 'attempts')).filter(filename => filename.includes(beforeRestart.questions[0].id));
     expect(questionAttempts).toEqual([]);
-    service.stop();
+    await service.stop();
     const second = await setup(adapter(), first.root);
     // 2026-09-20 起：自愈扫描在启动时自动恢复 interrupted 的可重试题目，无需人工点重试即跑完。
     await waitFor(second.request, accepted.job.id, 'completed');

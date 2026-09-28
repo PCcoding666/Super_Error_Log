@@ -66,7 +66,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
   // Task 3：service 终态释放容量与图像信号量依赖注入（云端必须接通，否则容量永不归还）。
   if (mode === 'cloud' && admission) service.useAdmission(admission);
   // 自愈看门狗：启动即做一次恢复扫描（重启/队列卡死留下的非终态任务自动回到队列）。
-  service.startWatchdog();
+  await service.initialize();
   const app = express(); app.disable('x-powered-by'); app.locals.mobileRecognitionService = service;
   app.use((_request, response, next) => { response.setHeader('cache-control', 'private, no-store'); response.setHeader('pragma', 'no-cache'); next(); });
 

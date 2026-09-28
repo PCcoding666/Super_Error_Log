@@ -55,7 +55,8 @@ if [[ -z "$(ls -A "${dist_dir}")" ]]; then
   exit 1
 fi
 for must_exist in package.json package-lock.json .env.example deploy/caddy/Caddyfile \
-                  deploy/systemd/super-error-log.service deploy/README.md; do
+                  deploy/systemd/super-error-log.service deploy/systemd/super-error-log-caddy.service \
+                  deploy/prepare-caddy-migration.mjs deploy/README.md; do
   if [[ ! -f "${must_exist}" ]]; then
     echo "错误：缺少发布白名单文件 ${must_exist}" >&2
     exit 1

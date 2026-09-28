@@ -311,10 +311,13 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
     expect(attempts.filter(attempt => attempt.stage === 'ground')).toHaveLength(2);
   });
 
-  it('retries network, 429 and transient 5xx only up to three total attempts, while authentication stops immediately', async () => {
+  it('makes a single HTTP attempt per call and classifies transient vs auth errors for the service-level retry budget', async () => {
+    // Task 01-C：重试预算统一收在 service 层（同题同阶段最多 3 次，证据见 mobileRetryBudget.test.ts）。
+    // 适配器不再内部自转：瞬时 5xx 一次调用即抛出 retryable 错误（含 attempt 记录），由外层决定重试。
     const attempts: VisionAttempt[] = []; mode = 'transient'; transientCalls = 0; requests.length = 0;
-    await expect(make(attempts).inventory(source, context)).resolves.toHaveProperty('candidates');
-    expect(requests).toHaveLength(3); expect(attempts).toHaveLength(3);
+    await expect(make(attempts).inventory(source, context)).rejects.toMatchObject({ code: 'network', retryable: true });
+    expect(requests).toHaveLength(1); expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.attempt).toBe(1);
     mode = 'auth'; requests.length = 0; attempts.length = 0;
     await expect(make(attempts).inventory(source, context)).rejects.toMatchObject({ code: 'authentication', retryable: false });
     expect(requests).toHaveLength(1); expect(attempts).toHaveLength(1);

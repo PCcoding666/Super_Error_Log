@@ -27,6 +27,8 @@ export interface VisionAttempt {
   error: { code: string; message: string } | null;
 }
 export interface VisionContext {
+  signal?: AbortSignal;
+  reserveAttempt?: (stage: VisionAttempt['stage']) => Promise<{ roundId: string; reservationId: string; attempt: number }>;
   jobId: string;
   sourceHash: string;
   questionId: string | null;
@@ -38,6 +40,8 @@ export interface VisionContext {
 }
 export interface MobileVisionBoundary {
   readonly configured?: boolean;
+  /** Guarantees the returned operation settles after context.signal aborts. */
+  readonly supportsCancellation?: boolean;
   inventory(source: Buffer, context: VisionContext): Promise<VisionInventoryResult>;
   recognizeQuestion(source: Buffer, candidate: InventoryCandidate, context: VisionContext): Promise<VisionQuestionResult>;
 }
@@ -116,6 +120,7 @@ function errorFrom(error: unknown, stage: string): MobileVisionError {
 
 export class BailianMobileVision implements MobileVisionBoundary {
   readonly configured: boolean;
+  readonly supportsCancellation = true;
   constructor(readonly options: BailianMobileVisionOptions, readonly defaultRecorder?: (attempt: VisionAttempt) => void | Promise<void>) {
     this.configured = Boolean(options.apiKey.trim() && Object.values(options.models).every(value => value.trim()));
   }
@@ -123,28 +128,34 @@ export class BailianMobileVision implements MobileVisionBoundary {
   private async call<T>(stage: VisionAttempt['stage'], input: Message[], context: VisionContext, validate: (value: unknown) => T): Promise<T> {
     const promptHash = crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const modelStage = `mobile_${stage}` as ModelStage;
-    let attempt = 0;
-    while (attempt < 3) {
-      attempt += 1;
-      const recorder = context.recordAttempt ?? this.defaultRecorder;
-      let captured: ChatTrace | null = null;
-      const client = new ChatClient({ baseUrl: this.options.baseUrl, apiKey: this.options.apiKey, timeoutMs: this.options.timeoutMs,
-        bailianOnly: this.options.bailianOnly, maxTokens: this.options.maxTokens, models: { [modelStage]: this.options.models[stage] },
-        trace: trace => { captured = trace; } });
-      let value: T;
-      try { value = validate((await client.call(modelStage, input)).value); }
-      catch (error) {
-        const classified = errorFrom(error, stage);
-        const mapped = new MobileVisionError(classified.code, classified.message, stage, classified.retryable);
-        if (recorder && captured) await recorder(this.attempt(stage, attempt, context, captured, mapped, promptHash));
-        if (!mapped.retryable || attempt >= 3) throw mapped;
-        await new Promise(resolve => setTimeout(resolve, 25 * attempt));
-        continue;
-      }
-      if (recorder && captured) await recorder(this.attempt(stage, attempt, context, captured, null, promptHash));
-      return value;
+    // Task 01-C：预算统一收到 service 层（同一题目及阶段最多 3 次，含首次）。适配器每次调用
+    // 只做一次 HTTP 尝试并原样上抛分类错误——不再内部自转，避免与外层重试相乘。
+    const recorder = context.recordAttempt ?? this.defaultRecorder;
+    let captured: ChatTrace | null = null;
+    let reservation: { roundId: string; reservationId: string; attempt: number } | undefined;
+    let boundaryFailure: unknown;
+    const client = new ChatClient({ baseUrl: this.options.baseUrl, apiKey: this.options.apiKey, timeoutMs: this.options.timeoutMs,
+      bailianOnly: this.options.bailianOnly, maxTokens: this.options.maxTokens, models: { [modelStage]: this.options.models[stage] },
+      signal: context.signal,
+      beforeRequest: async () => {
+        try { reservation = await context.reserveAttempt?.(stage); }
+        catch (error) { boundaryFailure = error; throw error; }
+      },
+      trace: trace => { captured = trace; } });
+    // 仅模型调用与输出校验进入 try/catch 做错误分类；attempt 落盘（recorder）保持在外——
+    // 存储故障（如 EIO）必须原样穿透为 fail-closed，绝不能被误分类成模型失败（既有语义回归）。
+    let value: T;
+    try { value = validate((await client.call(modelStage, input)).value); }
+    catch (error) {
+      if (boundaryFailure !== undefined) throw boundaryFailure;
+      if (context.signal?.aborted) throw context.signal.reason;
+      const classified = errorFrom(error, stage);
+      const mapped = new MobileVisionError(classified.code, classified.message, stage, classified.retryable);
+      if (recorder && captured) await recorder({ ...this.attempt(stage, reservation?.attempt ?? 1, context, captured, mapped, promptHash), ...reservation });
+      throw mapped;
     }
-    throw new MobileVisionError('internal', '识别暂未完成。', stage, false);
+    if (recorder && captured) await recorder({ ...this.attempt(stage, reservation?.attempt ?? 1, context, captured, null, promptHash), ...reservation });
+    return value;
   }
 
   private attempt(stage: VisionAttempt['stage'], attempt: number, context: VisionContext, trace: ChatTrace, error: MobileVisionError | null, promptHash: string): VisionAttempt {

@@ -10,7 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { Server } from 'node:http';
 import sharp from 'sharp';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Evidence } from '../../src/ai/evidence.js';
 import { createMobileApp } from '../../src/mobile/router.js';
 import type { MobileRecognitionService } from '../../src/mobile/service.js';
@@ -19,7 +19,9 @@ import type { InventoryCandidate, MobileVisionBoundary, VisionQuestionResult } f
 
 const roots: string[] = [];
 const servers: Server[] = [];
+const services: MobileRecognitionService[] = [];
 afterEach(async () => {
+  await Promise.all(services.splice(0).map(service => service.stop()));
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }));
 });
@@ -64,6 +66,7 @@ async function setup(vision: MobileVisionBoundary, dataDir?: string) {
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const request: RequestFn = (url, init = {}) => fetch(`${base}${url}`, { ...init, headers: { authorization: 'Bearer pairing-token-for-tests', ...init.headers } });
   const service = app.locals.mobileRecognitionService as MobileRecognitionService;
+  services.push(service);
   service.autoRetryDelaysMs = [20, 50];
   return { root, app, server, request, service };
 }
@@ -84,8 +87,40 @@ async function waitFor(request: RequestFn, id: string, status: string) {
   }
   throw new Error(`等待任务进入 ${status} 超时`);
 }
+async function waitForJob(request: RequestFn, id: string, predicate: (job: any) => boolean) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const body = await json(await request(`/v1/recognitions/${id}`));
+    if (body.job && predicate(body.job)) return body.job;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error('等待任务状态超时');
+}
 
 describe('识别队列自愈与自动重试', () => {
+  it('overlapping recovery scans share execution ownership across a blocked persistence boundary', async () => {
+    const vision = new RecoveryVision(); vision.questionFailures.set('1', [Object.assign(new Error('initial'), { code: 'invalid_output', stage: 'transcribe', retryable: false })]);
+    const { request, service } = await setup(vision);
+    const accepted = await json(await submit(request, await jpeg()));
+    const failed = await waitFor(request, accepted.job.id, 'failed');
+    await service.store.updateJob(failed.id, job => {
+      job.status = 'interrupted'; job.phase = 'questions'; job.questions[0]!.error = { code: 'interrupted', stage: 'question', retryable: true, message: 'interrupted' };
+    });
+    vision.questionFailures.set('1', [retryableTimeout()]); service.autoRetryDelaysMs = [30_000, 30_000];
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered = false; const original = service.store.updateJob.bind(service.store);
+    const spy = vi.spyOn(service.store, 'updateJob').mockImplementation(async (id, change) => {
+      if (!entered) { entered = true; await gate; }
+      return original(id, change);
+    });
+    const first = service.resumeIncompleteJobs();
+    await vi.waitFor(() => expect(entered).toBe(true));
+    const second = service.resumeIncompleteJobs(); release(); await Promise.all([first, second]); spy.mockRestore();
+    await vi.waitFor(async () => expect((await service.getJob(failed.id)).questions[0]).toMatchObject({ status: 'queued', error: { code: 'timeout' } }));
+    await service.resumeIncompleteJobs();
+    expect(vision.questionCalls).toEqual(['1', '1']);
+    await service.stop();
+  });
   it('可重试的题目失败自动退避重试，全程无需人工点击', async () => {
     const vision = new RecoveryVision();
     vision.questionFailures.set('1', [retryableTimeout(), retryableTimeout()]);
@@ -148,7 +183,7 @@ describe('识别队列自愈与自动重试', () => {
     const { request, root, service } = await setup(vision);
     const accepted = await json(await submit(request, await jpeg()));
     await waitFor(request, accepted.job.id, 'completed');
-    service.stop(); // 模拟进程退出
+    await service.stop(); // 模拟进程退出
     const vision2 = new RecoveryVision();
     await setup(vision2, root);
     await new Promise(resolve => setTimeout(resolve, 150));
@@ -159,10 +194,77 @@ describe('识别队列自愈与自动重试', () => {
   it('服务停止接收后 submit 明确 503，不产出 queued 僵尸任务', async () => {
     const vision = new RecoveryVision();
     const { request, service } = await setup(vision);
-    service.stop();
+    await service.stop();
     const response = await submit(request, await jpeg());
     expect(response.status).toBe(503);
     const listed = await json(await request('/v1/recognitions'));
     expect(listed.jobs).toHaveLength(0);
+  });
+
+  it('长任务跨越看门狗扫描周期不被误判僵尸：不重置、不重复入队', async () => {
+    // 门闩 vision：题目模型调用挂起直到放行（模拟横跨多个 60s 看门狗周期的长任务）。
+    class BarrierVision implements MobileVisionBoundary {
+      questionCalls: string[] = [];
+      private readonly gate: Promise<void>; private releaseFn!: () => void;
+      constructor() { this.gate = new Promise<void>(resolve => { this.releaseFn = resolve; }); }
+      release(): void { this.releaseFn(); }
+      async inventory() { return { candidates: [{ number: '1', box, selectionEvidence: 'marked_wrong' as const, partial: false }], warnings: [] }; }
+      async recognizeQuestion(source: Buffer, candidate: InventoryCandidate): Promise<VisionQuestionResult> {
+        this.questionCalls.push(candidate.number);
+        await this.gate;
+        return { evidence: evidence(candidate.number), verification: { ...CHECKS_OK }, questionCrop: source, diagramCrops: [] };
+      }
+    }
+    const vision = new BarrierVision();
+    const { request, service } = await setup(vision);
+    const accepted = await json(await submit(request, await jpeg()));
+    const processing = await waitForJob(request, accepted.job.id, job => job.questions[0]?.status === 'processing');
+    const revisionBefore = processing.questions[0].revision;
+    // 模拟两个看门狗周期（直接调用恢复扫描，不真等 60s）。
+    await service.resumeIncompleteJobs();
+    await service.resumeIncompleteJobs();
+    const during = (await json(await request(`/v1/recognitions/${accepted.job.id}`))).job;
+    expect(during.questions[0].status).toBe('processing');
+    expect(during.questions[0].revision).toBe(revisionBefore);
+    vision.release();
+    await waitFor(request, accepted.job.id, 'completed');
+    expect(vision.questionCalls).toEqual(['1']);
+  });
+
+  it('自动退避计时器挂起期间，看门狗不得把待重试题目提前入队', async () => {
+    const vision = new RecoveryVision();
+    vision.questionFailures.set('1', [retryableTimeout()]);
+    const { request, service } = await setup(vision);
+    service.autoRetryDelaysMs = [300, 800]; // 首次退避 300ms：足够覆盖下面的两次扫描窗口
+    const accepted = await json(await submit(request, await jpeg()));
+    // 等首次失败落定：题目回到 queued 并挂起退避计时器（错误文案含「自动重试」）。
+    await waitForJob(request, accepted.job.id, job => job.questions[0]?.status === 'queued'
+      && typeof job.questions[0]?.error?.message === 'string' && job.questions[0].error.message.includes('自动重试'));
+    const callsBeforeScan = vision.questionCalls.length;
+    await service.resumeIncompleteJobs();
+    await service.resumeIncompleteJobs();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(vision.questionCalls.length).toBe(callsBeforeScan); // 退避窗口内不得提前重跑
+    const done = await waitFor(request, accepted.job.id, 'completed');
+    expect(done.questions[0].status).toBe('ready');
+    expect(vision.questionCalls).toEqual(['1', '1']); // 首次 + 一次自动重试，无重复
+  });
+
+  it('看门狗重复扫描同一任务不产生重复队列工作', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-mobile-scan-idem-')); roots.push(root);
+    const bytes = await jpeg();
+    const store = await MobileRecognitionStore.open(root);
+    const { job } = await store.createJob({ idempotencyKey: crypto.randomUUID(), photoName: 'scan.jpg', sourceBytes: bytes, normalizedBytes: bytes });
+    const vision = new RecoveryVision();
+    const { request, service } = await setup(vision, root);
+    const done = await waitFor(request, job.id, 'completed');
+    expect(done.questions[0].status).toBe('ready');
+    expect(vision.inventoryCalls).toBe(1);
+    // 终态后追加扫描（含并发自身）：不得再触发任何模型调用。
+    await Promise.all([service.resumeIncompleteJobs(), service.resumeIncompleteJobs()]);
+    await service.resumeIncompleteJobs();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(vision.inventoryCalls).toBe(1);
+    expect(vision.questionCalls).toEqual(['1']);
   });
 });

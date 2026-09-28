@@ -89,6 +89,8 @@ describe('release packager (scripts/build-release.sh)', () => {
       'super-error-log/dist/mobile/server.js',
       'super-error-log/deploy/caddy/Caddyfile',
       'super-error-log/deploy/systemd/super-error-log.service',
+      'super-error-log/deploy/systemd/super-error-log-caddy.service',
+      'super-error-log/deploy/prepare-caddy-migration.mjs',
       'super-error-log/deploy/README.md',
       'super-error-log/.env.example'
     ];
@@ -173,5 +175,29 @@ describe('release packager (scripts/build-release.sh)', () => {
     expect(status).not.toBe(0);
     expect(stderr).toMatch(/版本号|version/i);
     expect(fs.existsSync(output) ? fs.readdirSync(output).filter(name => name.endsWith('.tar.gz')) : []).toHaveLength(0);
+  });
+
+  it('应用重复初始化不影响部署相邻目录的权限前提（证书存储与应用数据平级）', async () => {
+    // 回归守卫（Task 01-A）：历史上应用启动把数据目录 chmod 0700，嵌套在内的
+    // Caddy 证书存储随即不可访问（caddy 用户无法穿越 0700 父目录）。修复后证书存储
+    // 与应用数据目录平级——本测试用同 UID 的兄弟目录证明：应用两次初始化只会
+    // 动自己的数据目录，兄弟目录（证书存储位置）的权限保持部署时的 0700 不变。
+    // 跨 UID 的真实权限验证（caddy 用户不能读应用数据）属于生产部署验收项。
+    const { MobileRecognitionStore } = await import('../../src/mobile/store.js');
+    const { PairingManager } = await import('../../src/mobile/pairing.js');
+    const parent = makeTempDir();
+    const appData = path.join(parent, 'super-error-log');
+    const caddyData = path.join(parent, 'caddy-super-error-log');
+    fs.mkdirSync(appData); fs.mkdirSync(caddyData);
+    fs.chmodSync(caddyData, 0o700);
+    // 首次初始化 + 再次初始化（重启路径）各跑一遍
+    for (let round = 0; round < 2; round += 1) {
+      await MobileRecognitionStore.open(appData);
+      await PairingManager.open(appData);
+    }
+    const caddyMode = fs.statSync(caddyData).mode & 0o777;
+    expect(caddyMode, '应用初始化不得改动平级证书存储目录的权限').toBe(0o700);
+    // 应用自己的数据目录仍被强制私有化（既有安全语义不破）
+    expect(fs.statSync(appData).mode & 0o777).toBe(0o700);
   });
 });
