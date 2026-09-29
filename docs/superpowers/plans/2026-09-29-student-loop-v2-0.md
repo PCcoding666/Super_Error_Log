@@ -26,11 +26,13 @@
 
 现状：线上 `current` = 0.1.1-manual-release；本地 R1 已通过 448 Vitest + 9 Playwright，发布包 `releases/super-error-log-0.1.1-r1-20260922.tar.gz`（SHA256 5ebdd357…7eab）。
 
-- [ ] 用当前代码重新 `npm run release:build`（版号 `0.1.1-r1`），核对 SHA256 与包内 `dist/mobile/service.js` 逐字节一致。
-- [ ] 按 `deploy/README.md` 暂存新版到 `releases/0.1.1-r1`，切 `current`，重启应用；不动 Caddy（证书已迁移）。
-- [ ] 验收：授权 health 200 且六字段齐全；从手机端提交 1 张合成图任务走到终态；`systemctl restart` 后旧任务不丢、不超收；journal 无密钥、无未捕获异常。
-- [ ] 回滚演练：切回 0.1.1-manual-release 重启 → health 200 → 再切回 0.1.1-r1。两次切换记录时间戳。
-- [ ] 写 `docs/quality/2026-09-29-deploy-0.1.1-r1.md`。
+**2026-09-29 已完成（Claude 执行，用户批准窗口）**，记录见 `docs/quality/2026-09-29-deploy-0.1.1-r1.md`。
+
+- [x] 使用 R1 审查过的发布包（SHA256 核对一致），而非重新产包：WorkBuddy 正在同一工作区改 T2，重新产包会带入半成品。
+- [x] 暂存到 `releases/0.1.1-r1`，切 `current`，只重启应用；Caddy 与原网站未动。
+- [x] 验收：授权 health 200 六字段齐全；1 张合成图真实识别走到 completed；两次切换后 27 个任务状态指纹不变；journal 无异常。
+- [x] 回滚演练：17:53:53 切回旧版、17:53:54 切回新版，均健康。
+- [x] 部署记录已写。
 
 ### T2 单进程装配 + 共享数据库（WorkBuddy）
 
