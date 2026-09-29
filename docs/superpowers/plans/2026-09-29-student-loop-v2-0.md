@@ -48,6 +48,8 @@
 
 ### T3 桥：识别任务 → 错题记录（WorkBuddy）
 
+**2026-09-29 已完成**（WorkBuddy 两轮，Claude 审查与独立复核：typecheck、build、Vitest 465/465、Playwright 9/9）。简报与报告：`.superpowers/sdd/2026-09-29-v2-0/task-3-*.md`。与下列原始条目的差异：状态直接为 `ready_for_reflection`（D3）；只桥接 `registerV2Photo` 登记过的照片，`/v1` 历史任务永不进入学习记录；每个任务至多一份批次与原图记录；`needs_check` 与人工放行题徽标为 `low`；同哈希照片只收先登记者。遗留给 T4：桥接题 `verified=0` 会被现有 `submitReflection` 与 `reviewableItems` 拒绝，v2 来源的题需要单独的反思与选题规则。
+
 文件入口：`src/mobile/service.ts`（任务终态钩子）、新文件 `src/bridge/recognitionToItems.ts`、`src/services/batchService.ts`/`evidenceService.ts`（复用）、`src/db/schema.ts`。
 
 - [ ] 先写 RED：合成识别任务完成后，每道有证据的候选题变成一条 `error_item`（状态 `captured`）+ `evidence_record`（题干、区域、观察、知识点、裁图路径），带 `confidence_badge`（`ready` → 正常，`needs_check` → 低把握）；同一任务重复完成不重复建题；`selectionEvidence` 为 `unmarked/unclear` 的题**不建**错题，但保留在任务里供"同页其他题"补入。
@@ -85,7 +87,8 @@
 
 文件入口：`src/services/printPacket.ts`、`src/services/pdfService.ts`、`src/ai/cropAudit.ts`（区域遮白复用）、`tests/integration/sliceB.test.ts`。
 
-- [ ] 封面：周次、做题日（服务端配置默认值，`POST /v2/practice` 可传）、三条规则、题目清单（短 ID + 来源"原题"）。
+- [ ] 封面：周次、做题日（取学生设置里的默认做题时段，`POST /v2/practice` 可临时覆盖）、三条规则、题目清单（短 ID + 来源"原题"）。
+- [ ] 学生设置（2026-09-29 用户决定，原卷两处都有）：`GET/PUT /v2/settings`，字段为默认做题时段、原卷通常所在（学校 / 家 / 不固定）；末页"对照原卷"的措辞随原卷所在变化。
 - [ ] 题目页：短 ID、学科·知识点、题干**或遮白裁图**（低把握徽标的题一律用遮白裁图：把 student_work / correction / teacher_note 区域填白）、必要图示、一行"这题的关键一步是：______"、演算区、勾选框（独立 / 一级提示 / 二级提示 / 没做出来 ｜ 做题日期）。
 - [ ] 末页可撕：按短 ID 的一级提示、二级提示、答案（有 `reference_answer` 观察记录印它并标"原卷参考答案"；否则印 coach 答案并标"AI 参考，未经老师核验"；两者都没有印"对照原卷"）。
 - [ ] 程序检查：题目页无答案文本、无手写区域外露（遮白后像素抽样）、每题短 ID、末页存在、A4。
