@@ -383,6 +383,41 @@ describe('T3 桥：v2 识别任务 → 错题记录', () => {
     expect(photoRow(first)?.bridge_error).toBeNull();
   });
 
+  it('R2-RED 同时刻登记同哈希：已成功桥接者优先，job_id 较大的一方仍判重复', async () => {
+    const dir = await tempDir();
+    const shared = await jpeg();
+    const a = await makeJob(dir, j => { j.questions = [question({ number: '1' })]; }, shared);
+    const b = await makeJob(dir, j => { j.questions = [question({ number: '1' })]; }, shared);
+    // 稳定复现：second 的 UUID 字典序小于 first，registered_at 完全相同。
+    const [second, first] = [a, b].sort();
+    registerV2Photo(first!);
+    registerV2Photo(second!);
+    db().prepare('UPDATE v2_photo SET registered_at = ?').run('2026-09-29T12:00:00.000Z');
+    bridgeJob(first!, dir);
+    bridgeJob(second!, dir);
+    expect(itemCount()).toBe(1);
+    expect(photoRow(second!)?.bridge_error).toMatch(/^duplicate_source:/);
+    expect(photoRow(second!)?.bridge_error).toContain(first!);
+  });
+
+  it('R2-F4 同哈希后登记者先被直接桥接：先登记者再桥接判重复，仍只有一份建题', async () => {
+    const dir = await tempDir();
+    const shared = await jpeg();
+    const first = await makeJob(dir, j => { j.questions = [question({ number: '1' })]; }, shared);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const second = await makeJob(dir, j => { j.questions = [question({ number: '1' })]; }, shared);
+    registerV2Photo(first);
+    registerV2Photo(second);
+    bridgeJob(second, dir);            // 后登记者先桥接（此时 first 的 source_hash 未落库）→ second 建题
+    bridgeJob(first, dir);             // second 已成功桥接 → first 判重复
+    expect(itemCount()).toBe(1);
+    expect(photoRow(second)?.bridge_error).toBeNull();
+    expect(photoRow(second)?.bridged_revision).toBe(2);
+    expect(photoRow(first)?.bridge_error).toMatch(/^duplicate_source:/);
+    expect(photoRow(first)?.bridge_error).toContain(second);
+    expect(photoRow(first)?.bridged_revision).toBeNull();
+  });
+
   it('RED9 旧库（无新列/新表）迁移后自动补齐，旧数据不丢', async () => {
     const dir = await tempDir();
     const file = path.join(dir, 'old.db');

@@ -67,10 +67,14 @@ export function bridgeJob(jobId: string, mobileDataDir: string): void {
   if (!TERMINAL_STATUS.has(job.status)) return;
   if (photo.bridged_revision === job.revision) return;
 
-  // 同一张照片重复上传：存在 job_id 不同、source_hash 相同且登记更早的记录即判重复。
+  // 同一张照片重复上传：已有同哈希登记成功桥接（bridged_revision 已写且无错误）则一律判重复；
+  // 否则按"登记更早（同时刻则 job_id 更小）者优先"判断。不变量：同一哈希最多一份登记建题。
   const duplicate = db.prepare(
     `SELECT job_id FROM v2_photo
-     WHERE job_id != ? AND source_hash = ? AND (registered_at < ? OR (registered_at = ? AND job_id < ?)) LIMIT 1`,
+     WHERE job_id != ? AND source_hash = ? AND (
+       (bridged_revision IS NOT NULL AND bridge_error IS NULL)
+       OR registered_at < ? OR (registered_at = ? AND job_id < ?)
+     ) ORDER BY registered_at, job_id LIMIT 1`,
   ).get(jobId, job.sourceHash, photo.registered_at, photo.registered_at, jobId) as { job_id: string } | undefined;
   if (duplicate) {
     recordBridgeError(jobId, `duplicate_source:${duplicate.job_id}`);
