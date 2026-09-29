@@ -207,4 +207,12 @@ CREATE TABLE IF NOT EXISTS mobile_item_link (
   question_revision INTEGER NOT NULL,
   UNIQUE(job_id, question_id)
 );
+
+-- v2.0 T4a：学生设置（做题时段、原卷通常所在；设计稿 §13 第 4 条）
+CREATE TABLE IF NOT EXISTS v2_setting (
+  student_id TEXT PRIMARY KEY REFERENCES student_profile(id),
+  practice_slot TEXT NOT NULL,
+  paper_location TEXT NOT NULL CHECK (paper_location IN ('school','home','varies')),
+  updated_at TEXT NOT NULL
+);
 `;

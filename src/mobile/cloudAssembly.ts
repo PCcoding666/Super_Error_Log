@@ -31,7 +31,7 @@ export async function assembleCloudService(configuration: MobileConfiguration): 
   bridgePending(configuration.dataDir);
   const pairing = await PairingManager.open(configuration.dataDir);
   const admin = await createAdminServer(pairing);
-  const app = await createMobileApp({ dataDir: configuration.dataDir, vision: new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true, v2Router: createV2Router });
+  const app = await createMobileApp({ dataDir: configuration.dataDir, vision: new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true, v2Router: () => createV2Router({ mobileDataDir: configuration.dataDir }) });
   let server: Awaited<ReturnType<typeof app.listen>> | null = null;
   const listen = (): Promise<void> => new Promise((resolve, reject) => {
     if (server) { reject(new Error('云端服务已在监听，不能重复 listen')); return; }
