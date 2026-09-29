@@ -30,7 +30,27 @@ export function getDb(): DatabaseSync {
   if (!diagnosisCols.some((c) => c.name === 'adopted_ai')) {
     db.exec('ALTER TABLE error_diagnosis ADD COLUMN adopted_ai INTEGER NOT NULL DEFAULT 0');
   }
+  migrateBridgeSchema(db);
   return db;
+}
+
+/** v2.0 T3：旧库补齐 evidence_record 与 v2_photo 的桥接列（新表由 SCHEMA_SQL 的 IF NOT EXISTS 创建）。 */
+export function migrateBridgeSchema(database: DatabaseSync): void {
+  const cols = database.prepare('PRAGMA table_info(evidence_record)').all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'auto_checks_json')) {
+    database.exec('ALTER TABLE evidence_record ADD COLUMN auto_checks_json TEXT');
+  }
+  if (!cols.some((c) => c.name === 'confidence_badge')) {
+    database.exec('ALTER TABLE evidence_record ADD COLUMN confidence_badge TEXT');
+  }
+  const hasV2Photo = database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='v2_photo'").get();
+  if (!hasV2Photo) return;
+  const photoCols = database.prepare('PRAGMA table_info(v2_photo)').all() as Array<{ name: string }>;
+  for (const column of ['batch_id', 'asset_id', 'source_hash']) {
+    if (!photoCols.some((c) => c.name === column)) {
+      database.exec(`ALTER TABLE v2_photo ADD COLUMN ${column} TEXT`);
+    }
+  }
 }
 
 /** 测试用：关闭并允许换目录重开 */

@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { getDb } from './db/connection.js';
 import { ensureStudentProfile } from './services/studentService.js';
+import { bridgePending } from './bridge/recognitionToItems.js';
 import { loadMobileConfiguration } from './mobile/configuration.js';
 import { assembleCloudService } from './mobile/cloudAssembly.js';
 import { createMobileApp } from './mobile/router.js';
@@ -29,6 +30,8 @@ if (configuration.mode === 'cloud') {
   // 回环模式（本机模拟器）：/v1 + /v2，共享令牌鉴权；同样确保唯一学生档案。
   getDb();
   ensureStudentProfile();
+  // T3：启动时把已登记但尚未桥接的 v2 识别任务补桥一次（单个失败不影响启动）。
+  bridgePending(configuration.dataDir);
   const app = await createMobileApp({ dataDir: configuration.dataDir, pairingToken: configuration.pairingToken, vision: new BailianMobileVision(configuration.vision), v2Router: createV2Router });
   app.listen(configuration.port, configuration.host, () => {
     console.log(`单进程服务已启动：http://${configuration.host}:${configuration.port}（模式：loopback，/v1 + /v2）`);

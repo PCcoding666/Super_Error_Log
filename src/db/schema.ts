@@ -88,6 +88,8 @@ CREATE TABLE IF NOT EXISTS evidence_record (
   diagnosis_json TEXT,
   coaching_json TEXT,
   crop_audit_json TEXT,
+  auto_checks_json TEXT,
+  confidence_badge TEXT,
   updated_at TEXT NOT NULL
 );
 
@@ -182,5 +184,27 @@ CREATE TABLE IF NOT EXISTS audit_event (
   entity_type TEXT,
   entity_id TEXT,
   created_at TEXT NOT NULL
+);
+
+-- v2.0 T3：v2 上传照片登记（只桥接登记过的任务；v1 历史任务永不进入学习记录）
+-- batch_id/asset_id：该任务首次建题时创建的批次与原图（R1：一个任务最多各一份）；source_hash：判重用。
+CREATE TABLE IF NOT EXISTS v2_photo (
+  job_id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL REFERENCES student_profile(id),
+  registered_at TEXT NOT NULL,
+  bridged_revision INTEGER,
+  bridge_error TEXT,
+  batch_id TEXT,
+  asset_id TEXT,
+  source_hash TEXT
+);
+
+-- v2.0 T3：手机识别题 ↔ Web 错题记录映射
+CREATE TABLE IF NOT EXISTS mobile_item_link (
+  item_id TEXT PRIMARY KEY REFERENCES error_item(id) ON DELETE CASCADE,
+  job_id TEXT NOT NULL,
+  question_id TEXT NOT NULL,
+  question_revision INTEGER NOT NULL,
+  UNIQUE(job_id, question_id)
 );
 `;

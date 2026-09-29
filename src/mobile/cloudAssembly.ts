@@ -5,6 +5,7 @@ import { PairingManager } from './pairing.js';
 import { createAdminServer, type AdminServerHandle } from './adminServer.js';
 import { getDb } from '../db/connection.js';
 import { ensureStudentProfile } from '../services/studentService.js';
+import { bridgePending } from '../bridge/recognitionToItems.js';
 import { createV2Router } from '../v2/router.js';
 
 export interface CloudAssembly {
@@ -26,6 +27,8 @@ export async function assembleCloudService(configuration: MobileConfiguration): 
   // 共享 SQLite（SEL_DATA_DIR/app.db）：先建库再确保唯一学生档案，/v2 绑定到它。
   getDb();
   ensureStudentProfile();
+  // T3：启动时把已登记但尚未桥接的 v2 识别任务补桥一次（单个失败不影响启动）。
+  bridgePending(configuration.dataDir);
   const pairing = await PairingManager.open(configuration.dataDir);
   const admin = await createAdminServer(pairing);
   const app = await createMobileApp({ dataDir: configuration.dataDir, vision: new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true, v2Router: createV2Router });
