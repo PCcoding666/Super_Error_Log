@@ -58,10 +58,21 @@ SEL_MOBILE_AI_MODEL_TRANSCRIBE=<模型名>
 SEL_MOBILE_AI_MODEL_VERIFY=<模型名>
 SEL_MOBILE_AI_MODEL_GROUND=<模型名>
 SEL_MOBILE_AI_TIMEOUT_MS=1800000
+# v2.0 T2 单进程装配（dist/main.js）新增必填：
+# SEL_AI_MODE=bailian：/v2 与主入口共用同一配置入口，缺省 mock 会 fail-hard 拒绝启动。
+# SEL_DATA_DIR：/v2 的 node:sqlite 库（app.db）所在目录，必须与 SEL_MOBILE_DATA_DIR 相同。
+SEL_AI_MODE=bailian
+SEL_DATA_DIR=/var/lib/super-error-log
 ```
 
 参考 `.env.example`；缺任何必填项服务启动会直接失败（fail-hard，不静默降级 mock）。
 `SEL_MOBILE_HOST` 只允许 `127.0.0.1`——公网入口只有 Caddy。
+v2.0 T2 起入口为 `dist/main.js`：同一端口（3101）同时服务 `/v1` 识别与 `/v2` 手机接口（均设备令牌鉴权）。
+**云端公网入口不挂任何 Web 页面**（`/parent`、`/trends`、`/items` 等一律 404；Web 看板待有登录方案后再设计）。
+旧的 `dist/mobile/server.js` 仅保留给开发调试，不再作为线上入口。
+
+注意（T4 预告）：T2 本身不调用 `SEL_AI_*`；自 T4 起 `/v2` 会使用 Web 的 AI 配置
+（`SEL_AI_BASE_URL`、`SEL_AI_API_KEY`、`SEL_AI_MODEL*`），届时需与上面的 `SEL_MOBILE_AI_*` 配置为同值。
 
 ## 3. 发布新版本
 
@@ -124,6 +135,12 @@ systemctl status wikiworldlife-board
 
 # 无令牌健康检查必须 401
 curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/v1/health   # 期望 401
+curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/v2/health   # 期望 401
+
+# 云端不挂任何 Web 页面：页面路径一律 404（匿名与带令牌均如此）
+curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/parent      # 期望 404
+curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/            # 期望 404
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://study.pccoding666.com/batches  # 期望 404
 ```
 
 ## 6. 回滚与备份

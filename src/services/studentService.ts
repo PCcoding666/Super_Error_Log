@@ -54,6 +54,21 @@ export function requireProfile(): StudentProfile {
   return p;
 }
 
+/** 单进程装配（v2.0 T2）：启动时若无档案则创建一个匿名档案；重复调用幂等，/v2 所有调用绑定到它。 */
+export function ensureStudentProfile(): StudentProfile {
+  const existing = getProfile();
+  if (existing) return existing;
+  const id = newId('stu');
+  getDb()
+    .prepare('INSERT INTO student_profile (id, nickname, grade, subjects, weekend_pref, created_at) VALUES (?,?,?,?,?,?)')
+    .run(id, '学生', '初三', JSON.stringify(['数学', '物理', '化学']), '周六上午', now());
+  getDb()
+    .prepare('INSERT INTO guardian_view_policy (student_id) VALUES (?)')
+    .run(id);
+  audit('profile_auto_created', 'student', id);
+  return getProfile()!;
+}
+
 export function roleFromCookie(header: string | undefined): Role {
   if (!header) return 'student';
   const m = /(?:^|;\s*)sel_role=(\w+)/.exec(header);

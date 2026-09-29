@@ -20,6 +20,8 @@ export interface CreateMobileAppOptions {
   rateLimiter?: RateLimiter;
   /** 入口容量控制（Task 3）：云端缺省构造默认容量；回环模式不启用。 */
   admission?: AdmissionController;
+  /** 单进程装配（v2.0 T2）：挂载 /v2 路由，与 /v1 共用鉴权与限流。 */
+  v2Router?: () => express.Router;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -100,8 +102,8 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
     });
   }
 
-  // /v1 鉴权：回环共享令牌 或 云端设备令牌（鉴权成功后按设备计数）。
-  app.use('/v1', async (request, response, next) => {    try {
+  // /v1 鉴权：回环共享令牌 或 云端设备令牌（鉴权成功后按设备计数）。T2 起同中间件覆盖 /v2。
+  app.use(options.v2Router ? ['/v1', '/v2'] : '/v1', async (request, response, next) => {    try {
       if (mode === 'cloud') {
         const ip = ipOf(request);
         let deviceId: string;
@@ -230,6 +232,8 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
     try { const bytes = await service.getMedia(id(request.params.id), id(request.params.mediaId)); response.type('image/jpeg').send(bytes); }
     catch (error) { next(error); }
   });
+  // T2 单进程装配：/v2 路由挂在 /v1 之后、404 之前。云端公网入口不挂任何 Web 页面（F1）。
+  if (options.v2Router) app.use('/v2', options.v2Router());
   app.use((_request, response) => response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }));
   const errors: ErrorRequestHandler = (error, request, response, _next) => {
     if (response.headersSent) return;

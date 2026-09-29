@@ -38,12 +38,13 @@
 
 文件入口：`src/server.ts`、`src/mobile/server.ts`、`src/mobile/cloudAssembly.ts`、`src/app.ts`、`src/config.ts`、`src/db/connection.ts`、`deploy/systemd/super-error-log.service`、`deploy/README.md`。
 
-- [ ] 先写 RED：一个进程同时响应 `GET /v1/health`（设备令牌鉴权，现有语义不变）、`GET /v2/health`（设备令牌鉴权）、`GET /parent`（Web 页面，只读）。
-- [ ] 新增装配：云端模式下 `cloudAssembly` 同时挂载 Web `createApp()` 与 `/v2` 路由，共用一个 node:sqlite 库（路径 `SEL_DATA_DIR/app.db`）。回环模式（本机模拟器）同样可用。
-- [ ] Web 学生页面在云端模式下不可写（表单路由 405 或隐藏），只保留 `/parent`、`/trends`、`/items` 只读；不删代码。
-- [ ] 单一学生档案：服务启动时若无档案则创建匿名档案；`/v2` 所有调用绑定到它。
-- [ ] 部署单元 `ExecStart` 改为新入口；README 同步。
-- [ ] 现有 448 项测试全绿；新增装配测试。
+**2026-09-29 已完成**（WorkBuddy 两轮，Claude 审查与独立复核）。报告：`.superpowers/sdd/2026-09-29-v2-0/task-2-report.md`。
+
+- [x] 新入口 `src/main.ts`：一个进程提供 `/v1`（语义不变）与 `/v2`（同一设备令牌鉴权与限流）；回环模式同样可用。
+- [x] **审查改判**：原计划"云端挂 Web 只读页"会让未成年人的题目与照片匿名暴露在公网，已删除。云端公网入口**不挂任何 Web 页面**（`/`、`/parent`、`/items`、`/trends` 一律 404）；Web 看板待有登录方案后在 v2.2 设计。
+- [x] 启动时幂等建立唯一匿名学生档案；共用 `SEL_DATA_DIR/app.db`。
+- [x] 部署单元 `ExecStart` 改为 `dist/main.js`；README 注明新增必填 `SEL_AI_MODE=bailian`、`SEL_DATA_DIR`。
+- [x] 门禁（Claude 独立复核）：typecheck、build、Vitest 452/452、Playwright 9/9。
 
 ### T3 桥：识别任务 → 错题记录（WorkBuddy）
 

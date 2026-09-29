@@ -1,9 +1,11 @@
-# Super Error Log 移动识别服务（Task 6）
+# Super Error Log 单进程服务（v2.0 T2 起）
+# 一个进程同时提供：/v1 识别（设备令牌鉴权，语义不变）+ /v2 手机接口（设备令牌鉴权）。
+# 云端公网入口不挂任何 Web 页面（/、/parent、/items、/trends 等一律 404）。
 # 目标机：广州 ECS（239），systemd 230+，cgroup v1
 # 管理说明见 deploy/README.md；改本文件后 systemctl daemon-reload。
 
 [Unit]
-Description=Super Error Log mobile recognition service (cloud mode)
+Description=Super Error Log single-process service (cloud mode: /v1 + /v2 API only, no web pages)
 After=network-online.target
 Wants=network-online.target
 
@@ -15,7 +17,8 @@ Group=supererrorlog
 
 # 受控发布目录内锁定的 Node 24 LTS 绝对路径——不使用 /usr/bin/node。
 # /opt/super-error-log/current 是指向 releases/<版号> 的软链（回滚=切链）。
-ExecStart=/opt/super-error-log/node-v24/bin/node /opt/super-error-log/current/dist/mobile/server.js
+# v2.0 T2 起入口为 dist/main.js（单进程装配；旧的 dist/mobile/server.js 仅保留给开发调试）。
+ExecStart=/opt/super-error-log/node-v24/bin/node /opt/super-error-log/current/dist/main.js
 
 # 密钥只进 EnvironmentFile（0600 root:root），不进单元文件、不进命令行。
 EnvironmentFile=/etc/super-error-log/env
