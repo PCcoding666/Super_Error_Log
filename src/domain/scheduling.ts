@@ -3,6 +3,8 @@ export interface PlanCandidate {
   score: number;
   primaryTag: string | null;
   conflict: boolean;
+  /** 可选：同分时的优先顺序（小的优先）；缺省退回 itemId 字典序（Web 原有行为不变）。 */
+  order?: number;
 }
 
 export interface PlanResult {
@@ -23,6 +25,7 @@ export function selectWeeklyPlan(candidates: PlanCandidate[]): PlanResult {
   const sorted = [...candidates].sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     if (a.conflict !== b.conflict) return a.conflict ? -1 : 1;
+    if (a.order !== undefined && b.order !== undefined && a.order !== b.order) return a.order - b.order;
     return a.itemId.localeCompare(b.itemId);
   });
 

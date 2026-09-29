@@ -7,6 +7,7 @@ import { getQuestionCrop } from '../services/evidenceService.js';
 import { audit } from '../services/eventLog.js';
 import { discardV2Item, getWeek, isV2Item, restoreV2Item } from './weekService.js';
 import { getV2Settings, updateV2Settings } from './settingsService.js';
+import { createPractice, getPractice, listPractices, recommendPractice } from './practiceService.js';
 
 export const V2_PROTOCOL_VERSION = 2 as const;
 
@@ -87,6 +88,30 @@ export function createV2Router(options: V2RouterOptions = {}): Router {
     const result = updateV2Settings(request.body);
     if (!result.ok) { response.status(400).json({ error: { code: 'invalid_request', message: result.message } }); return; }
     response.json(result.settings);
+  });
+
+  // T4b：本周推荐与建练习。/practice/recommend 必须先于 /practice/:id 注册。
+  r.get('/practice/recommend', (_request, response) => {
+    response.json(recommendPractice(mobileDataDir()));
+  });
+
+  r.post('/practice', express.json({ limit: '16kb', strict: true }), (request, response) => {
+    const result = createPractice(request.body);
+    if (!result.ok) {
+      response.status(result.httpStatus).json({ error: { code: result.httpStatus === 400 ? 'invalid_request' : 'conflict', message: result.message } });
+      return;
+    }
+    response.json(result.detail);
+  });
+
+  r.get('/practice', (_request, response) => {
+    response.json({ packets: listPractices() });
+  });
+
+  r.get('/practice/:id', (request, response) => {
+    const detail = getPractice(String(request.params.id));
+    if (!detail) { notFound(response, '练习不存在。'); return; }
+    response.json(detail);
   });
 
   return r;

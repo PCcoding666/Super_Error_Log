@@ -22,6 +22,18 @@ export function getDb(): DatabaseSync {
   if (!packetCols.some((c) => c.name === 'generated_at')) {
     db.exec('ALTER TABLE review_packet ADD COLUMN generated_at TEXT');
   }
+  // v2.0 T4b：练习包记录做题时段（practiceSlot）。
+  if (!packetCols.some((c) => c.name === 'practice_slot')) {
+    db.exec('ALTER TABLE review_packet ADD COLUMN practice_slot TEXT');
+  }
+  // v2.0 T4b-R1：练习包条目冻结建包时的推荐层级与理由（详情不重算）。
+  const packetItemCols = db.prepare('PRAGMA table_info(review_packet_item)').all() as Array<{ name: string }>;
+  if (!packetItemCols.some((c) => c.name === 'v2_tier')) {
+    db.exec('ALTER TABLE review_packet_item ADD COLUMN v2_tier INTEGER');
+  }
+  if (!packetItemCols.some((c) => c.name === 'v2_reason')) {
+    db.exec('ALTER TABLE review_packet_item ADD COLUMN v2_reason TEXT');
+  }
   const attemptCols = db.prepare('PRAGMA table_info(review_attempt)').all() as Array<{ name: string }>;
   if (!attemptCols.some((c) => c.name === 'performed_at')) {
     db.exec('ALTER TABLE review_attempt ADD COLUMN performed_at TEXT');
