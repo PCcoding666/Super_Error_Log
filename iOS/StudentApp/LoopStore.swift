@@ -19,6 +19,8 @@ private struct LoopCacheSnapshot: Codable {
   var currentPractice: V2PracticeDetail?
   var settings: V2Settings?
   var summary: V2ReturnSummary?
+  /// T6d：summary 属于哪份练习（旧缓存没有此键，解码为 nil）。
+  var summaryPracticeID: String?
   var savedAt: Date
 }
 
@@ -283,11 +285,16 @@ final class LoopStore {
     isBusyReflection = true
     let requestGeneration = generation
     reflectionItemID = itemID
+    reflectionPreviousRecord = nil
     reflectionPhase = .asking
     do {
       let question = try await client.askReflection(itemId: itemID)
       guard requestGeneration == generation else { return }
       reflectionPhase = .waitingAnswer(question: question.question, turn: question.turn)
+    } catch RecognitionClientError.server(status: 409, _) {
+      // T6d：追问已结束（最多两轮）——不报错停住，读复盘详情进入确认页。
+      guard requestGeneration == generation else { return }
+      await recoverEndedFollowup(itemID: itemID, client: client, generation: requestGeneration)
     } catch {
       guard requestGeneration == generation else { return }
       reflectionPhase = .idle
@@ -690,8 +697,12 @@ final class LoopStore {
       returnIssues.removeValue(forKey: entry.itemId)
     }
     guard !pendingReturns.isEmpty else { return }
+    // T6d：本次提交没发出去时不得留下上次的逐条结果误导界面。
+    lastReturnResults = []
     do {
       let response = try await client.returnResults(packetId: practiceID, results: pendingReturns)
+      // T6d：保留逐条结果（含成功条目服务器给的那句话），供录结果页「已记录」区显示。
+      lastReturnResults = response.results
       for result in response.results {
         if result.ok {
           pendingReturns.removeAll { $0.itemId == result.itemId }
@@ -708,6 +719,7 @@ final class LoopStore {
     guard let client else { return }
     do {
       summary = try await client.practiceSummary(packetId: practiceID)
+      summaryPracticeID = practiceID
       persistCache()
     } catch { lastError = Self.errorText(error) }
   }
@@ -748,6 +760,7 @@ final class LoopStore {
       currentPractice = cache.currentPractice
       settings = cache.settings
       summary = cache.summary
+      summaryPracticeID = cache.summaryPracticeID
       cacheSavedAt = cache.savedAt
       isShowingCache = cache.week != nil || cache.currentPractice != nil
         || cache.settings != nil || cache.summary != nil
@@ -759,7 +772,7 @@ final class LoopStore {
   /// 联网刷新成功后更新缓存（原子写入、排除备份）。
   private func persistCache() {
     let cache = LoopCacheSnapshot(week: week, currentPractice: currentPractice,
-      settings: settings, summary: summary, savedAt: Date())
+      settings: settings, summary: summary, summaryPracticeID: summaryPracticeID, savedAt: Date())
     do {
       try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
       try JSONEncoder().encode(cache).write(to: cacheFileURL, options: .atomic)
@@ -778,6 +791,40 @@ final class LoopStore {
     }
     if case V2ClientError.revisionConflict(let message, _) = error { return message }
     return genericConnectionText
+  }
+
+  // MARK: - T6d（选题 / 追问复盘 / 练习入口接线）
+
+  /// T6d：复盘详情里已有的复盘记录（§3.20），作为确认页「上次的选择」初始值；无则 nil。
+  private(set) var reflectionPreviousRecord: V2ReflectionRecord?
+  /// T6d：最近一次回传提交的逐条结果（含成功条目服务器给的那句话）；网络失败时清空。
+  private(set) var lastReturnResults: [V2ReturnResult] = []
+  /// T6d：summary 属于哪份练习；不匹配时界面不得显示。
+  private(set) var summaryPracticeID: String?
+
+  /// 「跳过追问，直接选」：仅在等待回答时有效，直接进入确认页（三项建议为空）。
+  /// 不调用模型；学生已输入的回答文字由视图层保留。
+  func skipFollowup() {
+    guard case .waitingAnswer = reflectionPhase else { return }
+    reflectionPhase = .confirming(summary: nil, suggestedCause: nil, suggestedAttemptState: nil)
+  }
+
+  /// 发起追问遇到 409「追问已结束（最多两轮），请提交复盘。」的恢复路径：
+  /// 读复盘详情（§3.20），用最近一次 AI 建议进入确认页；已有复盘记录时暴露为「上次的选择」。
+  /// 详情读取失败回到 idle 并显示服务器文案，可重试。
+  private func recoverEndedFollowup(itemID: String, client: V2Client, generation requestGeneration: Int) async {
+    do {
+      let detail = try await client.reflectionDetail(itemId: itemID)
+      guard requestGeneration == generation else { return }
+      reflectionPreviousRecord = detail.reflection
+      reflectionPhase = .confirming(summary: detail.suggestion?.summary,
+        suggestedCause: detail.suggestion?.suggestedCause,
+        suggestedAttemptState: detail.suggestion?.suggestedAttemptState)
+    } catch {
+      guard requestGeneration == generation else { return }
+      reflectionPhase = .idle
+      lastError = Self.errorText(error)
+    }
   }
 }
 

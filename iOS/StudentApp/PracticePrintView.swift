@@ -23,17 +23,16 @@ struct PracticePrintView: View {
   @State private var glancePhoto: GlancePhoto?
 
   var body: some View {
-    NavigationStack {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 24) {
-          SectionTitle(title: "打印练习纸", subtitle: "生成一份 A4 练习纸，预览后用系统分享打印或发给家里的打印机。")
-          content
-        }.padding(24)
-      }
-      .background(Palette.paper)
-      .navigationTitle("打印练习纸")
-      .navigationBarTitleDisplayMode(.inline)
+    // T6d-w：从主页导航栈推入，去掉内层 NavigationStack。
+    ScrollView {
+      VStack(alignment: .leading, spacing: 24) {
+        SectionTitle(title: "打印练习纸", subtitle: "生成一份 A4 练习纸，预览后用系统分享打印或发给家里的打印机。")
+        content
+      }.padding(24)
     }
+    .background(Palette.paper)
+    .navigationTitle("打印练习纸")
+    .navigationBarTitleDisplayMode(.inline)
     .onAppear(perform: prime)
     .onDisappear(perform: cleanup)
     .onChange(of: store.printPhase) { _, phase in

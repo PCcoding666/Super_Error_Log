@@ -31,6 +31,7 @@ struct LoopHomeView: View {
         captureSection
         photoProgressSection
         itemSection
+        LoopPracticeSection()
       }.padding(24)
     }
     .background(Palette.paper)

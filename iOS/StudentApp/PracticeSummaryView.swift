@@ -12,7 +12,8 @@ struct PracticeSummaryView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
-        if let summary = store.summary {
+        // T6d-w：summary 按练习包区分——别的练习的回报不得在此显示。
+        if let summary = store.summary, store.summaryPracticeID == practiceID {
           summaryContent(summary)
         } else if let error = store.lastError {
           SectionTitle(title: "练习回报", subtitle: "")

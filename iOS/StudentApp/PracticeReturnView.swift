@@ -29,25 +29,24 @@ struct PracticeReturnView: View {
   ]
 
   var body: some View {
-    NavigationStack {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 24) {
-          SectionTitle(title: "录结果", subtitle: "几道题纸上做完后，逐题告诉系统结果。")
-          Text("当天做对不算掌握，隔 3–7 天独立做对才算。")
-            .font(.subheadline.weight(.medium)).foregroundStyle(Palette.teal)
-          commonDateCard
-          ForEach(form.rows.filter { !$0.isRecorded }) { row in
-            rowCard(row)
-          }
-          recordedSection
-          submitSection
-          summaryLink
-        }.padding(24)
-      }
-      .background(Palette.paper)
-      .navigationTitle("录结果")
-      .navigationBarTitleDisplayMode(.inline)
+    // T6d-w：从主页导航栈推入，去掉内层 NavigationStack；内部「看结果」由主页栈推入回报页。
+    ScrollView {
+      VStack(alignment: .leading, spacing: 24) {
+        SectionTitle(title: "录结果", subtitle: "几道题纸上做完后，逐题告诉系统结果。")
+        Text("当天做对不算掌握，隔 3–7 天独立做对才算。")
+          .font(.subheadline.weight(.medium)).foregroundStyle(Palette.teal)
+        commonDateCard
+        ForEach(form.rows.filter { !$0.isRecorded }) { row in
+          rowCard(row)
+        }
+        recordedSection
+        submitSection
+        summaryLink
+      }.padding(24)
     }
+    .background(Palette.paper)
+    .navigationTitle("录结果")
+    .navigationBarTitleDisplayMode(.inline)
   }
 
   // MARK: - 共用日期
@@ -185,8 +184,8 @@ struct PracticeReturnView: View {
     }
   }
 
-  /// 提交：服务器逐条判定。ok 的题进"已记录"；被拒的题留在列表带原因，可改后再提交；
-  /// 本次没发出去的（网络失败，仍在待提交列表且无原因）保持未提交状态。
+  /// 提交：服务器逐条判定。ok 的题进"已记录"（显示服务器给的那句话，来自 LoopStore.lastReturnResults）；
+  /// 被拒的题留在列表带原因，可改后再提交；本次没发出去的（网络失败，仍在待提交列表且无原因）保持未提交状态。
   private func submit() {
     let entries = form.entries()
     guard !entries.isEmpty, !submitting else { return }
@@ -196,7 +195,9 @@ struct PracticeReturnView: View {
       await store.submitReturn(practiceID: practice.id, entries: entries)
       var results: [V2ReturnResult] = []
       for id in ids {
-        if let issue = store.returnIssues[id] {
+        if let result = store.lastReturnResults.first(where: { $0.itemId == id }) {
+          results.append(result)
+        } else if let issue = store.returnIssues[id] {
           results.append(V2ReturnResult(itemId: id, ok: false, toStatus: nil, reason: nil, error: issue))
         } else if !store.pendingReturns.contains(where: { $0.itemId == id }) {
           results.append(V2ReturnResult(itemId: id, ok: true, toStatus: nil, reason: nil, error: nil))
