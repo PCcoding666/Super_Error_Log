@@ -21,6 +21,8 @@ struct CorrectionSheet: View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 20) {
+          // T6g：整题大图放在「当前识别结果」上方，供学生对照自己的手写核对；上限 260pt。
+          FullCropImage(itemID: itemID, maxHeight: 260)
           evidenceSection
           if let notice = loopStore.proposalNotice {
             Text(notice).font(.subheadline).foregroundStyle(CardTone.orange.color)
@@ -106,17 +108,8 @@ struct CorrectionSheet: View {
         .lineLimit(2...4)
         .textFieldStyle(.roundedBorder)
         .accessibilityIdentifier("correction-instruction")
-      switch speech.presentation {
-      case .holdToTalk, .askOnPress:
-        HoldToTalkButton(speech: speech, identifier: "correction-hold-to-talk")
-        if let hint = speech.hint {
-          Text(hint).font(.caption).foregroundStyle(Palette.muted)
-            .accessibilityIdentifier("correction-speech-hint")
-        }
-      case .keyboardOnly:
-        Text("可以直接打字").font(.caption).foregroundStyle(Palette.muted)
-          .accessibilityIdentifier("correction-type-instead")
-      }
+      SpeechControls(speech: speech, holdIdentifier: "correction-hold-to-talk",
+        typeInsteadIdentifier: "correction-type-instead", hintIdentifier: "correction-speech-hint")
       Button("生成修改") {
         let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         Task { await loopStore.proposeCorrection(instruction: text, method: usedVoice ? .voice : .keyboard) }

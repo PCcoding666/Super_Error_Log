@@ -71,7 +71,9 @@ struct PracticeReturnView: View {
     PaperCard {
       VStack(alignment: .leading, spacing: 12) {
         HStack(alignment: .top, spacing: 12) {
-          ReturnCropThumbnail(itemID: row.itemId)
+          CropThumbnail(itemID: row.itemId, fill: true)
+            .frame(width: 56, height: 72).clipped()
+            .accessibilityHidden(true)
           VStack(alignment: .leading, spacing: 4) {
             Text(row.shortId ?? "题目").font(.headline).foregroundStyle(Palette.ink)
             if let subject = row.subject {
@@ -220,30 +222,6 @@ struct PracticeReturnView: View {
       NavigationLink("看结果") { PracticeSummaryView(practiceID: practice.id) }
         .frame(maxWidth: .infinity, minHeight: 44)
         .accessibilityIdentifier("return-view-summary")
-    }
-  }
-}
-
-/// 裁图缩略图：从 LoopStore 的本地缓存读整题裁图（不走 AsyncImage 直连服务器）。
-/// T6e-w 临时放在本文件；主页的同类视图交付后应合并为一个共用视图。
-private struct ReturnCropThumbnail: View {
-  let itemID: String
-  @Environment(LoopStore.self) private var store
-  @State private var image: UIImage?
-
-  var body: some View {
-    Group {
-      if let image {
-        Image(uiImage: image).resizable().scaledToFill()
-      } else {
-        Image(systemName: "photo").foregroundStyle(Palette.muted)
-      }
-    }
-    .frame(width: 56, height: 72).clipped()
-    .accessibilityHidden(true)
-    .task(id: itemID) {
-      guard let url = await store.cropFileURL(itemID: itemID) else { return }
-      image = await Task.detached { UIImage(contentsOfFile: url.path) }.value
     }
   }
 }

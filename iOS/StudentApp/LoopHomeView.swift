@@ -470,23 +470,7 @@ struct ItemReference: Identifiable {
   let itemID: String
 }
 
-// MARK: - 整题裁图缩略（经 LoopStore 带令牌取字节、本地缓存）
-
-struct CropThumbnail: View {
-  let itemID: String
-  @Environment(LoopStore.self) private var loopStore
-  @State private var image: UIImage?
-  var body: some View {
-    Group {
-      if let image { Image(uiImage: image).resizable().scaledToFit() }
-      else { Image(systemName: "photo").foregroundStyle(Palette.muted) }
-    }
-    .task(id: itemID) {
-      guard let url = await loopStore.cropFileURL(itemID: itemID) else { return }
-      image = await Task.detached { UIImage(contentsOfFile: url.path) }.value
-    }
-  }
-}
+// MARK: - 整题裁图缩略（共用实现见 CropViews.swift 的 CropThumbnail）
 
 // MARK: - 题目详情
 
@@ -495,9 +479,6 @@ struct LoopItemDetailView: View {
   let onCorrect: (String) -> Void
   let onDiscard: (String) -> Void
   @Environment(LoopStore.self) private var loopStore
-  @State private var cropImage: UIImage?
-  /// 裁图区可用宽度（由 onGeometryChange 测得，未测到时为 0，高度退回下限）。
-  @State private var cropAvailableWidth: CGFloat = 0
 
   private var card: V2ItemCard? {
     loopStore.week?.items.first { $0.id == itemID } ?? loopStore.week?.backlog.first { $0.id == itemID }
@@ -506,13 +487,8 @@ struct LoopItemDetailView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
-        if let cropImage {
-          ZoomablePhoto(image: cropImage, role: .crop)
-            .frame(maxWidth: .infinity)
-            .frame(height: CropDisplayHeight.displayHeight(imageWidth: cropImage.size.width,
-              imageHeight: cropImage.size.height, availableWidth: cropAvailableWidth))
-          Text("整题裁图 · 双指缩放").font(.caption).foregroundStyle(Palette.muted)
-        }
+        // T6g：整题大图（含全部手写证据），取不到时 FullCropImage 内部退回题干小图。
+        FullCropImage(itemID: itemID, caption: "整题裁图 · 双指缩放")
         if let evidence = loopStore.evidence {
           VStack(alignment: .leading, spacing: 10) {
             Text(evidence.questionText).font(.body).foregroundStyle(Palette.ink)
@@ -542,7 +518,6 @@ struct LoopItemDetailView: View {
           }
         }
       }
-      .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { cropAvailableWidth = $0 }
       .padding(24)
     }
     .background(Palette.paper)
@@ -550,9 +525,6 @@ struct LoopItemDetailView: View {
     .navigationBarTitleDisplayMode(.inline)
     .task {
       await loopStore.loadEvidence(itemID: itemID)
-      if let url = await loopStore.cropFileURL(itemID: itemID) {
-        cropImage = await Task.detached { UIImage(contentsOfFile: url.path) }.value
-      }
     }
   }
 }

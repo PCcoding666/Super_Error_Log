@@ -2,7 +2,8 @@ import SwiftUI
 import UIKit
 
 // T6d-w：追问复盘——按 LoopStore 的复盘状态机一屏一件事：问题 → 回答 → 确认 → 提交。
-// 本轮只接键盘输入（语音输入返修中，输入框下方留位，由后续任务接上）。
+// T6g：回答输入框接「按住说话」（与 CorrectionSheet 同一用法，语音只回填文字、学生仍自己点发送）；
+// 顶部题图换整题大图（含全部手写证据，取不到退回题干小图）。
 // 硬规则：AI 从不替学生提交复盘；没有学生点「提交复盘」就不产生复盘记录；
 // 学生的回答与 AI 归纳不写日志、不落本机缓存。
 // 确认页规则全部在 ReflectionForm（Domain/V2），视图只绑定、不重写。
@@ -12,11 +13,11 @@ struct FollowupView: View {
   let itemID: String
   @Environment(LoopStore.self) private var store
   @Environment(\.dismiss) private var dismiss
+  @State private var speech = SpeechInput()
   @State private var answer = ""
   @State private var lastQuestion = ""
   @State private var form = ReflectionForm()
   @State private var submitted = false
-  @State private var zoom: PhotoReference?
 
   var body: some View {
     ScrollView {
@@ -28,8 +29,13 @@ struct FollowupView: View {
     .background(Palette.paper)
     .navigationTitle("复盘这道题")
     .navigationBarTitleDisplayMode(.inline)
-    .sheet(item: $zoom) { SourcePhotoView(reference: $0) }
-    .task { await beginIfNeeded() }
+    .task {
+      // 语音回填：SpeechInput 已给出「基底 + 本次整句」，直接替换输入框内容（不追加）。
+      speech.currentText = { answer }
+      speech.onText = { text in answer = text }
+      speech.refresh()
+      await beginIfNeeded()
+    }
     .onChange(of: store.reflectionPhase, initial: true) { old, new in
       if case .waitingAnswer(let question, _) = new { lastQuestion = question }
       if case .confirming(let summary, let cause, let attemptState) = new, !old.isSubmitting {
@@ -67,22 +73,11 @@ struct FollowupView: View {
     }
   }
 
-  // MARK: - 裁图（可放大）
+  // MARK: - 整题大图（可缩放）
 
   private var cropHeader: some View {
-    Button {
-      Task {
-        if let url = await store.cropFileURL(itemID: itemID) {
-          zoom = PhotoReference(url: url, title: "整题裁图", role: .crop)
-        }
-      }
-    } label: {
-      CropThumbnail(itemID: itemID)
-        .frame(maxWidth: .infinity).frame(height: 200)
-        .background(Palette.card, in: RoundedRectangle(cornerRadius: 12))
-    }
-    .buttonStyle(.plain)
-    .accessibilityIdentifier("followup-crop")
+    FullCropImage(itemID: itemID, maxHeight: 200)
+      .accessibilityIdentifier("followup-crop")
   }
 
   // MARK: - 状态机内容
@@ -134,6 +129,8 @@ struct FollowupView: View {
       Text("还能写 \(ReflectionForm.answerRemaining(answer)) 字")
         .font(.caption)
         .foregroundStyle(ReflectionForm.isValidAnswer(answer) || answer.isEmpty ? Palette.muted : CardTone.red.color)
+      SpeechControls(speech: speech, holdIdentifier: "followup-hold-to-talk",
+        typeInsteadIdentifier: "followup-type-instead", hintIdentifier: "followup-speech-hint")
       if sending {
         ProgressView("AI 在看你的回答…").accessibilityIdentifier("followup-sending")
       }

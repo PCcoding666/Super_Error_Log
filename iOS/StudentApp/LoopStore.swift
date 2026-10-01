@@ -727,22 +727,26 @@ final class LoopStore {
   // MARK: - 图片
 
   /// 整题裁图的本地文件：有缓存直接返回；没有则取字节写入缓存目录。并发同一张图只下载一次。
-  func cropFileURL(itemID: String) async -> URL? {
-    let url = cacheDirectory.appendingPathComponent("Crops/\(itemID).jpg")
+  /// T6g：两种图分开缓存——题干小图 `Crops/<id>.jpg`，整题大图 `Crops/<id>-full.jpg`；
+  /// 并发去重按「题目 + 种类」。
+  func cropFileURL(itemID: String, scope: V2CropScope = .question) async -> URL? {
+    let suffix = scope == .full ? "-full" : ""
+    let url = cacheDirectory.appendingPathComponent("Crops/\(itemID)\(suffix).jpg")
     if FileManager.default.fileExists(atPath: url.path) { return url }
-    if let inFlight = cropDownloads[itemID] {
+    let downloadKey = itemID + suffix
+    if let inFlight = cropDownloads[downloadKey] {
       return try? await inFlight.value
     }
     guard let client else { return nil }
     let download = Task {
-      let data = try await client.crop(itemId: itemID)
+      let data = try await client.crop(itemId: itemID, scope: scope)
       try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       try data.write(to: url, options: .atomic)
       try StudyPersistence.excludeFromBackup(url)
       return url
     }
-    cropDownloads[itemID] = download
-    defer { cropDownloads[itemID] = nil }
+    cropDownloads[downloadKey] = download
+    defer { cropDownloads[downloadKey] = nil }
     // 取缩略图失败只返回 nil，不写 lastError：离线时每张缩略图都会顶掉真正的错误提示。
     return try? await download.value
   }

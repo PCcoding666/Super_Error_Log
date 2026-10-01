@@ -26,4 +26,10 @@ final class CropDisplayHeightTests: XCTestCase {
     XCTAssertEqual(CropDisplayHeight.displayHeight(imageWidth: 1000, imageHeight: 0, availableWidth: 358), 80)
     XCTAssertEqual(CropDisplayHeight.displayHeight(imageWidth: 1000, imageHeight: 200, availableWidth: 0), 80)
   }
+
+  // T6g RED：修改面板的整题大图上限 260pt——传入更小上限时夹到该上限，缺省仍是 420。
+  func testCustomMaximumClampsLower() {
+    XCTAssertEqual(CropDisplayHeight.displayHeight(imageWidth: 200, imageHeight: 2000, availableWidth: 358, maxHeight: 260), 260)
+    XCTAssertEqual(CropDisplayHeight.displayHeight(imageWidth: 200, imageHeight: 2000, availableWidth: 358), 420)
+  }
 }

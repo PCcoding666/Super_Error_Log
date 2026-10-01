@@ -6,6 +6,12 @@ enum V2ClientError: Error, Equatable, Sendable {
   case revisionConflict(message: String, currentRevision: Int)
 }
 
+/// T6g：裁图范围（docs/mobile-v2-api.md §3.3）。缺省题干小图；full 为整题大图（含全部手写证据）。
+enum V2CropScope: String, Sendable {
+  case question
+  case full
+}
+
 /// /v2 全部接口的类型化客户端（docs/mobile-v2-api.md 为唯一依据）。
 /// 鉴权与安全沿用 RecognitionClient 约定：Bearer 令牌、拒绝一切重定向、不使用本地缓存、
 /// 错误文案令牌脱敏。无 UIKit/SwiftUI，不写日志，不保存任何状态。
@@ -52,9 +58,21 @@ final class V2Client: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
   }
 
   /// 整题裁图字节（带 Authorization；校验 JPEG）。
-  func crop(itemId: String) async throws -> Data {
+  /// scope 缺省为题干小图（不带查询参数，请求保持原样）；full 请求 `?scope=full` 整题大图。
+  func crop(itemId: String, scope: V2CropScope = .question) async throws -> Data {
     try validatePrefixedID(itemId, prefix: "itm_")
-    return try await image("v2/items/\(itemId)/crop")
+    switch scope {
+    case .question:
+      return try await image("v2/items/\(itemId)/crop")
+    case .full:
+      // appendingPathComponent 会把 ? 编码掉，查询参数用 appending(queryItems:) 追加。
+      let url = configuration.baseURL
+        .appendingPathComponent("v2/items/\(itemId)/crop")
+        .appending(queryItems: [URLQueryItem(name: "scope", value: "full")])
+      var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+      request.setValue("Bearer " + configuration.token, forHTTPHeaderField: "Authorization")
+      return try await image(request)
+    }
   }
 
   func discard(itemId: String) async throws -> V2ItemStatusChange {
@@ -219,7 +237,12 @@ final class V2Client: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
 
   /// 取图：必须是 image/jpeg 且字节以 JPEG 头开始，否则视为不可安全使用。
   private func image(_ path: String) async throws -> Data {
-    let (data, response) = try await send(makeRequest(path))
+    try await image(makeRequest(path))
+  }
+
+  /// 取图（已构造的请求，供带查询参数的裁图用）。
+  private func image(_ request: URLRequest) async throws -> Data {
+    let (data, response) = try await send(request)
     guard response.mimeType == "image/jpeg", data.starts(with: [0xff, 0xd8, 0xff]), data.count <= 15_000_000 else {
       throw RecognitionClientError.invalidResponse
     }

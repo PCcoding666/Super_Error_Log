@@ -215,3 +215,29 @@ struct HoldToTalkButton: View {
       .accessibilityAddTraits(.isButton)
   }
 }
+
+/// T6g：「按住说话」控件组——CorrectionSheet 与 FollowupView 共用。
+/// 识别器可用时显示按钮（按下先请求权限则带提示）；不可用或被拒绝时只留「可以直接打字」。
+struct SpeechControls: View {
+  let speech: SpeechInput
+  /// 按钮的无障碍标识符（如 correction-hold-to-talk / followup-hold-to-talk）。
+  var holdIdentifier: String
+  /// 「可以直接打字」的无障碍标识符（如 correction-type-instead / followup-type-instead）。
+  var typeInsteadIdentifier: String
+  /// 授权提示的无障碍标识符。
+  var hintIdentifier: String
+
+  var body: some View {
+    switch speech.presentation {
+    case .holdToTalk, .askOnPress:
+      HoldToTalkButton(speech: speech, identifier: holdIdentifier)
+      if let hint = speech.hint {
+        Text(hint).font(.caption).foregroundStyle(Palette.muted)
+          .accessibilityIdentifier(hintIdentifier)
+      }
+    case .keyboardOnly:
+      Text("可以直接打字").font(.caption).foregroundStyle(Palette.muted)
+        .accessibilityIdentifier(typeInsteadIdentifier)
+    }
+  }
+}

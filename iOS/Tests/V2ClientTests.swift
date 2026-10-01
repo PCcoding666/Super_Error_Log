@@ -97,6 +97,27 @@ final class V2ClientTests: XCTestCase {
     assertBearer(try lastRequest())
   }
 
+  // T6g RED：scope 缺省为题干（不带查询参数，请求保持不变）。
+  func testCropDefaultScopeSendsNoQuery() async throws {
+    V2SyntheticProtocol.respond("GET", "/v2/items/\(Self.itemId)/crop", body: Self.jpeg, contentType: "image/jpeg")
+    _ = try await makeClient().crop(itemId: Self.itemId)
+    let request = try lastRequest()
+    XCTAssertEqual(request.url?.path, "/v2/items/\(Self.itemId)/crop")
+    XCTAssertNil(request.url?.query, "题干裁图不带 scope 查询参数")
+    assertBearer(request)
+  }
+
+  // T6g RED：scope=full 请求整题大图（?scope=full），鉴权与 JPEG 校验沿用。
+  func testCropFullScopeSendsScopeQuery() async throws {
+    V2SyntheticProtocol.respond("GET", "/v2/items/\(Self.itemId)/crop", body: Self.jpeg, contentType: "image/jpeg")
+    let data = try await makeClient().crop(itemId: Self.itemId, scope: .full)
+    XCTAssertEqual(data, Self.jpeg)
+    let request = try lastRequest()
+    XCTAssertEqual(request.url?.path, "/v2/items/\(Self.itemId)/crop")
+    XCTAssertEqual(request.url?.query, "scope=full")
+    assertBearer(request)
+  }
+
   func testCropRejectsNonJPEGContentType() async throws {
     V2SyntheticProtocol.respond("GET", "/v2/items/\(Self.itemId)/crop", body: Self.jpeg, contentType: "text/plain")
     await assertThrowsInvalidResponse { try await self.makeClient().crop(itemId: Self.itemId) }

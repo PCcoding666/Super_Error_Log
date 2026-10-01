@@ -557,6 +557,39 @@ import Foundation
       "已缓存直接返回，不再请求")
   }
 
+  // T6g RED：整题大图与题干小图分开缓存（<id>-full.jpg / <id>.jpg），分别请求一次。
+  func testCropFileURLFullScopeCachesSeparatelyFromQuestion() async throws {
+    LoopSyntheticProtocol.respond("GET", "/v2/items/\(Self.itemID)/crop", body: Self.jpeg, contentType: "image/jpeg")
+    let store = try makeStore()
+    let fullURL = await store.cropFileURL(itemID: Self.itemID, scope: .full)
+    let questionURL = await store.cropFileURL(itemID: Self.itemID)
+    XCTAssertEqual(fullURL?.lastPathComponent, "\(Self.itemID)-full.jpg")
+    XCTAssertEqual(questionURL?.lastPathComponent, "\(Self.itemID).jpg")
+    let requests = LoopSyntheticProtocol.requests(method: "GET", path: "/v2/items/\(Self.itemID)/crop")
+    XCTAssertEqual(requests.count, 2, "两种图各下载一次")
+    XCTAssertEqual(requests.filter { $0.url?.query == "scope=full" }.count, 1, "整题大图带 scope=full")
+    XCTAssertEqual(requests.filter { $0.url?.query == nil }.count, 1, "题干小图不带查询参数")
+    _ = await store.cropFileURL(itemID: Self.itemID, scope: .full)
+    _ = await store.cropFileURL(itemID: Self.itemID)
+    XCTAssertEqual(LoopSyntheticProtocol.requests(method: "GET", path: "/v2/items/\(Self.itemID)/crop").count, 2,
+      "两种缓存各自命中，不再请求")
+  }
+
+  // T6g RED：并发去重按「题目 + 种类」——同种类只下载一次，不同种类互不阻塞。
+  func testCropFileURLDeduplicatesConcurrentDownloadsPerScope() async throws {
+    LoopSyntheticProtocol.respond("GET", "/v2/items/\(Self.itemID)/crop", body: Self.jpeg, contentType: "image/jpeg")
+    let store = try makeStore()
+    async let first = store.cropFileURL(itemID: Self.itemID, scope: .full)
+    async let second = store.cropFileURL(itemID: Self.itemID, scope: .full)
+    let (firstURL, secondURL) = await (first, second)
+    XCTAssertNotNil(firstURL)
+    XCTAssertEqual(firstURL, secondURL)
+    XCTAssertEqual(
+      LoopSyntheticProtocol.requests(method: "GET", path: "/v2/items/\(Self.itemID)/crop")
+        .filter { $0.url?.query == "scope=full" }.count, 1,
+      "并发请求同一张整题大图只下载一次")
+  }
+
   // MARK: - 忙碌标记
 
   func testBusyReflectionIgnoresSecondCall() async throws {
