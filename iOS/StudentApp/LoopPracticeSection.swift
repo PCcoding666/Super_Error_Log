@@ -27,7 +27,9 @@ struct LoopPracticeSection: View {
       Text("本周练习").font(.title3.weight(.semibold)).foregroundStyle(Palette.ink)
       content
     }
-    .task { await load() }
+    // T6j：每次出现（含从打印/录结果等页面返回主页）都重取一次练习与回报，
+    // 不只是首次出现和回前台。
+    .onAppear { Task { await load() } }
     .onChange(of: scenePhase) { _, phase in
       if phase == .active { Task { await load() } }
     }

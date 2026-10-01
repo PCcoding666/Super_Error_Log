@@ -628,12 +628,35 @@ final class LoopStore {
       if Task.isCancelled { return }
       guard requestGeneration == generation else { return }
       printPhase = .ready(snapshot)
+      // 就绪即不再忙碌：后面的刷新只是让主页卡片跟上，不能让打印页继续显示为进行中。
+      isBusyPrint = false
+      // T6j：就绪后重取这份练习详情（generatedAt 已由服务器写入）并刷新本周错题，
+      // 主页练习卡随即从「还没打印」变成「录结果」；失败不影响打印页显示。
+      await refreshPracticeAfterPrint(packetID: packetID, client: client, generation: requestGeneration)
     } catch {
       if !Task.isCancelled, requestGeneration == generation {
         printPhase = .failed("打印图片没有全部下载成功，请再试一次。")
       }
     }
     if requestGeneration == generation { isBusyPrint = false }
+  }
+
+  /// T6j：打印就绪后重取这份练习详情（更新 currentPractice 与练习列表里的对应项）并刷新本周错题。
+  /// 失败只让主页卡片晚一点更新，不写错误提示、不影响打印页显示。
+  private func refreshPracticeAfterPrint(packetID: String, client: V2Client, generation requestGeneration: Int) async {
+    do {
+      let detail = try await client.practiceDetail(id: packetID)
+      guard requestGeneration == generation else { return }
+      if currentPractice?.id == packetID { currentPractice = detail }
+      if let index = practices.firstIndex(where: { $0.id == packetID }) {
+        practices[index] = practices[index].with(status: detail.status, generatedAt: detail.generatedAt)
+      }
+      persistCache()
+    } catch {
+      // 详情重取失败：打印页已就绪，卡片等下次刷新跟上。
+    }
+    guard requestGeneration == generation else { return }
+    await refreshWeek()
   }
 
   private func startPrintPolling(packetID: String, client: V2Client, generation requestGeneration: Int) {
@@ -844,6 +867,13 @@ private extension V2PracticeDetail {
   func with(items: [V2PracticeItem]) -> V2PracticeDetail {
     V2PracticeDetail(id: id, week: week, status: status, practiceSlot: practiceSlot,
       createdAt: createdAt, generatedAt: generatedAt, items: items)
+  }
+}
+
+private extension V2PracticeSummary {
+  func with(status: String, generatedAt: Date?) -> V2PracticeSummary {
+    V2PracticeSummary(id: id, week: week, status: status, practiceSlot: practiceSlot,
+      createdAt: createdAt, generatedAt: generatedAt, itemCount: itemCount)
   }
 }
 

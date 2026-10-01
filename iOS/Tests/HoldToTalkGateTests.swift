@@ -60,4 +60,32 @@ final class HoldToTalkGateTests: XCTestCase {
     XCTAssertEqual(gate.handle(.longPressRecognized), .start)
     XCTAssertEqual(gate.handle(.touchUp), .stop)
   }
+
+  // MARK: - T6j：取消事件（来电、滑出、页面消失、进后台——任何阶段回到空闲；录音中给出停止）
+
+  // 空闲时收到取消：无动作。
+  func testCancelFromIdleDoesNothing() {
+    var gate = HoldToTalkGate()
+    XCTAssertEqual(gate.handle(.cancelled), .none)
+    XCTAssertEqual(gate.phase, .idle)
+  }
+
+  // 长按未成立时取消（按下后滑出/页面消失）：回到空闲，不停止（本来也没开始）。
+  func testCancelWhilePressingResetsWithoutStop() {
+    var gate = HoldToTalkGate()
+    _ = gate.handle(.touchDown)
+    XCTAssertEqual(gate.handle(.cancelled), .none)
+    XCTAssertEqual(gate.phase, .idle)
+  }
+
+  // 录音中取消（收不到「抬起」）：给出停止并复位；复位后可以再次按住。
+  func testCancelWhileHoldingStopsAndResets() {
+    var gate = HoldToTalkGate()
+    _ = gate.handle(.touchDown)
+    _ = gate.handle(.longPressRecognized)
+    XCTAssertEqual(gate.handle(.cancelled), .stop)
+    XCTAssertEqual(gate.phase, .idle)
+    XCTAssertEqual(gate.handle(.touchDown), .none)
+    XCTAssertEqual(gate.handle(.longPressRecognized), .start)
+  }
 }

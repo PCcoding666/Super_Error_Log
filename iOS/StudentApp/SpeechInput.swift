@@ -202,6 +202,7 @@ struct HoldToTalkButton: View {
   let speech: SpeechInput
   var identifier: String
   @State private var gate = HoldToTalkGate()
+  @Environment(\.scenePhase) private var scenePhase
 
   var body: some View {
     Label(speech.isRecording ? "正在听，松开结束" : "按住说话", systemImage: "mic.fill")
@@ -227,10 +228,22 @@ struct HoldToTalkButton: View {
           }
           .onEnded { _ in apply(gate.handle(.touchUp)) }
       )
+      // T6j：收尾保险——手势被系统取消（来电、滑出、页面消失、进后台）时可能收不到
+      // 「抬起」，页面消失或 App 离开前台都要停录音并复位状态机。
+      .onDisappear { cancelHold() }
+      .onChange(of: scenePhase) { _, phase in
+        if phase != .active { cancelHold() }
+      }
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(speech.isRecording ? "正在听，松开结束" : "按住说话")
       .accessibilityIdentifier(identifier)
       .accessibilityAddTraits(.isButton)
+  }
+
+  /// 页面消失或 App 离开前台：复位手势状态机（录音中给出停止），并兜底调一次 stop()。
+  private func cancelHold() {
+    apply(gate.handle(.cancelled))
+    speech.stop()
   }
 
   private func apply(_ action: HoldToTalkGate.Action) {

@@ -96,7 +96,8 @@ struct PracticePrintView: View {
     if !items.isEmpty {
       PaperCard {
         VStack(alignment: .leading, spacing: 12) {
-          Text("这几道的手写可能没遮干净，打印前看一眼").font(.headline).foregroundStyle(Palette.ink)
+          // T6j：标题保持中性，每行显示服务器给的具体原因。
+          Text("打印前看一眼这几道").font(.headline).foregroundStyle(Palette.ink)
           ForEach(items, id: \.itemId) { item in
             Button {
               if let name = item.cropMedia ?? item.diagramMedia.first {

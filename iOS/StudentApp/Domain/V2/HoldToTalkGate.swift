@@ -17,6 +17,7 @@ struct HoldToTalkGate: Equatable, Sendable {
     case touchDown            // 手指碰到按钮
     case longPressRecognized  // 长按达到 0.2 秒
     case touchUp              // 抬起 / 滑走 / 取消
+    case cancelled            // T6j：系统取消（来电、滑出、页面消失、进后台）——任何阶段回到空闲
   }
 
   /// 状态迁移后该做什么。
@@ -42,6 +43,11 @@ struct HoldToTalkGate: Equatable, Sendable {
     case (.holding, .touchUp):
       phase = .idle
       return .stop
+    case (_, .cancelled):
+      // 系统取消：任何阶段回到空闲；录音中（holding）给出停止。
+      let wasHolding = phase == .holding
+      phase = .idle
+      return wasHolding ? .stop : .none
     default:
       // 重复/悬空事件（成立后再次回调已成立、idle 时抬起等）不改变状态。
       return .none
