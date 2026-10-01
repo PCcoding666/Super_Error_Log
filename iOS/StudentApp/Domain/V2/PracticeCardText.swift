@@ -21,6 +21,10 @@ enum PracticeCardText {
   struct Content: Equatable {
     let statusLine: String
     let steps: [NextStep]
+    /// 能否开始下一份：已打印（含已录一部分、已录完）时可以；还没打印时不可以。
+    let canPickNext: Bool
+    /// 当前练习是否已录完（决定「选下一份」是主要还是次要按钮）。
+    let allRecorded: Bool
   }
 
   static func make(detail: V2PracticeDetail, summary: V2ReturnSummary?) -> Content {
@@ -50,6 +54,16 @@ enum PracticeCardText {
       steps.append(.reprint)
     }
 
-    return Content(statusLine: parts.joined(separator: " · "), steps: steps)
+    return Content(statusLine: parts.joined(separator: " · "), steps: steps,
+      canPickNext: printed, allRecorded: allRecorded)
+  }
+
+  /// 「更早的练习」折叠区的一行：周 · 做题时段 · 几道题 · 一句状态（T6h §2）。
+  static func olderLine(_ practice: V2PracticeSummary) -> String {
+    var parts = [practice.week]
+    if let slot = practice.practiceSlot, !slot.isEmpty { parts.append(slot) }
+    parts.append("\(practice.itemCount) 道题")
+    parts.append(practice.generatedAt == nil ? "还没打印" : "已打印")
+    return parts.joined(separator: " · ")
   }
 }

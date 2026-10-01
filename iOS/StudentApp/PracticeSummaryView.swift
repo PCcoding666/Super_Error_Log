@@ -51,6 +51,17 @@ struct PracticeSummaryView: View {
       }
     }
 
+    // T6h §4：当天独立做对、还要隔几天再验证的题（§3.16 pending），显示服务器给的 reason。
+    if !summary.pending.isEmpty {
+      VStack(alignment: .leading, spacing: 12) {
+        Eyebrow(text: "做对了，过几天再验证")
+        ForEach(summary.pending, id: \.id) { item in
+          itemCard(shortId: item.shortId, subject: item.subject, knowledgeTags: item.knowledgeTags, reason: item.reason)
+            .accessibilityIdentifier("summary-pending-\(item.id)")
+        }
+      }
+    }
+
     if !summary.again.isEmpty {
       VStack(alignment: .leading, spacing: 12) {
         Eyebrow(text: "还要再练的")
@@ -59,6 +70,15 @@ struct PracticeSummaryView: View {
             .accessibilityIdentifier("summary-again-\(item.id)")
         }
       }
+    }
+
+    // T6h §4：三组都为空且已录过题时不留空白页。
+    if summary.masteredNow.isEmpty, summary.pending.isEmpty, summary.again.isEmpty, summary.answered > 0 {
+      PaperCard {
+        Text("这次的结果已记下").font(.body).foregroundStyle(Palette.ink)
+      }
+      .accessibilityElement(children: .contain)
+      .accessibilityIdentifier("summary-recorded")
     }
 
     if let text = summary.calibration.text {

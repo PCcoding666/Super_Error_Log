@@ -1,10 +1,12 @@
 import SwiftUI
 
-// T6d-w：主页「本周练习」整块（含底部「上一份练习的结果」摘要）。
+// T6d-w：主页「本周练习」整块。
 // 练习相关的状态、导航、刷新全部在本视图内：出现时与回前台时取练习列表与回报，
 // 自己管理 navigationDestination。练习卡的状态句与下一步由 PracticeCardText.make 决定：
 // 去复盘 → PracticeDetailView；打印/再打印 → PracticePrintView；录结果 → PracticeReturnView；
 // 看结果 → PracticeSummaryView。界面只求可用清楚，不做视觉设计。
+// T6h：练习卡下方有「选下一份要练的题」（已打印才出现）与「更早的练习」折叠区
+// （点一行切换当前显示的练习并取它的回报）。
 
 struct LoopPracticeSection: View {
   @Environment(LoopStore.self) private var store
@@ -24,7 +26,6 @@ struct LoopPracticeSection: View {
     VStack(alignment: .leading, spacing: 12) {
       Text("本周练习").font(.title3.weight(.semibold)).foregroundStyle(Palette.ink)
       content
-      previousResult
     }
     .task { await load() }
     .onChange(of: scenePhase) { _, phase in
@@ -63,6 +64,8 @@ struct LoopPracticeSection: View {
   @ViewBuilder private var content: some View {
     if let practice = store.currentPractice {
       practiceCard(practice)
+      pickNext(practice)
+      olderPractices
     } else {
       Text("选 5–8 道，打印出来，隔几天在纸上重做。")
         .font(.subheadline).foregroundStyle(Palette.muted)
@@ -102,6 +105,7 @@ struct LoopPracticeSection: View {
     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
     .background(Palette.card, in: RoundedRectangle(cornerRadius: 18))
     .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Palette.line.opacity(0.5)))
+    .accessibilityElement(children: .contain)
     .accessibilityIdentifier("practice-card")
   }
 
@@ -124,20 +128,59 @@ struct LoopPracticeSection: View {
     }
   }
 
-  // MARK: - 上一份练习的结果摘要
+  // MARK: - 选下一份要练的题（T6h §1）
 
-  @ViewBuilder private var previousResult: some View {
-    if let id = store.summaryPracticeID, let summary = store.summary, summary.answered > 0 {
-      HStack(spacing: 12) {
-        Text("上一次练习：录了 \(summary.answered)/\(summary.total) 道，独立做对 \(summary.independentCorrect) 道。")
-          .font(.caption).foregroundStyle(Palette.muted)
-        Spacer(minLength: 0)
-        Button("看详情") { route = .summary(id) }
-          .font(.caption.weight(.semibold)).frame(minWidth: 44, minHeight: 44)
-          .foregroundStyle(Palette.teal)
-          .accessibilityIdentifier("practice-summary-detail")
+  /// 当前练习已打印（含已录一部分、已录完）时出现：已录完是主要按钮；
+  /// 已打印但没录完是次要样式，并提示上一份结果还没录完。
+  @ViewBuilder private func pickNext(_ practice: V2PracticeDetail) -> some View {
+    let summary = store.summaryPracticeID == practice.id ? store.summary : nil
+    let card = PracticeCardText.make(detail: practice, summary: summary)
+    if card.canPickNext {
+      if card.allRecorded {
+        Button("选下一份要练的题") { route = .pick }
+          .buttonStyle(PrimaryButton())
+          .accessibilityIdentifier("pick-next-practice")
+      } else {
+        VStack(alignment: .leading, spacing: 6) {
+          Button("选下一份要练的题") { route = .pick }
+            .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+            .foregroundStyle(Palette.teal)
+            .background(Palette.card, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Palette.line.opacity(0.5)))
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("pick-next-practice")
+          Text("上一份的结果还没录完，也可以先选下一份")
+            .font(.caption).foregroundStyle(Palette.muted)
+        }
       }
-      .accessibilityIdentifier("practice-previous-result")
+    }
+  }
+
+  // MARK: - 更早的练习（T6h §2）
+
+  /// 练习列表里除当前显示之外的各份；只有一份时不显示。点一行切换成当前练习并取它的回报。
+  @ViewBuilder private var olderPractices: some View {
+    let others = store.practices.filter { $0.id != store.currentPractice?.id }
+    if !others.isEmpty {
+      DisclosureGroup("更早的练习（\(others.count)）") {
+        VStack(alignment: .leading, spacing: 8) {
+          ForEach(others, id: \.id) { practice in
+            Button(PracticeCardText.olderLine(practice)) {
+              Task {
+                await store.openPractice(id: practice.id)
+                await store.loadSummary(practiceID: practice.id)
+              }
+            }
+            .font(.subheadline).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .multilineTextAlignment(.leading)
+            .foregroundStyle(Palette.ink)
+            .accessibilityIdentifier("older-practice-\(practice.id)")
+          }
+        }.padding(.top, 8)
+      }
+      .foregroundStyle(Palette.ink)
+      .accessibilityElement(children: .contain)
+      .accessibilityIdentifier("older-practices")
     }
   }
 }

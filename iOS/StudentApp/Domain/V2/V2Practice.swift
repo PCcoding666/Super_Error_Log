@@ -209,6 +209,26 @@ struct V2ReturnSummary: Codable, Equatable, Sendable {
   let independentCorrect: Int
   let masteredNow: [V2ItemCard]
   let again: [V2AgainItem]
+  /// §3.16：当天独立做对、还要隔几天再验证的题（形状同 again）。旧服务器没有此字段，解码为空数组。
+  let pending: [V2AgainItem]
   let calibration: V2Calibration
   let nextConfirmOn: String?
+}
+
+extension V2ReturnSummary {
+  private enum CodingKeys: String, CodingKey {
+    case answered, total, independentCorrect, masteredNow, again, pending, calibration, nextConfirmOn
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    answered = try container.decode(Int.self, forKey: .answered)
+    total = try container.decode(Int.self, forKey: .total)
+    independentCorrect = try container.decode(Int.self, forKey: .independentCorrect)
+    masteredNow = try container.decode([V2ItemCard].self, forKey: .masteredNow)
+    again = try container.decode([V2AgainItem].self, forKey: .again)
+    pending = try container.decodeIfPresent([V2AgainItem].self, forKey: .pending) ?? []
+    calibration = try container.decode(V2Calibration.self, forKey: .calibration)
+    nextConfirmOn = try container.decodeIfPresent(String.self, forKey: .nextConfirmOn)
+  }
 }

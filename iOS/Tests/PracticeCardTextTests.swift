@@ -24,7 +24,7 @@ final class PracticeCardTextTests: XCTestCase {
   private func makeSummary(answered: Int, total: Int = 3) -> V2ReturnSummary {
     V2ReturnSummary(
       answered: answered, total: total, independentCorrect: 0,
-      masteredNow: [], again: [],
+      masteredNow: [], again: [], pending: [],
       calibration: V2Calibration(confidentTotal: 0, missedCount: 0, text: nil, items: []),
       nextConfirmOn: nil)
   }
@@ -91,5 +91,51 @@ final class PracticeCardTextTests: XCTestCase {
     XCTAssertEqual(PracticeCardText.NextStep.reprint.title, "再打印一份")
     XCTAssertEqual(PracticeCardText.NextStep.record.title, "录结果")
     XCTAssertEqual(PracticeCardText.NextStep.viewSummary.title, "看结果")
+  }
+
+  // MARK: - 能否开始下一份（T6h §1）
+
+  func testCannotPickNextBeforePrinting() {
+    let content = PracticeCardText.make(detail: makeDetail(reflectedCount: 3, printed: false), summary: nil)
+    XCTAssertFalse(content.canPickNext, "还没打印时不可以选下一份（先把这份打印出来）")
+    XCTAssertFalse(content.allRecorded)
+  }
+
+  func testCanPickNextOncePrintedWithoutAnyReturn() {
+    let content = PracticeCardText.make(detail: makeDetail(printed: true), summary: nil)
+    XCTAssertTrue(content.canPickNext, "已打印就可以选下一份")
+    XCTAssertFalse(content.allRecorded)
+  }
+
+  func testCanPickNextWithPartialReturn() {
+    let content = PracticeCardText.make(detail: makeDetail(printed: true), summary: makeSummary(answered: 2))
+    XCTAssertTrue(content.canPickNext, "已录一部分也可以选下一份")
+    XCTAssertFalse(content.allRecorded)
+  }
+
+  func testAllRecordedWhenEveryItemAnswered() {
+    let content = PracticeCardText.make(detail: makeDetail(printed: true), summary: makeSummary(answered: 3))
+    XCTAssertTrue(content.canPickNext)
+    XCTAssertTrue(content.allRecorded, "已录完时「选下一份」是主要按钮")
+  }
+
+  // MARK: - 更早的练习行（T6h §2）
+
+  private func makePacketSummary(slot: String? = "周三晚自习", printed: Bool = false, count: Int = 3) -> V2PracticeSummary {
+    V2PracticeSummary(
+      id: "pkt_x", week: "2026-W39", status: "packet_generated", practiceSlot: slot,
+      createdAt: Date(timeIntervalSince1970: 1_758_000_000),
+      generatedAt: printed ? Date(timeIntervalSince1970: 1_758_100_000) : nil,
+      itemCount: count)
+  }
+
+  func testOlderLineWithSlotNotPrinted() {
+    XCTAssertEqual(PracticeCardText.olderLine(makePacketSummary()),
+      "2026-W39 · 周三晚自习 · 3 道题 · 还没打印")
+  }
+
+  func testOlderLineWithoutSlotPrinted() {
+    XCTAssertEqual(PracticeCardText.olderLine(makePacketSummary(slot: nil, printed: true, count: 5)),
+      "2026-W39 · 5 道题 · 已打印")
   }
 }

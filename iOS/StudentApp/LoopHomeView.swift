@@ -266,6 +266,7 @@ struct LoopHomeView: View {
     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
     .background(Palette.card, in: RoundedRectangle(cornerRadius: 18))
     .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Palette.line.opacity(0.5)))
+    .accessibilityElement(children: .contain)
     .accessibilityIdentifier("photo-progress-\(row.name)")
   }
 
@@ -286,6 +287,7 @@ struct LoopHomeView: View {
               }.padding(.top, 8)
             }
             .foregroundStyle(Palette.ink)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("backlog-disclosure")
           }
         }
@@ -395,6 +397,7 @@ struct LoopHomeView: View {
       .padding(.horizontal, 24).padding(.vertical, 10)
       .background(Palette.card)
       .overlay(Rectangle().fill(Palette.line.opacity(0.5)).frame(height: 1), alignment: .top)
+      .accessibilityElement(children: .contain)
       .accessibilityIdentifier("undo-bar")
     }
   }

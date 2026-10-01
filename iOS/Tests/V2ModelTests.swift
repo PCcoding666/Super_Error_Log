@@ -152,6 +152,22 @@ final class V2ModelTests: XCTestCase {
     XCTAssertNil(summary.nextConfirmOn)
   }
 
+  // MARK: - pending 组（§3.16，T6h §4）
+
+  func testReturnSummaryDecodesPendingGroup() throws {
+    let summary = try decode(V2ReturnSummary.self, V2ModelTests.summaryJSON)
+    XCTAssertEqual(summary.pending.count, 1)
+    XCTAssertEqual(summary.pending[0].id, "itm_2222222222222222")
+    XCTAssertEqual(summary.pending[0].status, .attempted)
+    XCTAssertEqual(summary.pending[0].reason, "当天做对，隔几天再独立做对才算掌握")
+  }
+
+  func testReturnSummaryWithoutPendingFieldDecodesEmpty() throws {
+    let json = #"{"answered":3,"total":3,"independentCorrect":1,"masteredNow":[],"again":[],"calibration":{"confidentTotal":0,"missedCount":0,"text":null,"items":[]},"nextConfirmOn":null}"#
+    let summary = try decode(V2ReturnSummary.self, json)
+    XCTAssertEqual(summary.pending, [], "旧服务器没有 pending 字段，解码为空数组")
+  }
+
   func testCorrectionProposalDecodesChangesWithObservationAndUnknownField() throws {
     let proposal = try decode(V2CorrectionProposal.self, #"{"proposalId":"crp_a1b2c3d4e5f60718","revision":1,"changes":[{"field":"questionText","before":"已知 x+y=1，求 x 的值。","after":"已知 x+y=1，求 y 的值。","find":"x 的值","replace":"y 的值"},{"field":"observation","observationId":"o1","before":"x=1","after":"x=2"},{"field":"futureField","before":"a","after":"b"}],"clarify":null}"#)
     XCTAssertEqual(proposal.changes[0].field, .questionText)
@@ -192,5 +208,5 @@ final class V2ModelTests: XCTestCase {
 
   static let snapshotJSON = #"{"packetId":"pkt_1a2b3c4d5e6f7081","week":"2026-W40","preparedAt":"2026-09-30T08:21:00.000Z","cover":{"title":"本周练习","practiceSlot":"周三晚自习","rules":["不看答案，独立做","卡住先看一级提示，再看二级","做完打勾，写上做题日期"],"itemList":[{"shortId":"M-12","sourceLabel":"原题"}]},"items":[{"itemId":"itm_0a1b2c3d4e5f6071","shortId":"M-12","position":0,"subject":"数学","knowledgeTags":["一元一次方程"],"mode":"text","stemText":"已知 x+y=1，求 x 的值。","cropMedia":null,"diagramMedia":[],"keyStepPrompt":"这题的关键一步是：","checkboxes":["独立做出","看了一级提示","看了二级提示","没做出来"],"needsGlance":false,"glanceReason":null}],"answerSheet":[{"shortId":"M-12","hint1":"一级提示：先移项","hint2":"二级提示：两边同时减 y","answer":{"text":"x = 1 - y","source":"ai","label":"AI 参考，未经老师核验"},"fallbackNote":"对照原卷第 1 题"}]}"#
 
-  static let summaryJSON = #"{"answered":3,"total":3,"independentCorrect":1,"masteredNow":[{"id":"itm_0a1b2c3d4e5f6071","shortId":"M-12","subject":"数学","knowledgeTags":["一元一次方程"],"questionExcerpt":"已知 x+y=1，求 x 的值。","badge":"ok","status":"temporarily_mastered","cropUrl":"/v2/items/itm_0a1b2c3d4e5f6071/crop","jobId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0"}],"again":[{"id":"itm_1111111111111111","shortId":"M-13","subject":"数学","knowledgeTags":["分式"],"questionExcerpt":"…","badge":"ok","status":"needs_recheck","cropUrl":"/v2/items/itm_1111111111111111/crop","jobId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","reason":"看了提示"}],"calibration":{"confidentTotal":1,"missedCount":0,"text":"你说有把握的 1 道里，0 道没独立做出来","items":[]},"nextConfirmOn":"2026-10-10"}"#
+  static let summaryJSON = #"{"answered":3,"total":3,"independentCorrect":1,"masteredNow":[{"id":"itm_0a1b2c3d4e5f6071","shortId":"M-12","subject":"数学","knowledgeTags":["一元一次方程"],"questionExcerpt":"已知 x+y=1，求 x 的值。","badge":"ok","status":"temporarily_mastered","cropUrl":"/v2/items/itm_0a1b2c3d4e5f6071/crop","jobId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0"}],"again":[{"id":"itm_1111111111111111","shortId":"M-13","subject":"数学","knowledgeTags":["分式"],"questionExcerpt":"…","badge":"ok","status":"needs_recheck","cropUrl":"/v2/items/itm_1111111111111111/crop","jobId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","reason":"看了提示"}],"pending":[{"id":"itm_2222222222222222","shortId":"M-14","subject":"数学","knowledgeTags":["一元一次方程"],"questionExcerpt":"…","badge":"ok","status":"attempted","cropUrl":"/v2/items/itm_2222222222222222/crop","jobId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","reason":"当天做对，隔几天再独立做对才算掌握"}],"calibration":{"confidentTotal":1,"missedCount":0,"text":"你说有把握的 1 道里，0 道没独立做出来","items":[]},"nextConfirmOn":"2026-10-10"}"#
 }
