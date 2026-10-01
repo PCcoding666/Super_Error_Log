@@ -26,6 +26,9 @@ final class SpeechInput {
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var recognitionTask: SFSpeechRecognitionTask?
   private var base = ""
+  /// 「第一次按下先请求权限」进行中标记：按住时手指微动会反复触发 start()，
+  /// 请求进行中再次进入直接返回，避免并发发起多次权限请求。
+  private var isRequestingPermissions = false
 
   init() {
     // requiresOnDeviceRecognition 设在识别请求上（见 beginRecording）。
@@ -48,6 +51,8 @@ final class SpeechInput {
     case .keyboardOnly:
       break
     case .askOnPress:
+      guard !isRequestingPermissions else { return }
+      isRequestingPermissions = true
       Task { await requestPermissions() }
     case .holdToTalk:
       beginRecording()
@@ -56,12 +61,9 @@ final class SpeechInput {
 
   /// 第一次按下：请求语音识别与麦克风授权。通过后提示「再按一次开始说」；任一被拒只留键盘。
   private func requestPermissions() async {
+    defer { isRequestingPermissions = false }
     guard let recognizer, recognizer.isAvailable else { presentation = .keyboardOnly; return }
-    let speechGranted = await withCheckedContinuation { continuation in
-      SFSpeechRecognizer.requestAuthorization { status in
-        continuation.resume(returning: status == .authorized)
-      }
-    }
+    let speechGranted = await Self.requestSpeechAuthorization()
     let micGranted = speechGranted ? await AVAudioApplication.requestRecordPermission() : false
     if speechGranted, micGranted {
       presentation = .holdToTalk
@@ -85,15 +87,17 @@ final class SpeechInput {
       let session = AVAudioSession.sharedInstance()
       try session.setCategory(.record, mode: .measurement, options: .duckOthers)
       try session.setActive(true, options: .notifyOthersOnDeactivation)
+      // input/format 在本 SDK 已是 Sendable 可直接传递；识别请求对象只在本次录音内
+      // 使用：主线程创建与收尾、系统音频/后台线程回调，由 stop()/finish() 串行释放，
+      // 不存在并发访问，故用 nonisolated(unsafe) 显式传递引用。
       let input = engine.inputNode
       let format = input.outputFormat(forBus: 0)
       guard format.sampleRate > 0, format.channelCount > 0 else {
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
         return
       }
-      input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-        request.append(buffer)
-      }
+      nonisolated(unsafe) let tapRequest = request
+      Self.installTap(on: input, format: format, request: tapRequest)
       engine.prepare()
       try engine.start()
     } catch {
@@ -103,15 +107,18 @@ final class SpeechInput {
     self.engine = engine
     self.request = request
     isRecording = true
-    recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-      // 只把文字交回调用方；不写日志、不落盘。
+    // 同上：识别器与请求对象只服务于本次录音，回调只回传可跨线程的 String?/Bool。
+    nonisolated(unsafe) let taskRecognizer = recognizer
+    nonisolated(unsafe) let taskRequest = request
+    recognitionTask = Self.startRecognition(recognizer: taskRecognizer, request: taskRequest) { [weak self] transcript, finished in
       Task { @MainActor [weak self] in
         guard let self else { return }
-        if let result {
-          self.onText(SpeechText.merge(base: self.base, transcript: result.bestTranscription.formattedString))
+        // 只把文字交回调用方；不写日志、不落盘。
+        if let transcript {
+          self.onText(SpeechText.merge(base: self.base, transcript: transcript))
         }
-        // 出错时无论有没有结果都要收尾（释放音频会话）；最终结果同样收尾。
-        if error != nil || result?.isFinal == true {
+        // 出错或最终结果都要收尾（释放音频会话）。
+        if finished {
           self.finish()
         }
       }
@@ -149,6 +156,37 @@ final class SpeechInput {
     case .undetermined: .notAsked
     case .granted: .allowed
     default: .denied
+    }
+  }
+
+  // MARK: - 系统回调的创建（nonisolated：系统在后台线程调用，闭包不能继承主线程隔离，
+  // 否则 Swift 6 运行时检查直接中止进程——T6c-R2 闪退根因）
+
+  /// 请求语音识别授权。系统回调在后台线程触发，闭包只恢复 continuation。
+  private nonisolated static func requestSpeechAuthorization() async -> Bool {
+    await withCheckedContinuation { continuation in
+      SFSpeechRecognizer.requestAuthorization { status in
+        continuation.resume(returning: status == .authorized)
+      }
+    }
+  }
+
+  /// 安装音频 Tap。回调在音频渲染线程触发，闭包只把 buffer 追加进识别请求
+  ///（SFSpeechAudioBufferRecognitionRequest.append 可在任意线程调用）。
+  private nonisolated static func installTap(on input: AVAudioInputNode, format: AVAudioFormat,
+    request: SFSpeechAudioBufferRecognitionRequest) {
+    input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+      request.append(buffer)
+    }
+  }
+
+  /// 启动识别任务。结果回调在后台队列触发，闭包只回传可跨线程的 String?/Bool，
+  /// 不把 SFSpeechRecognitionResult 带回主线程。
+  private nonisolated static func startRecognition(recognizer: SFSpeechRecognizer,
+    request: SFSpeechAudioBufferRecognitionRequest,
+    onUpdate: @escaping @Sendable (_ transcript: String?, _ finished: Bool) -> Void) -> SFSpeechRecognitionTask {
+    recognizer.recognitionTask(with: request) { result, error in
+      onUpdate(result?.bestTranscription.formattedString, error != nil || result?.isFinal == true)
     }
   }
 }

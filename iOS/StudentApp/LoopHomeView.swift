@@ -495,6 +495,8 @@ struct LoopItemDetailView: View {
   let onDiscard: (String) -> Void
   @Environment(LoopStore.self) private var loopStore
   @State private var cropImage: UIImage?
+  /// 裁图区可用宽度（由 onGeometryChange 测得，未测到时为 0，高度退回下限）。
+  @State private var cropAvailableWidth: CGFloat = 0
 
   private var card: V2ItemCard? {
     loopStore.week?.items.first { $0.id == itemID } ?? loopStore.week?.backlog.first { $0.id == itemID }
@@ -506,7 +508,8 @@ struct LoopItemDetailView: View {
         if let cropImage {
           ZoomablePhoto(image: cropImage, role: .crop)
             .frame(maxWidth: .infinity)
-            .frame(height: 420)
+            .frame(height: CropDisplayHeight.displayHeight(imageWidth: cropImage.size.width,
+              imageHeight: cropImage.size.height, availableWidth: cropAvailableWidth))
           Text("整题裁图 · 双指缩放").font(.caption).foregroundStyle(Palette.muted)
         }
         if let evidence = loopStore.evidence {
@@ -537,7 +540,9 @@ struct LoopItemDetailView: View {
               .accessibilityIdentifier("item-correct-\(card.id)")
           }
         }
-      }.padding(24)
+      }
+      .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { cropAvailableWidth = $0 }
+      .padding(24)
     }
     .background(Palette.paper)
     .navigationTitle(card?.shortId ?? "题目")
