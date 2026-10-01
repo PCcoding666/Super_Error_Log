@@ -7,6 +7,7 @@ import { getDb } from '../db/connection.js';
 import { ensureStudentProfile } from '../services/studentService.js';
 import { bridgePending } from '../bridge/recognitionToItems.js';
 import { createV2Router } from '../v2/router.js';
+import { resumePendingSnapshots } from '../v2/printService.js';
 
 export interface CloudAssembly {
   configuration: MobileConfiguration;
@@ -29,6 +30,8 @@ export async function assembleCloudService(configuration: MobileConfiguration): 
   ensureStudentProfile();
   // T3：启动时把已登记但尚未桥接的 v2 识别任务补桥一次（单个失败不影响启动）。
   bridgePending(configuration.dataDir);
+  // T5：重启后续做 preparing 状态的打印快照（已完成的题不重做）。
+  resumePendingSnapshots();
   const pairing = await PairingManager.open(configuration.dataDir);
   const admin = await createAdminServer(pairing);
   const app = await createMobileApp({ dataDir: configuration.dataDir, vision: new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true, v2Router: () => createV2Router({ mobileDataDir: configuration.dataDir }) });

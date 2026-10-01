@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { AiError } from './errors.js';
 import type {
   AiProvider,
+  CoachProvider,
   ExtractInput,
   ExtractResult,
   ExtractedItem,
@@ -13,7 +14,7 @@ import type {
   MatchResult,
   SuggestInput,
 } from './provider.js';
-import { FOLLOWUP_FALLBACK_QUESTION, validateEvidence, type Evidence, type FollowupAsk, type FollowupSummarize, type CorrectionProposalResult } from './evidence.js';
+import { FOLLOWUP_FALLBACK_QUESTION, validateEvidence, type Coaching, type Diagnosis, type Evidence, type FollowupAsk, type FollowupSummarize, type CorrectionProposalResult } from './evidence.js';
 import { ATTEMPT_STATES, CAUSES, type Subject } from '../domain/types.js';
 
 export interface FixtureManifestItem {
@@ -56,7 +57,7 @@ const TYPE_POOL = ['计算题', '选择题', '填空题', '证明题', '实验�
  * Deterministic mock：优先命中 fixture 清单（文件名精确匹配），
  * 否则由内容哈希派生稳定结果；支持 SEL_MOCK_FAULT 注入故障（测试用）。
  */
-export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionProvider {
+export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionProvider, CoachProvider {
   readonly name = 'mock';
   private manifest: Map<string, FixtureManifestItem> | null = null;
   private fault: string;
@@ -189,6 +190,17 @@ export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionP
    * T4e 确定性修订建议：按指令关键词选择字段，产出必然通过校验的修改。
    * 文字类字段附 find/replace 片段；学生原作只改最后一个字符（小幅转写纠错）；无法判断时只反问。
    */
+  /** T5 确定性打印辅导：一级说考什么、二级给第一步；答案标注 AI 参考。 */
+  async coachForPrint(evidence: Evidence, _diagnosis: Diagnosis): Promise<Coaching> {
+    const e = validateEvidence(evidence);
+    return {
+      hints: [`先想想这题考的是「${e.knowledgeTags[0] ?? '相关知识点'}」`, '把已知条件列出来，再决定第一步怎么算'],
+      solution: '按定义与已知条件逐步推导。',
+      answer: `【mock】第 ${e.questionNumber} 题参考答案`,
+      source: 'ai_generated',
+    };
+  }
+
   async proposeCorrection(evidence: Evidence, instruction: string): Promise<CorrectionProposalResult> {
     const e = validateEvidence(evidence);
     if (/学科/.test(instruction)) {

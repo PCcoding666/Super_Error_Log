@@ -1,5 +1,5 @@
 import type { AttemptState, Cause, ReviewValue, Subject } from '../domain/types.js';
-import type { Evidence, FollowupAsk, FollowupSummarize, QuestionRegion, CorrectionProposalResult } from './evidence.js';
+import type { Coaching, Diagnosis, Evidence, FollowupAsk, FollowupSummarize, QuestionRegion, CorrectionProposalResult } from './evidence.js';
 import type { StageRun } from './chatClient.js';
 import type { CropAuditReport } from './cropAuditor.js';
 
@@ -94,4 +94,15 @@ export interface FollowupProvider {
  */
 export interface CorrectionProvider {
   proposeCorrection(evidence: Evidence, instruction: string): Promise<CorrectionProposalResult>;
+}
+
+// ---------- v2.0 T5：打印快照辅导 ----------
+
+/**
+ * 打印快照的提示/答案能力（T5）。诊断对象由服务器按规则合成（复盘错因或 null），
+ * 不满足 validateDiagnosis 的 findings 不变量，因此实现方不得再校验诊断。
+ * 每份练习包每题至多调用 1 次，不重试；失败由调用方留空处理。
+ */
+export interface CoachProvider {
+  coachForPrint(evidence: Evidence, diagnosis: Diagnosis): Promise<Coaching>;
 }

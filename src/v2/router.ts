@@ -11,7 +11,8 @@ import { createPractice, getPractice, listPractices, recommendPractice } from '.
 import { getReturnSummary, submitReturns } from './returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from './reflectionService.js';
 import { acceptCorrection, directCorrection, getCorrectionsReport, getEvidenceView, proposeCorrection } from './correctionService.js';
-import type { FollowupProvider, CorrectionProvider } from '../ai/provider.js';
+import { getPrintStatus, readPrintMedia, requestPrint } from './printService.js';
+import type { FollowupProvider, CorrectionProvider, CoachProvider } from '../ai/provider.js';
 
 export const V2_PROTOCOL_VERSION = 2 as const;
 
@@ -24,6 +25,8 @@ export interface V2RouterOptions {
   followupProvider?: FollowupProvider;
   /** T4e 修订建议模型能力；缺省走全局 getCorrectionProvider()（mock 模式为确定性实现）。 */
   correctionProvider?: CorrectionProvider;
+  /** T5 打印快照提示/答案模型能力；缺省走全局 getCoachProvider()（mock 模式为确定性实现）。 */
+  coachProvider?: CoachProvider;
 }
 
 /**
@@ -120,6 +123,25 @@ export function createV2Router(options: V2RouterOptions = {}): Router {
     const detail = getPractice(String(request.params.id));
     if (!detail) { notFound(response, '练习不存在。'); return; }
     response.json(detail);
+  });
+
+  // T5：打印快照（D17：服务器冻结内容，PDF 由手机生成）。仅限 v2 练习包。幂等。
+  r.post('/practice/:id/print', (request, response) => {
+    const result = requestPrint(String(request.params.id), options.coachProvider);
+    if (result.httpStatus === 404) { notFound(response, '练习不存在。'); return; }
+    response.status(result.httpStatus).json(result.body);
+  });
+
+  r.get('/practice/:id/print', (request, response) => {
+    const result = getPrintStatus(String(request.params.id));
+    if (result.httpStatus === 404) { notFound(response, '练习不存在。'); return; }
+    response.json(result.body);
+  });
+
+  r.get('/practice/:id/print/media/:name', (request, response) => {
+    const media = readPrintMedia(String(request.params.id), String(request.params.name));
+    if (!media) { notFound(response, '快照图片不存在。'); return; }
+    response.type('image/jpeg').set('Cache-Control', 'private, no-store').send(media);
   });
 
   // T4d：回传（形状错 400、规则错逐条 ok:false）与回报。仅限 v2 练习包。

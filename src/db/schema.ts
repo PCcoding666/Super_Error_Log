@@ -264,4 +264,17 @@ CREATE TABLE IF NOT EXISTS correction_proposal (
   error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_correction_proposal_item ON correction_proposal(item_id, created_at);
+
+-- v2.0 T5：打印快照（D17：服务器冻结结构化内容+图片，PDF 由手机生成）。
+-- 每个 v2 练习包最多一份快照；preparing 时 snapshot_json 存部分进度（供重启续做），ready 后为终态。
+CREATE TABLE IF NOT EXISTS v2_print_snapshot (
+  packet_id TEXT PRIMARY KEY REFERENCES review_packet(id),
+  status TEXT NOT NULL CHECK (status IN ('preparing','ready','failed')),
+  progress_done INTEGER NOT NULL DEFAULT 0,
+  progress_total INTEGER NOT NULL DEFAULT 0,
+  snapshot_json TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  ready_at TEXT
+);
 `;
