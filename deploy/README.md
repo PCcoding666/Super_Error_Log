@@ -63,6 +63,11 @@ SEL_MOBILE_AI_TIMEOUT_MS=1800000
 # SEL_DATA_DIR：/v2 的 node:sqlite 库（app.db）所在目录，必须与 SEL_MOBILE_DATA_DIR 相同。
 SEL_AI_MODE=bailian
 SEL_DATA_DIR=/var/lib/super-error-log
+# v2.0 T4 起必填：/v2 的追问、修改建议、打印辅导走这组配置；与上面的 SEL_MOBILE_AI_* 同值。
+# 缺接口地址、密钥或模型时 dist/main.js 启动即失败（不会带着缺配置上线后悄悄退回固定问句）。
+SEL_AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+SEL_AI_API_KEY=<百炼密钥，与 SEL_MOBILE_AI_API_KEY 相同>
+SEL_AI_MODEL=<模型名>
 ```
 
 参考 `.env.example`；缺任何必填项服务启动会直接失败（fail-hard，不静默降级 mock）。
@@ -71,8 +76,8 @@ v2.0 T2 起入口为 `dist/main.js`：同一端口（3101）同时服务 `/v1` �
 **云端公网入口不挂任何 Web 页面**（`/parent`、`/trends`、`/items` 等一律 404；Web 看板待有登录方案后再设计）。
 旧的 `dist/mobile/server.js` 仅保留给开发调试，不再作为线上入口。
 
-注意（T4 预告）：T2 本身不调用 `SEL_AI_*`；自 T4 起 `/v2` 会使用 Web 的 AI 配置
-（`SEL_AI_BASE_URL`、`SEL_AI_API_KEY`、`SEL_AI_MODEL*`），届时需与上面的 `SEL_MOBILE_AI_*` 配置为同值。
+`/v2` 使用 Web 的 AI 配置（`SEL_AI_BASE_URL`、`SEL_AI_API_KEY`、`SEL_AI_MODEL*`），与上面的 `SEL_MOBILE_AI_*` 配置为同值；
+启动守卫见 `src/v2/aiConfigGuard.ts`。需要按阶段指定模型时可加 `SEL_AI_MODEL_FOLLOWUP`、`SEL_AI_MODEL_CORRECT`、`SEL_AI_MODEL_COACH`。
 
 ## 3. 发布新版本
 

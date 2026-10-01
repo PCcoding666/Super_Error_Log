@@ -8,13 +8,12 @@ import { createMobileApp } from './mobile/router.js';
 import { BailianMobileVision } from './mobile/vision.js';
 import { createV2Router } from './v2/router.js';
 import { resumePendingSnapshots } from './v2/printService.js';
+import { assertV2AiConfigured } from './v2/aiConfigGuard.js';
 
 // v2.0 T2 单进程入口：一个 Node 进程同时提供 /v1 识别（语义不变）与 /v2 手机接口，
 // 共享 node:sqlite 库 SEL_DATA_DIR/app.db。云端公网入口不挂任何 Web 页面（F1）。
 // 缺配置一律 fail-hard，禁止降级为 mock。
-if (config.aiMode !== 'bailian') {
-  throw new Error(`单进程装配要求 SEL_AI_MODE=bailian（当前：${config.aiMode}），禁止降级为 mock`);
-}
+assertV2AiConfigured(config);
 const configuration = loadMobileConfiguration();
 
 if (configuration.mode === 'cloud') {
