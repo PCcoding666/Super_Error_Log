@@ -38,6 +38,10 @@ export function getDb(): DatabaseSync {
   if (!attemptCols.some((c) => c.name === 'performed_at')) {
     db.exec('ALTER TABLE review_attempt ADD COLUMN performed_at TEXT');
   }
+  // v2.0 T4d：提示等级（0 未看提示 / 1 一级 / 2 二级；v2 回传 hint1→1、hint2→2、其余 0）。
+  if (!attemptCols.some((c) => c.name === 'hint_level')) {
+    db.exec('ALTER TABLE review_attempt ADD COLUMN hint_level INTEGER');
+  }
   const diagnosisCols = db.prepare('PRAGMA table_info(error_diagnosis)').all() as Array<{ name: string }>;
   if (!diagnosisCols.some((c) => c.name === 'adopted_ai')) {
     db.exec('ALTER TABLE error_diagnosis ADD COLUMN adopted_ai INTEGER NOT NULL DEFAULT 0');

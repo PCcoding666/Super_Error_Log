@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS review_attempt (
   stuck_step TEXT,
   submitted_by TEXT NOT NULL DEFAULT 'student',
   performed_at TEXT,
+  hint_level INTEGER,
   created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_attempt_packet_item ON review_attempt(packet_id, item_id);

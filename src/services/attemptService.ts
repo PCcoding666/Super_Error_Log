@@ -11,6 +11,8 @@ export interface AttemptInput {
   correct: boolean;
   stuckStep?: string;
   performedAt?: string;
+  /** 提示等级（v2.0 T4d）：0 未看提示 / 1 一级 / 2 二级；缺省按 0 落库。不影响掌握判定。 */
+  hintLevel?: 0 | 1 | 2;
 }
 
 interface CalendarDay {
@@ -79,10 +81,18 @@ export function recordAttempt(
   if (runtimeInput.performedAt !== undefined && typeof runtimeInput.performedAt !== 'string') {
     return { ok: false, error: '实际作答日期必须是 YYYY-MM-DD 文本' };
   }
+  if (
+    runtimeInput.hintLevel !== undefined
+    && (typeof runtimeInput.hintLevel !== 'number' || !Number.isInteger(runtimeInput.hintLevel)
+      || runtimeInput.hintLevel < 0 || runtimeInput.hintLevel > 2)
+  ) {
+    return { ok: false, error: '提示等级必须是 0–2 的整数' };
+  }
   const completion = runtimeInput.completion as Completion;
   const correct = runtimeInput.correct;
   const stuckStep = runtimeInput.stuckStep as string | undefined;
   const performedAt = runtimeInput.performedAt as string | undefined;
+  const hintLevel = (runtimeInput.hintLevel as 0 | 1 | 2 | undefined) ?? 0;
 
   const db = getDb();
   const item = getItem(itemId);
@@ -131,11 +141,11 @@ export function recordAttempt(
 
   db.prepare(
     `INSERT INTO review_attempt
-     (id, packet_id, item_id, completion, correct, stuck_step, submitted_by, performed_at, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?)`,
+     (id, packet_id, item_id, completion, correct, stuck_step, submitted_by, performed_at, hint_level, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
   ).run(
     newId('att'), packetId, itemId, completion, correct ? 1 : 0,
-    stuckStep ?? null, 'student', performedDay.text, now(),
+    stuckStep ?? null, 'student', performedDay.text, hintLevel, now(),
   );
 
   if (transition.to !== item.status) {

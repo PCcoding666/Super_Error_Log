@@ -8,6 +8,7 @@ import { audit } from '../services/eventLog.js';
 import { discardV2Item, getWeek, isV2Item, restoreV2Item } from './weekService.js';
 import { getV2Settings, updateV2Settings } from './settingsService.js';
 import { createPractice, getPractice, listPractices, recommendPractice } from './practiceService.js';
+import { getReturnSummary, submitReturns } from './returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from './reflectionService.js';
 import type { FollowupProvider } from '../ai/provider.js';
 
@@ -116,6 +117,23 @@ export function createV2Router(options: V2RouterOptions = {}): Router {
     const detail = getPractice(String(request.params.id));
     if (!detail) { notFound(response, '练习不存在。'); return; }
     response.json(detail);
+  });
+
+  // T4d：回传（形状错 400、规则错逐条 ok:false）与回报。仅限 v2 练习包。
+  r.post('/practice/:id/return', express.json({ limit: '16kb', strict: true }), (request, response) => {
+    const result = submitReturns(String(request.params.id), request.body);
+    if (!result.ok) {
+      const code = result.httpStatus === 404 ? 'not_found' : 'invalid_request';
+      response.status(result.httpStatus).json({ error: { code, message: result.message } });
+      return;
+    }
+    response.json({ results: result.results });
+  });
+
+  r.get('/practice/:id/summary', (request, response) => {
+    const summary = getReturnSummary(String(request.params.id));
+    if (!summary) { notFound(response, '练习不存在。'); return; }
+    response.json(summary);
   });
 
   // T4c：AI 追问与复盘。仅限 v2 来源的题；Web 的 submitReflection 路径不变。
