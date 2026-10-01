@@ -316,3 +316,62 @@ describe('T4a 本周错题卡片 / 删恢复 / 学生设置', () => {
     }
   });
 });
+
+/** T4f：作答/订正区域在题干下方的整题证据。 */
+function fullScopeEvidence(number: string): Evidence {
+  return {
+    ...evidence(number),
+    questionRegion: { x: 0, y: 0.6, width: 1, height: 0.1 },
+    regions: [
+      { id: 's1', kind: 'student_work', box: { x: 0.1, y: 0.75, width: 0.5, height: 0.05 }, confidence: 0.9, cleanForPrint: false },
+      { id: 'c1', kind: 'correction', box: { x: 0.1, y: 0.85, width: 0.6, height: 0.05 }, confidence: 0.9, cleanForPrint: false },
+    ],
+    observations: [
+      { id: 'o1', kind: 'student_work', text: 'x=1', regionId: 's1', confidence: 0.9 },
+      { id: 'o2', kind: 'correction', text: 'x=2', regionId: 'c1', confidence: 0.9 },
+    ],
+  };
+}
+
+describe('T4f crop?scope=full 整题大图', () => {
+  it('scope=full 返回 200 JPEG，高度大于 scope=question；缺省与 scope=question 字节一致', async () => {
+    const { base, dataDir, auth } = await setupApp();
+    const jobId = await makeJob(dataDir, [question({ number: '1', evidence: fullScopeEvidence('1') })]);
+    await registerPhoto(base, auth, jobId);
+    const week = await getWeek(base, auth);
+    const itemId = week.items[0]!.id;
+
+    const fetchCrop = async (query: string) => {
+      const response = await fetch(`${base}/v2/items/${itemId}/crop${query}`, { headers: auth });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('image/jpeg');
+      expect(response.headers.get('cache-control')).toContain('no-store');
+      return Buffer.from(await response.arrayBuffer());
+    };
+
+    const questionBytes = await fetchCrop('?scope=question');
+    const fullBytes = await fetchCrop('?scope=full');
+    const defaultBytes = await fetchCrop('');
+
+    const questionMeta = await sharp(questionBytes).metadata();
+    const fullMeta = await sharp(fullBytes).metadata();
+    expect(fullMeta.height!).toBeGreaterThan(questionMeta.height!);
+    // 缺省行为与改动前完全一致：与 scope=question 字节相同。
+    expect(defaultBytes.equals(questionBytes)).toBe(true);
+  });
+
+  it('scope=bad 返回 400 invalid_request；scope=full 对非 v2 题 404', async () => {
+    const { base, dataDir, auth } = await setupApp();
+    const jobId = await makeJob(dataDir, [question({ number: '1' })]);
+    await registerPhoto(base, auth, jobId);
+    const week = await getWeek(base, auth);
+    const itemId = week.items[0]!.id;
+
+    const bad = await fetch(`${base}/v2/items/${itemId}/crop?scope=bad`, { headers: auth });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: { code: 'invalid_request', message: 'scope 只能是 question 或 full。' } });
+
+    expect((await fetch(`${base}/v2/items/itm_web/crop?scope=full`, { headers: auth })).status).toBe(404);
+    expect((await fetch(`${base}/v2/items/itm_missing/crop?scope=full`, { headers: auth })).status).toBe(404);
+  });
+});

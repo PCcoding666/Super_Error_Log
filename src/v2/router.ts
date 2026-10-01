@@ -4,6 +4,7 @@ import express, { Router } from 'express';
 import { getDb } from '../db/connection.js';
 import { registerV2Photo } from '../bridge/recognitionToItems.js';
 import { getQuestionCrop } from '../services/evidenceService.js';
+import { getItemFullCrop } from './fullCrop.js';
 import { audit } from '../services/eventLog.js';
 import { discardV2Item, getWeek, isV2Item, restoreV2Item } from './weekService.js';
 import { getV2Settings, updateV2Settings } from './settingsService.js';
@@ -65,13 +66,18 @@ export function createV2Router(options: V2RouterOptions = {}): Router {
     response.json(getWeek(mobileDataDir()));
   });
 
-  // 整题裁图：仅限 v2 来源的题。
+  // 整题裁图：仅限 v2 来源的题。T4f：scope=full 返回整题大图（题干 + 全部手写区域，不遮白）。
   r.get('/items/:id/crop', async (request, response, next) => {
     try {
+      const scope = request.query.scope === undefined ? 'question' : String(request.query.scope);
+      if (scope !== 'question' && scope !== 'full') {
+        response.status(400).json({ error: { code: 'invalid_request', message: 'scope 只能是 question 或 full。' } });
+        return;
+      }
       const itemId = String(request.params.id);
       if (!isV2Item(itemId)) { notFound(response, '题目不存在或不属于手机上传。'); return; }
       try {
-        const crop = await getQuestionCrop(itemId);
+        const crop = scope === 'full' ? await getItemFullCrop(itemId) : await getQuestionCrop(itemId);
         response.type('image/jpeg').set('Cache-Control', 'private, no-store').send(crop);
       } catch {
         notFound(response, '整题裁图无法读取。');
