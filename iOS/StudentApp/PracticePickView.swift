@@ -66,32 +66,40 @@ struct PracticePickView: View {
 
   private func row(_ item: V2RecommendedItem) -> some View {
     let selected = store.selectedItemIDs.contains(item.id)
-    return HStack(alignment: .top, spacing: 12) {
-      Button { toggle(item) } label: {
-        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-          .font(.title3)
-          .foregroundStyle(selected ? Palette.teal : Palette.muted)
-          .frame(width: 44, height: 44)
-      }
-      .buttonStyle(.plain)
-      .disabled(!selected && limitReached)
-      .accessibilityIdentifier("pick-toggle-\(item.id)")
+    // 与主页错题卡片一致的版式：裁图置顶占满宽度（≤72pt、等比居左），
+    // 下面依次短编号（左侧勾选框）、学科·知识点、题干文字摘要、推荐理由。
+    return VStack(alignment: .leading, spacing: 8) {
       Button {
         Task {
-          if let url = await store.cropFileURL(itemID: item.id) {
+          // 点裁图看整题大图；旧服务器/离线取不到整题大图时退回题干小图。
+          var url = await store.cropFileURL(itemID: item.id, scope: .full)
+          if url == nil { url = await store.cropFileURL(itemID: item.id) }
+          if let url {
             zoom = PhotoReference(url: url, title: item.shortId ?? "题目", role: .crop)
           }
         }
       } label: {
-        CropThumbnail(itemID: item.id).frame(width: 62, height: 76).clipped()
+        CropThumbnail(itemID: item.id)
+          .frame(maxWidth: .infinity, maxHeight: 72, alignment: .leading)
+          .clipped()
+          .accessibilityHidden(true)
       }
       .buttonStyle(.plain)
       .accessibilityIdentifier("pick-thumb-\(item.id)")
       Button { toggle(item) } label: {
         VStack(alignment: .leading, spacing: 4) {
-          Text(item.shortId ?? "题目").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+          HStack(spacing: 8) {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+              .font(.title3)
+              .foregroundStyle(selected ? Palette.teal : Palette.muted)
+              .accessibilityIdentifier("pick-toggle-\(item.id)")
+            Text(item.shortId ?? "题目").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+          }
           Text([item.subject, item.knowledgeTags.joined(separator: "、")].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
             .font(.caption).foregroundStyle(Palette.muted)
+          if let excerpt = item.questionExcerpt, !excerpt.isEmpty {
+            Text(excerpt).font(.caption).foregroundStyle(Palette.ink).lineLimit(2)
+          }
           Text("推荐理由：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

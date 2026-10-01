@@ -38,10 +38,15 @@ final class SpeechInput {
 
   /// 面板出现时调用：只读授权状态决定按钮显隐，不请求权限。
   func refresh() {
+    #if targetEnvironment(simulator)
+    // T6i：模拟器音频输入不可靠（inputNode 会因音频服务超时直接中止进程），只留键盘。
+    presentation = .keyboardOnly
+    #else
     guard let recognizer, recognizer.isAvailable else { presentation = .keyboardOnly; return }
     presentation = SpeechGate.presentation(recognizerExists: true,
       speech: Self.authState(SFSpeechRecognizer.authorizationStatus()),
       mic: Self.authState(AVAudioApplication.shared.recordPermission))
+    #endif
   }
 
   /// 按下。askOnPress 时本次不录音、只请求两项权限；holdToTalk 时开始录音。
@@ -191,10 +196,12 @@ final class SpeechInput {
   }
 }
 
-/// 「按住说话」按钮：按下开始、松开结束。语音不可用或被拒绝时由调用方隐藏本按钮。
+/// 「按住说话」按钮：按住约 0.2 秒（长按成立）才开始，松开结束；成立前滑走/抬起不触发，
+/// 避免在按钮上滑动页面误开始录音。语音不可用或被拒绝时由调用方隐藏本按钮。
 struct HoldToTalkButton: View {
   let speech: SpeechInput
   var identifier: String
+  @State private var gate = HoldToTalkGate()
 
   var body: some View {
     Label(speech.isRecording ? "正在听，松开结束" : "按住说话", systemImage: "mic.fill")
@@ -205,14 +212,33 @@ struct HoldToTalkButton: View {
         in: RoundedRectangle(cornerRadius: 14))
       .contentShape(RoundedRectangle(cornerRadius: 14))
       .gesture(
-        DragGesture(minimumDistance: 0)
-          .onChanged { _ in speech.start() }
-          .onEnded { _ in speech.stop() }
+        // 长按成立后才接拖动手势：成立前滑动页面只会滚屏，不会触发 start()。
+        LongPressGesture(minimumDuration: 0.2)
+          .sequenced(before: DragGesture(minimumDistance: 0))
+          .onChanged { value in
+            switch value {
+            case .first(true):
+              apply(gate.handle(.touchDown))
+            case .second(true, _):
+              apply(gate.handle(.longPressRecognized))
+            default:
+              apply(gate.handle(.touchUp))
+            }
+          }
+          .onEnded { _ in apply(gate.handle(.touchUp)) }
       )
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(speech.isRecording ? "正在听，松开结束" : "按住说话")
       .accessibilityIdentifier(identifier)
       .accessibilityAddTraits(.isButton)
+  }
+
+  private func apply(_ action: HoldToTalkGate.Action) {
+    switch action {
+    case .none: break
+    case .start: speech.start()
+    case .stop: speech.stop()
+    }
   }
 }
 

@@ -43,32 +43,41 @@ struct PracticeDetailView: View {
   }
 
   private func row(_ item: V2PracticeItem) -> some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack(alignment: .top, spacing: 12) {
-        Button {
-          Task {
-            if let url = await store.cropFileURL(itemID: item.id) {
-              zoom = PhotoReference(url: url, title: item.shortId ?? "题目", role: .crop)
-            }
+    // 与主页错题卡片一致的版式：裁图置顶占满宽度（≤72pt、等比居左），
+    // 下面依次短编号与复盘状态、学科·知识点、题干文字摘要、推荐理由、复盘按钮。
+    VStack(alignment: .leading, spacing: 8) {
+      Button {
+        Task {
+          // 点裁图看整题大图；旧服务器/离线取不到整题大图时退回题干小图。
+          var url = await store.cropFileURL(itemID: item.id, scope: .full)
+          if url == nil { url = await store.cropFileURL(itemID: item.id) }
+          if let url {
+            zoom = PhotoReference(url: url, title: item.shortId ?? "题目", role: .crop)
           }
-        } label: {
-          CropThumbnail(itemID: item.id).frame(width: 62, height: 76).clipped()
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("practice-detail-thumb-\(item.id)")
-        VStack(alignment: .leading, spacing: 4) {
-          HStack(spacing: 8) {
-            Text(item.shortId ?? "题目").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-            Text(item.reflected ? "已复盘" : "还没复盘")
-              .font(.caption2.weight(.medium))
-              .foregroundStyle(item.reflected ? CardTone.green.color : CardTone.orange.color)
-          }
-          Text([item.subject, item.knowledgeTags.joined(separator: "、")].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-            .font(.caption).foregroundStyle(Palette.muted)
-          Text("推荐理由：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
-        }
-        Spacer(minLength: 0)
+      } label: {
+        CropThumbnail(itemID: item.id)
+          .frame(maxWidth: .infinity, maxHeight: 72, alignment: .leading)
+          .clipped()
+          .accessibilityHidden(true)
       }
+      .buttonStyle(.plain)
+      .accessibilityIdentifier("practice-detail-thumb-\(item.id)")
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 8) {
+          Text(item.shortId ?? "题目").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+          Text(item.reflected ? "已复盘" : "还没复盘")
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(item.reflected ? CardTone.green.color : CardTone.orange.color)
+        }
+        Text([item.subject, item.knowledgeTags.joined(separator: "、")].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+          .font(.caption).foregroundStyle(Palette.muted)
+        if let excerpt = item.questionExcerpt, !excerpt.isEmpty {
+          Text(excerpt).font(.caption).foregroundStyle(Palette.ink).lineLimit(2)
+        }
+        Text("推荐理由：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
       Button(item.reflected ? "再看一下" : "复盘这道") { reflectTarget = item.id }
         .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
         .foregroundStyle(Palette.teal)
