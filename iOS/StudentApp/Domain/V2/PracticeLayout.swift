@@ -208,12 +208,13 @@ enum PracticeLayout {
 
     let items = snapshot.items.sorted { $0.position < $1.position }
     if !items.isEmpty {
+      let plans = items.map { planBlock(item: $0, imageSizes: imageSizes, measurer: measurer, metrics: metrics) }
       cursor.newPage(.question)
-      for (index, item) in items.enumerated() {
-        let plan = planBlock(item: item, imageSizes: imageSizes, measurer: measurer, metrics: metrics)
+      for index in plans.indices {
+        let plan = plans[index]
         if index == 0 {
           if plan.total <= cursor.remaining {
-            placeWholeBlock(plan, measurer: measurer, metrics: metrics, cursor: &cursor)
+            placeWholeBlock(plan, fillTail: isLastBlockOnPage(plans: plans, index: index, remainingAfter: cursor.remaining - plan.total, metrics: metrics), measurer: measurer, metrics: metrics, cursor: &cursor)
           } else {
             placeSplitBlock(plan, measurer: measurer, metrics: metrics, cursor: &cursor)
           }
@@ -221,10 +222,10 @@ enum PracticeLayout {
           cursor.advance(metrics.blockSpacing / 2)
           cursor.add(PracticeElement(kind: .separator, rect: CGRect(x: metrics.margin, y: cursor.y, width: metrics.contentWidth, height: 0)))
           cursor.advance(metrics.blockSpacing / 2)
-          placeWholeBlock(plan, measurer: measurer, metrics: metrics, cursor: &cursor)
+          placeWholeBlock(plan, fillTail: isLastBlockOnPage(plans: plans, index: index, remainingAfter: cursor.remaining - plan.total, metrics: metrics), measurer: measurer, metrics: metrics, cursor: &cursor)
         } else if plan.total <= metrics.contentHeight {
           cursor.newPage(.question)
-          placeWholeBlock(plan, measurer: measurer, metrics: metrics, cursor: &cursor)
+          placeWholeBlock(plan, fillTail: isLastBlockOnPage(plans: plans, index: index, remainingAfter: cursor.remaining - plan.total, metrics: metrics), measurer: measurer, metrics: metrics, cursor: &cursor)
         } else {
           placeSplitBlock(plan, measurer: measurer, metrics: metrics, cursor: &cursor)
         }
@@ -341,12 +342,26 @@ enum PracticeLayout {
 
   // MARK: 区块绘制（排版坐标）
 
-  private static func placeWholeBlock(_ plan: BlockPlan, measurer: PracticeTextMeasurer, metrics: PracticePageMetrics, cursor: inout Cursor) {
+  /// 本块之后本页还会不会有下一块：整块放得下、或超大块的题头+题面会从本页开始时，本块不是"本页最后一题"。
+  private static func isLastBlockOnPage(plans: [BlockPlan], index: Int, remainingAfter: CGFloat, metrics: PracticePageMetrics) -> Bool {
+    guard index + 1 < plans.count else { return true }
+    let next = plans[index + 1]
+    if next.total + metrics.blockSpacing <= remainingAfter { return false }
+    if next.total <= metrics.contentHeight { return true }
+    return next.headStemH > remainingAfter
+  }
+
+  /// fillTail 为 true 时（本页最后一题）：页尾剩余空间并入作答留白，横线继续按行距画下去，
+  /// "关键一步"行与勾选框行随之下移到页面底部。
+  private static func placeWholeBlock(_ plan: BlockPlan, fillTail: Bool, measurer: PracticeTextMeasurer, metrics: PracticePageMetrics, cursor: inout Cursor) {
     placeHeader(plan, metrics: metrics, cursor: &cursor)
     cursor.advance(metrics.partGap)
     placeStemParts(plan.stemParts, flow: false, metrics: metrics, cursor: &cursor)
     cursor.advance(metrics.partGap)
-    placeAnswerSpace(height: metrics.answerMinHeight, metrics: metrics, cursor: &cursor)
+    let answerHeight = fillTail
+      ? max(metrics.answerMinHeight, cursor.remaining - plan.keyStepH - plan.checkH - 2 * metrics.partGap)
+      : metrics.answerMinHeight
+    placeAnswerSpace(height: answerHeight, metrics: metrics, cursor: &cursor)
     cursor.advance(metrics.partGap)
     placeKeyStep(plan, metrics: metrics, cursor: &cursor)
     cursor.advance(metrics.partGap)

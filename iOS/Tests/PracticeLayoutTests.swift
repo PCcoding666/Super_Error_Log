@@ -319,6 +319,74 @@ final class PracticeLayoutTests: XCTestCase {
     for position in 0..<3 { XCTAssertTrue(answerTexts.contains("M-0\(position + 1)")) }
   }
 
+  // MARK: - 页尾空白并入作答留白（T6e-w）
+
+  /// 页面内容底部（页脚保留区上沿）：842 - 40 - 28 = 774。
+  private let contentBottom: CGFloat = 774
+
+  func testTrailingSpaceMergesIntoLastBlockAnswerSpace() {
+    // 单题：旧行为留白固定 150pt，勾选框底部停在 284.5pt，页面下半截空白。
+    // 新行为：页尾剩余空间并入作答留白，"关键一步"与勾选框移到页面底部。
+    let snapshot = makeSnapshot(items: [makeItem(position: 0)], answers: [makeAnswer(0)])
+    let result = compute(snapshot)
+    let questionPages = result.pages.filter { $0.role == .question }
+    XCTAssertEqual(questionPages.count, 1)
+    let page = questionPages[0]
+    let checkboxes = page.elements.filter { $0.kind == .checkbox }
+    XCTAssertEqual(checkboxes.count, 4)
+    for box in checkboxes {
+      XCTAssertEqual(box.rect.maxY, contentBottom, accuracy: 0.01, "勾选框行应落在页面底部")
+    }
+    let dateText = page.elements.first { $0.text == "做题日期：________" }
+    XCTAssertEqual(dateText?.rect.maxY ?? 0, contentBottom, accuracy: 0.01, "做题日期跟着勾选框到底部")
+    let keyStep = page.elements.first { $0.text == "这题的关键一步是：" }
+    XCTAssertNotNil(keyStep)
+    XCTAssertGreaterThan(keyStep!.rect.minY, 700, "关键一步行随之下移到页面底部")
+    // 横线按 28pt 行距继续画下去：题头+题面后剩余 686pt，留白 639.5pt → 22 条横线（旧行为只有 5 条）。
+    let writingLines = page.elements.filter { $0.kind == .writingLine }
+    XCTAssertEqual(writingLines.count, 22, "横线应继续按 28pt 行距画到页面底部")
+    XCTAssertEqual(writingLines.last?.rect.minY ?? 0, 704, accuracy: 0.01)
+  }
+
+  func testTrailingFillAppliesPerPageToLastBlockOnly() {
+    // 三道题：第一页放 M-01、M-02，第二页放 M-03。
+    // 每页只有"该页最后一题"吃掉页尾空白；M-01 的勾选框仍在原位置（284.5pt），不得下移。
+    let snapshot = makeSnapshot(
+      items: (0..<3).map { makeItem(position: $0) },
+      answers: (0..<3).map { makeAnswer($0) })
+    let result = compute(snapshot)
+    let questionPages = result.pages.filter { $0.role == .question }
+    XCTAssertEqual(questionPages.count, 2)
+    let page1Boxes = questionPages[0].elements.filter { $0.kind == .checkbox }
+    XCTAssertEqual(page1Boxes.count, 8)
+    let firstBlockBoxes = page1Boxes.prefix(4)
+    let lastBlockBoxes = page1Boxes.suffix(4)
+    for box in firstBlockBoxes {
+      XCTAssertEqual(box.rect.maxY, 284.5, accuracy: 0.01, "不是本页最后一题，留白保持 150pt")
+    }
+    for box in lastBlockBoxes {
+      XCTAssertEqual(box.rect.maxY, contentBottom, accuracy: 0.01, "本页最后一题并入页尾空白")
+    }
+    let page2Boxes = questionPages[1].elements.filter { $0.kind == .checkbox }
+    XCTAssertEqual(page2Boxes.count, 4)
+    for box in page2Boxes {
+      XCTAssertEqual(box.rect.maxY, contentBottom, accuracy: 0.01, "第二页最后一题同样并入页尾空白")
+    }
+  }
+
+  func testCoverAndAnswerPagesDoNotFillTrailingSpace() {
+    // 封面与答案页不适用并入规则：封面没有横线，答案页条目从页首顺排、不沉到底部。
+    let snapshot = makeSnapshot(items: [makeItem(position: 0)], answers: [makeAnswer(0)])
+    let result = compute(snapshot)
+    let cover = result.pages[0]
+    XCTAssertEqual(cover.role, .cover)
+    XCTAssertTrue(cover.elements.filter { $0.kind == .writingLine }.isEmpty)
+    let answerPage = result.pages.first { $0.role == .answer }!
+    XCTAssertTrue(answerPage.elements.filter { $0.kind == .writingLine }.isEmpty)
+    let lastAnswerText = answerPage.elements.filter { $0.kind == .text && $0.rect.minY < contentBottom }.last
+    XCTAssertLessThan(lastAnswerText?.rect.maxY ?? 0, contentBottom - 100, "答案页内容不沉到页面底部")
+  }
+
   func testEightItemSnapshotLayout() {
     let snapshot = makeSnapshot(
       items: (0..<8).map { makeItem(position: $0) },
