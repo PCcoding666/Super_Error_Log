@@ -411,7 +411,7 @@ import Foundation
     let change = V2CorrectionChange(field: .subject, observationId: nil, before: "数学", after: "物理", find: nil, replace: nil)
     await store.applyDirect(changes: [change])
     XCTAssertEqual(store.week?.items[0].subject, "物理")
-    XCTAssertNil(store.evidence)
+    XCTAssertNotNil(store.evidence, "T6c-R1：成功后保留并重取识别结果（详情页不停在转圈）")
     XCTAssertNil(store.lastError)
   }
 

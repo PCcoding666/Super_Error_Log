@@ -78,6 +78,11 @@ final class LoopStore {
   private(set) var proposal: V2CorrectionProposal?
   /// 修改接口 409（revision 冲突）后给学生的提示。
   private(set) var proposalNotice: String?
+  /// AI 只反问、没有给出修改时的反问文案：界面回到输入区（保留学生已输入）补充后再生成。
+  private(set) var clarifyPrompt: String?
+  /// 修改已生效的显式信号：接受/直改成功一次 +1（界面据此关闭修改面板，
+  /// 不再靠「识别结果变成空」推断——成功后识别结果会保留并重取最新）。
+  private(set) var correctionAppliedCount = 0
   private(set) var printPhase: PrintPhase = .none
 
   /// 回传待提交列表：ok:false 的保留并带原因（returnIssues），ok:true 的移除。
@@ -133,6 +138,7 @@ final class LoopStore {
     proposal = nil
     pendingProposal = nil
     proposalNotice = nil
+    clarifyPrompt = nil
     proposalRetryable = false
     printPhase = .none
     isBusyReflection = false
@@ -371,12 +377,21 @@ final class LoopStore {
 
   func loadEvidence(itemID: String) async {
     guard let client else { return }
+    if evidenceItemID != itemID {
+      // 换题：先清空旧结果，避免载入期间短暂显示上一题的内容。同题重载保留（不闪空）。
+      evidence = nil
+      proposal = nil
+      pendingProposal = nil
+      proposalNotice = nil
+      clarifyPrompt = nil
+    }
     do {
       evidence = try await client.evidence(itemId: itemID)
       evidenceItemID = itemID
       proposal = nil
       pendingProposal = nil
       proposalNotice = nil
+      clarifyPrompt = nil
     } catch { lastError = Self.errorText(error) }
   }
 
@@ -401,12 +416,20 @@ final class LoopStore {
   private func sendProposal(_ request: PendingCorrectionRequest, itemID: String, revision: Int) async {
     guard let client, !isBusyProposal else { return }
     isBusyProposal = true
+    clarifyPrompt = nil
     let requestGeneration = generation
     do {
       let proposal = try await client.proposeCorrection(itemId: itemID, instruction: request.instruction,
         method: request.method, revision: revision, clientRequestId: request.clientRequestId)
       guard requestGeneration == generation else { return }
-      self.proposal = proposal
+      if proposal.changes.isEmpty, let clarify = proposal.clarify, !clarify.isEmpty {
+        // AI 只反问、没有给出修改：不出「接受修改」，反问交回输入区（学生已输入保留）补充后再生成。
+        self.proposal = nil
+        clarifyPrompt = clarify
+      } else {
+        self.proposal = proposal
+        clarifyPrompt = nil
+      }
       proposalNotice = nil
       proposalRetryable = false
     } catch V2ClientError.revisionConflict {
@@ -440,9 +463,11 @@ final class LoopStore {
       applyUpdatedCard(acceptance.card)
       self.proposal = nil
       pendingProposal = nil
-      evidence = nil
-      evidenceItemID = nil
       proposalNotice = nil
+      clarifyPrompt = nil
+      correctionAppliedCount += 1
+      // 成功后保留并更新为最新识别结果（服务器已返回新版本号），详情页随之刷新。
+      await refetchEvidence(itemID: itemID, client: client, generation: requestGeneration)
     } catch V2ClientError.revisionConflict {
       guard requestGeneration == generation else { return }
       await refreshEvidenceAfterConflict(itemID: itemID, client: client)
@@ -461,11 +486,13 @@ final class LoopStore {
       let acceptance = try await client.correctDirectly(itemId: itemID, revision: evidence.revision, changes: changes)
       guard requestGeneration == generation else { return }
       applyUpdatedCard(acceptance.card)
-      self.evidence = nil
-      evidenceItemID = nil
-      proposal = nil
+      self.proposal = nil
       pendingProposal = nil
       proposalNotice = nil
+      clarifyPrompt = nil
+      correctionAppliedCount += 1
+      // 成功后保留并更新为最新识别结果，详情页随之刷新。
+      await refetchEvidence(itemID: itemID, client: client, generation: requestGeneration)
     } catch V2ClientError.revisionConflict {
       guard requestGeneration == generation else { return }
       await refreshEvidenceAfterConflict(itemID: itemID, client: client)
@@ -479,10 +506,23 @@ final class LoopStore {
   /// 修改接口 409（顶层带 revision）：用新 revision 重新取识别结果，提示学生再看一眼；不自动重放。
   private func refreshEvidenceAfterConflict(itemID: String, client: V2Client) async {
     proposal = nil
+    clarifyPrompt = nil
     do {
       evidence = try await client.evidence(itemId: itemID)
       proposalNotice = "内容已更新，请再看一眼。"
     } catch { lastError = Self.errorText(error) }
+  }
+
+  /// 接受/直改成功后重取识别结果（新版本号与内容）；失败只记错误，已生效的修改不回滚。
+  private func refetchEvidence(itemID: String, client: V2Client, generation requestGeneration: Int) async {
+    do {
+      let fresh = try await client.evidence(itemId: itemID)
+      guard requestGeneration == generation else { return }
+      evidence = fresh
+    } catch {
+      guard requestGeneration == generation else { return }
+      lastError = Self.errorText(error)
+    }
   }
 
   /// 接受/直改成功后用返回的卡片更新本地列表。

@@ -35,8 +35,6 @@ struct LoopHomeView: View {
     }
     .background(Palette.paper)
     .refreshable { await loopStore.refreshWeek() }
-    .navigationTitle("超级错题本")
-    .navigationBarTitleDisplayMode(.inline)
     .safeAreaInset(edge: .bottom, spacing: 0) { undoBar }
     .sheet(isPresented: $showSettings) { LoopSettingsView() }
     .sheet(isPresented: $showScanner) {
@@ -65,7 +63,13 @@ struct LoopHomeView: View {
     }
     .sheet(item: $correctionTarget) { CorrectionSheet(itemID: $0.itemID) }
     .navigationDestination(item: $detailItemID) { itemID in
-      LoopItemDetailView(itemID: itemID, onCorrect: { correctionTarget = ItemReference(itemID: $0) }, onDiscard: discard)
+      LoopItemDetailView(itemID: itemID, onCorrect: { correctionTarget = ItemReference(itemID: $0) },
+        onDiscard: { id in
+          // 移出成功后返回主页（撤销条在主页照常出现）。
+          Task {
+            if await discard(id) { detailItemID = nil }
+          }
+        })
     }
     .confirmationDialog("重新识别这张照片？", isPresented: Binding(
       get: { retryPhoto != nil }, set: { if !$0 { retryPhoto = nil } }), titleVisibility: .visible) {
@@ -284,6 +288,10 @@ struct LoopHomeView: View {
             .accessibilityIdentifier("backlog-disclosure")
           }
         }
+      } else if store.pairing == nil {
+        Text("先连接服务（上面点扫码配对），这里才会显示本周错题")
+          .font(.subheadline).foregroundStyle(Palette.muted)
+          .accessibilityIdentifier("items-unpaired")
       } else {
         Text(loopStore.weekIssue?.studentText ?? "正在读取本周错题…")
           .font(.subheadline).foregroundStyle(Palette.muted)
@@ -307,8 +315,11 @@ struct LoopHomeView: View {
   private func itemCard(_ card: V2ItemCard) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       Button { detailItemID = card.id } label: {
-        HStack(alignment: .top, spacing: 12) {
-          CropThumbnail(itemID: card.id).frame(width: 62, height: 76).clipped()
+        VStack(alignment: .leading, spacing: 10) {
+          // 整题裁图通常是很宽的一条：放卡片顶部、占满宽度、高不超过 96pt、等比缩放居左。
+          CropThumbnail(itemID: card.id)
+            .frame(maxWidth: .infinity, maxHeight: 96, alignment: .leading)
+            .clipped()
             .accessibilityHidden(true)
           VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
@@ -326,7 +337,6 @@ struct LoopHomeView: View {
             }
             Text(LoopText.itemStatus(card.status)).font(.caption).foregroundStyle(Palette.teal)
           }
-          Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -334,10 +344,12 @@ struct LoopHomeView: View {
       .buttonStyle(.plain)
       .accessibilityIdentifier("item-card-\(card.id)")
       HStack(spacing: 12) {
-        Button("不是错题") { discard(card.id) }
-          .font(.caption.weight(.semibold)).frame(minHeight: 44)
-          .foregroundStyle(Palette.muted)
-          .accessibilityIdentifier("item-discard-\(card.id)")
+        if LoopText.canDiscard(card.status) {
+          Button("不是错题") { Task { await discard(card.id) } }
+            .font(.caption.weight(.semibold)).frame(minHeight: 44)
+            .foregroundStyle(Palette.muted)
+            .accessibilityIdentifier("item-discard-\(card.id)")
+        }
         Button("不对，改一下") { correctionTarget = ItemReference(itemID: card.id) }
           .font(.caption.weight(.semibold)).frame(minHeight: 44)
           .foregroundStyle(Palette.teal)
@@ -351,17 +363,18 @@ struct LoopHomeView: View {
 
   // MARK: - 不是错题与撤销
 
-  private func discard(_ itemID: String) {
-    Task {
-      await loopStore.discard(itemID: itemID)
-      guard loopStore.discardedItems.contains(where: { $0.id == itemID }) else { return }
-      undo.begin(itemID: itemID)
-      undoTask?.cancel()
-      undoTask = Task {
-        try? await Task.sleep(for: .seconds(DiscardUndo.window))
-        undo.tick()
-      }
+  /// 移出成功返回 true（撤销条照常出现）；失败（服务器拒绝等）返回 false，详情页据此决定是否返回主页。
+  @discardableResult
+  private func discard(_ itemID: String) async -> Bool {
+    await loopStore.discard(itemID: itemID)
+    guard loopStore.discardedItems.contains(where: { $0.id == itemID }) else { return false }
+    undo.begin(itemID: itemID)
+    undoTask?.cancel()
+    undoTask = Task {
+      try? await Task.sleep(for: .seconds(DiscardUndo.window))
+      undo.tick()
     }
+    return true
   }
 
   @ViewBuilder private var undoBar: some View {
@@ -514,9 +527,11 @@ struct LoopItemDetailView: View {
         }
         if let card {
           HStack(spacing: 12) {
-            Button("不是错题") { onDiscard(card.id) }
-              .font(.subheadline).frame(minHeight: 44).foregroundStyle(Palette.muted)
-              .accessibilityIdentifier("item-discard-\(card.id)")
+            if LoopText.canDiscard(card.status) {
+              Button("不是错题") { onDiscard(card.id) }
+                .font(.subheadline).frame(minHeight: 44).foregroundStyle(Palette.muted)
+                .accessibilityIdentifier("item-discard-\(card.id)")
+            }
             Button("不对，改一下") { onCorrect(card.id) }
               .font(.subheadline.weight(.semibold)).frame(minHeight: 44).foregroundStyle(Palette.teal)
               .accessibilityIdentifier("item-correct-\(card.id)")

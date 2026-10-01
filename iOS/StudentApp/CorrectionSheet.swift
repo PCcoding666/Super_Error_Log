@@ -12,7 +12,6 @@ struct CorrectionSheet: View {
   @State private var instruction = ""
   @State private var usedVoice = false
   @State private var directMode = false
-  @State private var directSeeded = false
   @State private var directQuestion = ""
   @State private var directSubject = "数学"
   @State private var directTags = ""
@@ -26,6 +25,10 @@ struct CorrectionSheet: View {
           if let notice = loopStore.proposalNotice {
             Text(notice).font(.subheadline).foregroundStyle(CardTone.orange.color)
               .accessibilityIdentifier("correction-notice")
+          }
+          if let clarify = loopStore.clarifyPrompt {
+            Text(clarify).font(.subheadline).foregroundStyle(CardTone.orange.color)
+              .accessibilityIdentifier("correction-clarify")
           }
           if let error = loopStore.lastError {
             HStack(spacing: 12) {
@@ -58,18 +61,19 @@ struct CorrectionSheet: View {
       .toolbar { ToolbarItem(placement: .topBarLeading) { Button("关闭") { dismiss() } } }
     }
     .task {
+      // 语音回填：SpeechInput 已给出「基底 + 本次整句」，直接替换输入框内容（不追加）。
+      speech.currentText = { instruction }
       speech.onText = { text in
-        instruction = instruction.isEmpty ? text : instruction + " " + text
+        instruction = text
         usedVoice = true
       }
-      await speech.prepare()
+      speech.refresh()
       await loopStore.loadEvidence(itemID: itemID)
+      // 等载入完成后显式填充直改输入框（不靠 onChange：从详情页进来时值没变不触发）。
+      if let evidence = loopStore.evidence { seedDirect(evidence) }
     }
-    .onChange(of: loopStore.evidence) { _, evidence in
-      // 接受/直改成功后 LoopStore 清空 evidence：关闭面板并更新卡片（卡片由 store 就地更新）。
-      if evidence == nil, directSeeded { dismiss() }
-      if let evidence, !directSeeded { seedDirect(evidence) }
-    }
+    // 修改已生效：用 LoopStore 的显式信号关面板（接受/直改成功后识别结果保留并重取）。
+    .onChange(of: loopStore.correctionAppliedCount) { _, _ in dismiss() }
   }
 
   // MARK: - 当前识别结果
@@ -102,9 +106,14 @@ struct CorrectionSheet: View {
         .lineLimit(2...4)
         .textFieldStyle(.roundedBorder)
         .accessibilityIdentifier("correction-instruction")
-      if speech.isAvailable {
+      switch speech.presentation {
+      case .holdToTalk, .askOnPress:
         HoldToTalkButton(speech: speech, identifier: "correction-hold-to-talk")
-      } else {
+        if let hint = speech.hint {
+          Text(hint).font(.caption).foregroundStyle(Palette.muted)
+            .accessibilityIdentifier("correction-speech-hint")
+        }
+      case .keyboardOnly:
         Text("可以直接打字").font(.caption).foregroundStyle(Palette.muted)
           .accessibilityIdentifier("correction-type-instead")
       }
@@ -242,6 +251,5 @@ struct CorrectionSheet: View {
     directSubject = ["数学", "物理", "化学"].contains(evidence.subject) ? evidence.subject : "数学"
     directTags = evidence.knowledgeTags.joined(separator: "，")
     directObservations = Dictionary(uniqueKeysWithValues: evidence.observations.map { ($0.id, $0.text) })
-    directSeeded = true
   }
 }

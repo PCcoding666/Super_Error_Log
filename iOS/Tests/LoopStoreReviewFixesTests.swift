@@ -249,4 +249,118 @@ import Foundation
     XCTAssertEqual(store.proposal?.proposalId, Self.proposalID)
     XCTAssertFalse(store.proposalRetryable, "成功后标记清除")
   }
+
+  // MARK: - 8. T6c-R1 换题载入先清空旧结果
+
+  // 从详情页进修改面板同一题已载入：换题时先清空，不短暂显示上一题的内容。
+  func testLoadEvidenceForDifferentItemClearsOldEvidenceFirst() async throws {
+    primeEvidence()
+    let otherID = "itm_2222222222222222"
+    LoopSyntheticProtocol.enqueueHold("GET", "/v2/items/\(otherID)/evidence",
+      thenBody: #"{"questionText":"另一题题干","subject":"物理","knowledgeTags":[],"observations":[],"badge":"ok","revision":1}"#)
+    let store = try makeStore()
+    await store.loadEvidence(itemID: Self.itemID)
+    XCTAssertEqual(store.evidence?.questionText, "已知 x+y=1，求 x 的值。")
+    let loading = Task { await store.loadEvidence(itemID: otherID) }
+    await waitUntil { LoopSyntheticProtocol.pendingCount > 0 }
+    XCTAssertNil(store.evidence, "换题载入期间不得残留上一题的识别结果")
+    LoopSyntheticProtocol.releaseHeld()
+    await loading.value
+    XCTAssertEqual(store.evidence?.questionText, "另一题题干")
+  }
+
+  // 同题重载：保留旧结果直到新结果到达（不闪空）。
+  func testLoadEvidenceSameItemKeepsOldWhileReloading() async throws {
+    primeEvidence()
+    let store = try makeStore()
+    await store.loadEvidence(itemID: Self.itemID)
+    LoopSyntheticProtocol.enqueueHold("GET", "/v2/items/\(Self.itemID)/evidence",
+      thenBody: #"{"questionText":"已知 x+y=1，求 x 的值。","subject":"数学","knowledgeTags":["一元一次方程"],"observations":[{"id":"o1","kind":"student_work","text":"x=1"}],"badge":"ok","revision":2}"#)
+    let reloading = Task { await store.loadEvidence(itemID: Self.itemID) }
+    await waitUntil { LoopSyntheticProtocol.pendingCount > 0 }
+    XCTAssertNotNil(store.evidence, "同题重载期间保留旧结果")
+    LoopSyntheticProtocol.releaseHeld()
+    await reloading.value
+    XCTAssertEqual(store.evidence?.revision, 2)
+  }
+
+  // MARK: - 9. T6c-R1 修改成功：显式信号 + 保留并重取识别结果
+
+  // 接受成功：correctionAppliedCount +1；识别结果清空改为重取最新（详情页不停在转圈）。
+  func testAcceptProposalSignalsAppliedAndRefetchesEvidence() async throws {
+    primeEvidence()
+    primeProposal()
+    LoopSyntheticProtocol.respond("POST", "/v2/items/\(Self.itemID)/correct/accept",
+      body: #"{"revision":2,"card":{"id":"itm_0a1b2c3d4e5f6071","shortId":"M-12","subject":"数学","knowledgeTags":["一元一次方程"],"questionExcerpt":"已知 x+y=1，求 y 的值。","badge":"ok","status":"ready_for_reflection","cropUrl":"/v2/items/itm_0a1b2c3d4e5f6071/crop","jobId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0"}}"#)
+    let store = try makeStore()
+    await store.loadEvidence(itemID: Self.itemID)
+    await store.proposeCorrection(instruction: "题目求的是 y 不是 x", method: .keyboard)
+    XCTAssertEqual(store.correctionAppliedCount, 0)
+    await store.acceptProposal()
+    XCTAssertEqual(store.correctionAppliedCount, 1, "修改已生效的显式信号（界面据此关面板）")
+    XCTAssertNil(store.proposal)
+    XCTAssertNotNil(store.evidence, "成功后保留识别结果")
+    XCTAssertEqual(LoopSyntheticProtocol.requests(method: "GET", path: "/v2/items/\(Self.itemID)/evidence").count, 2,
+      "成功后重新取一次识别结果（新版本号与内容）")
+    XCTAssertNil(store.lastError)
+  }
+
+  // 直改成功：同样计数 +1 并重取识别结果。
+  func testApplyDirectSignalsAppliedAndRefetchesEvidence() async throws {
+    primeEvidence()
+    LoopSyntheticProtocol.respond("POST", "/v2/items/\(Self.itemID)/correct/direct",
+      body: #"{"revision":2,"card":{"id":"itm_0a1b2c3d4e5f6071","shortId":"M-12","subject":"物理","knowledgeTags":["一元一次方程"],"questionExcerpt":"已知 x+y=1，求 x 的值。","badge":"ok","status":"ready_for_reflection","cropUrl":"/v2/items/itm_0a1b2c3d4e5f6071/crop","jobId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0"}}"#)
+    let store = try makeStore()
+    await store.loadEvidence(itemID: Self.itemID)
+    let change = V2CorrectionChange(field: .subject, observationId: nil, before: "数学", after: "物理", find: nil, replace: nil)
+    await store.applyDirect(changes: [change])
+    XCTAssertEqual(store.correctionAppliedCount, 1)
+    XCTAssertNotNil(store.evidence, "成功后保留识别结果")
+    XCTAssertEqual(LoopSyntheticProtocol.requests(method: "GET", path: "/v2/items/\(Self.itemID)/evidence").count, 2)
+    XCTAssertNil(store.lastError)
+  }
+
+  // MARK: - 10. T6c-R1 AI 只反问、没有给出修改
+
+  // changes 为空、只有 clarify：不出修改建议（不显示「接受修改」），反问交回输入区。
+  func testClarifyOnlyProposalStaysInInstructionMode() async throws {
+    primeEvidence()
+    LoopSyntheticProtocol.respond("POST", "/v2/items/\(Self.itemID)/correct",
+      body: #"{"proposalId":"crp_a1b2c3d4e5f60718","revision":1,"changes":[],"clarify":"你想改的是题干还是你的作答？"}"#)
+    let store = try makeStore()
+    await store.loadEvidence(itemID: Self.itemID)
+    await store.proposeCorrection(instruction: "不对", method: .keyboard)
+    XCTAssertNil(store.proposal, "没有修改时不出「接受修改」")
+    XCTAssertEqual(store.clarifyPrompt, "你想改的是题干还是你的作答？")
+    XCTAssertFalse(store.proposalRetryable)
+    XCTAssertNil(store.lastError)
+  }
+
+  // 补充后再生成：清掉反问，正常出建议。
+  func testNewProposalAfterClarifyClearsPrompt() async throws {
+    primeEvidence()
+    LoopSyntheticProtocol.enqueue("POST", "/v2/items/\(Self.itemID)/correct",
+      body: #"{"proposalId":"crp_a1b2c3d4e5f60718","revision":1,"changes":[],"clarify":"你想改的是题干还是你的作答？"}"#)
+    LoopSyntheticProtocol.enqueue("POST", "/v2/items/\(Self.itemID)/correct",
+      body: #"{"proposalId":"crp_b1b2c3d4e5f60718","revision":1,"changes":[{"field":"questionText","before":"已知 x+y=1，求 x 的值。","after":"已知 x+y=1，求 y 的值。","find":"x 的值","replace":"y 的值"}],"clarify":null}"#)
+    let store = try makeStore()
+    await store.loadEvidence(itemID: Self.itemID)
+    await store.proposeCorrection(instruction: "不对", method: .keyboard)
+    XCTAssertEqual(store.clarifyPrompt, "你想改的是题干还是你的作答？")
+    await store.proposeCorrection(instruction: "题干，求的是 y 不是 x", method: .keyboard)
+    XCTAssertNil(store.clarifyPrompt, "再次生成后反问清除")
+    XCTAssertEqual(store.proposal?.proposalId, "crp_b1b2c3d4e5f60718")
+  }
+
+  // 有修改也有反问：正常出建议（不属于只反问）。
+  func testProposalWithChangesAndClarifyShowsProposal() async throws {
+    primeEvidence()
+    LoopSyntheticProtocol.respond("POST", "/v2/items/\(Self.itemID)/correct",
+      body: #"{"proposalId":"crp_a1b2c3d4e5f60718","revision":1,"changes":[{"field":"questionText","before":"已知 x+y=1，求 x 的值。","after":"已知 x+y=1，求 y 的值。","find":"x 的值","replace":"y 的值"}],"clarify":"顺带确认：是求 y 吗？"}"#)
+    let store = try makeStore()
+    await store.loadEvidence(itemID: Self.itemID)
+    await store.proposeCorrection(instruction: "题目求的是 y 不是 x", method: .keyboard)
+    XCTAssertEqual(store.proposal?.proposalId, Self.proposalID)
+    XCTAssertNil(store.clarifyPrompt)
+  }
 }

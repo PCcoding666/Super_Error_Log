@@ -49,6 +49,8 @@ struct StudentRootView: View {
     }
     .onChange(of: store.pairing) { _, _ in
       loopStore.updateClient(store.v2Client)
+      // 换客户端后重新取本周数据（扫码配对成功后主页随之出卡片）。
+      Task { await loopStore.refreshWeek() }
     }
     .onChange(of: phase) { _, phase in
       if phase == .active {

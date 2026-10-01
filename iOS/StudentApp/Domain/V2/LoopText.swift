@@ -30,4 +30,12 @@ enum LoopText {
     default: "识别记录"
     }
   }
+
+  /// 「不是错题」按钮是否显示：只有「待复盘」「已复盘，等着进练习」能移出（服务器规则）。
+  static func canDiscard(_ status: V2ItemStatus) -> Bool {
+    switch status {
+    case .readyForReflection, .eligibleForReview: true
+    default: false
+    }
+  }
 }

@@ -138,6 +138,65 @@ final class LoopLogicTests: XCTestCase {
     XCTAssertEqual(undo.expiresAt, start.addingTimeInterval(10))
   }
 
+  // MARK: - LoopText.canDiscard：只有「待复盘」「已复盘，等着进练习」能移出（服务器规则）
+
+  func testCanDiscardOnlyBeforeScheduling() {
+    XCTAssertTrue(LoopText.canDiscard(.readyForReflection))
+    XCTAssertTrue(LoopText.canDiscard(.eligibleForReview))
+    let rest: [V2ItemStatus] = [.captured, .needsReview, .scheduled, .packetGenerated, .attempted,
+      .needsRecheck, .temporarilyMastered, .stablyMastered, .archivedNotWorthReview, .unknown("future")]
+    for status in rest {
+      XCTAssertFalse(LoopText.canDiscard(status), "\(status) 不显示「不是错题」")
+    }
+  }
+
+  // MARK: - T6c-R1 SpeechText.merge：语音整句替换（相对基底替换，不追加）
+
+  func testSpeechMergeEmptyBaseUsesTranscript() {
+    XCTAssertEqual(SpeechText.merge(base: "", transcript: "题目求的是 y"), "题目求的是 y")
+  }
+
+  func testSpeechMergeNonEmptyBaseConcatenatesWithoutSpace() {
+    // 基底非空时直接接上，中文之间不加空格。
+    XCTAssertEqual(SpeechText.merge(base: "这一题", transcript: "题目求的是 y 不是 x"), "这一题题目求的是 y 不是 x")
+  }
+
+  func testSpeechMergeEmptyTranscriptKeepsBase() {
+    XCTAssertEqual(SpeechText.merge(base: "这一题", transcript: ""), "这一题")
+  }
+
+  func testSpeechMergePartialResultsKeepOnlyLatest() {
+    // 连续三个中间结果：每次都相对同一基底替换，只保留最后一个，不叠加成「题目 题目求的 …」。
+    let base = "前面："
+    let partials = ["题目", "题目求的", "题目求的是 y"]
+    var text = base
+    for partial in partials { text = SpeechText.merge(base: base, transcript: partial) }
+    XCTAssertEqual(text, "前面：题目求的是 y")
+  }
+
+  // MARK: - T6c-R1 SpeechGate：权限状态 → 界面呈现（按住可录 / 按下先请求 / 只留键盘）
+
+  func testSpeechGateKeyboardOnlyWithoutRecognizer() {
+    XCTAssertEqual(SpeechGate.presentation(recognizerExists: false, speech: .notAsked, mic: .notAsked), .keyboardOnly)
+    XCTAssertEqual(SpeechGate.presentation(recognizerExists: false, speech: .allowed, mic: .allowed), .keyboardOnly)
+  }
+
+  func testSpeechGateDeniedIsKeyboardOnly() {
+    XCTAssertEqual(SpeechGate.presentation(recognizerExists: true, speech: .denied, mic: .notAsked), .keyboardOnly)
+    XCTAssertEqual(SpeechGate.presentation(recognizerExists: true, speech: .notAsked, mic: .denied), .keyboardOnly)
+    XCTAssertEqual(SpeechGate.presentation(recognizerExists: true, speech: .allowed, mic: .denied), .keyboardOnly)
+  }
+
+  func testSpeechGateNotAskedShowsButtonAndAsksOnPress() {
+    XCTAssertEqual(SpeechGate.presentation(recognizerExists: true, speech: .notAsked, mic: .notAsked), .askOnPress)
+    XCTAssertEqual(SpeechGate.presentation(recognizerExists: true, speech: .allowed, mic: .notAsked), .askOnPress)
+    XCTAssertEqual(SpeechGate.presentation(recognizerExists: true, speech: .notAsked, mic: .allowed), .askOnPress)
+  }
+
+  func testSpeechGateBothAllowedRecordsOnPress() {
+    XCTAssertEqual(SpeechGate.presentation(recognizerExists: true, speech: .allowed, mic: .allowed), .holdToTalk)
+  }
+
   // MARK: - DirectCorrection：键盘直改的 changes 构造（before 与当前值一致；无改动为空）
 
   private func evidence() -> V2Evidence {
