@@ -60,6 +60,8 @@
 
 ### T4 手机接口 `/v2`（WorkBuddy）
 
+**进度（拆为 4a–4e）**：4a 错题卡片/删恢复/设置 ✅（1ee755d）；4b 推荐与建练习 ✅（91c49e1）；4c AI 追问与复盘 ✅（8c818ef）；4d 回传与回报、4e 修改识别结果与修改记录：进行中。各段简报与报告在 `.superpowers/sdd/2026-09-29-v2-0/`。T7（修正即测量报告）并入 4e。
+
 文件入口：新目录 `src/v2/`（路由、DTO、鉴权中间件复用 `src/mobile/router.ts` 的设备令牌校验）、`src/services/*`（复用）、`src/db/schema.ts`（新增 `correction` 表）。
 
 接口族（返回 JSON，全部设备令牌鉴权，300/分钟/设备限流沿用）：
@@ -84,6 +86,8 @@
 - [ ] 追问提示词边界：不讲解、不评价、只问一句、引用观察记录原文；单元测试用合成响应断言"不含解题步骤"。
 
 ### T5 练习包 v2 版式与遮白裁图（WorkBuddy）
+
+**2026-10-01 修订（D17）**：服务器不生成 PDF，改为生成并冻结"打印快照"，PDF 由手机原生排版。以 `.superpowers/sdd/2026-09-29-v2-0/task-5-brief.md` 为准；下列原始条目中"复用 printPacket/pdfService"与"PDF 程序检查"不再适用，版式内容要求不变，由 T6d 在手机端实现并检查。T6d 相应改为：升级 `ReviewPDF.swift` 为 v2 版式（不删除）。
 
 文件入口：`src/services/printPacket.ts`、`src/services/pdfService.ts`、`src/ai/cropAudit.ts`（区域遮白复用）、`tests/integration/sliceB.test.ts`。
 
