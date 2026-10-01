@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { MockAiProvider } from './mockProvider.js';
 import { StagedProvider } from './stagedProvider.js';
-import type { AiProvider } from './provider.js';
+import type { AiProvider, FollowupProvider } from './provider.js';
 
 let provider: AiProvider | null = null;
 
@@ -13,4 +13,14 @@ export function getAiProvider(): AiProvider {
 
 export function setAiProviderForTest(p: AiProvider | null): void {
   provider = p;
+}
+
+/** T4c：追问/归纳能力。两种内置 provider 都实现；外部 provider 未实现时 fail-fast。 */
+export function getFollowupProvider(): FollowupProvider {
+  const p = getAiProvider();
+  if (typeof (p as Partial<FollowupProvider>).followupAsk !== 'function'
+    || typeof (p as Partial<FollowupProvider>).followupSummarize !== 'function') {
+    throw new Error('当前 AI 提供者不支持追问复盘');
+  }
+  return p as AiProvider & FollowupProvider;
 }

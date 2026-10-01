@@ -215,4 +215,19 @@ CREATE TABLE IF NOT EXISTS v2_setting (
   paper_location TEXT NOT NULL CHECK (paper_location IN ('school','home','varies')),
   updated_at TEXT NOT NULL
 );
+
+-- v2.0 T4c：AI 追问轮次。answer/summary_json 含学生原话与 AI 归纳——只给学生本人看，
+-- 不进日志、不进家长聚合。每题最多 2 轮（UNIQUE(item_id, turn) 兜底）。
+CREATE TABLE IF NOT EXISTS v2_reflection_turn (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL REFERENCES error_item(id),
+  turn INTEGER NOT NULL,
+  question TEXT NOT NULL,
+  question_source TEXT NOT NULL,
+  answer TEXT,
+  summary_json TEXT,
+  created_at TEXT NOT NULL,
+  answered_at TEXT,
+  UNIQUE(item_id, turn)
+);
 `;

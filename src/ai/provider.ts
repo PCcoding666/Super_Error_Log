@@ -1,5 +1,5 @@
 import type { AttemptState, Cause, ReviewValue, Subject } from '../domain/types.js';
-import type { Evidence, QuestionRegion } from './evidence.js';
+import type { Evidence, FollowupAsk, FollowupSummarize, QuestionRegion } from './evidence.js';
 import type { StageRun } from './chatClient.js';
 import type { CropAuditReport } from './cropAuditor.js';
 
@@ -71,3 +71,17 @@ export interface AiProvider {
 
 export const LOW_CONFIDENCE_THRESHOLD = 0.8;
 export const FIELD_CONFIDENCE_THRESHOLD = 0.6;
+
+// ---------- v2.0 T4c：AI 追问与复盘 ----------
+
+/** 一轮已回答的追问（学生原话只用于模型归纳，不落日志）。 */
+export interface FollowupTurn { question: string; answer: string }
+
+/**
+ * 追问/归纳能力。StagedProvider 与 MockAiProvider 实现。
+ * AI 只提问和归纳：不讲题、不给答案、不替学生写复盘。
+ */
+export interface FollowupProvider {
+  followupAsk(evidence: Evidence): Promise<FollowupAsk>;
+  followupSummarize(evidence: Evidence, turns: FollowupTurn[]): Promise<FollowupSummarize>;
+}

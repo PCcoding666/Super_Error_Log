@@ -8,6 +8,8 @@ import { audit } from '../services/eventLog.js';
 import { discardV2Item, getWeek, isV2Item, restoreV2Item } from './weekService.js';
 import { getV2Settings, updateV2Settings } from './settingsService.js';
 import { createPractice, getPractice, listPractices, recommendPractice } from './practiceService.js';
+import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from './reflectionService.js';
+import type { FollowupProvider } from '../ai/provider.js';
 
 export const V2_PROTOCOL_VERSION = 2 as const;
 
@@ -16,6 +18,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 export interface V2RouterOptions {
   /** 移动识别数据目录（jobs/<jobId>/job.json 所在）；register 与 week 的懒桥接需要。 */
   mobileDataDir?: string;
+  /** T4c 追问/归纳模型能力；缺省走全局 getFollowupProvider()（mock 模式为确定性实现）。 */
+  followupProvider?: FollowupProvider;
 }
 
 /**
@@ -111,6 +115,42 @@ export function createV2Router(options: V2RouterOptions = {}): Router {
   r.get('/practice/:id', (request, response) => {
     const detail = getPractice(String(request.params.id));
     if (!detail) { notFound(response, '练习不存在。'); return; }
+    response.json(detail);
+  });
+
+  // T4c：AI 追问与复盘。仅限 v2 来源的题；Web 的 submitReflection 路径不变。
+  r.post('/items/:id/reflection/ask', async (request, response, next) => {
+    try {
+      const result = await askFollowup(String(request.params.id), options.followupProvider);
+      if (!result.ok) { response.status(result.httpStatus).json({ error: { code: result.httpStatus === 404 ? 'not_found' : 'conflict', message: result.message } }); return; }
+      response.json({ turn: result.turn, question: result.question, source: result.source });
+    } catch (error) { next(error); }
+  });
+
+  r.post('/items/:id/reflection/answer', express.json({ limit: '16kb', strict: true }), async (request, response, next) => {
+    try {
+      const result = await answerFollowup(String(request.params.id), request.body, options.followupProvider);
+      if (!result.ok) {
+        const code = result.httpStatus === 400 ? 'invalid_request' : result.httpStatus === 404 ? 'not_found' : 'conflict';
+        response.status(result.httpStatus).json({ error: { code, message: result.message } });
+        return;
+      }
+      response.json({ turn: result.turn, summary: result.summary, suggestedCause: result.suggestedCause, suggestedAttemptState: result.suggestedAttemptState, secondQuestion: result.secondQuestion });
+    } catch (error) { next(error); }
+  });
+
+  r.post('/items/:id/reflection', express.json({ limit: '16kb', strict: true }), (request, response) => {
+    const result = submitV2Reflection(String(request.params.id), request.body);
+    if (!result.ok) {
+      response.status(result.httpStatus).json({ error: { code: result.httpStatus === 400 ? 'invalid_request' : 'not_found', message: result.message } });
+      return;
+    }
+    response.json({ ...result.reflection, status: result.status });
+  });
+
+  r.get('/items/:id/reflection', (request, response) => {
+    const detail = getV2Reflection(String(request.params.id));
+    if (!detail) { notFound(response, '题目不存在或不属于手机上传。'); return; }
     response.json(detail);
   });
 

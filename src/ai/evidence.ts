@@ -1,8 +1,8 @@
 import { AiError } from './errors.js';
-import { CAUSES, SUBJECTS, type Cause, type Subject } from '../domain/types.js';
+import { ATTEMPT_STATES, CAUSES, SUBJECTS, type AttemptState, type Cause, type Subject } from '../domain/types.js';
 import { validateBox, type Box } from '../media/images.js';
 
-export const STAGES = ['layout', 'transcribe', 'diagnose', 'coach', 'match'] as const;
+export const STAGES = ['layout', 'transcribe', 'diagnose', 'coach', 'match', 'followup'] as const;
 export type Stage = typeof STAGES[number];
 export const OBSERVATION_KINDS = ['student_work', 'teacher_note', 'correction', 'reference_answer', 'unknown'] as const;
 export type ObservationKind = typeof OBSERVATION_KINDS[number];
@@ -92,4 +92,47 @@ export function validateCoaching(data: unknown): Coaching {
   const c = obj(data, 'coaching'); const hints = strings(c.hints, 'hints');
   if (!hints.length || hints.length > 3) bad('hints');
   return { hints, solution: str(c.solution, 'solution'), answer: str(c.answer, 'answer'), source: 'ai_generated' };
+}
+
+// ---------- v2.0 T4c：AI 追问与复盘（followup 阶段） ----------
+
+/** 证据里没有学生作答/订正时的固定开放句（不调模型）。 */
+export const FOLLOWUP_FALLBACK_QUESTION = '这题你当时卡在哪一步？';
+export const FOLLOWUP_MAX_CHARS = 60;
+
+export interface FollowupAsk { question: string; referencedObservationIds: string[] }
+export interface FollowupSummarize { summary: string; suggestedCause: Cause; suggestedAttemptState: AttemptState; secondQuestion: string | null }
+
+/** 恰好一个问句（中英文问号合计 1 个）。 */
+function singleQuestion(text: string, field: string): void {
+  if ((text.match(/[？?]/g) ?? []).length !== 1) bad(field);
+}
+
+export function validateFollowupAsk(data: unknown, evidence: Evidence): FollowupAsk {
+  const d = obj(data, 'followupAsk');
+  const question = str(d.question, 'question');
+  if (question.length > FOLLOWUP_MAX_CHARS) bad('question 超长');
+  singleQuestion(question, 'question 须恰好一个问句');
+  const ids = strings(d.referencedObservationIds, 'referencedObservationIds');
+  if (!ids.length) bad('追问必须引用学生作答或订正');
+  if (ids.some(id => !evidence.observations.some(o => o.id === id))) bad('追问引用了不存在的观察记录');
+  // 产品规则 3：追问必须基于学生自己写过的东西，只引批注/参考答案不算。
+  if (!ids.some(id => evidence.observations.some(o => o.id === id && (o.kind === 'student_work' || o.kind === 'correction')))) {
+    bad('追问必须引用学生作答或订正');
+  }
+  return { question, referencedObservationIds: ids };
+}
+
+export function validateFollowupSummarize(data: unknown): FollowupSummarize {
+  const d = obj(data, 'followupSummarize');
+  if (!CAUSES.includes(d.suggestedCause as Cause)) bad('suggestedCause');
+  if (!ATTEMPT_STATES.includes(d.suggestedAttemptState as AttemptState)) bad('suggestedAttemptState');
+  const summary = str(d.summary, 'summary');
+  if (summary.length > FOLLOWUP_MAX_CHARS) bad('summary 超长');
+  const secondQuestion = d.secondQuestion === null ? null : str(d.secondQuestion, 'secondQuestion');
+  if (secondQuestion !== null) {
+    if (secondQuestion.length > FOLLOWUP_MAX_CHARS) bad('secondQuestion 超长');
+    singleQuestion(secondQuestion, 'secondQuestion 须恰好一个问句');
+  }
+  return { summary, suggestedCause: d.suggestedCause as Cause, suggestedAttemptState: d.suggestedAttemptState as AttemptState, secondQuestion };
 }

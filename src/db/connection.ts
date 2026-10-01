@@ -42,6 +42,20 @@ export function getDb(): DatabaseSync {
   if (!diagnosisCols.some((c) => c.name === 'adopted_ai')) {
     db.exec('ALTER TABLE error_diagnosis ADD COLUMN adopted_ai INTEGER NOT NULL DEFAULT 0');
   }
+  // v2.0 T4c：复盘来源（web/v2）、学生原话、AI 归纳。学生原话与 AI 归纳只给学生本人看。
+  if (!diagnosisCols.some((c) => c.name === 'source')) {
+    db.exec("ALTER TABLE error_diagnosis ADD COLUMN source TEXT NOT NULL DEFAULT 'web'");
+  }
+  if (!diagnosisCols.some((c) => c.name === 'student_words')) {
+    db.exec('ALTER TABLE error_diagnosis ADD COLUMN student_words TEXT');
+  }
+  if (!diagnosisCols.some((c) => c.name === 'ai_summary')) {
+    db.exec('ALTER TABLE error_diagnosis ADD COLUMN ai_summary TEXT');
+  }
+  // v2.0 T4c-R1：学生确认或改写后的归纳（ai_summary 只存 AI 原文）。
+  if (!diagnosisCols.some((c) => c.name === 'confirmed_summary')) {
+    db.exec('ALTER TABLE error_diagnosis ADD COLUMN confirmed_summary TEXT');
+  }
   migrateBridgeSchema(db);
   return db;
 }

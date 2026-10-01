@@ -6,11 +6,14 @@ import type {
   ExtractResult,
   ExtractedItem,
   FieldSuggestion,
+  FollowupProvider,
+  FollowupTurn,
   MatchInput,
   MatchResult,
   SuggestInput,
 } from './provider.js';
-import { ATTEMPT_STATES, type Subject } from '../domain/types.js';
+import { FOLLOWUP_FALLBACK_QUESTION, type Evidence, type FollowupAsk, type FollowupSummarize } from './evidence.js';
+import { ATTEMPT_STATES, CAUSES, type Subject } from '../domain/types.js';
 
 export interface FixtureManifestItem {
   filename: string;
@@ -52,7 +55,7 @@ const TYPE_POOL = ['计算题', '选择题', '填空题', '证明题', '实验�
  * Deterministic mock：优先命中 fixture 清单（文件名精确匹配），
  * 否则由内容哈希派生稳定结果；支持 SEL_MOCK_FAULT 注入故障（测试用）。
  */
-export class MockAiProvider implements AiProvider {
+export class MockAiProvider implements AiProvider, FollowupProvider {
   readonly name = 'mock';
   private manifest: Map<string, FixtureManifestItem> | null = null;
   private fault: string;
@@ -159,5 +162,25 @@ export class MockAiProvider implements AiProvider {
     if (byName) return { shortId: byName, confidence: 0.95 };
     const idx = derive(input.contentHash, 'match') % input.candidateShortIds.length;
     return { shortId: input.candidateShortIds[idx]!, confidence: 0.5 };
+  }
+
+  /** T4c 确定性追问：引用第一条学生作答/订正原文片段。 */
+  async followupAsk(evidence: Evidence): Promise<FollowupAsk> {
+    const target = evidence.observations.find(o => o.kind === 'student_work' || o.kind === 'correction');
+    if (!target) return { question: FOLLOWUP_FALLBACK_QUESTION, referencedObservationIds: [] };
+    const excerpt = target.text.slice(0, 20).replace(/[？?]/g, '');
+    return { question: `你写的「${excerpt}」这一步，当时是怎么想的？`, referencedObservationIds: [target.id] };
+  }
+
+  /** T4c 确定性归纳：由回答内容哈希派生稳定建议；第 1 轮给第二轮追问。 */
+  async followupSummarize(_evidence: Evidence, turns: FollowupTurn[]): Promise<FollowupSummarize> {
+    const key = turns.map(t => t.answer).join('|');
+    const base = derive(key, 'followup');
+    return {
+      summary: '把订正当成了新做法，漏了原来那一步的检查',
+      suggestedCause: CAUSES[base % CAUSES.length]!,
+      suggestedAttemptState: ATTEMPT_STATES[base % ATTEMPT_STATES.length]!,
+      secondQuestion: turns.length < 2 ? '那一步你当时为什么觉得可以这样做？' : null,
+    };
   }
 }
