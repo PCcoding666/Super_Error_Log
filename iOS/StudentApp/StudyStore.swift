@@ -41,7 +41,8 @@ final class StudyStore {
   private var isActive = false
   private var client: RecognitionClient?
   /// T6b：与 client 同一份配对的 /v2 客户端（登记进学习闭环）；配对变化时一起重建/关闭。
-  private var v2Client: V2Client?
+  /// T6c：改为 private(set)，供 App 根把它接给 LoopStore（不另建会话）。
+  private(set) var v2Client: V2Client?
   private var polling: Task<Void, Never>?
 
   init(persistence suppliedPersistence: StudyPersistence? = nil, client suppliedClient: RecognitionClient? = nil,
@@ -71,6 +72,10 @@ final class StudyStore {
 
   var completedCount: Int { state.realProblems.filter { state.drafts[$0.id]?.submittedAt != nil }.count }
   var hasDraft: Bool { state.drafts.values.contains { $0.submittedAt == nil } }
+  /// T6c：上传同意只问一次（按数据集合隔离保存在 study-state.json）。
+  var hasUploadConsent: Bool { state.uploadConsentGranted }
+  /// 同意说明的肯定动作调用；记住之后新加的照片自动上传，不再弹。
+  func grantUploadConsent() { _ = change { $0.uploadConsentGranted = true } }
   var photoDirectory: URL {
     persistence.directory.appendingPathComponent("Photos", isDirectory: true)
   }
@@ -319,11 +324,13 @@ final class StudyStore {
     guard let client, !cannotLoad, !requireActive || isActive else { return }
     // T6b：补登记——已有任务、尚未登记成功（nil）、归属当前服务的任务，直到成功。
     // 与识别进度刷新独立，不看 onlyActive（登记是进学习闭环的门槛）。
+    // T6c：一轮里遇到第一个非 404 的失败就停止本轮补登记（下次刷新再试），
+    // 避免服务异常时每次轮询都把所有未登记任务请求一遍。
     for task in state.recognitionTasks where task.v2Registered == nil && task.job != nil
       && (pairing?.isCloud != true || task.ownedServiceId == pairing?.serviceId) {
       guard !Task.isCancelled, !requireActive || isActive else { return }
       guard let jobID = task.job?.id else { continue }
-      await registerV2(jobID: jobID, taskID: task.id)
+      if await registerV2(jobID: jobID, taskID: task.id) == .failed { break }
     }
     let tasks = state.recognitionTasks.filter { task in
       // 云端模式：只刷新归属当前服务的任务（随任务持久化，重启后依然有效）；
@@ -491,8 +498,10 @@ final class StudyStore {
   /// T6b：登记进 /v2 学习闭环（docs/mobile-v2-api.md §3.1）。幂等。
   /// 成功置 v2Registered = true；404（任务不存在）记 false 并保留、不再重试；
   /// 其余失败保持 nil 静默留待 refreshJobs 补登记——登记失败绝不影响上传结果、不弹错误。
-  private func registerV2(jobID: String, taskID: UUID) async {
-    guard let v2Client else { return }
+  /// T6c：返回登记结果，refreshJobs 的补登记循环遇到 .failed（非 404）即停止本轮。
+  @discardableResult
+  private func registerV2(jobID: String, taskID: UUID) async -> V2RegistrationOutcome {
+    guard let v2Client else { return .failed }
     do {
       _ = try await v2Client.registerPhoto(jobId: jobID)
       _ = change { state in
@@ -500,16 +509,22 @@ final class StudyStore {
           state.recognitionTasks[index].v2Registered = true
         }
       }
+      return .registered
     } catch RecognitionClientError.server(status: 404, _) {
       _ = change { state in
         if let index = state.recognitionTasks.firstIndex(where: { $0.id == taskID }) {
           state.recognitionTasks[index].v2Registered = false
         }
       }
+      return .notFound
     } catch {
       // 静默：上传已成功，登记留待下次 refreshJobs 补登记。
+      return .failed
     }
   }
+
+  /// 补登记单轮结果：成功 / 404（不再重试该任务，继续下一个）/ 失败（停止本轮）。
+  private enum V2RegistrationOutcome { case registered, notFound, failed }
 
   private func cacheMedia(_ job: RecognitionJob, client: RecognitionClient) async throws {
     for question in job.questions {

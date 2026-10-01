@@ -45,7 +45,10 @@ final class LoopStore {
     case failed(String)
   }
 
-  private let client: V2Client?
+  private var client: V2Client?
+  /// 客户端代次：updateClient 换客户端时 +1，进行中的异步流程落地前比对代次，
+  /// 旧客户端的迟到响应一律丢弃（不复活已清除的进行中状态）。
+  private var generation = 0
   private let cacheDirectory: URL
   private let pollInterval: Duration
   private let pollTimeout: Duration
@@ -87,7 +90,12 @@ final class LoopStore {
   /// 会调用模型的动作进行中标记（界面据此禁用按钮；进行中重复调用直接返回）。
   private(set) var isBusyReflection = false
   private(set) var isBusyProposal = false
+  private(set) var isBusyApply = false
   private(set) var isBusyPrint = false
+  /// 上次「生成修改建议」失败是否属于连接失败（没有收到服务器回应）：
+  /// 界面只在此时提供原样重试（retryProposal 复用同一 clientRequestId）；
+  /// 收到了服务器回应（含 502/429）则重试必须走 proposeCorrection 换新的请求标识。
+  private(set) var proposalRetryable = false
 
   private var reflectionItemID: String?
   private var evidenceItemID: String?
@@ -105,6 +113,39 @@ final class LoopStore {
     self.pollTimeout = pollTimeout
     loadCache()
   }
+
+  // MARK: - 客户端切换与错误清除
+
+  /// 配对变化后换上新客户端（nil = 未配对）：取消进行中的打印轮询，
+  /// 清掉与旧服务相关的进行中状态（复盘、修改、打印）；已显示的数据保留并标为缓存，
+  /// 直到下一次刷新成功。旧客户端的迟到响应由代次守卫丢弃。
+  func updateClient(_ client: V2Client?) {
+    generation += 1
+    self.client = client
+    printTask?.cancel()
+    printTask = nil
+    for (_, download) in cropDownloads { download.cancel() }
+    cropDownloads = [:]
+    reflectionPhase = .idle
+    reflectionItemID = nil
+    evidence = nil
+    evidenceItemID = nil
+    proposal = nil
+    pendingProposal = nil
+    proposalNotice = nil
+    proposalRetryable = false
+    printPhase = .none
+    isBusyReflection = false
+    isBusyProposal = false
+    isBusyApply = false
+    isBusyPrint = false
+    if week != nil || currentPractice != nil || settings != nil || summary != nil {
+      isShowingCache = true
+    }
+  }
+
+  /// 界面关掉错误提示时调用。
+  func clearError() { lastError = nil }
 
   // MARK: - 周视图
 
@@ -234,12 +275,15 @@ final class LoopStore {
   func startReflection(itemID: String) async {
     guard let client, !isBusyReflection else { return }
     isBusyReflection = true
+    let requestGeneration = generation
     reflectionItemID = itemID
     reflectionPhase = .asking
     do {
       let question = try await client.askReflection(itemId: itemID)
+      guard requestGeneration == generation else { return }
       reflectionPhase = .waitingAnswer(question: question.question, turn: question.turn)
     } catch {
+      guard requestGeneration == generation else { return }
       reflectionPhase = .idle
       lastError = Self.errorText(error)
     }
@@ -250,9 +294,11 @@ final class LoopStore {
     guard let client, !isBusyReflection, let itemID = reflectionItemID,
       case .waitingAnswer(let question, let turn) = reflectionPhase else { return }
     isBusyReflection = true
+    let requestGeneration = generation
     reflectionPhase = .summarizing
     do {
       let result = try await client.answerReflection(itemId: itemID, answer: text)
+      guard requestGeneration == generation else { return }
       if let secondQuestion = result.secondQuestion {
         // 有第二轮问题时回到 waitingAnswer。
         reflectionPhase = .waitingAnswer(question: secondQuestion, turn: result.turn + 1)
@@ -262,6 +308,7 @@ final class LoopStore {
           suggestedCause: result.suggestedCause, suggestedAttemptState: result.suggestedAttemptState)
       }
     } catch {
+      guard requestGeneration == generation else { return }
       reflectionPhase = .waitingAnswer(question: question, turn: turn)
       lastError = Self.errorText(error)
     }
@@ -273,14 +320,17 @@ final class LoopStore {
       case .confirming(let confirmedSummary, let suggestedCause, let suggestedAttemptState) = reflectionPhase
     else { return }
     isBusyReflection = true
+    let requestGeneration = generation
     reflectionPhase = .submitting
     do {
       let record = try await client.submitReflection(itemId: itemID,
         submission: V2ReflectionSubmission(attemptState: attemptState, cause: cause,
           masteryFeeling: masteryFeeling, summary: summary))
+      guard requestGeneration == generation else { return }
       reflectionPhase = .done
       applyReflectionResult(itemID: itemID, status: record.status)
     } catch {
+      guard requestGeneration == generation else { return }
       reflectionPhase = .confirming(summary: confirmedSummary,
         suggestedCause: suggestedCause, suggestedAttemptState: suggestedAttemptState)
       lastError = Self.errorText(error)
@@ -330,41 +380,63 @@ final class LoopStore {
     } catch { lastError = Self.errorText(error) }
   }
 
-  /// 每次「生成建议」生成新的 clientRequestId（UUID）；失败后的重试走 retryProposal 复用同一个。
+  /// 每次「生成建议」生成新的 clientRequestId（UUID）；连接失败后的原样重试走 retryProposal 复用同一个。
   func proposeCorrection(instruction: String, method: V2CorrectionMethod) async {
     guard let evidence, let itemID = evidenceItemID, !isBusyProposal else { return }
     let request = PendingCorrectionRequest(instruction: instruction, method: method,
       clientRequestId: UUID().uuidString)
     pendingProposal = request
+    proposalRetryable = false
     await sendProposal(request, itemID: itemID, revision: evidence.revision)
   }
 
-  /// 同一次点击的重试：复用上次的指令与 clientRequestId（服务器幂等，不重复调用模型）。
+  /// 连接失败（没有收到服务器回应）后的原样重试：复用上次的指令与 clientRequestId
+  /// （服务器幂等，不重复调用模型）。收到了服务器回应的失败不得走这里。
   func retryProposal() async {
-    guard let request = pendingProposal, let itemID = evidenceItemID, let evidence, !isBusyProposal else { return }
+    guard proposalRetryable, let request = pendingProposal, let itemID = evidenceItemID,
+      let evidence, !isBusyProposal else { return }
     await sendProposal(request, itemID: itemID, revision: evidence.revision)
   }
 
   private func sendProposal(_ request: PendingCorrectionRequest, itemID: String, revision: Int) async {
     guard let client, !isBusyProposal else { return }
     isBusyProposal = true
+    let requestGeneration = generation
     do {
-      proposal = try await client.proposeCorrection(itemId: itemID, instruction: request.instruction,
+      let proposal = try await client.proposeCorrection(itemId: itemID, instruction: request.instruction,
         method: request.method, revision: revision, clientRequestId: request.clientRequestId)
+      guard requestGeneration == generation else { return }
+      self.proposal = proposal
       proposalNotice = nil
+      proposalRetryable = false
     } catch V2ClientError.revisionConflict {
+      guard requestGeneration == generation else { return }
+      proposalRetryable = false
       await refreshEvidenceAfterConflict(itemID: itemID, client: client)
     } catch {
+      guard requestGeneration == generation else { return }
       lastError = Self.errorText(error)
+      // 只有连接失败（没有收到服务器回应）才可原样重试；服务器回了话（含 502/429）必须换新请求标识。
+      proposalRetryable = Self.isConnectionFailure(error)
     }
     isBusyProposal = false
   }
 
+  /// 连接失败判定：传输层错误（未收到服务器任何回应）。
+  private static func isConnectionFailure(_ error: Error) -> Bool {
+    if case RecognitionClientError.networkFailure = error { return true }
+    if case RecognitionClientError.service = error { return true }
+    return false
+  }
+
   func acceptProposal() async {
-    guard let client, let proposal, let itemID = evidenceItemID else { return }
+    guard let client, let proposal, let itemID = evidenceItemID, !isBusyApply else { return }
+    isBusyApply = true
+    let requestGeneration = generation
     do {
       let acceptance = try await client.acceptCorrection(itemId: itemID,
         proposalId: proposal.proposalId, revision: proposal.revision)
+      guard requestGeneration == generation else { return }
       applyUpdatedCard(acceptance.card)
       self.proposal = nil
       pendingProposal = nil
@@ -372,14 +444,22 @@ final class LoopStore {
       evidenceItemID = nil
       proposalNotice = nil
     } catch V2ClientError.revisionConflict {
+      guard requestGeneration == generation else { return }
       await refreshEvidenceAfterConflict(itemID: itemID, client: client)
-    } catch { lastError = Self.errorText(error) }
+    } catch {
+      guard requestGeneration == generation else { return }
+      lastError = Self.errorText(error)
+    }
+    isBusyApply = false
   }
 
   func applyDirect(changes: [V2CorrectionChange]) async {
-    guard let client, let evidence, let itemID = evidenceItemID else { return }
+    guard let client, let evidence, let itemID = evidenceItemID, !isBusyApply else { return }
+    isBusyApply = true
+    let requestGeneration = generation
     do {
       let acceptance = try await client.correctDirectly(itemId: itemID, revision: evidence.revision, changes: changes)
+      guard requestGeneration == generation else { return }
       applyUpdatedCard(acceptance.card)
       self.evidence = nil
       evidenceItemID = nil
@@ -387,8 +467,13 @@ final class LoopStore {
       pendingProposal = nil
       proposalNotice = nil
     } catch V2ClientError.revisionConflict {
+      guard requestGeneration == generation else { return }
       await refreshEvidenceAfterConflict(itemID: itemID, client: client)
-    } catch { lastError = Self.errorText(error) }
+    } catch {
+      guard requestGeneration == generation else { return }
+      lastError = Self.errorText(error)
+    }
+    isBusyApply = false
   }
 
   /// 修改接口 409（顶层带 revision）：用新 revision 重新取识别结果，提示学生再看一眼；不自动重放。
@@ -430,12 +515,15 @@ final class LoopStore {
   func requestPrint(practiceID: String) async {
     guard let client, !isBusyPrint else { return }
     isBusyPrint = true
+    let requestGeneration = generation
     printTask?.cancel()
     printTask = nil
     do {
       let state = try await client.requestPrint(packetId: practiceID)
-      await applyPrintState(state, packetID: practiceID, client: client)
+      guard requestGeneration == generation else { return }
+      await applyPrintState(state, packetID: practiceID, client: client, generation: requestGeneration)
     } catch {
+      guard requestGeneration == generation else { return }
       if !Task.isCancelled { lastError = Self.errorText(error) }
       isBusyPrint = false
     }
@@ -444,12 +532,14 @@ final class LoopStore {
   /// 单次状态检查；已到 ready 时补齐图片（已存在不重下），preparing 时确保轮询进行中。
   func pollPrint(practiceID: String) async {
     guard let client, !isBusyPrint else { return }
+    let requestGeneration = generation
     do {
       let state = try await client.printStatus(packetId: practiceID)
       if Task.isCancelled { return }
-      await applyPrintState(state, packetID: practiceID, client: client)
+      guard requestGeneration == generation else { return }
+      await applyPrintState(state, packetID: practiceID, client: client, generation: requestGeneration)
     } catch {
-      if !Task.isCancelled { lastError = Self.errorText(error) }
+      if !Task.isCancelled, requestGeneration == generation { lastError = Self.errorText(error) }
     }
   }
 
@@ -464,39 +554,42 @@ final class LoopStore {
     cacheDirectory.appendingPathComponent("PrintMedia/\(packetID)/\(name)")
   }
 
-  private func applyPrintState(_ state: V2PrintState, packetID: String, client: V2Client) async {
+  private func applyPrintState(_ state: V2PrintState, packetID: String, client: V2Client, generation requestGeneration: Int) async {
     switch state.status {
     case .ready:
       guard let snapshot = state.snapshot else {
-        lastError = Self.genericConnectionText
+        printPhase = .failed(Self.genericConnectionText)
         isBusyPrint = false
         return
       }
-      await finishPrintReady(packetID: packetID, snapshot: snapshot, client: client)
+      await finishPrintReady(packetID: packetID, snapshot: snapshot, client: client, generation: requestGeneration)
     case .failed:
       printPhase = .failed(state.error ?? "打印准备失败，请稍后再试。")
       isBusyPrint = false
     default:
       printPhase = .preparing(state.progress)
       isBusyPrint = true
-      startPrintPolling(packetID: packetID, client: client)
+      startPrintPolling(packetID: packetID, client: client, generation: requestGeneration)
     }
   }
 
   /// ready 后下载快照登记的全部图片；全部到齐才把状态标为 ready（可生成 PDF）。
-  private func finishPrintReady(packetID: String, snapshot: V2PrintSnapshot, client: V2Client) async {
+  /// 图片没下全统一进入 failed（不停在 preparing），重试路径只有再调 requestPrint（服务器幂等）。
+  private func finishPrintReady(packetID: String, snapshot: V2PrintSnapshot, client: V2Client, generation requestGeneration: Int) async {
     do {
       try await downloadPrintMedia(packetID: packetID, snapshot: snapshot, client: client)
       if Task.isCancelled { return }
+      guard requestGeneration == generation else { return }
       printPhase = .ready(snapshot)
     } catch {
-      // 图片未齐：停留在 preparing，可再次 pollPrint 补齐。
-      if !Task.isCancelled { lastError = Self.errorText(error) }
+      if !Task.isCancelled, requestGeneration == generation {
+        printPhase = .failed("打印图片没有全部下载成功，请再试一次。")
+      }
     }
-    isBusyPrint = false
+    if requestGeneration == generation { isBusyPrint = false }
   }
 
-  private func startPrintPolling(packetID: String, client: V2Client) {
+  private func startPrintPolling(packetID: String, client: V2Client, generation requestGeneration: Int) {
     printTask?.cancel()
     let deadline = ContinuousClock.now + pollTimeout
     printTask = Task { [weak self] in
@@ -505,23 +598,26 @@ final class LoopStore {
         do { try await Task.sleep(for: pollInterval) } catch { break }
         if Task.isCancelled { break }
         if ContinuousClock.now >= deadline {
-          self.lastError = "打印准备时间太久，请稍后再试。"
+          // 轮询超时统一进入 failed（不停在 preparing），重试路径只有再调 requestPrint。
+          self.printPhase = .failed("打印准备时间太久，请再试一次。")
           self.isBusyPrint = false
           return
         }
         do {
           let state = try await client.printStatus(packetId: packetID)
           if Task.isCancelled { break }
+          guard requestGeneration == self.generation else { return }
           switch state.status {
           case .ready, .failed:
-            await self.applyPrintState(state, packetID: packetID, client: client)
+            await self.applyPrintState(state, packetID: packetID, client: client, generation: requestGeneration)
             return
           default:
             self.printPhase = .preparing(state.progress)
           }
         } catch {
           if Task.isCancelled { break }
-          self.lastError = Self.errorText(error)
+          // 轮询时网络失败统一进入 failed（不停在 preparing）。
+          self.printPhase = .failed(Self.errorText(error))
           self.isBusyPrint = false
           return
         }
@@ -595,12 +691,8 @@ final class LoopStore {
     }
     cropDownloads[itemID] = download
     defer { cropDownloads[itemID] = nil }
-    do {
-      return try await download.value
-    } catch {
-      if !Task.isCancelled { lastError = Self.errorText(error) }
-      return nil
-    }
+    // 取缩略图失败只返回 nil，不写 lastError：离线时每张缩略图都会顶掉真正的错误提示。
+    return try? await download.value
   }
 
   // MARK: - 离线缓存

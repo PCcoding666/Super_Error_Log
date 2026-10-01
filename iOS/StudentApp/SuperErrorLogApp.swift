@@ -5,16 +5,25 @@ struct SuperErrorLogApp: App {
   @State private var store = StudyStore()
   var body: some Scene {
     WindowGroup {
-      StudentRootView().environment(store)
+      StudentRootView(store: store)
         .tint(Palette.teal)
     }
   }
 }
 
+/// T6c：单一「本周」主页，不再有 Tab。LoopStore 与 StudyStore 都进环境；
+/// LoopStore 的客户端随配对变化更新（扫码配对、重新配对、清除配对都跟上），
+/// 缓存目录用数据集合目录下的 Loop/（UI 测试的 -test-session 集合各自独立）。
 struct StudentRootView: View {
-  @Environment(StudyStore.self) private var store
+  let store: StudyStore
+  @State private var loopStore: LoopStore
   @Environment(\.scenePhase) private var phase
-  @State private var tab = 0
+
+  init(store: StudyStore) {
+    self.store = store
+    _loopStore = State(initialValue: LoopStore(client: nil,
+      cacheDirectory: store.persistence.directory.appendingPathComponent("Loop", isDirectory: true)))
+  }
 
   var body: some View {
     @Bindable var store = store
@@ -23,26 +32,29 @@ struct StudentRootView: View {
         ContentUnavailableView {
           Label("你的学习内容仍然安全", systemImage: "externaldrive.badge.exclamationmark")
         } description: {
-          Text(
-            "无法打开已保存的内容。原始文件已经保留，不会被替换。"
-          )
+          Text("无法打开已保存的内容。原始文件已经保留，不会被替换。")
         } actions: {
           Button("重试") { store.reload() }
         }
       } else {
-        TabView(selection: $tab) {
-          NavigationStack { ThisWeekView(tab: $tab) }
-            .tabItem { Label("本周", systemImage: "square.grid.2x2") }.tag(0)
-          NavigationStack { ReflectionListView(tab: $tab) }
-            .tabItem { Label("复盘", systemImage: "bubble.left.and.text.bubble.right") }.tag(1)
-          NavigationStack { ReviewPackView() }
-            .tabItem { Label("练习包", systemImage: "doc.text") }.tag(2)
-        }
+        NavigationStack { LoopHomeView() }
       }
     }
-    .task { store.setActive(phase == .active) }
+    .environment(store)
+    .environment(loopStore)
+    .task {
+      loopStore.updateClient(store.v2Client)
+      store.setActive(phase == .active)
+      await loopStore.refreshWeek()
+    }
+    .onChange(of: store.pairing) { _, _ in
+      loopStore.updateClient(store.v2Client)
+    }
     .onChange(of: phase) { _, phase in
-      if phase == .active { store.loadPairing() }
+      if phase == .active {
+        store.loadPairing()
+        Task { await loopStore.refreshWeek() }
+      }
       store.setActive(phase == .active)
     }
     .alert(

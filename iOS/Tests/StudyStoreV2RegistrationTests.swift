@@ -133,4 +133,80 @@ import Foundation
     let againFalse = try JSONDecoder().decode(LocalRecognitionTask.self, from: JSONEncoder().encode(task))
     XCTAssertEqual(againFalse.v2Registered, false)
   }
+
+  // MARK: - T6c 审查小修
+
+  static let jobID2 = "11111111-1111-4111-8111-111111111111"
+  static let photoName2 = "00000000-0000-4000-8000-000000000002.jpg"
+  static let registerPath2 = "/v2/photos/11111111-1111-4111-8111-111111111111/register"
+
+  // 补登记一轮里遇到第一个非 404 失败就停止本轮（下次刷新再试），
+  // 避免服务异常时每次轮询都把所有未登记任务请求一遍。
+  func testRefreshJobsBackfillStopsAtFirstNon404Failure() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("V2Registration-" + UUID().uuidString)
+    let persistence = StudyPersistence(directory: directory)
+    try persistence.prepareDirectory()
+    var state = StudyState()
+    state.importedPhotos = [Self.photoName, Self.photoName2]
+    let firstJob = try RecognitionTests.job()
+    try state.ingest(firstJob, photoName: Self.photoName)
+    let secondJob = try RecognitionTests.job([Self.jobID: Self.jobID2])
+    try state.ingest(secondJob, photoName: Self.photoName2)
+    try persistence.save(state)
+    let photos = directory.appendingPathComponent("Photos")
+    try FileManager.default.createDirectory(at: photos, withIntermediateDirectories: true)
+    try StoreHTTPProtocol.jpeg.write(to: photos.appendingPathComponent(Self.photoName))
+    try StoreHTTPProtocol.jpeg.write(to: photos.appendingPathComponent(Self.photoName2))
+    let sessionConfiguration = URLSessionConfiguration.ephemeral
+    sessionConfiguration.protocolClasses = [LoopSyntheticProtocol.self]
+    let pairing = try PairingConfiguration(baseURL: "http://127.0.0.1:3198", token: "synthetic-register")
+    let store = StudyStore(
+      persistence: persistence,
+      client: RecognitionClient(configuration: pairing, sessionConfiguration: sessionConfiguration),
+      v2Client: V2Client(configuration: pairing, sessionConfiguration: sessionConfiguration))
+
+    // 识别刷新照常应答（与本测试断言无关）。
+    LoopSyntheticProtocol.respond("GET", "/v1/recognitions/\(Self.jobID)", body: "{\"job\":" + RecognitionTests.fixture + "}")
+    LoopSyntheticProtocol.respond("GET", "/v1/recognitions/\(Self.jobID2)",
+      body: "{\"job\":" + RecognitionTests.fixture.replacingOccurrences(of: Self.jobID, with: Self.jobID2) + "}")
+    LoopSyntheticProtocol.respond("GET", "/v1/recognitions/\(Self.jobID)/media/\(Self.questionMediaID)",
+      body: StoreHTTPProtocol.jpeg, contentType: "image/jpeg")
+    LoopSyntheticProtocol.respond("GET", "/v1/recognitions/\(Self.jobID2)/media/\(Self.questionMediaID)",
+      body: StoreHTTPProtocol.jpeg, contentType: "image/jpeg")
+    // 第一个任务登记 500（非 404）：本轮停止，第二个任务本轮不请求。
+    LoopSyntheticProtocol.respond("POST", Self.registerPath, status: 500,
+      body: #"{"error":{"code":"invalid_request","message":"服务暂不可用。"}}"#)
+    LoopSyntheticProtocol.respond("POST", Self.registerPath2, body: Self.registrationJSON)
+    await store.refreshJobs()
+    XCTAssertEqual(LoopSyntheticProtocol.requests(method: "POST", path: Self.registerPath).count, 1)
+    XCTAssertEqual(LoopSyntheticProtocol.requests(method: "POST", path: Self.registerPath2).count, 0,
+      "遇到非 404 失败即停止本轮补登记")
+    XCTAssertNil(store.state.recognitionTasks[0].v2Registered)
+    XCTAssertNil(store.state.recognitionTasks[1].v2Registered)
+
+    // 下次刷新再试：第一个恢复成功后两个都登记。
+    LoopSyntheticProtocol.respond("POST", Self.registerPath, body: Self.registrationJSON)
+    await store.refreshJobs()
+    XCTAssertEqual(store.state.recognitionTasks[0].v2Registered, true)
+    XCTAssertEqual(store.state.recognitionTasks[1].v2Registered, true)
+  }
+
+  // 上传同意只问一次：记住后按数据集合隔离保存；旧存档解码为未同意。
+  func testUploadConsentGrantPersistsPerCollectionAndOldArchiveDecodesFalse() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("V2Consent-" + UUID().uuidString)
+    let persistence = StudyPersistence(directory: directory)
+    try persistence.prepareDirectory()
+    let store = StudyStore(persistence: persistence, client: nil)
+    XCTAssertFalse(store.hasUploadConsent)
+    store.grantUploadConsent()
+    XCTAssertTrue(store.hasUploadConsent)
+    let reloaded = StudyStore(persistence: persistence, client: nil)
+    XCTAssertTrue(reloaded.hasUploadConsent, "同意后记住，同一数据集合重启不再问")
+
+    let oldJSON = #"{"schemaVersion":2,"drafts":{},"selectedIDs":[],"packs":[],"importedPhotos":[],"recognitionTasks":[],"realProblems":[]}"#
+    let decoded = try JSONDecoder().decode(StudyState.self, from: Data(oldJSON.utf8))
+    XCTAssertFalse(decoded.uploadConsentGranted, "旧存档无该键解码为未同意")
+  }
 }

@@ -353,22 +353,37 @@ import Foundation
     XCTAssertNil(store.lastError)
   }
 
+  // T6c：retryProposal 只用于连接失败（没有收到服务器回应）的原样重试；复用同一 clientRequestId。
   func testRetryProposalReusesClientRequestID() async throws {
     primeEvidence()
-    LoopSyntheticProtocol.enqueue("POST", "/v2/items/\(Self.itemID)/correct", status: 502,
-      body: #"{"error":{"code":"bad_gateway","message":"这次没生成出可用的修改，请换个说法或用键盘直接改"}}"#)
+    LoopSyntheticProtocol.enqueueTransportFailure("POST", "/v2/items/\(Self.itemID)/correct", code: .notConnectedToInternet)
     LoopSyntheticProtocol.enqueue("POST", "/v2/items/\(Self.itemID)/correct",
       body: #"{"proposalId":"crp_a1b2c3d4e5f60718","revision":1,"changes":[{"field":"questionText","before":"已知 x+y=1，求 x 的值。","after":"已知 x+y=1，求 y 的值。","find":"x 的值","replace":"y 的值"}],"clarify":null}"#)
     let store = try makeStore()
     await store.loadEvidence(itemID: Self.itemID)
     await store.proposeCorrection(instruction: "题目求的是 y 不是 x", method: .voice)
     XCTAssertNil(store.proposal)
-    XCTAssertEqual(store.lastError, "这次没生成出可用的修改，请换个说法或用键盘直接改")
+    XCTAssertTrue(store.proposalRetryable, "连接失败才可原样重试")
     await store.retryProposal()
     XCTAssertEqual(store.proposal?.proposalId, Self.proposalID)
     let requestIDs = correctionRequestIDs()
     XCTAssertEqual(requestIDs.count, 2)
-    XCTAssertEqual(requestIDs[0], requestIDs[1], "同一次点击的重试复用同一个 clientRequestId")
+    XCTAssertEqual(requestIDs[0], requestIDs[1], "连接失败的原样重试复用同一个 clientRequestId")
+  }
+
+  // 收到了服务器回应（502）的失败不可原样重试：retryProposal 直接返回，不发请求。
+  func testRetryProposalAfterServerFailureDoesNothing() async throws {
+    primeEvidence()
+    LoopSyntheticProtocol.respond("POST", "/v2/items/\(Self.itemID)/correct", status: 502,
+      body: #"{"error":{"code":"bad_gateway","message":"这次没生成出可用的修改，请换个说法或用键盘直接改"}}"#)
+    let store = try makeStore()
+    await store.loadEvidence(itemID: Self.itemID)
+    await store.proposeCorrection(instruction: "题目求的是 y 不是 x", method: .voice)
+    XCTAssertNil(store.proposal)
+    XCTAssertFalse(store.proposalRetryable)
+    await store.retryProposal()
+    XCTAssertEqual(LoopSyntheticProtocol.requests(method: "POST", path: "/v2/items/\(Self.itemID)/correct").count, 1,
+      "收到服务器回应的失败不得原样重试（重试要换新请求标识）")
   }
 
   func testProposeConflictRefreshesEvidenceWithNotice() async throws {
@@ -456,7 +471,8 @@ import Foundation
       "取消后不再发轮询请求")
   }
 
-  func testPrintTimeoutKeepsPreparingAndReports() async throws {
+  // T6c：轮询超时不再停在 preparing——统一进入 failed，唯一重试路径是再调 requestPrint（服务器幂等）。
+  func testPrintTimeoutMarksFailedAndRetriesThroughRequestPrint() async throws {
     LoopSyntheticProtocol.respond("POST", "/v2/practice/\(Self.packetID)/print", status: 202, body: #"{"status":"preparing"}"#)
     for _ in 0..<30 {
       LoopSyntheticProtocol.enqueue("GET", "/v2/practice/\(Self.packetID)/print",
@@ -464,9 +480,13 @@ import Foundation
     }
     let store = try makeStore(pollInterval: .milliseconds(5), pollTimeout: .milliseconds(30))
     await store.requestPrint(practiceID: Self.packetID)
-    await waitUntil { store.lastError != nil }
-    if case .preparing = store.printPhase {} else { XCTFail("超时不伪报 ready，停留在 preparing") }
+    await waitUntil { if case .failed = store.printPhase { return true }; return false }
+    XCTAssertEqual(store.printPhase, .failed("打印准备时间太久，请再试一次。"))
     XCTAssertFalse(store.isBusyPrint)
+    await store.requestPrint(practiceID: Self.packetID)
+    XCTAssertEqual(LoopSyntheticProtocol.requests(method: "POST", path: "/v2/practice/\(Self.packetID)/print").count, 2,
+      "失败后唯一的重试路径是再调 requestPrint")
+    store.cancelPrint()
   }
 
   // MARK: - 回传与回报

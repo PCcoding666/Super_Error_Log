@@ -68,6 +68,8 @@ struct StudyState: Codable, Equatable {
   var importedPhotos: [String] = []
   var recognitionTasks: [LocalRecognitionTask] = []
   var realProblems: [StudyProblem] = []
+  /// T6c：上传同意只问一次（旧存档解码为 false）。同意后新加的照片自动上传，不再弹。
+  var uploadConsentGranted = false
   var allProblems: [StudyProblem] { realProblems + SampleProblem.all.map { StudyProblem(example: $0) } }
   func problem(_ id: String) -> StudyProblem? { allProblems.first { $0.id == id && $0.printable } }
   func uploadBatch(selected: Set<String>) -> [String] {
@@ -76,7 +78,7 @@ struct StudyState: Codable, Equatable {
 
   init() {}
   private enum CodingKeys: String, CodingKey {
-    case schemaVersion, drafts, selectedIDs, packs, importedPhotos, recognitionTasks, realProblems
+    case schemaVersion, drafts, selectedIDs, packs, importedPhotos, recognitionTasks, realProblems, uploadConsentGranted
   }
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -88,6 +90,8 @@ struct StudyState: Codable, Equatable {
     importedPhotos = try values.decode([String].self, forKey: .importedPhotos)
     recognitionTasks = try values.decodeIfPresent([LocalRecognitionTask].self, forKey: .recognitionTasks) ?? []
     realProblems = try values.decodeIfPresent([StudyProblem].self, forKey: .realProblems) ?? []
+    // 旧存档无该键：解码为未同意，不拒绝加载。
+    uploadConsentGranted = try values.decodeIfPresent(Bool.self, forKey: .uploadConsentGranted) ?? false
   }
 
   mutating func ingest(_ job: RecognitionJob, photoName: String) throws {
