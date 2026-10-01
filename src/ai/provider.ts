@@ -1,5 +1,5 @@
 import type { AttemptState, Cause, ReviewValue, Subject } from '../domain/types.js';
-import type { Evidence, FollowupAsk, FollowupSummarize, QuestionRegion } from './evidence.js';
+import type { Evidence, FollowupAsk, FollowupSummarize, QuestionRegion, CorrectionProposalResult } from './evidence.js';
 import type { StageRun } from './chatClient.js';
 import type { CropAuditReport } from './cropAuditor.js';
 
@@ -84,4 +84,14 @@ export interface FollowupTurn { question: string; answer: string }
 export interface FollowupProvider {
   followupAsk(evidence: Evidence): Promise<FollowupAsk>;
   followupSummarize(evidence: Evidence, turns: FollowupTurn[]): Promise<FollowupSummarize>;
+}
+
+// ---------- v2.0 T4e：识别结果修订 ----------
+
+/**
+ * 修订建议能力。StagedProvider 与 MockAiProvider 实现。
+ * AI 只提出"改前/改后"建议——不直接改证据，接受与否由学生决定。
+ */
+export interface CorrectionProvider {
+  proposeCorrection(evidence: Evidence, instruction: string): Promise<CorrectionProposalResult>;
 }

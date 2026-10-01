@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { MockAiProvider } from './mockProvider.js';
 import { StagedProvider } from './stagedProvider.js';
-import type { AiProvider, FollowupProvider } from './provider.js';
+import type { AiProvider, FollowupProvider, CorrectionProvider } from './provider.js';
 
 let provider: AiProvider | null = null;
 
@@ -23,4 +23,13 @@ export function getFollowupProvider(): FollowupProvider {
     throw new Error('当前 AI 提供者不支持追问复盘');
   }
   return p as AiProvider & FollowupProvider;
+}
+
+/** T4e：修订建议能力。两种内置 provider 都实现；外部 provider 未实现时 fail-fast。 */
+export function getCorrectionProvider(): CorrectionProvider {
+  const p = getAiProvider();
+  if (typeof (p as Partial<CorrectionProvider>).proposeCorrection !== 'function') {
+    throw new Error('当前 AI 提供者不支持识别结果修订');
+  }
+  return p as AiProvider & CorrectionProvider;
 }

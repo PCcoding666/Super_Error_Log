@@ -2,7 +2,7 @@ import { AiError } from './errors.js';
 import { ATTEMPT_STATES, CAUSES, SUBJECTS, type AttemptState, type Cause, type Subject } from '../domain/types.js';
 import { validateBox, type Box } from '../media/images.js';
 
-export const STAGES = ['layout', 'transcribe', 'diagnose', 'coach', 'match', 'followup'] as const;
+export const STAGES = ['layout', 'transcribe', 'diagnose', 'coach', 'match', 'followup', 'correct'] as const;
 export type Stage = typeof STAGES[number];
 export const OBSERVATION_KINDS = ['student_work', 'teacher_note', 'correction', 'reference_answer', 'unknown'] as const;
 export type ObservationKind = typeof OBSERVATION_KINDS[number];
@@ -135,4 +135,166 @@ export function validateFollowupSummarize(data: unknown): FollowupSummarize {
     singleQuestion(secondQuestion, 'secondQuestion 须恰好一个问句');
   }
   return { summary, suggestedCause: d.suggestedCause as Cause, suggestedAttemptState: d.suggestedAttemptState as AttemptState, secondQuestion };
+}
+
+// ---------- v2.0 T4e：识别结果修订（correct 阶段） ----------
+
+export const CORRECTION_FIELDS = ['questionText', 'observation', 'subject', 'knowledgeTags'] as const;
+export type CorrectionField = typeof CORRECTION_FIELDS[number];
+/** 一条"改前/改后"修改建议；field=observation 时必须带 observationId。find/replace 为模型给出的片段（供界面高亮）。 */
+export interface CorrectionChange { field: CorrectionField; observationId?: string; before: string; after: string; find?: string; replace?: string }
+/** 被剔除/拒绝的单条修改及原因（给学生看的说明，不写日志）。 */
+export interface RejectedChange { change: CorrectionChange; reason: string }
+export interface CorrectionProposalResult { changes: CorrectionChange[]; rejected: RejectedChange[]; clarify: string | null }
+
+/** 规则 3：student_work 单条修改的改动字符数上限（且不超过原文 50%）。 */
+export const STUDENT_WORK_MAX_EDIT_CHARS = 20;
+export const STUDENT_WORK_MAX_EDIT_RATIO = 0.5;
+
+/** 编辑距离（Levenshtein），只关心是否超过 cap：超过返回 cap+1。公共前后缀剥离 + 带状 DP。 */
+export function editDistanceCapped(a: string, b: string, cap: number): number {
+  if (cap < 0) return 1;
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
+  const s = a.slice(start, endA);
+  const t = b.slice(start, endB);
+  if (s.length === 0) return t.length;
+  if (t.length === 0) return s.length;
+  const INF = cap + 1;
+  let prev: number[] = new Array(t.length + 1).fill(INF);
+  for (let j = 0; j <= Math.min(cap, t.length); j++) prev[j] = j;
+  for (let i = 1; i <= s.length; i++) {
+    const cur: number[] = new Array(t.length + 1).fill(INF);
+    if (i <= cap) cur[0] = i;
+    let rowMin = cur[0]!;
+    const from = Math.max(1, i - cap);
+    const to = Math.min(t.length, i + cap);
+    for (let j = from; j <= to; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j]! + cost, prev[j - 1]! + 1, cur[j - 1]! + 1);
+      if (cur[j]! < rowMin) rowMin = cur[j]!;
+    }
+    if (rowMin > cap) return INF;
+    prev = cur;
+  }
+  return prev[t.length]!;
+}
+
+const CORRECTION_FIELD_LABEL: Record<CorrectionField, string> = {
+  questionText: '题干', observation: '作答/批注转写', subject: '学科', knowledgeTags: '知识点',
+};
+
+/**
+ * 校验一组修改建议：硬性问题（字段枚举、observationId 缺失或不存在、after 与 before 相同、
+ * subject 枚举外、knowledgeTags 形状非法、同字段重复）抛 AiError；软性问题（before 与当前值不符、
+ * 规则 3 改动量超限）剔除该条并给出原因。只对转写保真与分类，不碰坐标/区域/题号。
+ */
+export function validateCorrectionChanges(data: unknown, evidence: Evidence): { changes: CorrectionChange[]; rejected: RejectedChange[] } {
+  const entries = list(data, 'changes', 20);
+  const changes: CorrectionChange[] = [];
+  const rejected: RejectedChange[] = [];
+  const seen = new Set<string>();
+  for (const raw of entries) {
+    const c = obj(raw, 'change');
+    if (!CORRECTION_FIELDS.includes(c.field as CorrectionField)) bad('correction.field');
+    const field = c.field as CorrectionField;
+    const before = str(c.before, 'correction.before', true);
+    const after = str(c.after, 'correction.after', true);
+    if (after === before) bad('correction.after 与 before 相同');
+    if (!after.trim()) bad('correction.after 不能为空');
+    let observationId: string | undefined;
+    let observation: Observation | undefined;
+    if (field === 'observation') {
+      if (c.observationId === undefined || c.observationId === null) bad('observation 修改必须带 observationId');
+      observationId = str(c.observationId, 'correction.observationId');
+      observation = evidence.observations.find(o => o.id === observationId);
+      if (!observation) bad('correction.observationId 不存在');
+    }
+    if (field === 'subject' && !SUBJECTS.includes(after as Subject)) bad('correction.subject 枚举外');
+    if (field === 'knowledgeTags') {
+      let tags: unknown;
+      try { tags = JSON.parse(after); } catch { bad('correction.knowledgeTags 不是 JSON 数组'); }
+      const parsed = strings(tags, 'correction.knowledgeTags');
+      if (parsed.length < 1 || parsed.length > 5) bad('correction.knowledgeTags 须 1–5 个');
+    }
+    const key = observationId ? `${field}:${observationId}` : field;
+    if (seen.has(key)) bad('同一字段只能修改一次');
+    seen.add(key);
+    const change: CorrectionChange = {
+      field, ...(observationId ? { observationId } : {}), before, after,
+      ...(typeof c.find === 'string' ? { find: c.find } : {}),
+      ...(typeof c.replace === 'string' ? { replace: c.replace } : {}),
+    };
+
+    // 软校验：before 必须与当前值完全一致（knowledgeTags 用 JSON 数组字符串比较）。
+    const current = field === 'questionText' ? evidence.questionText
+      : field === 'subject' ? evidence.subject
+        : field === 'knowledgeTags' ? JSON.stringify(evidence.knowledgeTags)
+          : observation!.text;
+    if (before !== current) {
+      rejected.push({ change, reason: `${CORRECTION_FIELD_LABEL[field]}的改前内容与当前识别结果不一致，已略过该条修改` });
+      continue;
+    }
+    // 规则 3：不许把学生原作的错误"改对"——只允许小幅转写纠错。
+    if (field === 'observation' && observation!.kind === 'student_work') {
+      const cap = Math.min(STUDENT_WORK_MAX_EDIT_CHARS, Math.floor(before.length * STUDENT_WORK_MAX_EDIT_RATIO));
+      if (editDistanceCapped(before, after, cap) > cap) {
+        rejected.push({ change, reason: '对学生原作的修改超过允许幅度，已拒绝：只能把识别错的字改回纸上实际写的' });
+        continue;
+      }
+    }
+    changes.push(change);
+  }
+  return { changes, rejected };
+}
+
+/**
+ * 校验模型修订包（T4e-R1）：文字类字段（questionText/observation）模型只给 { field, observationId?, find, replace }
+ * 片段——find 须非空且在当前文字中恰好出现一次（0 次或多次都剔除该条并提示"请说得更具体"），
+ * 服务器据此生成完整 before/after；subject/knowledgeTags 仍用完整 before/after。
+ * changes 为空（原始输出层面）时必须有 clarify 反问。
+ */
+export function validateCorrectionProposal(data: unknown, evidence: Evidence): CorrectionProposalResult {
+  const d = obj(data, 'correctionProposal');
+  const clarify = d.clarify === null || d.clarify === undefined ? null : str(d.clarify, 'clarify');
+  if (clarify !== null && clarify.length > 200) bad('clarify 超长');
+  const entries = list(d.changes, 'changes', 20);
+  if (entries.length === 0 && !clarify) bad('没有修改建议时须给出反问');
+
+  const resolved: unknown[] = [];
+  const rejected: RejectedChange[] = [];
+  for (const raw of entries) {
+    const c = obj(raw, 'change');
+    if (!CORRECTION_FIELDS.includes(c.field as CorrectionField)) bad('correction.field');
+    const field = c.field as CorrectionField;
+    // subject/knowledgeTags 值很短，模型仍给完整 before/after。
+    if (field === 'subject' || field === 'knowledgeTags') { resolved.push(raw); continue; }
+    let observationId: string | undefined;
+    if (field === 'observation') {
+      if (c.observationId === undefined || c.observationId === null) bad('observation 修改必须带 observationId');
+      observationId = str(c.observationId, 'correction.observationId');
+      if (!evidence.observations.some(o => o.id === observationId)) bad('correction.observationId 不存在');
+    }
+    // 只给需要替换的片段，不复述全文。
+    const find = str(c.find, 'correction.find');
+    const replace = str(c.replace, 'correction.replace', true);
+    if (replace === find) bad('correction.replace 与 find 相同');
+    const current = field === 'questionText' ? evidence.questionText
+      : evidence.observations.find(o => o.id === observationId)!.text;
+    const parts = current.split(find);
+    if (parts.length !== 2) {
+      const reason = parts.length === 1
+        ? `${CORRECTION_FIELD_LABEL[field]}找不到要修改的原文片段，已略过该条修改：请说得更具体`
+        : `${CORRECTION_FIELD_LABEL[field]}要修改的原文片段出现多次，已略过该条修改：请说得更具体`;
+      rejected.push({ change: { field, ...(observationId ? { observationId } : {}), before: current, after: current, find, replace }, reason });
+      continue;
+    }
+    resolved.push({ field, ...(observationId ? { observationId } : {}), before: current, after: parts.join(replace), find, replace });
+  }
+  const validated = validateCorrectionChanges(resolved, evidence);
+  return { changes: validated.changes, rejected: [...rejected, ...validated.rejected], clarify };
 }

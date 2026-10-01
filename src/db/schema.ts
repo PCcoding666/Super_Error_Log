@@ -231,4 +231,37 @@ CREATE TABLE IF NOT EXISTS v2_reflection_turn (
   answered_at TEXT,
   UNIQUE(item_id, turn)
 );
+
+-- v2.0 T4e：修改记录（修正即测量）。被接受的每一条修改记一笔：字段、改前、改后、方式、时间。
+-- before_text/after_text 只存库供测量与学生端对照，不进日志、不进家长聚合。
+CREATE TABLE IF NOT EXISTS correction (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL REFERENCES error_item(id),
+  field TEXT NOT NULL,
+  observation_id TEXT,
+  before_text TEXT,
+  after_text TEXT,
+  method TEXT NOT NULL CHECK (method IN ('voice','keyboard','direct')),
+  proposal_id TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_correction_item ON correction(item_id, created_at);
+
+-- v2.0 T4e：修改建议。client_request_id 全局唯一（重放返回同一结果、不再调用模型）；
+-- 建议 10 分钟内有效，被接受后写 accepted_at。instruction 只存库，不进日志。
+-- error 非空表示该次模型调用失败（R1-F2：失败也计入限流；不可被接受）。
+CREATE TABLE IF NOT EXISTS correction_proposal (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL REFERENCES error_item(id),
+  base_revision INTEGER NOT NULL,
+  client_request_id TEXT NOT NULL UNIQUE,
+  instruction TEXT NOT NULL,
+  method TEXT NOT NULL CHECK (method IN ('voice','keyboard')),
+  changes_json TEXT NOT NULL,
+  clarify TEXT,
+  created_at TEXT NOT NULL,
+  accepted_at TEXT,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_correction_proposal_item ON correction_proposal(item_id, created_at);
 `;

@@ -10,7 +10,8 @@ import { getV2Settings, updateV2Settings } from './settingsService.js';
 import { createPractice, getPractice, listPractices, recommendPractice } from './practiceService.js';
 import { getReturnSummary, submitReturns } from './returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from './reflectionService.js';
-import type { FollowupProvider } from '../ai/provider.js';
+import { acceptCorrection, directCorrection, getCorrectionsReport, getEvidenceView, proposeCorrection } from './correctionService.js';
+import type { FollowupProvider, CorrectionProvider } from '../ai/provider.js';
 
 export const V2_PROTOCOL_VERSION = 2 as const;
 
@@ -21,6 +22,8 @@ export interface V2RouterOptions {
   mobileDataDir?: string;
   /** T4c 追问/归纳模型能力；缺省走全局 getFollowupProvider()（mock 模式为确定性实现）。 */
   followupProvider?: FollowupProvider;
+  /** T4e 修订建议模型能力；缺省走全局 getCorrectionProvider()（mock 模式为确定性实现）。 */
+  correctionProvider?: CorrectionProvider;
 }
 
 /**
@@ -170,6 +173,48 @@ export function createV2Router(options: V2RouterOptions = {}): Router {
     const detail = getV2Reflection(String(request.params.id));
     if (!detail) { notFound(response, '题目不存在或不属于手机上传。'); return; }
     response.json(detail);
+  });
+
+  // T4e：修改识别结果与修改记录。仅限 v2 来源的题；不走 Web 的 saveEvidence。
+  r.get('/items/:id/evidence', (request, response) => {
+    const view = getEvidenceView(String(request.params.id));
+    if (!view) { notFound(response, '题目不存在或不属于手机上传。'); return; }
+    response.json(view);
+  });
+
+  const CORRECT_ERROR_CODE: Record<number, string> = {
+    400: 'invalid_request', 404: 'not_found', 409: 'conflict', 429: 'rate_limited', 502: 'bad_gateway',
+  };
+  const sendCorrectError = (response: express.Response, result: { httpStatus: number; message: string; revision?: number }): void => {
+    response.status(result.httpStatus).json({
+      error: { code: CORRECT_ERROR_CODE[result.httpStatus] ?? 'error', message: result.message },
+      ...(result.revision !== undefined ? { revision: result.revision } : {}),
+    });
+  };
+
+  r.post('/items/:id/correct', express.json({ limit: '16kb', strict: true }), async (request, response, next) => {
+    try {
+      const result = await proposeCorrection(String(request.params.id), request.body, options.correctionProvider);
+      if (!result.ok) { sendCorrectError(response, result); return; }
+      response.json({ proposalId: result.proposalId, revision: result.revision, changes: result.changes, clarify: result.clarify });
+    } catch (error) { next(error); }
+  });
+
+  r.post('/items/:id/correct/accept', express.json({ limit: '16kb', strict: true }), (request, response) => {
+    const result = acceptCorrection(String(request.params.id), request.body);
+    if (!result.ok) { sendCorrectError(response, result); return; }
+    response.json({ revision: result.revision, card: result.card });
+  });
+
+  r.post('/items/:id/correct/direct', express.json({ limit: '16kb', strict: true }), (request, response) => {
+    const result = directCorrection(String(request.params.id), request.body);
+    if (!result.ok) { sendCorrectError(response, result); return; }
+    response.json({ revision: result.revision, card: result.card });
+  });
+
+  // 修正即测量报告：只输出计数，不含题目文字。
+  r.get('/corrections/report', (_request, response) => {
+    response.json(getCorrectionsReport());
   });
 
   return r;

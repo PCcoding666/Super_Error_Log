@@ -8,11 +8,12 @@ import type {
   FieldSuggestion,
   FollowupProvider,
   FollowupTurn,
+  CorrectionProvider,
   MatchInput,
   MatchResult,
   SuggestInput,
 } from './provider.js';
-import { FOLLOWUP_FALLBACK_QUESTION, type Evidence, type FollowupAsk, type FollowupSummarize } from './evidence.js';
+import { FOLLOWUP_FALLBACK_QUESTION, validateEvidence, type Evidence, type FollowupAsk, type FollowupSummarize, type CorrectionProposalResult } from './evidence.js';
 import { ATTEMPT_STATES, CAUSES, type Subject } from '../domain/types.js';
 
 export interface FixtureManifestItem {
@@ -55,7 +56,7 @@ const TYPE_POOL = ['计算题', '选择题', '填空题', '证明题', '实验�
  * Deterministic mock：优先命中 fixture 清单（文件名精确匹配），
  * 否则由内容哈希派生稳定结果；支持 SEL_MOCK_FAULT 注入故障（测试用）。
  */
-export class MockAiProvider implements AiProvider, FollowupProvider {
+export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionProvider {
   readonly name = 'mock';
   private manifest: Map<string, FixtureManifestItem> | null = null;
   private fault: string;
@@ -182,5 +183,33 @@ export class MockAiProvider implements AiProvider, FollowupProvider {
       suggestedAttemptState: ATTEMPT_STATES[base % ATTEMPT_STATES.length]!,
       secondQuestion: turns.length < 2 ? '那一步你当时为什么觉得可以这样做？' : null,
     };
+  }
+
+  /**
+   * T4e 确定性修订建议：按指令关键词选择字段，产出必然通过校验的修改。
+   * 文字类字段附 find/replace 片段；学生原作只改最后一个字符（小幅转写纠错）；无法判断时只反问。
+   */
+  async proposeCorrection(evidence: Evidence, instruction: string): Promise<CorrectionProposalResult> {
+    const e = validateEvidence(evidence);
+    if (/学科/.test(instruction)) {
+      const after = e.subject === '数学' ? '物理' : '数学';
+      return { changes: [{ field: 'subject', before: e.subject, after }], rejected: [], clarify: null };
+    }
+    if (/知识点/.test(instruction)) {
+      const after = JSON.stringify([`${e.knowledgeTags[0] ?? '知识点'}（订）`]);
+      return { changes: [{ field: 'knowledgeTags', before: JSON.stringify(e.knowledgeTags), after }], rejected: [], clarify: null };
+    }
+    if (/题干/.test(instruction)) {
+      const find = e.questionText.slice(-1);
+      const replace = `${find}（订）`;
+      return { changes: [{ field: 'questionText', before: e.questionText, after: `${e.questionText.slice(0, -1)}${replace}`, find, replace }], rejected: [], clarify: null };
+    }
+    const target = e.observations.find(o => o.kind === 'student_work');
+    if (target) {
+      const find = target.text.slice(-1);
+      const replace = target.text.endsWith('1') ? '2' : '1';
+      return { changes: [{ field: 'observation', observationId: target.id, before: target.text, after: `${target.text.slice(0, -1)}${replace}`, find, replace }], rejected: [], clarify: null };
+    }
+    return { changes: [], rejected: [], clarify: '请说明要改哪一处（题干/学科/知识点/作答）。' };
   }
 }

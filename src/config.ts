@@ -20,7 +20,7 @@ export const config = {
   aiBaseUrl: process.env.SEL_AI_BASE_URL ?? '',
   aiApiKey: process.env.SEL_AI_API_KEY || process.env.DASHSCOPE_API_KEY || '',
   aiModel: defaultModel,
-  aiModels: Object.fromEntries(['layout', 'transcribe', 'diagnose', 'coach', 'match', 'crop_inventory', 'crop_verify', 'followup'].map(stage =>
+  aiModels: Object.fromEntries(['layout', 'transcribe', 'diagnose', 'coach', 'match', 'crop_inventory', 'crop_verify', 'followup', 'correct'].map(stage =>
     [stage, process.env[`SEL_AI_MODEL_${stage.toUpperCase()}`] || defaultModel])),
   aiTimeoutMs: Number(process.env.SEL_AI_TIMEOUT_MS ?? 90000),
   mockFault: process.env.SEL_MOCK_FAULT ?? '',

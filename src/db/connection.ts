@@ -60,6 +60,11 @@ export function getDb(): DatabaseSync {
   if (!diagnosisCols.some((c) => c.name === 'confirmed_summary')) {
     db.exec('ALTER TABLE error_diagnosis ADD COLUMN confirmed_summary TEXT');
   }
+  // v2.0 T4e-R1：correction_proposal 增加 error 列（失败的模型调用也落库、计入限流）。
+  const proposalCols = db.prepare('PRAGMA table_info(correction_proposal)').all() as Array<{ name: string }>;
+  if (!proposalCols.some((c) => c.name === 'error')) {
+    db.exec('ALTER TABLE correction_proposal ADD COLUMN error TEXT');
+  }
   migrateBridgeSchema(db);
   return db;
 }
