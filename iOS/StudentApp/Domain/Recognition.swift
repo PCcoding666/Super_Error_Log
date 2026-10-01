@@ -207,17 +207,21 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
   /// M1：最近一次刷新失败的分类（nil = 无失败或旧文档）。lastError 文案之外的结构化区分：
   /// 离线/服务暂不可用/配对失效/未知，驱动卡片显示「进度暂未更新」而非误报任务失败。
   var lastIssueKind: RefreshIssue?
+  /// T6b：上传后是否已成功登记进 /v2 学习闭环（旧存档解码为 nil = 未登记）。
+  /// 登记失败不影响上传结果；nil/false 的任务在 refreshJobs 时补登记，404 记 false 后不再重试。
+  var v2Registered: Bool?
 
   init(id: UUID, photoName: String, uploadName: String, consentedAt: Date? = nil,
     job: RecognitionJob? = nil, lastError: String? = nil, ownedServiceId: String? = nil,
-    lastIssueKind: RefreshIssue? = nil) {
+    lastIssueKind: RefreshIssue? = nil, v2Registered: Bool? = nil) {
     self.id = id; self.photoName = photoName; self.uploadName = uploadName
     self.consentedAt = consentedAt; self.job = job; self.lastError = lastError
     self.ownedServiceId = ownedServiceId; self.lastIssueKind = lastIssueKind
+    self.v2Registered = v2Registered
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId, lastIssueKind
+    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId, lastIssueKind, v2Registered
   }
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -231,6 +235,8 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
     ownedServiceId = try values.decodeIfPresent(String.self, forKey: .ownedServiceId)
     // 旧文档无分类字段：解码为 nil，不拒绝加载。
     lastIssueKind = try values.decodeIfPresent(RefreshIssue.self, forKey: .lastIssueKind)
+    // 旧文档无登记字段：解码为 nil（未登记），不拒绝加载。
+    v2Registered = try values.decodeIfPresent(Bool.self, forKey: .v2Registered)
   }
 }
 

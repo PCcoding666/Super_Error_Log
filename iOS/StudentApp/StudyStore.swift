@@ -40,9 +40,12 @@ final class StudyStore {
   #endif
   private var isActive = false
   private var client: RecognitionClient?
+  /// T6b：与 client 同一份配对的 /v2 客户端（登记进学习闭环）；配对变化时一起重建/关闭。
+  private var v2Client: V2Client?
   private var polling: Task<Void, Never>?
 
-  init(persistence suppliedPersistence: StudyPersistence? = nil, client suppliedClient: RecognitionClient? = nil) {
+  init(persistence suppliedPersistence: StudyPersistence? = nil, client suppliedClient: RecognitionClient? = nil,
+    v2Client suppliedV2Client: V2Client? = nil) {
     var directory = URL.applicationSupportDirectory.appendingPathComponent(
       "StudentExperience", isDirectory: true)
     #if DEBUG
@@ -58,7 +61,11 @@ final class StudyStore {
     #endif
     persistence = suppliedPersistence ?? StudyPersistence(directory: directory)
     reload()
-    if let suppliedClient { client = suppliedClient; pairing = suppliedClient.configuration }
+    if let suppliedClient {
+      client = suppliedClient
+      pairing = suppliedClient.configuration
+      v2Client = suppliedV2Client
+    }
     else { loadPairing() }
   }
 
@@ -139,8 +146,10 @@ final class StudyStore {
       // 时不重建客户端——重建会作废在途请求（health/上传中途被 invalidate 导致崩溃）。
       if saved != pairing {
         client?.close()
+        v2Client?.close()
         pairing = saved
         client = pairing.map { RecognitionClient(configuration: $0) }
+        v2Client = pairing.map { V2Client(configuration: $0) }
         if pairing?.isCloud == true {
           connectionTracker = ConnectionTracker()
           connectionGeneration = connectionTracker.paired()
@@ -165,7 +174,9 @@ final class StudyStore {
   func adoptCloudPairing(_ configuration: PairingConfiguration) {
     if pairing == configuration { return } // 幂等：重复兑换同一结果不重建会话。
     client?.close()
+    v2Client?.close()
     client = RecognitionClient(configuration: configuration)
+    v2Client = V2Client(configuration: configuration)
     pairing = configuration
     connectionTracker = ConnectionTracker()
     connectionGeneration = connectionTracker.paired()
@@ -225,6 +236,7 @@ final class StudyStore {
       connectionState = .unpaired
       PairingStore.remove(scope: persistence.directory.lastPathComponent)
       client?.close(); client = nil; pairing = nil
+      v2Client?.close(); v2Client = nil
     case .ready, .busy, .failed, .pairedNeedsCheck, .checking, .unpaired, .none:
       _ = await checkConnection(force: true)
     }
@@ -278,6 +290,7 @@ final class StudyStore {
       try PairingStore.save(pairing, scope: persistence.directory.lastPathComponent)
       self.pairing = pairing
       client?.close(); client = RecognitionClient(configuration: pairing)
+      v2Client?.close(); v2Client = V2Client(configuration: pairing)
       resumePolling()
       return true
     } catch { errorMessage = error.localizedDescription; return false }
@@ -304,6 +317,14 @@ final class StudyStore {
 
   func refreshJobs(onlyActive: Bool = false, requireActive: Bool = false) async {
     guard let client, !cannotLoad, !requireActive || isActive else { return }
+    // T6b：补登记——已有任务、尚未登记成功（nil）、归属当前服务的任务，直到成功。
+    // 与识别进度刷新独立，不看 onlyActive（登记是进学习闭环的门槛）。
+    for task in state.recognitionTasks where task.v2Registered == nil && task.job != nil
+      && (pairing?.isCloud != true || task.ownedServiceId == pairing?.serviceId) {
+      guard !Task.isCancelled, !requireActive || isActive else { return }
+      guard let jobID = task.job?.id else { continue }
+      await registerV2(jobID: jobID, taskID: task.id)
+    }
     let tasks = state.recognitionTasks.filter { task in
       // 云端模式：只刷新归属当前服务的任务（随任务持久化，重启后依然有效）；
       // 旧 Mac 来源（ownedServiceId != 当前服务）仅离线可看。
@@ -419,6 +440,9 @@ final class StudyStore {
       do {
         let job = try await client.upload(file: photoURL(task.uploadName), idempotencyKey: task.id, photoName: name)
         _ = change { try $0.ingest(job, photoName: name) }
+        // T6b：上传成功拿到任务后立即登记进 /v2 学习闭环；失败不影响上传结果，
+        // 不弹错误，refreshJobs 会补登记（404 记 false 后不再重试）。
+        await registerV2(jobID: job.id, taskID: task.id)
       } catch {
         change { state in
           if let index = state.recognitionTasks.firstIndex(where: { $0.id == task.id }) {
@@ -462,6 +486,29 @@ final class StudyStore {
 
   func mediaURL(jobID: String, mediaID: String) -> URL {
     persistence.directory.appendingPathComponent("Media/\(jobID)/\(mediaID).jpg")
+  }
+
+  /// T6b：登记进 /v2 学习闭环（docs/mobile-v2-api.md §3.1）。幂等。
+  /// 成功置 v2Registered = true；404（任务不存在）记 false 并保留、不再重试；
+  /// 其余失败保持 nil 静默留待 refreshJobs 补登记——登记失败绝不影响上传结果、不弹错误。
+  private func registerV2(jobID: String, taskID: UUID) async {
+    guard let v2Client else { return }
+    do {
+      _ = try await v2Client.registerPhoto(jobId: jobID)
+      _ = change { state in
+        if let index = state.recognitionTasks.firstIndex(where: { $0.id == taskID }) {
+          state.recognitionTasks[index].v2Registered = true
+        }
+      }
+    } catch RecognitionClientError.server(status: 404, _) {
+      _ = change { state in
+        if let index = state.recognitionTasks.firstIndex(where: { $0.id == taskID }) {
+          state.recognitionTasks[index].v2Registered = false
+        }
+      }
+    } catch {
+      // 静默：上传已成功，登记留待下次 refreshJobs 补登记。
+    }
   }
 
   private func cacheMedia(_ job: RecognitionJob, client: RecognitionClient) async throws {
