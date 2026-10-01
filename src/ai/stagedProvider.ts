@@ -27,7 +27,7 @@ function messages(prompt: string, text: string, input?: ExtractInput): Message[]
   ] }];
 }
 
-const COACH_PROMPT = '基于完整题干、图示和诊断给出1到3条逐级提示，第一条只提示方法不泄露最终答案。独立核对正确解法的条件、定义域、单位和全部小问。图片中的作答可能错误，不能照抄为正确解法。输出 {"hints":["最少帮助","进一步提示"],"solution":"完整清晰步骤与必要条件检查","answer":"各小问答案","source":"ai_generated"}。这是AI参考，不能声明已由老师核验。';
+const COACH_PROMPT = '基于完整题干、图示和诊断给出1到3条逐级提示，第一条只提示方法不泄露最终答案。独立核对正确解法的条件、定义域、单位和全部小问。图片中的作答可能错误，不能照抄为正确解法。输出 {"hints":["最少帮助","进一步提示"],"solution":"完整清晰步骤与必要条件检查","answer":"各小问答案","source":"ai_generated"}。这是AI参考，不能声明已由老师核验。引用原文片段或公式时用「」括起来，JSON 字符串内部不得出现英文双引号（否则字符串会被提前截断）。';
 
 export class StagedProvider implements AiProvider, FollowupProvider, CorrectionProvider, CoachProvider {
   readonly name = 'multimodal-evidence';
@@ -110,7 +110,7 @@ export class StagedProvider implements AiProvider, FollowupProvider, CorrectionP
         .map(o => ({ id: o.id, kind: o.kind, text: o.text })),
     };
     const result = await this.client.call('followup', messages(
-      '你是错题追问助手。只提问：有学生原作（student_work）时，必须针对原作里最先出错的那一步提问并引用它，只有没有原作时才引用订正（订正是改完后的做法，不是当时错的那一步）。用开放问句（"当时是怎么想的""这一步是怎么得到的""为什么这样写"），不用"是不是/是否/对吗/吗？"这类只需答是或否的问句。问题里不能出现正确做法、正确结论或对错误原因的判断。必须引用所给观察记录的原文片段并给出其ID；不讲题、不给答案、不评价对错、不替学生写反思。问题不超过60字，恰好一个问句。返回 {"question":"……？","referencedObservationIds":["o1"]}。',
+      '你是错题追问助手。只提问：有学生原作（student_work）时，必须针对原作里最先出错的那一步提问并引用它，只有没有原作时才引用订正（订正是改完后的做法，不是当时错的那一步）。用开放问句（"当时是怎么想的""这一步是怎么得到的""为什么这样写"），不用"是不是/是否/对吗/吗？"这类只需答是或否的问句。问题里不能出现正确做法、正确结论或对错误原因的判断。必须引用所给观察记录的原文片段并给出其ID；不讲题、不给答案、不评价对错、不替学生写反思。问题不超过60字，恰好一个问句。引用原文片段或公式时用「」括起来，JSON 字符串内部不得出现英文双引号（否则字符串会被提前截断）。返回 {"question":"……？","referencedObservationIds":["o1"]}。',
       JSON.stringify(material)));
     return validateFollowupAsk(result.value, e);
   }
@@ -119,7 +119,7 @@ export class StagedProvider implements AiProvider, FollowupProvider, CorrectionP
   async followupSummarize(evidence: Evidence, turns: FollowupTurn[]): Promise<FollowupSummarize> {
     const e = validateEvidence(evidence);
     const result = await this.client.call('followup', messages(
-      '你是错题复盘归纳助手。根据题干、学生作答证据与追问问答，归纳"他把什么当成了什么/漏了什么"：不超过60字，不含解题步骤与最终答案，不替学生写完整反思。suggestedCause 取 知识概念|方法选择|推理步骤|计算|审题遗漏|表达规范|时间注意力状态；suggestedAttemptState 取 完全不会|知道考什么但没想到方法|方法基本正确但步骤出错|本来会但审题计算书写失误|时间不足|其他。学生回答不足以归纳时 secondQuestion 给出一个追问（不超过60字、恰好一个问句），否则为 JSON null。secondQuestion 同样用开放问句（"当时是怎么想的""这一步是怎么得到的""为什么这样写"），不用"是不是/是否/对吗/吗？"这类只需答是或否的问句，且不能出现正确做法、正确结论或对错误原因的判断。返回 {"summary":"……","suggestedCause":"……","suggestedAttemptState":"……","secondQuestion":"……？或 JSON null"}。',
+      '你是错题复盘归纳助手。根据题干、学生作答证据与追问问答，归纳"他把什么当成了什么/漏了什么"：不超过60字，不含解题步骤与最终答案，不替学生写完整反思。suggestedCause 取 知识概念|方法选择|推理步骤|计算|审题遗漏|表达规范|时间注意力状态；suggestedAttemptState 取 完全不会|知道考什么但没想到方法|方法基本正确但步骤出错|本来会但审题计算书写失误|时间不足|其他。学生回答不足以归纳时 secondQuestion 给出一个追问（不超过60字、恰好一个问句），否则为 JSON null。引用原文片段或公式时用「」括起来，JSON 字符串内部不得出现英文双引号（否则字符串会被提前截断）。secondQuestion 同样用开放问句（"当时是怎么想的""这一步是怎么得到的""为什么这样写"），不用"是不是/是否/对吗/吗？"这类只需答是或否的问句，且不能出现正确做法、正确结论或对错误原因的判断。返回 {"summary":"……","suggestedCause":"……","suggestedAttemptState":"……","secondQuestion":"……？或 JSON null"}。',
       JSON.stringify({ questionText: e.questionText, observations: e.observations, turns })));
     return validateFollowupSummarize(result.value);
   }
