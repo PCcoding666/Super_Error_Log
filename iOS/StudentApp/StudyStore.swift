@@ -391,19 +391,42 @@ final class StudyStore {
     resumePolling()
   }
 
-  /// 整张照片的重新识别（v2 唯一保留的识别改动动作；逐题确认/跳过/人工放行已随旧界面移除）。
-  /// 行为不变：busy 去重、服务器重试、成功后 ingest + 缓存媒体。
-  func retryPhoto(taskID: UUID) async {
+  /// T6k：按失败方案重试（PhotoFailurePlan）。找题目失败且可恢复 → 整张重试
+  /// （questionId=null，服务器只在这时接受）；否则对每道「失败且可恢复」的题依次单题重试，
+  /// 任一请求失败就停下并给出错误，已成功的保留。进行中重复调用直接返回。
+  func retryFailed(taskID: UUID) async {
     guard let client, let task = state.recognitionTasks.first(where: { $0.id == taskID }),
-      let job = task.job, !busyTasks.contains(taskID) else { return }
+      let job = task.job, !busyTasks.contains(taskID),
+      let plan = PhotoFailurePlan.plan(for: task), plan.retryTitle != nil else { return }
     busyTasks.insert(taskID)
     defer { busyTasks.remove(taskID) }
-    do {
-      let updated = try await client.retry(job.id, questionID: nil)
-      if change({ try $0.ingest(updated, photoName: task.photoName) }) {
-        try await cacheMedia(updated, client: client)
+    if plan.retryWholePhoto {
+      do {
+        let updated = try await client.retry(job.id, questionID: nil)
+        if change({ try $0.ingest(updated, photoName: task.photoName) }) {
+          try await cacheMedia(updated, client: client)
+        }
+      } catch { errorMessage = error.localizedDescription }
+      return
+    }
+    for questionID in plan.retryQuestionIDs ?? [] {
+      do {
+        let updated = try await client.retry(job.id, questionID: questionID)
+        if change({ try $0.ingest(updated, photoName: task.photoName) }) {
+          try await cacheMedia(updated, client: client)
+        }
+      } catch { errorMessage = error.localizedDescription; return }
+    }
+  }
+
+  /// T6k：把这张照片从「照片进度」里移除。只是不再显示：本机照片文件、识别任务、
+  /// 已进错题本的题都不动；部分失败的「不管了 / 知道了」同样走这里。
+  func dismissPhoto(_ name: String) {
+    _ = change { state in
+      if let index = state.recognitionTasks.firstIndex(where: { $0.photoName == name }) {
+        state.recognitionTasks[index].dismissedFromProgress = true
       }
-    } catch { errorMessage = error.localizedDescription }
+    }
   }
 
   func mediaURL(jobID: String, mediaID: String) -> URL {

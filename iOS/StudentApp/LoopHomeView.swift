@@ -35,6 +35,10 @@ struct LoopHomeView: View {
       }.padding(24)
     }
     .background(Palette.paper)
+    // T6k：顶部同色安全区背景——滚动内容不再钻到状态栏（时间、电量）下面。
+    .safeAreaInset(edge: .top, spacing: 0) {
+      Rectangle().fill(Palette.paper).frame(height: 0)
+    }
     .refreshable { await loopStore.refreshWeek() }
     .safeAreaInset(edge: .bottom, spacing: 0) { undoBar }
     .sheet(isPresented: $showSettings) { LoopSettingsView() }
@@ -75,12 +79,12 @@ struct LoopHomeView: View {
     .confirmationDialog("重新识别这张照片？", isPresented: Binding(
       get: { retryPhoto != nil }, set: { if !$0 { retryPhoto = nil } }), titleVisibility: .visible) {
       Button("重新识别") {
-        if let retryPhoto { Task { await store.retryPhoto(taskID: retryPhoto.taskID) } }
+        if let retryPhoto { Task { await store.retryFailed(taskID: retryPhoto.taskID) } }
         retryPhoto = nil
       }
       Button("取消", role: .cancel) { retryPhoto = nil }
     } message: {
-      Text("会再次请求识别服务重新处理这张照片。")
+      Text("会再次请求 AI 重新识别。")
     }
     .task {
       await loopStore.refreshWeek()
@@ -190,7 +194,7 @@ struct LoopHomeView: View {
     }
   }
 
-  // MARK: - 3. 照片进度（只列未完成或失败的）
+  // MARK: - 3. 照片进度（还没上传 / 上传中 / 识别中 / 失败与部分失败且未移除的）
 
   @ViewBuilder private var photoProgressSection: some View {
     let rows = progressRows
@@ -202,15 +206,25 @@ struct LoopHomeView: View {
     }
   }
 
-  /// 还没上传 / 正在上传 / 正在识别 / 没识别成功 的照片；识别完成的不占位置。
+  /// 还没上传 / 正在上传 / 正在识别 / 没识别成功 的照片；全部识别完成的不占位置。
+  /// T6k：部分失败且没被移除的照片也列出来（失败的那几道不能悄悄没了）；
+  /// 被学生移除（dismissPhoto）的失败照片不再出现。
   private var progressRows: [PhotoProgressRow] {
     store.state.importedPhotos.compactMap { name in
       let task = store.state.recognitionTasks.first { $0.photoName == name }
       guard let job = task?.job else {
         return PhotoProgressRow(name: name, task: task, kind: .pending)
       }
-      if job.status == "completed" || job.status == "partial" { return nil }
-      if job.status == "failed" || job.status == "interrupted" { return PhotoProgressRow(name: name, task: task, kind: .failed) }
+      if job.status == "completed" || job.status == "partial" {
+        if let task, task.dismissedFromProgress != true, PhotoFailurePlan.plan(for: task) != nil {
+          return PhotoProgressRow(name: name, task: task, kind: .failed)
+        }
+        return nil
+      }
+      if job.status == "failed" || job.status == "interrupted" {
+        guard task?.dismissedFromProgress != true else { return nil }
+        return PhotoProgressRow(name: name, task: task, kind: .failed)
+      }
       if job.active { return PhotoProgressRow(name: name, task: task, kind: .recognizing) }
       // 未知/待更新状态如实列出，不误报为完成。
       return PhotoProgressRow(name: name, task: task, kind: .unknown)
@@ -222,12 +236,17 @@ struct LoopHomeView: View {
     let presentation = row.task.map { TaskPresentation.photoCard(task: $0, uploading: uploading) }
       ?? PhotoCardPresentation(tone: .gray, headline: "还没上传", counts: "",
         nextStep: "点「上传」开始识别", actionable: false, needsRefresh: false)
+    // T6k：失败/部分失败的行按方案显示标题、说明与按钮；无方案（罕见状态）退回既有呈现。
+    let plan = row.kind == .failed ? row.task.flatMap { PhotoFailurePlan.plan(for: $0) } : nil
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .top, spacing: 12) {
         LocalPhotoThumbnail(url: store.photoURL(row.name)).frame(width: 62, height: 76).clipped()
           .accessibilityHidden(true)
         VStack(alignment: .leading, spacing: 5) {
-          Text(presentation.headline).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+          Text(plan?.title ?? presentation.headline).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+          if let plan {
+            Text(plan.detail).font(.caption).foregroundStyle(Palette.muted)
+          }
           if !presentation.counts.isEmpty {
             Text(presentation.counts).font(.caption).foregroundStyle(Palette.muted)
           }
@@ -257,9 +276,23 @@ struct LoopHomeView: View {
             .accessibilityIdentifier("photo-upload-\(row.name)")
         }
         if row.kind == .failed, let task = row.task {
-          Button("重新识别这张照片") { retryPhoto = PhotoRetry(taskID: task.id) }
-            .font(.caption.weight(.semibold)).frame(minHeight: 44)
-            .accessibilityIdentifier("photo-retry-\(task.id.uuidString)")
+          let retrying = store.busyTasks.contains(task.id)
+          if let retryTitle = plan?.retryTitle {
+            Button(retrying ? "正在重试…" : retryTitle) { retryPhoto = PhotoRetry(taskID: task.id) }
+              .font(.caption.weight(.semibold)).frame(minHeight: 44)
+              .disabled(retrying)
+              .accessibilityIdentifier("photo-retry-\(task.id.uuidString)")
+          } else if plan == nil {
+            // 无方案兜底的失败行（罕见状态）：保留旧的整卡重试入口。
+            Button(retrying ? "正在重试…" : "重新识别这张照片") { retryPhoto = PhotoRetry(taskID: task.id) }
+              .font(.caption.weight(.semibold)).frame(minHeight: 44)
+              .disabled(retrying)
+              .accessibilityIdentifier("photo-retry-\(task.id.uuidString)")
+          }
+          Button(plan?.dismissTitle ?? "移除这张") { store.dismissPhoto(row.name) }
+            .font(.caption).frame(minHeight: 44)
+            .foregroundStyle(Palette.muted)
+            .accessibilityIdentifier("photo-dismiss-\(row.name)")
         }
       }
     }

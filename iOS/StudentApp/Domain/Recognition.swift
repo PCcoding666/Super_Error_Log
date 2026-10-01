@@ -210,18 +210,23 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
   /// T6b：上传后是否已成功登记进 /v2 学习闭环（旧存档解码为 nil = 未登记）。
   /// 登记失败不影响上传结果；nil/false 的任务在 refreshJobs 时补登记，404 记 false 后不再重试。
   var v2Registered: Bool?
+  /// T6k：学生把这张失败/部分失败的照片从「照片进度」里移除（旧存档解码为 nil = 未移除）。
+  /// 只是不再显示：本机照片文件、识别任务、已进错题本的题都不动。
+  var dismissedFromProgress: Bool?
 
   init(id: UUID, photoName: String, uploadName: String, consentedAt: Date? = nil,
     job: RecognitionJob? = nil, lastError: String? = nil, ownedServiceId: String? = nil,
-    lastIssueKind: RefreshIssue? = nil, v2Registered: Bool? = nil) {
+    lastIssueKind: RefreshIssue? = nil, v2Registered: Bool? = nil,
+    dismissedFromProgress: Bool? = nil) {
     self.id = id; self.photoName = photoName; self.uploadName = uploadName
     self.consentedAt = consentedAt; self.job = job; self.lastError = lastError
     self.ownedServiceId = ownedServiceId; self.lastIssueKind = lastIssueKind
     self.v2Registered = v2Registered
+    self.dismissedFromProgress = dismissedFromProgress
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId, lastIssueKind, v2Registered
+    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId, lastIssueKind, v2Registered, dismissedFromProgress
   }
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -237,6 +242,8 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
     lastIssueKind = try values.decodeIfPresent(RefreshIssue.self, forKey: .lastIssueKind)
     // 旧文档无登记字段：解码为 nil（未登记），不拒绝加载。
     v2Registered = try values.decodeIfPresent(Bool.self, forKey: .v2Registered)
+    // 旧文档无移除字段：解码为 nil（未移除，照常显示），不拒绝加载。
+    dismissedFromProgress = try values.decodeIfPresent(Bool.self, forKey: .dismissedFromProgress)
   }
 }
 

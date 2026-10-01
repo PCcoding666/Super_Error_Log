@@ -31,8 +31,9 @@ struct PairingSettingsView: View {
   }
 }
 
-/// Task 5：云端连接状态行——状态徽标 + 按状态给出中文操作（重试连接 / 重新配对 / 开始上传）。
-/// 每个状态既有文案也有可点操作，绝不出现「灰色不可用死按钮」。
+/// Task 5：云端连接状态行——状态徽标 + 按状态给出中文操作（重试连接 / 重新配对）。
+/// 每个需要动作的状态既有文案也有可点操作，绝不出现「灰色不可用死按钮」。
+/// T6k：连接就绪（ready）不再有「开始上传」按钮——新主页照片自动上传，改为一行说明。
 struct CloudConnectionRow: View {
   let state: ConnectionState
   /// 未配对/重新配对操作打开扫码页（由宿主视图提供；缺省时退化为仅重查）。
@@ -84,7 +85,12 @@ struct CloudConnectionRow: View {
       Button(state.actionTitle) { onScan?() }
         .buttonStyle(.borderedProminent)
         .accessibilityIdentifier("scan-to-pair")
-    case .pairedNeedsCheck, .checking, .ready, .busy, .failed:
+    case .ready:
+      // T6k：连接就绪时照片自动上传，不再留旧界面的「开始上传」按钮。
+      Text("已连接，新照片会自动上传识别")
+        .font(.caption).foregroundStyle(Palette.muted)
+        .accessibilityIdentifier("connection-ready-note")
+    case .pairedNeedsCheck, .checking, .busy, .failed:
       Button(state.actionTitle) { Task { await store.connectionAction() } }
         .buttonStyle(.borderedProminent)
         .accessibilityIdentifier("retry-connection")
