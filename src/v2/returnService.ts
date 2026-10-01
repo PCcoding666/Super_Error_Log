@@ -118,6 +118,8 @@ export interface ReturnSummary {
   masteredNow: V2WeekItem[];
   /** 状态为 needs_recheck 的题卡片，附"下次再来"原因。 */
   again: Array<V2WeekItem & { reason: string }>;
+  /** 本包已回传、独立且做对、当前状态 attempted（当天做对不算掌握，隔几天再验证）的题卡片，附固定原因。 */
+  pending: Array<V2WeekItem & { reason: string }>;
   /** 校准：本包已回传且最近一次复盘把握 ≥2 的题里，没独立做对的题数与卡片；基数为 0 时 text 为 null。 */
   calibration: { confidentTotal: number; missedCount: number; text: string | null; items: V2WeekItem[] };
   /** 本包新进入暂时掌握的题中最早的确认日期（YYYY-MM-DD，仅日期）；无则 null。 */
@@ -137,6 +139,8 @@ const AGAIN_REASON: Record<string, string> = {
   unfinished: '没做',
   independent: '做错',
 };
+
+const PENDING_REASON = '当天做对，隔几天再独立做对才算掌握';
 
 /** 回报：仅限 v2 练习包，否则 null（路由层 404）。 */
 export function getReturnSummary(packetId: string): ReturnSummary | null {
@@ -197,6 +201,9 @@ export function getReturnSummary(packetId: string): ReturnSummary | null {
     again: rows
       .filter(row => row.status === 'needs_recheck')
       .map(row => ({ ...toCard(row), reason: (row.att_completion ? AGAIN_REASON[row.att_completion] : undefined) ?? '需再做一次' })),
+    pending: rows
+      .filter(row => isIndependentCorrect(row) && row.status === 'attempted')
+      .map(row => ({ ...toCard(row), reason: PENDING_REASON })),
     calibration: {
       confidentTotal: confidentReturned.length,
       missedCount: missed.length,

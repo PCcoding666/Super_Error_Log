@@ -110,7 +110,7 @@ interface ReturnItemResult { itemId: string; ok: boolean; toStatus?: string; rea
 interface SummaryCard extends WeekItem { reason?: string }
 interface ReturnSummary {
   answered: number; total: number; independentCorrect: number;
-  masteredNow: SummaryCard[]; again: SummaryCard[];
+  masteredNow: SummaryCard[]; again: SummaryCard[]; pending: SummaryCard[];
   calibration: { confidentTotal: number; missedCount: number; text: string | null; items: SummaryCard[] };
   nextConfirmOn: string | null;
 }
@@ -485,6 +485,58 @@ describe('T4d 回传与回报', () => {
     const after = (await (await getSummary(base, auth, practice.id)).json()) as ReturnSummary;
     expect(after.masteredNow.map(card => card.id)).toEqual([confirm.id]);
     expect(after.masteredNow[0]!.status).toBe('stably_mastered');
+  });
+
+  it('T4g 回报 pending：当天独立做对进 pending 带固定文案；延迟做对进 masteredNow；提示/没做出来只在 again；未回传三组都不在；三组互不重叠', async () => {
+    const { base, dataDir, auth } = await setupApp();
+    const [sameDay, delayed, hinted, unsolved, unreturned] = await bridgeItems(base, auth, dataDir, [
+      { tags: ['知识点A'] }, { tags: ['知识点B'] }, { tags: ['知识点C'] }, { tags: ['知识点D'] }, { tags: ['知识点E'] },
+    ]) as [WeekItem, WeekItem, WeekItem, WeekItem, WeekItem];
+    const practice = await makePractice(base, auth, [sameDay.id, delayed.id, hinted.id, unsolved.id, unreturned.id]);
+    const printDay = printPacket(practice.id, 4);
+
+    const returned = await postReturn(base, auth, practice.id, {
+      results: [
+        // 打印当天独立做对 → attempted（不算掌握，隔几天再验证）。
+        { itemId: sameDay.id, completion: 'independent', correct: true, performedOn: printDay },
+        // 打印 4 天后独立做对 → temporarily_mastered。
+        { itemId: delayed.id, completion: 'independent', correct: true, performedOn: TODAY() },
+        { itemId: hinted.id, completion: 'hint1', correct: true, performedOn: TODAY() },
+        { itemId: unsolved.id, completion: 'not_solved', performedOn: TODAY() },
+      ],
+    });
+    expect(returned.status).toBe(200);
+
+    const response = await getSummary(base, auth, practice.id);
+    expect(response.status).toBe(200);
+    const summary = (await response.json()) as ReturnSummary;
+
+    // 当天独立做对 → pending，带固定文案；卡片沿用 /v2/week 形状。
+    expect(summary.pending.map(card => card.id)).toEqual([sameDay.id]);
+    expect(summary.pending[0]!.reason).toBe('当天做对，隔几天再独立做对才算掌握');
+    expect(summary.pending[0]).toMatchObject({ status: 'attempted' });
+    expect(summary.pending[0]!.cropUrl).toBe(`/v2/items/${sameDay.id}/crop`);
+
+    // 延迟独立做对 → masteredNow，不在 pending。
+    expect(summary.masteredNow.map(card => card.id)).toEqual([delayed.id]);
+    // 看了提示 / 没做出来 → 只在 again。
+    expect(summary.again.map(card => card.id)).toEqual([hinted.id, unsolved.id]);
+
+    // 未回传的题三组都不在。
+    expect(summary.masteredNow.some(card => card.id === unreturned.id)).toBe(false);
+    expect(summary.again.some(card => card.id === unreturned.id)).toBe(false);
+    expect(summary.pending.some(card => card.id === unreturned.id)).toBe(false);
+
+    // 三组互不重叠。
+    const masteredIds = new Set(summary.masteredNow.map(card => card.id));
+    const againIds = new Set(summary.again.map(card => card.id));
+    for (const card of summary.pending) {
+      expect(masteredIds.has(card.id)).toBe(false);
+      expect(againIds.has(card.id)).toBe(false);
+    }
+    for (const id of againIds) {
+      expect(masteredIds.has(id)).toBe(false);
+    }
   });
 
   it('RED7 Web 练习包对两个接口 404；无令牌 401', async () => {

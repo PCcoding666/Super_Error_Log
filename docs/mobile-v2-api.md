@@ -355,6 +355,7 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
   "independentCorrect": 1,
   "masteredNow": [ { "id": "itm_0a1b2c3d4e5f6071", "shortId": "M-12", "subject": "数学", "knowledgeTags": ["一元一次方程"], "questionExcerpt": "已知 x+y=1，求 x 的值。", "badge": "ok", "status": "temporarily_mastered", "cropUrl": "/v2/items/itm_0a1b2c3d4e5f6071/crop", "jobId": "3f7b69dc-9d37-4aaa-b965-bb61243445a0" } ],
   "again": [ { "id": "itm_1111111111111111", "shortId": "M-13", "subject": "数学", "knowledgeTags": ["分式"], "questionExcerpt": "…", "badge": "ok", "status": "needs_recheck", "cropUrl": "/v2/items/itm_1111111111111111/crop", "jobId": "3f7b69dc-9d37-4aaa-b965-bb61243445a0", "reason": "看了提示" } ],
+  "pending": [ { "id": "itm_2222222222222222", "shortId": "M-14", "subject": "数学", "knowledgeTags": ["一元一次方程"], "questionExcerpt": "…", "badge": "ok", "status": "attempted", "cropUrl": "/v2/items/itm_2222222222222222/crop", "jobId": "3f7b69dc-9d37-4aaa-b965-bb61243445a0", "reason": "当天做对，隔几天再独立做对才算掌握" } ],
   "calibration": {
     "confidentTotal": 1,
     "missedCount": 0,
@@ -367,6 +368,7 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
 
 - `masteredNow`：本包已回传且进入暂时/稳定掌握的题卡片（形状同 `/v2/week` 的 item）。
 - `again`：状态为 `needs_recheck` 的题卡片，附 `reason`（`看了提示` / `没做出来` / `没做` / `做错`，无回传记录时为 `需再做一次`）。
+- `pending`：本包已回传、独立且做对、当前状态为 `attempted` 的题卡片（当天做对不算掌握），附固定 `reason` `当天做对，隔几天再独立做对才算掌握`；无则为空数组。`masteredNow` / `again` / `pending` 三组互不重叠。
 - `calibration`：本包已回传且最近一次复盘把握 ≥2 的题里没独立做对的统计；基数为 0 时 `text` 为 `null`。
 - `nextConfirmOn`：本包新进入暂时掌握的题中最早的确认日期（`YYYY-MM-DD`，仅日期），无则 `null`。
 
