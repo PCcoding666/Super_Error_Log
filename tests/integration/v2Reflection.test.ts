@@ -52,6 +52,7 @@ function okContent(model: string, body: Record<string, unknown>): string {
     if (model === 'fu-long-question') return JSON.stringify({ question: `你${'当时到底是怎么想的'.repeat(8)}？`, referencedObservationIds: ['o1'] });
     if (model === 'fu-empty-refs') return JSON.stringify({ question: '你当时是怎么想的？', referencedObservationIds: [] });
     if (model === 'fu-teacher-refs') return JSON.stringify({ question: '你原来写 x=1，这一步当时是怎么想的？', referencedObservationIds: ['o2'] });
+    if (model === 'fu-correction-refs') return JSON.stringify({ question: '你在订正里写 x=2，这一步是怎么得到的？', referencedObservationIds: ['o3'] });
     return JSON.stringify({ question: '你原来写 x=1，这一步当时是怎么想的？', referencedObservationIds: ['o1'] });
   }
   // followupSummarize
@@ -118,7 +119,7 @@ async function jpeg(color = '#ffffff'): Promise<Buffer> {
   return sharp({ create: { width: 64, height: 48, channels: 3, background: color } }).jpeg().toBuffer();
 }
 
-function evidence(number: string, withStudentWork: boolean, withTeacherNote = false): Evidence {
+function evidence(number: string, withStudentWork: boolean, withTeacherNote = false, withCorrection = false): Evidence {
   return {
     version: 1, questionNumber: number, questionText: `已知 x+y=${number}，求 x 的值。`, subject: '数学', chapter: '方程',
     knowledgeTags: [`知识点${number}`], questionType: '计算',
@@ -126,23 +127,25 @@ function evidence(number: string, withStudentWork: boolean, withTeacherNote = fa
     regions: [
       ...(withStudentWork ? [{ id: 's1', kind: 'student_work' as const, box: { x: .2, y: .2, width: .2, height: .2 }, confidence: .9, cleanForPrint: false }] : []),
       ...(withTeacherNote ? [{ id: 's2', kind: 'teacher_note' as const, box: { x: .5, y: .2, width: .2, height: .2 }, confidence: .9, cleanForPrint: false }] : []),
+      ...(withCorrection ? [{ id: 's3', kind: 'correction' as const, box: { x: .5, y: .5, width: .2, height: .2 }, confidence: .9, cleanForPrint: false }] : []),
     ],
     observations: [
       ...(withStudentWork ? [{ id: 'o1', kind: 'student_work' as const, text: 'x=1', regionId: 's1', confidence: .9 }] : []),
       ...(withTeacherNote ? [{ id: 'o2', kind: 'teacher_note' as const, text: '移项要变号', regionId: 's2', confidence: .9 }] : []),
+      ...(withCorrection ? [{ id: 'o3', kind: 'correction' as const, text: '订正：x=2', regionId: 's3', confidence: .9 }] : []),
     ],
     uncertainties: [],
   };
 }
 
 let seq = 0;
-function question(partial: Partial<RecognitionQuestion> & { number?: string; withStudentWork?: boolean; withTeacherNote?: boolean } = {}): RecognitionQuestion {
+function question(partial: Partial<RecognitionQuestion> & { number?: string; withStudentWork?: boolean; withTeacherNote?: boolean; withCorrection?: boolean } = {}): RecognitionQuestion {
   seq += 1;
   const number = partial.number ?? String(seq);
-  const { withStudentWork, withTeacherNote, ...rest } = partial;
+  const { withStudentWork, withTeacherNote, withCorrection, ...rest } = partial;
   return {
     id: crypto.randomUUID(), number, revision: 1, status: 'ready', selectionEvidence: 'marked_wrong',
-    evidence: evidence(number, withStudentWork ?? true, withTeacherNote ?? false), verification: { ...CHECKS }, questionMediaId: null, diagramMediaIds: [],
+    evidence: evidence(number, withStudentWork ?? true, withTeacherNote ?? false, withCorrection ?? false), verification: { ...CHECKS }, questionMediaId: null, diagramMediaIds: [],
     error: null, confirmedAt: null, ...rest,
   };
 }
@@ -185,8 +188,8 @@ async function setupApp(model = 'fu-ok'): Promise<{ base: string; dataDir: strin
 interface WeekItem { id: string; jobId: string; status: string }
 
 /** 造一道题（一道 job），登记并桥接，返回卡片。 */
-async function bridgeItem(base: string, auth: { authorization: string }, dataDir: string, withStudentWork = true, withTeacherNote = false): Promise<WeekItem> {
-  const jobId = await makeJob(dataDir, [question({ withStudentWork, withTeacherNote })]);
+async function bridgeItem(base: string, auth: { authorization: string }, dataDir: string, withStudentWork = true, withTeacherNote = false, withCorrection = false): Promise<WeekItem> {
+  const jobId = await makeJob(dataDir, [question({ withStudentWork, withTeacherNote, withCorrection })]);
   const registered = await fetch(`${base}/v2/photos/${jobId}/register`, { method: 'POST', headers: auth });
   expect(registered.status).toBe(200);
   const week = (await (await fetch(`${base}/v2/week`, { headers: auth })).json()) as { items: WeekItem[] };
@@ -451,6 +454,29 @@ describe('T4c AI 追问与复盘', () => {
     expect(s2.status).toBe(200);
     const state2 = (await (await getReflection(base, auth, noAi.id)).json()) as ReflectionState;
     expect(state2.reflection?.summary).toBeNull();
+  });
+
+  it('T5R2-F3 有学生原作时模型只引订正 → 退回固定句（1 次调用不重试）；追问提示词要求针对原作最先出错步的开放问句', async () => {
+    const { base, dataDir, auth } = await setupApp('fu-correction-refs');
+    const item = await bridgeItem(base, auth, dataDir, true, false, true);
+    const response = await ask(base, auth, item.id);
+    expect(response.status).toBe(200);
+    expect((await response.json()) as AskResponse).toEqual({ turn: 1, question: FALLBACK_QUESTION, source: 'fallback' });
+    expect(modelRequests).toHaveLength(1);
+    // 提示词：有原作必须针对原作里最先出错的那一步；用开放问句；不出现正确做法/错因判断。
+    const system = (modelRequests[0]!.messages as Array<{ role: string; content: string }>)[0]!.content;
+    expect(system).toContain('最先出错');
+    expect(system).toContain('开放问句');
+  });
+
+  it('T5R2-F3b 归纳提示词：secondQuestion 同样要求开放问句、问当时怎么想的', async () => {
+    const { base, dataDir, auth } = await setupApp();
+    const item = await bridgeItem(base, auth, dataDir, true);
+    await ask(base, auth, item.id);
+    await answer(base, auth, item.id, { answer: STUDENT_ANSWER_1 });
+    // 第 2 次模型调用是 followupSummarize。
+    const system = (modelRequests[1]!.messages as Array<{ role: string; content: string }>)[0]!.content;
+    expect(system).toContain('开放问句');
   });
 
   it('RED8 新接口无令牌 401', async () => {

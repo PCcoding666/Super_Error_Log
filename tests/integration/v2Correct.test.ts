@@ -53,6 +53,8 @@ function correctContent(model: string, body: Record<string, unknown>): string {
   if (model === 'cor-bad-field') return JSON.stringify({ changes: [{ field: 'questionRegion', before: 'a', after: 'b' }], clarify: null });
   if (model === 'cor-empty-no-clarify') return JSON.stringify({ changes: [], clarify: null });
   if (model === 'cor-clarify') return JSON.stringify({ changes: [], clarify: '请问要改题干还是作答？' });
+  // T5R2-F4：超长 clarify（100 字）应被截断到 80 字而不是判失败。
+  if (model === 'cor-clarify-long') return JSON.stringify({ changes: [], clarify: '您'.repeat(100) });
   // F1：文字类字段（questionText/observation）模型只给 find/replace 片段。
   if (model === 'cor-fragment') return JSON.stringify({ changes: [{ field: 'questionText', find: '减三', replace: '加三' }], clarify: null });
   if (model === 'cor-fragment-dup') return JSON.stringify({ changes: [{ field: 'questionText', find: 'abc', replace: '甲' }], clarify: null });
@@ -519,6 +521,20 @@ describe('T4e 修改识别结果与修改记录', () => {
       });
       expect(response.status, `${method} ${path} (web)`).toBe(404);
     }
+  });
+
+  it('T5R2-F4 clarify 超 80 字截断不判失败；提示词要求"你"称呼、不超过 40 字、直说能改什么', async () => {
+    const { base, dataDir, auth } = await setupApp('cor-clarify-long');
+    const item = await bridgeItem(base, auth, dataDir);
+    const response = await propose(base, auth, item.id, proposeBody());
+    expect(response.status).toBe(200);
+    const p = (await response.json()) as ProposeResponse;
+    expect(p.changes).toHaveLength(0);
+    expect(p.clarify).toHaveLength(80);
+    expect(modelRequests).toHaveLength(1);
+    const system = (modelRequests[0]!.messages as Array<{ role: string; content: string }>)[0]!.content;
+    expect(system).toContain('用"你"称呼');
+    expect(system).toContain('不超过40字');
   });
 
   it('R1-F1 模型只给 find/replace 片段：服务器生成完整 before/after；片段多次或不存在即剔除并提示', async () => {

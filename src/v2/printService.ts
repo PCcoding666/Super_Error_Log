@@ -22,7 +22,6 @@ import { validateEvidence, type Coaching, type Diagnosis, type Evidence } from '
 import { getCoachProvider } from '../ai/index.js';
 import type { CoachProvider } from '../ai/provider.js';
 import { cropPhoto, normalizePhoto, type Box } from '../media/images.js';
-import { expandCropMargin } from '../mobile/modelBox.js';
 import { audit } from '../services/eventLog.js';
 import { getEvidence, evidenceSource } from '../services/evidenceService.js';
 import { getPractice } from './practiceService.js';
@@ -34,7 +33,7 @@ export interface PrintSnapshotItem {
   itemId: string; shortId: string | null; position: number; subject: string | null; knowledgeTags: string[];
   mode: 'text' | 'crop'; stemText: string | null; cropMedia: string | null; diagramMedia: string[];
   keyStepPrompt: string; checkboxes: string[];
-  /** crop 模式下存在无法定位的手写观察记录（遮不全）时为 true，手机排版时提示学生打印前看一眼。 */
+  /** crop 模式下需要学生打印前看一眼截图：存在无法定位的手写（遮不全），或徽标 low（AI 没把握）。text 模式恒为 false。 */
   needsGlance: boolean; glanceReason: string | null;
 }
 
@@ -61,9 +60,12 @@ const KEY_STEP_PROMPT = '这题的关键一步是：';
 const MASK_KINDS = new Set(['student_work', 'correction', 'teacher_note', 'reference_answer', 'unknown']);
 /** F2：需要"定位才能遮"的手写观察记录种类；缺定位（regionId 为空或区域不存在）即可能遮不全。 */
 const GLANCE_KINDS = new Set(['student_work', 'correction', 'teacher_note', 'reference_answer']);
-const GLANCE_REASON = '这题的手写内容可能没有遮全，打印前请看一眼';
-/** 遮白区域各向外扩 1% 页宽/页高。 */
-const MASK_EXPAND = 0.01;
+const GLANCE_REASON_UNLOCATED = '这题的手写内容可能没有遮全，打印前请看一眼';
+/** T5R2-F1：low 徽标 crop 题恒提示（余量加宽可能带进相邻题目/框漂），让学生打印前核对截图。 */
+const GLANCE_REASON_LOW = '这题 AI 没把握，打印前看一眼截图是否完整';
+/** 遮白区域外扩：横向 1% 页宽，纵向 1.2% 页高（T5R2-F1，原 1% 遮不住相邻行上沿）。 */
+const MASK_EXPAND_X = 0.01;
+const MASK_EXPAND_Y = 0.012;
 
 interface SnapshotRow {
   packet_id: string; status: 'preparing' | 'ready' | 'failed';
@@ -75,10 +77,20 @@ function rowOf(packetId: string): SnapshotRow | undefined {
   return getDb().prepare('SELECT * FROM v2_print_snapshot WHERE packet_id = ?').get(packetId) as SnapshotRow | undefined;
 }
 
+/**
+ * T5R2-F2：fallbackNote 里的题号先规整——去首尾空白和结尾的 .．、。:：)）与"题"、开头的 (（与"第"；
+ * 规整后为空就用原值。只影响提示文字，证据里的题号不动。
+ */
+export function normalizeQuestionNumber(raw: string): string {
+  const normalized = raw.trim().replace(/^[（(第]+/, '').replace(/[.．、。:：)）题]+$/, '');
+  return normalized || raw;
+}
+
 function fallbackNote(paperLocation: PaperLocation, questionNumber: string): string {
-  if (paperLocation === 'school') return `对照原卷第 ${questionNumber} 题`;
-  if (paperLocation === 'home') return `回家后对照原卷第 ${questionNumber} 题`;
-  return `对照原卷第 ${questionNumber} 题（原卷不在手边就回家再对）`;
+  const number = normalizeQuestionNumber(questionNumber);
+  if (paperLocation === 'school') return `对照原卷第 ${number} 题`;
+  if (paperLocation === 'home') return `回家后对照原卷第 ${number} 题`;
+  return `对照原卷第 ${number} 题（原卷不在手边就回家再对）`;
 }
 
 /** coach 的诊断对象：有复盘取学生确认的归纳与错因；没有则 possibleCause=null。 */
@@ -91,44 +103,82 @@ function diagnosisFor(itemId: string): Diagnosis {
 }
 
 /**
- * 遮白裁图：questionRegion 经 expandCropMargin 后裁出；
- * 落在裁图内的作答/订正/批注/参考答案/未知区域（外扩 1%）填白，diagram 不遮。
+ * T5R2-F1：打印专用裁图余量。识别流程的 expandCropMargin 纵向最多 1.2%，
+ * 真实模型走查里框整体下漂约 1% 就把题干上沿切掉了；打印没有二次校验机会，用更宽的纵向余量：
+ * 纵向每侧 clamp(区域高度 × 0.5, 0.02, 0.04)，横向沿用识别规则，裁到页面边界内。
  */
-async function maskedQuestionCrop(source: Buffer, evidence: Evidence): Promise<Buffer> {
-  const crop = expandCropMargin(evidence.questionRegion);
+export function expandPrintCropMargin(box: Box): Box {
+  const dx = Math.min(0.03, Math.max(0.01, box.width * 0.06));
+  const dy = Math.min(0.04, Math.max(0.02, box.height * 0.5));
+  const x = Math.max(0, box.x - dx);
+  const y = Math.max(0, box.y - dy);
+  const round6 = (value: number): number => Math.round(value * 1e6) / 1e6;
+  return {
+    x: round6(x), y: round6(y),
+    width: round6(Math.min(1, box.x + box.width + dx) - x),
+    height: round6(Math.min(1, box.y + box.height + dy) - y),
+  };
+}
+
+export interface PixelRect { x: number; y: number; width: number; height: number }
+
+function cropPixelBounds(crop: Box, width: number, height: number): { left: number; top: number; right: number; bottom: number } {
+  const left = Math.min(width - 1, Math.floor(crop.x * width));
+  const top = Math.min(height - 1, Math.floor(crop.y * height));
+  const right = Math.min(width, Math.max(left + 1, Math.ceil((crop.x + crop.width) * width)));
+  const bottom = Math.min(height, Math.max(top + 1, Math.ceil((crop.y + crop.height) * height)));
+  return { left, top, right, bottom };
+}
+
+/**
+ * T5R2-F1：遮白矩形（裁图内像素坐标）。先在整页像素坐标里算好（外扩后 floor 起点、ceil 终点），
+ * 再减去裁图左上角并裁到裁图范围内——与裁图底边/右边相交时 ceil 终点对齐裁图像素边界，一直遮到那条边，不留像素缝。
+ */
+export function printMaskRects(evidence: Evidence, crop: Box, width: number, height: number): PixelRect[] {
+  const { left, top, right, bottom } = cropPixelBounds(crop, width, height);
+  const cropWidth = right - left;
+  const cropHeight = bottom - top;
+  const rects: PixelRect[] = [];
+  for (const region of evidence.regions) {
+    if (!MASK_KINDS.has(region.kind)) continue;
+    const box = region.box;
+    const ex1 = Math.max(0, box.x - MASK_EXPAND_X);
+    const ey1 = Math.max(0, box.y - MASK_EXPAND_Y);
+    const ex2 = Math.min(1, box.x + box.width + MASK_EXPAND_X);
+    const ey2 = Math.min(1, box.y + box.height + MASK_EXPAND_Y);
+    // 与裁图区域求交（页坐标）。
+    const ix1 = Math.max(ex1, crop.x);
+    const iy1 = Math.max(ey1, crop.y);
+    const ix2 = Math.min(ex2, crop.x + crop.width);
+    const iy2 = Math.min(ey2, crop.y + crop.height);
+    if (ix2 <= ix1 || iy2 <= iy1) continue;
+    // 整页像素坐标：floor 起点、ceil 终点，再平移到裁图坐标并裁到 [0, cropWidth]×[0, cropHeight]。
+    const x = Math.max(0, Math.floor(ix1 * width) - left);
+    const y = Math.max(0, Math.floor(iy1 * height) - top);
+    const x2 = Math.min(cropWidth, Math.ceil(ix2 * width) - left);
+    const y2 = Math.min(cropHeight, Math.ceil(iy2 * height) - top);
+    if (x2 > x && y2 > y) rects.push({ x, y, width: x2 - x, height: y2 - y });
+  }
+  return rects;
+}
+
+/**
+ * 遮白裁图：questionRegion 经 expandPrintCropMargin（打印专用宽纵向余量）后裁出；
+ * 落在裁图内的作答/订正/批注/参考答案/未知区域填白（见 printMaskRects），diagram 不遮。
+ */
+export async function maskedQuestionCrop(source: Buffer, evidence: Evidence): Promise<Buffer> {
+  const crop = expandPrintCropMargin(evidence.questionRegion);
   const normalized = await normalizePhoto(source);
   const metadata = await sharp(normalized).metadata();
   const width = metadata.width;
   const height = metadata.height;
   if (!width || !height) throw new Error('原图尺寸不可读');
 
-  const left = Math.min(width - 1, Math.floor(crop.x * width));
-  const top = Math.min(height - 1, Math.floor(crop.y * height));
-  const right = Math.min(width, Math.max(left + 1, Math.ceil((crop.x + crop.width) * width)));
-  const bottom = Math.min(height, Math.max(top + 1, Math.ceil((crop.y + crop.height) * height)));
+  const { left, top, right, bottom } = cropPixelBounds(crop, width, height);
   const cropWidth = right - left;
   const cropHeight = bottom - top;
-
-  const rects: string[] = [];
-  for (const region of evidence.regions) {
-    if (!MASK_KINDS.has(region.kind)) continue;
-    const box: Box = region.box;
-    const ex1 = Math.max(0, box.x - MASK_EXPAND);
-    const ey1 = Math.max(0, box.y - MASK_EXPAND);
-    const ex2 = Math.min(1, box.x + box.width + MASK_EXPAND);
-    const ey2 = Math.min(1, box.y + box.height + MASK_EXPAND);
-    // 与裁图区域求交（页坐标），再换算到裁图像素。
-    const ix1 = Math.max(ex1, crop.x);
-    const iy1 = Math.max(ey1, crop.y);
-    const ix2 = Math.min(ex2, crop.x + crop.width);
-    const iy2 = Math.min(ey2, crop.y + crop.height);
-    if (ix2 <= ix1 || iy2 <= iy1) continue;
-    const rx = Math.max(0, Math.floor((ix1 - crop.x) * width));
-    const ry = Math.max(0, Math.floor((iy1 - crop.y) * height));
-    const rw = Math.min(cropWidth - rx, Math.ceil((ix2 - ix1) * width));
-    const rh = Math.min(cropHeight - ry, Math.ceil((iy2 - iy1) * height));
-    if (rw > 0 && rh > 0) rects.push(`<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" fill="#ffffff"/>`);
-  }
+  const rects = printMaskRects(evidence, crop, width, height)
+    .map(r => `<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="#ffffff"/>`);
 
   let pipeline = sharp(normalized).extract({ left, top, width: cropWidth, height: cropHeight });
   if (rects.length > 0) {
@@ -194,9 +244,9 @@ async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
       const diagrams = evidence.regions.filter(region => region.kind === 'diagram');
       // F1：text 模式的前提是"不需要图示，或至少有一个 diagram 区域"；否则改用遮白裁图。
       if (card.badge === 'low' || (evidence.requiresDiagram && diagrams.length === 0)) {
-        // 规则 2：low 印遮白裁图，不印转写文字。
+        // 规则 2：low 印遮白裁图。T5R2-F1：同时给出识别题干文字——截图有问题还有文字，文字有问题还有截图。
         mode = 'crop';
-        stemText = null;
+        stemText = evidence.questionText;
         cropMedia = `p${card.position}-crop.jpg`;
         fs.writeFileSync(path.join(dir, cropMedia), await maskedQuestionCrop(source, evidence));
       } else {
@@ -211,11 +261,15 @@ async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
         }
       }
 
-      // F2：crop 模式下，存在无定位区域的手写观察记录（遮不掉）→ 提示打印前看一眼；text 模式恒不需要。
+      // F2/T5R2-F1：crop 模式下，存在无定位区域的手写观察记录（遮不掉）→ 沿用旧文案；
+      // 否则徽标 low 也提示（打印余量加宽可能带进相邻题目，且模型框可能整体漂移）。text 模式恒不需要。
       const regionIds = new Set(evidence.regions.map(region => region.id));
-      const needsGlance = mode === 'crop' && evidence.observations.some(
+      const hasUnlocatedHandwriting = evidence.observations.some(
         o => GLANCE_KINDS.has(o.kind) && (o.regionId === null || !regionIds.has(o.regionId)),
       );
+      const needsGlance = mode === 'crop' && (hasUnlocatedHandwriting || card.badge === 'low');
+      const glanceReason = !needsGlance ? null
+        : hasUnlocatedHandwriting ? GLANCE_REASON_UNLOCATED : GLANCE_REASON_LOW;
 
       // 规则 4/5/7：每题至多 1 次 coach，失败不阻塞（提示为空、答案可能只剩原卷/空）。
       let coaching: Coaching | null = null;
@@ -236,7 +290,7 @@ async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
         subject: card.subject, knowledgeTags: card.knowledgeTags,
         mode, stemText, cropMedia, diagramMedia,
         keyStepPrompt: KEY_STEP_PROMPT, checkboxes: [...CHECKBOXES],
-        needsGlance, glanceReason: needsGlance ? GLANCE_REASON : null,
+        needsGlance, glanceReason,
       });
       answerSheet.push({
         shortId: card.shortId,

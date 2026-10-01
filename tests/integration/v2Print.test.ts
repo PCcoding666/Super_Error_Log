@@ -116,12 +116,12 @@ function evidence(number: string, tags: string[], options: EvidenceOptions = {})
   };
 }
 
-interface QuestionSpec { tags: string[]; needsCheck?: boolean; referenceAnswer?: boolean; diagram?: boolean; diagramMissing?: boolean; located?: boolean; stem?: string }
+interface QuestionSpec { tags: string[]; needsCheck?: boolean; referenceAnswer?: boolean; diagram?: boolean; diagramMissing?: boolean; located?: boolean; stem?: string; number?: string }
 
 function question(number: string, spec: QuestionSpec): RecognitionQuestion {
   return {
-    id: crypto.randomUUID(), number, revision: 1, status: spec.needsCheck ? 'needs_check' : 'ready', selectionEvidence: 'marked_wrong',
-    evidence: evidence(number, spec.tags, spec), verification: { ...CHECKS }, questionMediaId: null, diagramMediaIds: [],
+    id: crypto.randomUUID(), number: spec.number ?? number, revision: 1, status: spec.needsCheck ? 'needs_check' : 'ready', selectionEvidence: 'marked_wrong',
+    evidence: evidence(spec.number ?? number, spec.tags, spec), verification: { ...CHECKS }, questionMediaId: null, diagramMediaIds: [],
     error: null, confirmedAt: null,
   };
 }
@@ -289,10 +289,10 @@ describe('T5 打印快照', () => {
     expect(db.prepare('SELECT status FROM error_item WHERE id = ?').get(mastered.id)).toEqual({ status: 'temporarily_mastered' });
   });
 
-  it('RED2 low 徽标题为 crop 模式且作答区遮白、题干区非全白；ok 题为 text 模式无裁图', async () => {
+  it('RED2 low 徽标题为 crop 模式：stemText 与遮白裁图同时给出；ok 题为 text 模式无裁图', async () => {
     const { base, dataDir, auth } = await setupApp();
     const [low, ok] = await bridgeItems(base, auth, dataDir, [
-      { tags: ['知识点A'], needsCheck: true }, { tags: ['知识点B'] },
+      { tags: ['知识点A'], needsCheck: true, stem: '低把握题题干标记' }, { tags: ['知识点B'] },
     ]) as [WeekItem, WeekItem];
     expect(low.badge).toBe('low');
     const practice = await makePractice(base, auth, [low.id, ok.id]);
@@ -301,7 +301,8 @@ describe('T5 打印快照', () => {
     const lowItem = snapshot.items.find(item => item.itemId === low.id)!;
     const okItem = snapshot.items.find(item => item.itemId === ok.id)!;
     expect(lowItem.mode).toBe('crop');
-    expect(lowItem.stemText).toBeNull();
+    // T5R2-F1：没把握的题同时印文字和截图——截图有问题还有文字，文字有问题还有截图。
+    expect(lowItem.stemText).toBe('低把握题题干标记');
     expect(typeof lowItem.cropMedia).toBe('string');
     expect(okItem.mode).toBe('text');
     expect(okItem.cropMedia).toBeNull();
@@ -516,17 +517,17 @@ describe('T5 打印快照', () => {
     expect((await fetch(`${base}/v2/practice/${practice.id}/print/media/${name}`)).status).toBe(401);
   });
 
-  it('R1-F1 ok 徽标题 requiresDiagram 但没有 diagram 区域时改用 crop 模式（不只印文字）', async () => {
+  it('R1-F1 ok 徽标题 requiresDiagram 但没有 diagram 区域时改用 crop 模式（同时给 stemText）', async () => {
     const { base, dataDir, auth } = await setupApp();
     const [missing, withDiagram, plain] = await bridgeItems(base, auth, dataDir, [
-      { tags: ['知识点A'], diagramMissing: true }, { tags: ['知识点B'], diagram: true }, { tags: ['知识点C'] },
+      { tags: ['知识点A'], diagramMissing: true, stem: '缺图示题题干标记' }, { tags: ['知识点B'], diagram: true }, { tags: ['知识点C'] },
     ]) as [WeekItem, WeekItem, WeekItem];
     const practice = await makePractice(base, auth, [missing.id, withDiagram.id, plain.id]);
     const snapshot = await prepareReady(base, auth, practice.id);
 
     const byItemId = new Map(snapshot.items.map(item => [item.itemId, item]));
-    // 需要图示却没有 diagram 区域 → crop 模式（遮白裁图），不是只印文字。
-    expect(byItemId.get(missing.id)).toMatchObject({ mode: 'crop', stemText: null });
+    // 需要图示却没有 diagram 区域 → crop 模式（遮白裁图），不是只印文字；T5R2-F1：同样给出 stemText。
+    expect(byItemId.get(missing.id)).toMatchObject({ mode: 'crop', stemText: '缺图示题题干标记' });
     expect(typeof byItemId.get(missing.id)!.cropMedia).toBe('string');
     // 有 diagram 区域的保持 text 模式并裁出图示；不需要图示的保持 text 模式。
     expect(byItemId.get(withDiagram.id)).toMatchObject({ mode: 'text', cropMedia: null });
@@ -534,23 +535,45 @@ describe('T5 打印快照', () => {
     expect(byItemId.get(plain.id)).toMatchObject({ mode: 'text', cropMedia: null });
   });
 
-  it('R1-F2 crop 模式：手写观察记录无定位区域时 needsGlance 提示；都有定位则不需要', async () => {
+  it('R1-F2 crop 模式 needsGlance：low 徽标恒提示；无法定位手写沿用旧文案，否则提示 AI 没把握；text 恒 false', async () => {
     const { base, dataDir, auth } = await setupApp();
-    const [unlocated, located, textItem] = await bridgeItems(base, auth, dataDir, [
-      { tags: ['知识点A'], needsCheck: true }, { tags: ['知识点B'], needsCheck: true, located: true }, { tags: ['知识点C'] },
-    ]) as [WeekItem, WeekItem, WeekItem];
-    const practice = await makePractice(base, auth, [unlocated.id, located.id, textItem.id]);
+    const [unlocated, located, textItem, diagramMissingLocated] = await bridgeItems(base, auth, dataDir, [
+      { tags: ['知识点A'], needsCheck: true }, { tags: ['知识点B'], needsCheck: true, located: true },
+      { tags: ['知识点C'] }, { tags: ['知识点D'], diagramMissing: true, located: true },
+    ]) as [WeekItem, WeekItem, WeekItem, WeekItem];
+    const practice = await makePractice(base, auth, [unlocated.id, located.id, textItem.id, diagramMissingLocated.id]);
     const snapshot = await prepareReady(base, auth, practice.id);
 
     const byItemId = new Map(snapshot.items.map(item => [item.itemId, item]));
-    // 无定位（regionId null 的批注/订正）→ 可能没遮全，提示打印前看一眼。
+    // 无定位（regionId null 的批注/订正）→ 可能没遮全，沿用旧文案。
     expect(byItemId.get(unlocated.id)).toMatchObject({
       mode: 'crop', needsGlance: true, glanceReason: '这题的手写内容可能没有遮全，打印前请看一眼',
     });
-    // 全部有定位 → 不需要。
-    expect(byItemId.get(located.id)).toMatchObject({ mode: 'crop', needsGlance: false, glanceReason: null });
+    // T5R2-F1：low 徽标即使全部有定位也提示（余量加宽可能带进相邻题目），用新文案。
+    expect(byItemId.get(located.id)).toMatchObject({
+      mode: 'crop', needsGlance: true, glanceReason: '这题 AI 没把握，打印前看一眼截图是否完整',
+    });
     // text 模式恒为 false / null（本条观察记录同样无定位，但文字题面不含手写内容）。
     expect(byItemId.get(textItem.id)).toMatchObject({ mode: 'text', needsGlance: false, glanceReason: null });
+    // ok 徽标、因缺图示进 crop 且全部有定位：不需要。
+    expect(byItemId.get(diagramMissingLocated.id)).toMatchObject({ mode: 'crop', needsGlance: false, glanceReason: null });
+  });
+
+  it('T5R2-F2 fallbackNote 题号规整：带标点/括号的题号印成"第 N 题"', async () => {
+    const { base, dataDir, auth } = await setupApp();
+    const items = await bridgeItems(base, auth, dataDir, [
+      { tags: ['知识点A'], number: '2.' }, { tags: ['知识点B'], number: '（3）' },
+      { tags: ['知识点C'], number: '第4题' }, { tags: ['知识点D'], number: '13' },
+    ]);
+    await setPaperLocation(base, auth, 'school');
+    const practice = await makePractice(base, auth, items.map(item => item.id));
+    const snapshot = await prepareReady(base, auth, practice.id);
+    expect(snapshot.answerSheet.map(entry => entry.fallbackNote)).toEqual([
+      '对照原卷第 2 题', '对照原卷第 3 题', '对照原卷第 4 题', '对照原卷第 13 题',
+    ]);
+    // 证据里的题号保持原值，不改。
+    const row = getDb().prepare('SELECT content_json FROM evidence_record WHERE item_id = ?').get(items[0]!.id) as { content_json: string };
+    expect((JSON.parse(row.content_json) as { questionNumber: string }).questionNumber).toBe('2.');
   });
 
   it('RED9 生产入口依赖守卫：dist/main.js 可达第三方包只有 express 与 sharp', () => {

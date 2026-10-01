@@ -301,9 +301,9 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
 }
 ```
 
-- `mode`：`text` 印 `stemText`（`requiresDiagram` 时另附 `diagramMedia` 图片）；徽标 `low` 或需要图示但无图示区域时印遮白裁图 `cropMedia`（题面上的作答/订正/批注/参考答案已遮白）。
+- `mode`：`text` 印 `stemText`（`requiresDiagram` 时另附 `diagramMedia` 图片）；徽标 `low` 或需要图示但无图示区域时印遮白裁图 `cropMedia`（题面上的作答/订正/批注/参考答案已遮白）。`crop` 模式下 `stemText` 同样是识别出的题干文字（不是 `null`）——截图有问题时学生还有文字，文字有问题时还有截图；排版时在文字旁标注"AI 对这题没把握，以截图为准"。
 - `answer.source`：`paper`（原卷参考答案，`label` `原卷参考答案`）/ `ai`（coach 答案，`label` `AI 参考，未经老师核验`）/ `none`（`text`/`label` 为 `null`）。
-- `fallbackNote` 随设置里 `paperLocation`：`school` → `对照原卷第 N 题`；`home` → `回家后对照原卷第 N 题`；`varies` → `对照原卷第 N 题（原卷不在手边就回家再对）`。
+- `fallbackNote` 随设置里 `paperLocation`：`school` → `对照原卷第 N 题`；`home` → `回家后对照原卷第 N 题`；`varies` → `对照原卷第 N 题（原卷不在手边就回家再对）`。`N` 是规整后的题号：去掉首尾空白、结尾的 `.．、。:：)）` 与"题"、开头的 `(（` 与"第"（如 `"2."`→`第 2 题`、`"（3）"`→`第 3 题`）；规整后为空则用原值。
 - `needsGlance` 见 §6。
 
 ### 3.14 `GET /v2/practice/:id/print/media/:name` — 快照图片
@@ -595,5 +595,5 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
   - 打印准备（3.12）：每份包每题至多 1 次 coach 调用，失败不阻塞（提示为空、答案可能只剩原卷/空）。
   - 推荐（3.8）与回报（3.16）不调用模型。
 - **打印是异步的**：`POST /v2/practice/:id/print` 返回 202 后必须轮询 `GET /v2/practice/:id/print` 到 `ready`（或 `failed` 后重发 POST 续做）；快照只生成一次，之后改题不影响它。
-- **`needsGlance`**：遮白裁图模式下，存在无法定位的手写观察记录（遮不全）时为 `true`，`glanceReason` 为 `这题的手写内容可能没有遮全，打印前请看一眼`——手机排版时应提示学生打印前看一眼原图。
+- **`needsGlance`**：遮白裁图（`crop`）模式下，存在无法定位的手写观察记录（遮不全）或徽标为 `low`（AI 没把握，且打印裁图余量较宽可能带进相邻题目）时为 `true`；`glanceReason` 分别为 `这题的手写内容可能没有遮全，打印前请看一眼`（无法定位的手写优先）或 `这题 AI 没把握，打印前看一眼截图是否完整`。`text` 模式恒为 `false`。手机排版时应提示学生打印前看一眼原图/截图。
 - **隐私**：学生原话（追问回答）与 AI 归纳只给学生本人看，**不得写入客户端日志**；修改指令与修改文字同理。家长侧只见聚合计数。

@@ -120,6 +120,11 @@ export function validateFollowupAsk(data: unknown, evidence: Evidence): Followup
   if (!ids.some(id => evidence.observations.some(o => o.id === id && (o.kind === 'student_work' || o.kind === 'correction')))) {
     bad('追问必须引用学生作答或订正');
   }
+  // T5R2-F3：有学生原作时必须针对原作提问（订正是改完后的做法，不是当时错的那一步）。
+  const hasStudentWork = evidence.observations.some(o => o.kind === 'student_work');
+  if (hasStudentWork && !ids.some(id => evidence.observations.some(o => o.id === id && o.kind === 'student_work'))) {
+    bad('有学生原作时追问必须引用至少一条学生原作');
+  }
   return { question, referencedObservationIds: ids };
 }
 
@@ -260,8 +265,9 @@ export function validateCorrectionChanges(data: unknown, evidence: Evidence): { 
  */
 export function validateCorrectionProposal(data: unknown, evidence: Evidence): CorrectionProposalResult {
   const d = obj(data, 'correctionProposal');
-  const clarify = d.clarify === null || d.clarify === undefined ? null : str(d.clarify, 'clarify');
-  if (clarify !== null && clarify.length > 200) bad('clarify 超长');
+  // T5R2-F4：clarify 过长不判失败，截断到 80 字。
+  const rawClarify = d.clarify === null || d.clarify === undefined ? null : str(d.clarify, 'clarify');
+  const clarify = rawClarify !== null && rawClarify.length > 80 ? rawClarify.slice(0, 80) : rawClarify;
   const entries = list(d.changes, 'changes', 20);
   if (entries.length === 0 && !clarify) bad('没有修改建议时须给出反问');
 

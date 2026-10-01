@@ -433,10 +433,10 @@ describe('T5b 端到端串联：学生的一周', () => {
     expect(snap1.checkboxes).toEqual(['独立做出', '看了一级提示', '看了二级提示', '没做出来']);
     // 题2印的是修改后的题干。
     expect(snapshot.items[1]!.stemText).toContain('求 y 的值');
-    // 题3徽标 low → 遮白裁图；无定位批注 → needsGlance。
+    // 题3徽标 low → 遮白裁图 + 识别题干文字一起给（T5-R2）；无定位批注 → needsGlance。
     const snap3 = snapshot.items[2]!;
     expect(snap3).toMatchObject({
-      itemId: item3.id, mode: 'crop', stemText: null, cropMedia: 'p2-crop.jpg',
+      itemId: item3.id, mode: 'crop', stemText: '已知 x+y=3，求 x 的值。', cropMedia: 'p2-crop.jpg',
       needsGlance: true, glanceReason: '这题的手写内容可能没有遮全，打印前请看一眼',
     });
 
