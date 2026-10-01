@@ -114,17 +114,6 @@ final class TaskPresentationTests: XCTestCase {
     XCTAssertTrue(uploading.headline.contains("上传"))
   }
 
-  // MARK: 确认后的「继续下一道待处理」
-
-  func testNextActionableSkipsCurrentAndNonActionable() throws {
-    let job = try Self.job(statuses: ["confirmed", "processing", "needs_check", "ready", "failed"])
-    let next = TaskPresentation.nextActionableQuestion(in: job, after: job.questions[2].id)
-    XCTAssertEqual(next?.id, job.questions[3].id, "needs_check 之后按顺序取 ready；confirmed/processing/failed 跳过")
-    let wrap = TaskPresentation.nextActionableQuestion(in: job, after: job.questions[3].id)
-    XCTAssertEqual(wrap?.id, job.questions[2].id, "当前已是最后一条待处理时回到最前面的待处理")
-    XCTAssertNil(TaskPresentation.nextActionableQuestion(in: try Self.job(statuses: ["confirmed", "failed"]), after: nil))
-  }
-
   // MARK: 刷新错误分类（lastError 不等于离线）
 
   func testRefreshIssueClassification() {
@@ -136,90 +125,6 @@ final class TaskPresentationTests: XCTestCase {
     XCTAssertEqual(TaskPresentation.classifyRefreshIssue(RecognitionClientError.server(status: 401, message: "x")), .unauthorized)
     XCTAssertEqual(TaskPresentation.classifyRefreshIssue(RecognitionClientError.server(status: 400, message: "x")), .unknown)
     XCTAssertEqual(TaskPresentation.classifyRefreshIssue(RecognitionClientError.invalidResponse), .unknown)
-  }
-
-  // MARK: 页内原图身份绑定门禁（审查意见：题目/任务/revision/源图片四元绑定）
-
-  static let bindingURL = URL(fileURLWithPath: "/tmp/synthetic-source.jpg")
-  static func binding(_ qid: String, _ revision: Int, task: String = "00000000-0000-4000-8000-0000000000aa") -> SourceBinding {
-    SourceBinding(taskID: UUID(uuidString: task)!, questionID: qid, revision: revision, url: bindingURL)
-  }
-
-  func testStaleInlineImageCompletionCannotEnableNewQuestion() {
-    var gate = InlineSourceGate()
-    let oldBinding = Self.binding("q1", 3)
-    gate.begin(oldBinding)
-    // 学生已换到另一道题：旧图片解码此刻才完成——不得启用新题的勾选。
-    let newBinding = Self.binding("q2", 1)
-    gate.begin(newBinding)
-    XCTAssertFalse(gate.complete(oldBinding), "迟到的旧图解码完成不得生效")
-    XCTAssertFalse(gate.isReadable(newBinding))
-    XCTAssertTrue(gate.complete(newBinding))
-    XCTAssertTrue(gate.isReadable(newBinding))
-  }
-
-  func testRevisionBumpInvalidatesPreviouslyReadableSource() {
-    var gate = InlineSourceGate()
-    let before = Self.binding("q1", 3)
-    gate.begin(before)
-    XCTAssertTrue(gate.complete(before))
-    XCTAssertTrue(gate.isReadable(before))
-    // 证据更新（revision 递增）→ 旧可读状态与勾选作废，必须重新对照。
-    let after = Self.binding("q1", 4)
-    gate.begin(after)
-    XCTAssertFalse(gate.isReadable(before))
-    XCTAssertFalse(gate.isReadable(after))
-  }
-
-  func testLoadFailureClearsReadability() {
-    var gate = InlineSourceGate()
-    let binding = Self.binding("q1", 3)
-    gate.begin(binding)
-    XCTAssertTrue(gate.complete(binding))
-    gate.fail(binding)
-    XCTAssertFalse(gate.isReadable(binding), "加载失败/字节损坏后不得保持可读")
-  }
-
-  func testSameBindingReloadClearsReadability() {
-    var gate = InlineSourceGate()
-    let binding = Self.binding("q1", 3)
-    gate.begin(binding)
-    XCTAssertTrue(gate.complete(binding))
-    gate.begin(binding)   // 同绑定重载（如重试解码）也作废旧可读
-    XCTAssertFalse(gate.isReadable(binding))
-  }
-
-  func testBindingIdentityCoversTaskQuestionRevisionAndURL() {
-    let base = Self.binding("q1", 3)
-    XCTAssertNotEqual(base, Self.binding("q1", 4), "revision 是身份的一部分")
-    XCTAssertNotEqual(base, Self.binding("q2", 3), "questionID 是身份的一部分")
-    XCTAssertNotEqual(base, Self.binding("q1", 3, task: "00000000-0000-4000-8000-0000000000bb"), "taskID 是身份的一部分")
-    var otherURL = base
-    otherURL = SourceBinding(taskID: base.taskID, questionID: base.questionID, revision: base.revision,
-      url: URL(fileURLWithPath: "/tmp/other-source.jpg"))
-    XCTAssertNotEqual(base, otherURL, "源图片 URL 是身份的一部分")
-  }
-
-  // MARK: 加载定序器（Codex 中期审查：B 完成后 A 迟到完成不得覆盖）
-
-  func testLateCompletionFromEarlierLoadIsIgnored() {
-    var sequencer = LoadSequencer<SourceBinding>()
-    let a = Self.binding("qA", 1)
-    let b = Self.binding("qB", 1)
-    let genA = sequencer.begin(a)
-    let genB = sequencer.begin(b)          // 换题：B 开始加载
-    XCTAssertTrue(sequencer.isCurrent(b, generation: genB))
-    XCTAssertFalse(sequencer.isCurrent(a, generation: genA),
-      "B 已开始后，A 的迟到完成不是当前加载——不得写 image、不得上报门禁")
-  }
-
-  func testReloadInvalidatesEarlierCompletion() {
-    var sequencer = LoadSequencer<SourceBinding>()
-    let a = Self.binding("qA", 1)
-    let first = sequencer.begin(a)
-    let second = sequencer.begin(a)        // 同题重新加载（如重试解码）
-    XCTAssertFalse(sequencer.isCurrent(a, generation: first), "重载后旧代次作废")
-    XCTAssertTrue(sequencer.isCurrent(a, generation: second))
   }
 
   // MARK: 旧存档兼容：无 lastIssueKind 的任务照常解码

@@ -68,20 +68,28 @@ struct PracticeReturnView: View {
   // MARK: - 逐题卡片
 
   @ViewBuilder private func rowCard(_ row: ReturnForm.Row) -> some View {
+    // T6f：行版式与选题页、练习详情页一致——题干裁图行顶部占满宽度（≤72pt、等比居左），
+    // 下面依次短编号、学科 · 知识点、题干文字摘要（最多两行），再是五个选项。
+    // ReturnForm.Row 没有的字段（知识点、题干摘要）从练习详情取。
+    let detail = practice.items.first { $0.id == row.itemId }
     PaperCard {
       VStack(alignment: .leading, spacing: 12) {
-        HStack(alignment: .top, spacing: 12) {
-          CropThumbnail(itemID: row.itemId, fill: true)
-            .frame(width: 56, height: 72).clipped()
-            .accessibilityHidden(true)
-          VStack(alignment: .leading, spacing: 4) {
-            Text(row.shortId ?? "题目").font(.headline).foregroundStyle(Palette.ink)
-            if let subject = row.subject {
-              Text(subject).font(.caption).foregroundStyle(Palette.muted)
-            }
+        CropThumbnail(itemID: row.itemId)
+          .frame(maxWidth: .infinity, maxHeight: 72, alignment: .leading)
+          .clipped()
+          .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 4) {
+          Text(row.shortId ?? "题目").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+          let subtitle = [detail?.subject ?? row.subject, detail?.knowledgeTags.joined(separator: "、")]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+          if !subtitle.isEmpty {
+            Text(subtitle).font(.caption).foregroundStyle(Palette.muted)
           }
-          Spacer(minLength: 0)
+          if let excerpt = detail?.questionExcerpt, !excerpt.isEmpty {
+            Text(excerpt).font(.caption).foregroundStyle(Palette.ink).lineLimit(2)
+          }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         ForEach(Self.completionOptions, id: \.0.rawValue) { option, title in
           ChoiceRow(title: title, isSelected: row.completion == option) {
             form.selectCompletion(option, for: row.itemId)

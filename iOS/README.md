@@ -1,60 +1,96 @@
 # 超级错题本 · iPhone 学生端
 
-独立 SwiftUI 项目，最低 iOS 18。应用导航、复盘选项、状态与 PDF 标签为中文；原题文字、旧英文选项内部值和学生自由笔记不改写。示例题与真实确认题分开呈现，示例不计入真实学习进度。
+SwiftUI 项目，最低 iOS 18。界面中文；单一「本周」主页，没有 Tab。
+接口形状以 `docs/mobile-v2-api.md`（/v2）与 `docs/mobile-recognition-api.md`（/v1 上传与识别进度）为准。
 
-## 当前流程
+## 学生的一周（当前流程）
 
-1. 本周添加照片：原始导入字节留在本机；后台生成一次 JPEG 副本。导入本身不发请求。每批最多选择 10 张，按显示顺序确认并提交；多次导入的其余照片仍留在本机，可再选下一批。每批上传前显示所选照片、实际数量、百炼处理说明；不同意则不上传。
-2. 连接设置（双模式）：回环模式填写 `http://127.0.0.1:3101` 等本机地址及配对口令（仅适用这台 Mac 的 iPhone 模拟器）；云端模式（Task 5）用相机扫描管理员在 Mac 服务端生成的配对二维码，兑换一次性会话为 30 天设备令牌。二维码只接受固定云域名 `https://study.pccoding666.com` 的 HTTPS 地址；任意服务器、http、带凭据/端口/路径的 URL 一律拒绝，重定向一律禁止。设备令牌与 deviceId 存 Keychain（本设备）；云端每批提交前强制重新 health 检查（不是仅 30 秒缓存），服务返回的 serviceId 必须与配对一致。连接状态行显示在「本周」主屏与连接设置页：未配对（扫码配对）、已配对待检查（自动首次检查）、检查中、可以上传（开始上传）、服务繁忙（稍后再试）、连接失败（重试连接）、授权失效（重新配对，清空凭据后回扫码）、版本不兼容（重新配对）。上传确认页云端模式显示「照片将上传到你的广州云服务器，再由阿里云百炼处理」。UI 测试注入：DEBUG 构建可用 `-cloud-loopback http://127.0.0.1:<端口>` 启动参数把云模式指向本机合成服务器（仅接受回环 http URL，Release 构建该覆盖恒为 nil，不能绕过固定云域名约束）；首次启动且无配对时自动向合成服务器兑换。
-3. 上传：在发送前持久化 UUID 幂等键，重复尝试读取同一份已经保存的 JPEG。每张照片独立生成异步任务，上传期间照片卡片显示真实字节进度（百分比与进度条）。前台短轮询，后台停止轮询而不取消服务任务。已同意的上传即使在非前台返回，也不会重新启动轮询，回到前台后才恢复。照片卡片按语义着色：灰=仅本机，蓝=上传/识别中，橙=待你确认，绿=已确认，红=失败可重试——“看到橙色就是你的活”。
-4. 查看候选：全部题目或“批改标记 / 订正痕迹”筛选，印刷题干与原作、订正分开。完整本机原图始终可缩放查看；没有通过核对的裁剪仅作为明确标注的次要检查入口。`completed` 不代表已确认。
-5. 确认：必须打开可读完整原图，必要图示经后台完整解码可读取，再明确勾选逐项比较。图示到达时可用状态自动刷新；损坏图示不会启用确认，可“重新读取题目图示”。损坏下载或被替换的旧缓存字节保存在同一私有集合的 `CorruptMedia/`，不覆盖丢弃证据。`needs_check` 不能直接确认；可保留疑问或暂不处理。可重试的失败项只重试该项。仅已确认且满足独立核对条件的快照进入复盘。
-6. 复盘：“查看题目”包含已确认快照的完整题干、可读本机图示及分别标注的原作／订正等来源记录，未提交或已保存后都可离线查看。缺少图示时明确提示不可用，保留原图入口，不用其他图片代替。四个问题均由学生选择，前三问选中即自动进入下一问（短暂停顿让勾选可见，可点返回修改），最后一问明确点「保存复盘」提交；展开的题目可收起，选择练习题仍需另行操作。
-7. 练习包：保存创建时的题目快照；印刷题干可跨页，必要图示必须已保存、可读取。PDF 不读取原始整页、原作过程或订正记录。可预览、系统分享或打印。
-8. “读取本机已有识别任务”仅通过配对 API 读取已有任务与来源图片，不产生识别调用、不授予上传同意。按任务 ID 去重，拒绝较旧快照。已保存结果与复盘离线可读。
+1. **拍错题**：主页「拍这周的错题」拍照或从相册添加。原始字节留在本机，另存一份上传用 JPEG。
+   首次上传前弹一次同意说明（点名目的地：广州云服务器 + 阿里云百炼）；同意后记住，
+   之后新加的照片自动上传，不再问。没同意前照片只在本机。
+2. **上传与识别**：每张照片一个任务，上传有真实字节进度；前台每 3 秒轮询识别进度，
+   切后台停轮询不取消任务。上传成功拿到任务 ID 后立即 `POST /v2/photos/:jobId/register` 登记；
+   登记失败不影响上传结果，下次刷新自动补登记。
+3. **本周错题**：识别完成并登记后，题目卡片出现在「本周错题」。每张卡可「不是错题」
+   （8 秒内可撤销）或「不对，改一下」（说一句生成修改建议 → 看改前改后 → 接受；
+   或「自己动手改」键盘直改；修改带 revision 乐观并发，409 时刷新后重试）。
+4. **选题**：「选这周要练的题」进推荐页，推荐默认全选、显示服务器给的推荐理由，
+   「就练这些」建练习（1–8 道）。
+5. **复盘（可选）**：练习卡「去复盘」→ 每题「复盘这道」→ AI 追问（最多两轮）→ 确认页
+   （AI 建议预选并标注、「现在的把握」永不预选、没选把握不能提交）→ 学生自己点「提交复盘」。
+6. **打印**：练习卡「打印练习纸」→ 服务器异步准备快照（手机轮询到 ready）→ 手机按快照
+   原生排版生成 A4 PDF → 预览 → 系统分享/打印。快照只生成一次。
+7. **录结果**：纸上做完后（隔 3–7 天）练习卡「录结果」，逐题选五选一完成情况与对错、
+   写做题日期 → 提交 → 已记录区显示服务器给的那句话。当天做对不算掌握。
+8. **看结果**：「看结果」页分「这次掌握的 / 做对了，过几天再验证 / 还要再练的」三组，
+   另有校准句与下次确认日期。之后主页出现「选下一份要练的题」。
 
-这实现了客户端流程；合成 HTTP/UI 测试不证明真实模型质量。真实照片题目覆盖、转录与图示正确性须由原图逐项验收，不能以接口成功或 UI 测试通过替代。
+## 数据在哪
 
-服务会公开原始候选位置（不是已验证裁图），同题号出现多处时要核对具体位置；旧记录没有位置则如实提示。裁剪查看器的正文和辅助阅读标签都标为裁剪，不再称作完整原图。示例指导语只做中文显示映射，不改写保存的原文或真实证据。
+- **服务器是记录源**：错题、复盘、练习、结果都以服务器为准（/v2）。
+- **本机只有**：照片原件与上传副本（Application Support，排除备份、按集合隔离）、
+  Loop 只读缓存（`Loop/loop-cache.json`，离线时显示「上次保存的内容」并标注）、
+  配对令牌（Keychain，按集合名隔离 scope）。旧版存档（v1 的 drafts/packs/realProblems）
+  保持可解码，不再写入。
+- 写操作必须联网，失败如实提示，不做本地排队。学生原话（追问回答、修改指令）不写日志。
 
-结构／认证／权限／模型配置失败不自动循环请求。服务公开 `recoverable` 时，可在修复后明确选择“重新识别这道题”或“重新识别这张照片”，阅读可能产生新模型请求的说明后再次确认；只继续该项保存的下一阶段，保留已完成步骤、其他题目和历史记录。旧任务不会因启动或读取而自动恢复。内存中的旧记录可接受同版本新增候选位置／恢复策略字段，但不会因此接受题干、状态或确认内容的同版本改写。
+## 构建与单元测试
 
-## 构建和模拟器
-
-本机 Xcode 26.6 的 SDK 为 26.5，已有模拟器 runtime 为 26.3/18.6。以下使用直接 target 构建，不修改全局 Xcode 选择或安装 runtime：
+仓库根目录执行，逐条单独跑：
 
 ```sh
-cd /Users/chengpeng/MyProject/Super_Error_Log/iOS
-env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
-env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
-  -project SuperErrorLog.xcodeproj -target StudentAppUITests -configuration Debug \
+swift test --package-path iOS
+xcodebuild -project iOS/SuperErrorLog.xcodeproj -target SuperErrorLog -configuration Debug \
+  -sdk iphonesimulator SYMROOT=build/Manual CODE_SIGNING_ALLOWED=NO -quiet build
+```
+
+Swift 包 `StudentCore`（`iOS/Package.swift`）只含纯逻辑与客户端：`Domain/`、
+`RecognitionClient.swift`、`PairingStore.swift`、`StudyStore.swift`、`V2Client.swift`、
+`LoopStore.swift`；视图文件全部在 `exclude` 里（不进包、只进 App target，Xcode 工程是同步目录）。
+`swift test` 在 macOS 上跑（需 macOS 14+），用 `URLProtocol` 合成传输，不连真实服务。
+注意：`SYMROOT=build/Manual` 等相对路径按**项目目录**（`iOS/`）解析。
+
+## 界面回归测试（合成服务器，不连真实服务、不调用 AI）
+
+`UITests/SyntheticRecognitionServer.swift` 是测试进程内的回环 HTTP 服务器：
+模拟云端语义（配对兑换、health）与完整 /v2 闭环（登记、周视图、推荐、练习、打印
+「轮询两次就绪」、回传、回报、追问、修改）。`LoopJourneyTests` 覆盖 J1 拍照进错题本、
+J2 改与移出、J3 选题与复盘、J4 打印/录结果/看结果/下一份、J5 离线与重启；
+`CloudConnectionJourneyTests` 覆盖连接状态机各分支。`LiveTourTests` 默认跳过（见下节）。
+
+```sh
+xcodebuild -project iOS/SuperErrorLog.xcodeproj -target StudentAppUITests -configuration Debug \
   -sdk iphonesimulator SYMROOT=build/Manual build CODE_SIGNING_ALLOWED=NO -quiet
-zsh scripts/sign-simulator.sh
-```
-
-最后一步由 Xcode 在模拟器二进制内嵌入 simulated Keychain entitlements，并使用本机 ad-hoc 签名；不需要开发者身份或设备签名团队。直接对 app 使用带 iOS entitlements 的 `codesign` 会被 macOS 拒绝；仅无 entitlement 的未签名构建又会导致 Keychain `-34018`。每次重建后都应再运行这个 helper。
-
-```sh
-env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test-without-building \
-  -xctestrun StudentJourney.xctestrun \
+zsh iOS/scripts/sign-simulator.sh   # 或等价：-target SuperErrorLog ... CODE_SIGNING_ALLOWED=YES \
+                                    #   CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS=scripts/Simulator.entitlements
+xcodebuild test-without-building -xctestrun iOS/StudentJourney.xctestrun \
   -destination 'platform=iOS Simulator,id=9A990744-AF00-4275-8195-7336E94B7C06' \
-  -resultBundlePath build/ui-UNIQUE-RUN.xcresult -parallel-testing-enabled NO
+  -resultBundlePath iOS/build/ui-<唯一名字>.xcresult -parallel-testing-enabled NO
 ```
 
-每次使用新的结果目录，保留失败证据。UI 测试每次创建独立 UUID 本机集合；`SyntheticRecognitionServer` 仅在测试进程内开启随机回环端口，用合成响应测试解码、确认、离线复盘和 PDF，不连接真实服务/模型。照片选择器测试需要现有照片库；不要为重复测试重置或重复添加照片。
+- 每次重建后必须重跑签名步骤（Xcode 嵌入 simulated Keychain entitlements，ad-hoc 签名，
+  不需要开发者身份）；否则 Keychain 报 -34018。
+- 结果目录每次换新名字，保留失败证据。
+- 模拟器相册里需要有照片（照片选择器测试用）；不要为重复测试重置或重复添加照片。
+- 每条用例用独立 `-test-session <UUID>`（隔离的数据集合与 Keychain scope）+
+  `-cloud-loopback http://127.0.0.1:<端口>`（仅 DEBUG、仅接受回环 http，Release 恒无效）。
 
-Swift 包含真实 Store/持久化/客户端的合成 URLProtocol 回归，测试运行需 macOS 14+（Observation）；iPhone 最低版本仍为 iOS 18。只有相机导入与 UIKit PDF 入口不在 Mac 测试包内，仍由模拟器流程验证。
+## 「连真实服务」的探索走查（LiveTourTests）
 
-日常启动：`zsh scripts/run-simulator.sh <已有设备 UUID>`。准备私有示例图：`zsh scripts/prepare-examples.sh /path/to/run-UdBWjj`；这些文件不提交。未提供示例图时，原图入口明确显示缺失，不替换图片。不要分发包含私有示例图的构建。
+默认跳过（没有环境变量即 skip）。跑法：
 
-## 隔离 QA 配对
+1. 本机以回环模式启动真实服务（`SEL_MOBILE_MODE=loopback`，独立数据目录与端口，自备配对口令）。
+2. 模拟器里用 `-test-session <UUID>` 启动过一次 App，并把 `pairing-bootstrap.json`
+   （`baseURL` + `token`）放进该集合的 `Library/Application Support/UITest-<大写 UUID>/`。
+3. 给测试进程传环境变量 `TEST_RUNNER_SEL_TOUR_SESSION=<UUID>`、
+   `TEST_RUNNER_SEL_TOUR_SHOTS=<截图目录>`（写入 xctestrun 的 TestingEnvironmentVariables
+   或 scheme；`TEST_RUNNER_` 前缀会被剥掉再传给测试）。
 
-正常使用通过“连接设置”填写口令。仅 Debug 支持测试准备：用 `-test-session <UUID>` 启动后，QA 操作者可以将 `pairing-bootstrap.json` 放入 app 数据容器的 `Library/Application Support/UITest-<大写 UUID>/`。文件结构是 `baseURL` 字符串与 `token` 字符串；只能放本机配对口令，不放模型密钥。
+这些用例会调用真实模型并在该服务数据里留下合成题目，**不要对着线上服务跑**。
 
-应用读取并验证该文件，写入按同一 UUID 隔离的 Keychain 项，成功后删除 bootstrap 文件。普通集合继续使用原 Keychain 项。启动参数只传 UUID，不能传口令；测试日志与截图中也不能出现真实口令。准备该文件的人应使用私有文件权限且避免打印内容。
+## 已知限制
 
-## 数据边界
-
-数据在 Application Support 内，排除系统备份。照片同时保留原始导入字节与一次生成的上传 JPEG；从本机已有任务读取的来源则是服务保存的 JPEG。修改采用磁盘原子保存后再更新界面；无法识别或损坏的数据保留并阻止写入。版本 1 的示例复盘与练习包可迁移，原笔记和内部选项值保留。
-
-删除应用会丢失本机集合，尚无云恢复、导入/导出学习历史或照片删除界面。物理设备签名、相机授权实机测试、App Store 分发不在当前模拟器验证范围内。纸上练习结果是学生自述，不是 AI 评分，也不代表已掌握。
+- 模拟器不能录音：按住说话（SFSpeechRecognizer）只能真机验证；语音不可用或被拒时只显示键盘。
+- 真机签名用免费开发者证书 7 天到期；真机安装、相机实机验收不在模拟器验证范围内。
+- 删除应用会丢失本机照片与缓存；学习记录在服务器。
+- 合成测试不证明真实模型质量；真实照片的识别正确性须对照原图逐项验收。

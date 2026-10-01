@@ -75,7 +75,7 @@ struct LoopHomeView: View {
     .confirmationDialog("重新识别这张照片？", isPresented: Binding(
       get: { retryPhoto != nil }, set: { if !$0 { retryPhoto = nil } }), titleVisibility: .visible) {
       Button("重新识别") {
-        if let retryPhoto { Task { await store.act(taskID: retryPhoto.taskID, questionID: nil, retry: true) } }
+        if let retryPhoto { Task { await store.retryPhoto(taskID: retryPhoto.taskID) } }
         retryPhoto = nil
       }
       Button("取消", role: .cancel) { retryPhoto = nil }

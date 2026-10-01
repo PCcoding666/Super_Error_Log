@@ -121,16 +121,6 @@ enum TaskPresentation {
       nextStep: "可去复盘已确认的题", actionable: false, needsRefresh: false)
   }
 
-  /// 确认后「继续下一道待处理」：按列表顺序取当前题之后的下一道 ready/needs_check；没有则回到最前面的待处理。
-  static func nextActionableQuestion(in job: RecognitionJob, after currentID: String?) -> RecognitionQuestion? {
-    func actionable(_ q: RecognitionQuestion) -> Bool { q.status == "ready" || q.status == "needs_check" }
-    guard let currentID, let index = job.questions.firstIndex(where: { $0.id == currentID }) else {
-      return job.questions.first(where: actionable)
-    }
-    if let later = job.questions[(index + 1)...].first(where: actionable) { return later }
-    return job.questions[..<index].first(where: actionable)
-  }
-
   static func classifyRefreshIssue(_ error: Error) -> RefreshIssue {
     if case RecognitionClientError.server(let status, _) = error {
       if status == 401 { return .unauthorized }
@@ -147,57 +137,5 @@ enum TaskPresentation {
       }
     }
     return .unknown
-  }
-}
-
-/// 页内原图的身份绑定：任务 + 题目 + revision + 源图片 URL 四元。
-/// 确认门禁以「这份来源真实解码显示」为准，不用「打开过模态框」的布尔值代替核对。
-struct SourceBinding: Equatable, Hashable, Sendable {
-  let taskID: UUID
-  let questionID: String
-  let revision: Int
-  let url: URL
-}
-
-/// 页内原图可读状态机：begin 换绑即作废旧可读；complete 只接受当前 pending（迟到旧图不生效）；
-/// fail 清除对应可读状态。视图层在换题、图片 URL 变化、加载失败时调用 begin/fail。
-struct InlineSourceGate: Equatable, Sendable {
-  private(set) var pending: SourceBinding?
-  private(set) var readable: SourceBinding?
-  mutating func begin(_ binding: SourceBinding) {
-    pending = binding
-    readable = nil   // 每次开始加载（含同绑定重载）都作废旧可读；对应勾选由视图层一并清除
-  }
-  /// 返回这次解码完成是否生效（false = 迟到的旧图，不得启用新题）。
-  @discardableResult
-  mutating func complete(_ binding: SourceBinding) -> Bool {
-    guard pending == binding else { return false }
-    readable = binding
-    pending = nil
-    return true
-  }
-  mutating func fail(_ binding: SourceBinding) {
-    if pending == binding { pending = nil }
-    if readable == binding { readable = nil }
-  }
-  func isReadable(_ binding: SourceBinding) -> Bool { readable == binding }
-}
-
-/// M1 review：页内图片加载定序器。每次加载得到递增代次；只有「当前 token + 当代代次」
-/// 的完成才允许写界面/上报门禁——迟到旧图（先开始的 A 晚于 B 完成）一律忽略。
-struct LoadSequencer<Token: Hashable & Sendable>: Equatable, Sendable {
-  private var generation: UInt64 = 0
-  private(set) var activeToken: Token?
-  private(set) var activeGeneration: UInt64 = 0
-  /// 开始一次加载；替换旧 token。返回本次代次。
-  mutating func begin(_ token: Token) -> UInt64 {
-    generation += 1
-    activeToken = token
-    activeGeneration = generation
-    return generation
-  }
-  /// 完成是否仍属当前加载（绑定未换、未被更新的 begin 覆盖）。
-  func isCurrent(_ token: Token, generation check: UInt64) -> Bool {
-    activeToken == token && activeGeneration == check
   }
 }

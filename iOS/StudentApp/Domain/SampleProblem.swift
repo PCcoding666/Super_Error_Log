@@ -40,35 +40,3 @@ struct SampleProblem: Identifiable, Sendable {
       symbol: "arrow.triangle.branch"),
   ]
 }
-
-enum ReflectionOptions {
-  static let attempts = ["I had a plan", "I got stuck partway", "I was unsure"]
-  static let takeaways = [
-    "Check each calculation", "Choose a different method", "Read the question more carefully",
-    "I’m not sure yet",
-  ]
-  static let confidences = ["On my own", "With a hint", "I need to learn it again"]
-  static let paperOutcomes = [
-    "I solved it independently", "I needed a hint", "I’m still working on it",
-  ]
-
-  private static let chineseTitles = [
-    "I had a plan": "当时有思路",
-    "I got stuck partway": "做到一半卡住了",
-    "I was unsure": "一开始就没把握",
-    "Check each calculation": "检查每一步计算",
-    "Choose a different method": "换一种方法",
-    "Read the question more carefully": "先读清题目条件",
-    "I’m not sure yet": "还没想清楚",
-    "On my own": "能独立完成",
-    "With a hint": "需要一点提示",
-    "I need to learn it again": "还要再学一下",
-    "I solved it independently": "这次独立做出来了",
-    "I needed a hint": "看了提示才做出来",
-    "I’m still working on it": "还没有做出来",
-  ]
-
-  static func displayTitle(for storedValue: String) -> String {
-    chineseTitles[storedValue] ?? storedValue
-  }
-}

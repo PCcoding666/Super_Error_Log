@@ -23,11 +23,6 @@ struct ReflectionDraft: Codable, Equatable {
   var revisit: Bool?
   var note = ""
   var submittedAt: Date?
-  var isComplete: Bool {
-    ReflectionOptions.attempts.contains(attempt ?? "")
-      && ReflectionOptions.takeaways.contains(takeaway ?? "")
-      && ReflectionOptions.confidences.contains(confidence ?? "") && revisit != nil
-  }
 }
 
 struct PaperPack: Codable, Identifiable, Equatable {
@@ -72,9 +67,6 @@ struct StudyState: Codable, Equatable {
   var uploadConsentGranted = false
   var allProblems: [StudyProblem] { realProblems + SampleProblem.all.map { StudyProblem(example: $0) } }
   func problem(_ id: String) -> StudyProblem? { allProblems.first { $0.id == id && $0.printable } }
-  func uploadBatch(selected: Set<String>) -> [String] {
-    Array(importedPhotos.filter { selected.contains($0) }.prefix(10))
-  }
 
   init() {}
   private enum CodingKeys: String, CodingKey {
@@ -126,49 +118,6 @@ struct StudyState: Codable, Equatable {
         if let snapshot { realProblems.append(snapshot) }
       }
     }
-  }
-
-  mutating func updateDraft(_ id: String, draft: ReflectionDraft) {
-    guard problem(id) != nil else { return }
-    var draft = draft
-    draft.submittedAt = nil
-    drafts[id] = draft
-    selectedIDs.remove(id)
-  }
-
-  mutating func submit(_ id: String, at date: Date = Date()) throws {
-    guard problem(id) != nil else { throw StudyError.unknownProblem }
-    guard var draft = drafts[id], draft.isComplete else { throw StudyError.incompleteReflection }
-    draft.submittedAt = date
-    drafts[id] = draft
-  }
-
-  mutating func submit(_ id: String, draft: ReflectionDraft, at date: Date = Date()) throws {
-    guard problem(id) != nil else { throw StudyError.unknownProblem }
-    guard draft.isComplete else { throw StudyError.incompleteReflection }
-    updateDraft(id, draft: draft)
-    try submit(id, at: date)
-  }
-
-  mutating func select(_ id: String, selected: Bool) throws {
-    if !selected {
-      selectedIDs.remove(id)
-      return
-    }
-    guard problem(id) != nil else { throw StudyError.unknownProblem }
-    guard let draft = drafts[id], draft.isComplete, draft.submittedAt != nil else {
-      throw StudyError.selectionNotReady
-    }
-    selectedIDs.insert(id)
-  }
-
-  mutating func makePack(at date: Date = Date()) throws -> PaperPack {
-    guard !selectedIDs.isEmpty else { throw StudyError.emptySelection }
-    for id in selectedIDs { try select(id, selected: true) }
-    let snapshots = allProblems.filter { selectedIDs.contains($0.id) }
-    let pack = PaperPack(createdAt: date, problemIDs: snapshots.map(\.id), problemSnapshots: snapshots)
-    packs.insert(pack, at: 0)
-    return pack
   }
 }
 

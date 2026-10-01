@@ -1,9 +1,11 @@
 import XCTest
 
-/// Task 5 RED：云端连接状态 UI 旅程。合成服务器（回环传输 + 云端语义）驱动
+/// 云端连接状态 UI 旅程。合成服务器（回环传输 + 云端语义）驱动
 /// 状态机各分支：服务繁忙（acceptingJobs=false）、授权失效（401）、限流（429）、可以上传。
 /// 通过 DEBUG 专用 `-cloud-loopback` 启动参数 + 首次启动自动兑换，注入云模式配对；
-/// 绝不连接真实云域名或模型。状态行直接显示在「本周」主屏（无需先打开设置页）。
+/// 绝不连接真实云域名或模型。状态行直接显示在「本周」主页（无需先打开设置页）。
+/// T6f：适配 v2 主页——首次上传由进门策略自动弹出一次同意说明，不再有「识别所选照片」按钮；
+/// 照片行改用 `photo-progress-` 前缀。
 final class CloudConnectionJourneyTests: XCTestCase {
 
   @MainActor
@@ -54,9 +56,7 @@ final class CloudConnectionJourneyTests: XCTestCase {
     let app = launchCloudApp(server)
     XCTAssertTrue(app.staticTexts["connection-state-ready"].waitForExistence(timeout: 10))
     importOnePhoto(app)
-    let submission = app.buttons["recognize-selected"]
-    reveal(submission, in: app)
-    submission.tap()
+    // v2：首次上传由进门策略自动弹出一次同意说明。
     XCTAssertTrue(app.staticTexts["这次将发送 1 张照片。"].waitForExistence(timeout: 5))
     // 云端确认页必须点名目的地（广州云服务器）而不是本机服务文案。
     let guangzhouCopy = app.staticTexts.matching(
@@ -68,9 +68,8 @@ final class CloudConnectionJourneyTests: XCTestCase {
     reveal(app.buttons["consent-upload"], in: app)
     XCTAssertTrue(app.buttons["consent-upload"].isEnabled, "ready 状态必须允许上传")
     app.buttons["consent-upload"].tap()
-    let job = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recognition-job-")).firstMatch
-    XCTAssertTrue(job.waitForExistence(timeout: 15), app.debugDescription)
-    XCTAssertEqual(server.uploadCount, 1, "同意后恰好一次上传")
+    waitUntil("同意后恰好一次上传") { server.uploadCount == 1 }
+    XCTAssertEqual(server.uploadCount, 1)
   }
 
   @MainActor
@@ -80,16 +79,14 @@ final class CloudConnectionJourneyTests: XCTestCase {
     let app = launchCloudApp(server)
     XCTAssertTrue(app.staticTexts["connection-state-busy"].waitForExistence(timeout: 10))
     importOnePhoto(app)
-    let submission = app.buttons["recognize-selected"]
-    reveal(submission, in: app)
-    submission.tap()
+    // 同意说明照弹（同意与连接状态无关）；点同意时强制重查 health（busy）→ 拒绝上传。
     XCTAssertTrue(app.staticTexts["这次将发送 1 张照片。"].waitForExistence(timeout: 5))
     reveal(app.buttons["consent-upload"], in: app)
     app.buttons["consent-upload"].tap()
-    // 每批提交前强制重查 health（即使显示缓存仍为 busy）→ 拒绝上传，照片留在本机。
     XCTAssertTrue(app.staticTexts["识别服务当前繁忙，请稍后再试。照片仍保存在本机。"].waitForExistence(timeout: 10))
     XCTAssertEqual(server.uploadCount, 0, "busy 状态不得发送任何照片")
-    XCTAssertTrue(app.staticTexts["照片 1 · 已保存在本机"].exists)
+    app.buttons["知道了"].tap()
+    XCTAssertTrue(progressRow(app).waitForExistence(timeout: 5), "照片仍保存在本机")
   }
 
   @MainActor
@@ -99,13 +96,19 @@ final class CloudConnectionJourneyTests: XCTestCase {
     let app = launchCloudApp(server)
     XCTAssertTrue(app.staticTexts["connection-state-ready"].waitForExistence(timeout: 10))
     importOnePhoto(app)
+    // 这次不上传：关掉同意说明（同意只记「同意」，不记「暂不上传」）。
+    let later = app.buttons["暂不上传"]
+    XCTAssertTrue(later.waitForExistence(timeout: 5))
+    later.tap()
     app.terminate()
     app.launch()
     // 重启后：已保存的云配对直接进入待检查 → 检查 → 可以上传（状态机恢复，无需重新扫码）。
     XCTAssertTrue(
       app.staticTexts["connection-state-ready"].waitForExistence(timeout: 15),
       "重启后自动重新检查连接")
-    XCTAssertTrue(app.staticTexts["照片 1 · 已保存在本机"].waitForExistence(timeout: 10))
+    // 未同意的照片重启后会再次询问；关掉后核对照片仍在本机。
+    if app.buttons["暂不上传"].waitForExistence(timeout: 5) { app.buttons["暂不上传"].tap() }
+    XCTAssertTrue(progressRow(app).waitForExistence(timeout: 10), "重启后本机照片仍在")
   }
 
   // MARK: - Helpers
@@ -130,7 +133,24 @@ final class CloudConnectionJourneyTests: XCTestCase {
     let add = app.buttons["Done"].firstMatch
     XCTAssertTrue(add.waitForExistence(timeout: 5))
     add.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-    XCTAssertTrue(app.staticTexts["照片 1 · 已保存在本机"].waitForExistence(timeout: 10))
+    XCTAssertTrue(progressRow(app).waitForExistence(timeout: 10), "导入后本机照片行出现")
+  }
+
+  /// 照片进度行（正在上传/正在识别/还没上传/失败重试）。
+  @MainActor
+  private func progressRow(_ app: XCUIApplication) -> XCUIElement {
+    app.descendants(matching: .any)
+      .matching(NSPredicate(format: "identifier BEGINSWITH %@", "photo-progress-")).firstMatch
+  }
+
+  @MainActor
+  private func waitUntil(_ description: String, timeout: TimeInterval = 20, _ predicate: () -> Bool) {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if predicate() { return }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    }
+    XCTFail(description)
   }
 
   @MainActor

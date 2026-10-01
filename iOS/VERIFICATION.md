@@ -1,3 +1,12 @@
+# 验收历史存档说明
+
+本文件记录的是 **v1**（三 Tab 旧界面：逐题确认、本地复盘、本地练习包）的验收历史，
+供查证当时的结论与证据。v2（单一「本周」主页 + /v2 学习闭环）的验证方式见 `iOS/README.md`：
+单元测试 `swift test --package-path iOS`，界面回归 `LoopJourneyTests`/`CloudConnectionJourneyTests`
+（合成服务器），真实服务走查 `LiveTourTests`。
+
+---
+
 # 云端识别版本验证（2026-09-18）
 
 计划 `docs/superpowers/plans/2026-09-17-iphone-cloud-recognition.md`（Task 1–7）的 iOS 侧验证。完整清单与边界见 `docs/quality/2026-09-17-cloud-recognition-acceptance.md`。

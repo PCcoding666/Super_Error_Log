@@ -16,19 +16,6 @@ struct StudyProblem: Codable, Equatable, Identifiable, Sendable {
   let confirmationRevision: Int?
   let printable: Bool
 
-  var displaySourceNote: String {
-    guard isExample else { return sourceNote }
-    switch sourceNote {
-    case "Your original working shows √16; a later correction shows √13. What would help you catch a slip like this?":
-      return "原作记录为 √16，之后的订正为 √13。下次怎样帮助自己发现这类差异？"
-    case "Several lines of working overlap. Use the original photo to revisit your thinking; the prototype does not guess the crossed-out steps.":
-      return "多行解题过程有重叠。请对照原图回想思路；应用不会猜测被划掉的步骤。"
-    case "Look back at your original working. Decide for yourself which part is worth trying again.":
-      return "回看自己的原作过程，由你决定哪一部分值得再试一次。"
-    default: return sourceNote
-    }
-  }
-
   init(example: SampleProblem) {
     id = example.id; source = example.source; number = example.number
     title = example.title; topic = example.topic; stem = example.stem
@@ -62,17 +49,6 @@ struct StudyProblem: Codable, Equatable, Identifiable, Sendable {
       let parts = path.split(separator: "/", omittingEmptySubsequences: false)
       return parts.count == 3 && parts[0] == "Media" && parts[1] == ids[0]
         && StudyPersistence.isSafePhotoName(String(parts[2]))
-    }
-  }
-
-  func printableDiagramURLs(in directory: URL) throws -> [URL] {
-    guard hasValidSnapshot else { throw StudyError.selectionNotReady }
-    return try diagramPaths.map { path in
-      let url = directory.appendingPathComponent(path)
-      let root = directory.resolvingSymlinksInPath().standardizedFileURL.path + "/"
-      guard url.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(root),
-        FileManager.default.fileExists(atPath: url.path) else { throw RecognitionClientError.missingMedia }
-      return url
     }
   }
 }

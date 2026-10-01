@@ -25,7 +25,6 @@ final class StudyStore {
   private(set) var busyTasks: Set<UUID> = []
   /// 各任务的上传进度（0.0–1.0）；无键表示不在上传中。
   private(set) var uploadProgress: [UUID: Double] = [:]
-  private(set) var syncing = false
   private(set) var mediaRevision = 0
   private(set) var readableMedia: Set<URL> = []
   // Task 4: 连接状态机（云端模式；回环模式保持 nil，由既有 UI 表达）。
@@ -70,8 +69,6 @@ final class StudyStore {
     else { loadPairing() }
   }
 
-  var completedCount: Int { state.realProblems.filter { state.drafts[$0.id]?.submittedAt != nil }.count }
-  var hasDraft: Bool { state.drafts.values.contains { $0.submittedAt == nil } }
   /// T6c：上传同意只问一次（按数据集合隔离保存在 study-state.json）。
   var hasUploadConsent: Bool { state.uploadConsentGranted }
   /// 同意说明的肯定动作调用；记住之后新加的照片自动上传，不再弹。
@@ -110,35 +107,11 @@ final class StudyStore {
     }
   }
 
-  func updateDraft(_ id: String, _ draft: ReflectionDraft) -> Bool {
-    change { $0.updateDraft(id, draft: draft) }
-  }
-
-  func submit(_ id: String, draft: ReflectionDraft) -> Bool {
-    change { try $0.submit(id, draft: draft) }
-  }
-
-  func select(_ id: String) {
-    change { try $0.select(id, selected: !$0.selectedIDs.contains(id)) }
-  }
-
   func photoURL(_ name: String) -> URL { photoDirectory.appendingPathComponent(name) }
 
   func originalURL(_ name: String) -> URL {
     let original = photoDirectory.appendingPathComponent(String(name.dropLast(4)) + ".source")
     return FileManager.default.fileExists(atPath: original.path) ? original : photoURL(name)
-  }
-
-  func sourceURL(_ problem: StudyProblem) -> URL? {
-    if let path = problem.sourceImagePath { return persistence.directory.appendingPathComponent(path) }
-    return Bundle.main.url(forResource: problem.source, withExtension: "jpg")
-  }
-
-  func diagramURL(_ problem: StudyProblem, index: Int) -> URL? {
-    guard problem.hasValidSnapshot, problem.diagramPaths.indices.contains(index) else { return nil }
-    let url = persistence.directory.appendingPathComponent(problem.diagramPaths[index])
-    let root = persistence.directory.resolvingSymlinksInPath().standardizedFileURL.path + "/"
-    return url.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(root) ? url : nil
   }
 
   func loadPairing() {
@@ -365,52 +338,6 @@ final class StudyStore {
     }
   }
 
-  // Explicit read-only collection sync: never submits photos or grants upload consent.
-  // 云端模式下仅读取归属当前服务的任务（由本次会话提交）；旧来源任务不自动向新服务查询。
-  func syncExistingJobs() async {
-    guard let client, !cannotLoad, !syncing else {
-      if client == nil { errorMessage = "请先填写本机连接设置。" }
-      return
-    }
-    syncing = true
-    defer { syncing = false }
-    do {
-      let jobs = try await client.listJobs()
-      for job in jobs {
-        // 归属校验（云端）：serviceId 无法从 job 自身获得，以「随任务持久化的归属」为边界——
-        // 只更新归属当前服务或回环导入的本地条目；归属其他服务的任务既不新增也不查询。
-        if pairing?.isCloud == true {
-          let matched = state.recognitionTasks.contains { task in
-            guard task.job?.id == job.id else { return false }
-            return task.ownedServiceId == pairing?.serviceId || task.ownedServiceId == nil
-          }
-          if !matched { continue }
-        }
-        if let existing = state.recognitionTasks.first(where: { $0.job?.id == job.id }) {
-          _ = change { try $0.ingest(job, photoName: existing.photoName) }
-        } else if pairing?.isCloud != true {
-          // 回环模式保留原有全量读取行为。
-          let name = UUID().uuidString + ".jpg"
-          let bytes = try await client.media(job.id, mediaID: job.sourceMediaId)
-          let directory = photoDirectory
-          try await Task.detached {
-            guard MediaReadability.isReadableJPEG(bytes) else { throw RecognitionClientError.invalidResponse }
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try StudyPersistence.excludeFromBackup(directory)
-            try bytes.write(to: directory.appendingPathComponent(name), options: .atomic)
-            try bytes.write(to: directory.appendingPathComponent(String(name.dropLast(4)) + ".source"), options: .atomic)
-          }.value
-          guard change({ state in
-            if !state.recognitionTasks.contains(where: { $0.job?.id == job.id }) { state.importedPhotos.append(name) }
-            try state.ingest(job, photoName: name)
-          }) else { return }
-        }
-        let current = state.recognitionTasks.first { $0.job?.id == job.id }?.job ?? job
-        try await cacheMedia(current, client: client)
-      }
-    } catch { errorMessage = error.localizedDescription }
-  }
-
   // Invoked only by the consent sheet's affirmative action, never by import or activation.
   func submitPhotos(_ names: [String]) async {
     guard let client else { errorMessage = "请先在连接设置中填写本机地址和配对口令。"; return }
@@ -464,27 +391,15 @@ final class StudyStore {
     resumePolling()
   }
 
-  func act(taskID: UUID, questionID: String?, skip: Bool = false, sourceCompared: Bool = false, retry: Bool = false, manualRelease: Bool = false, expectedRevision: Int? = nil) async {
+  /// 整张照片的重新识别（v2 唯一保留的识别改动动作；逐题确认/跳过/人工放行已随旧界面移除）。
+  /// 行为不变：busy 去重、服务器重试、成功后 ingest + 缓存媒体。
+  func retryPhoto(taskID: UUID) async {
     guard let client, let task = state.recognitionTasks.first(where: { $0.id == taskID }),
       let job = task.job, !busyTasks.contains(taskID) else { return }
     busyTasks.insert(taskID)
     defer { busyTasks.remove(taskID) }
     do {
-      let updated: RecognitionJob
-      if retry { updated = try await client.retry(job.id, questionID: questionID) }
-      else if let question = job.questions.first(where: { $0.id == questionID }) {
-        // M1 review：确认/放行的核对对象是呈现那一刻的证据版本。revision 已变（证据更新）
-        // 就不能带着旧核对结论去改最新版本——在真实改动边界按呈现时捕获的 revision 拒绝。
-        if let expectedRevision, question.revision != expectedRevision {
-          errorMessage = "这道题的内容已更新，请重新对照后再操作。"
-          return
-        }
-        if !skip {
-          await validateSavedMedia()
-          guard hasCachedDiagrams(job: job, question: question) else { throw RecognitionClientError.missingMedia }
-        }
-        updated = try await client.confirm(job.id, question: question, skip: skip, sourceCompared: sourceCompared, manualRelease: manualRelease)
-      } else { return }
+      let updated = try await client.retry(job.id, questionID: nil)
       if change({ try $0.ingest(updated, photoName: task.photoName) }) {
         try await cacheMedia(updated, client: client)
       }
@@ -556,12 +471,6 @@ final class StudyStore {
     }
   }
 
-  func refreshMedia(_ job: RecognitionJob) async {
-    guard let client else { return }
-    do { try await cacheMedia(job, client: client) }
-    catch { errorMessage = error.localizedDescription }
-  }
-
   private func validateSavedMedia() async {
     for job in state.recognitionTasks.compactMap(\.job) {
       for id in job.questions.flatMap({ $0.diagramMediaIds }) {
@@ -570,10 +479,6 @@ final class StudyStore {
         else { readableMedia.remove(url) }
       }
     }
-  }
-
-  func hasCachedDiagrams(job: RecognitionJob, question: RecognitionQuestion) -> Bool {
-    question.diagramMediaIds.allSatisfy { readableMedia.contains(mediaURL(jobID: job.id, mediaID: $0)) }
   }
 
   #if canImport(UIKit)
@@ -599,39 +504,5 @@ final class StudyStore {
       errorMessage = "照片未能添加。\(error.localizedDescription)"
     }
   }
-
-  func createPack() -> PDFDocumentItem? {
-    guard !cannotLoad else { return nil }
-    do {
-      var next = state
-      let pack = try next.makePack()
-      let url = try ReviewPDF.write(pack: pack, directory: persistence.directory)
-      try persistence.save(next)
-      state = next
-      return PDFDocumentItem(url: url)
-    } catch {
-      errorMessage = "无法生成练习包。\(error.localizedDescription)"
-      return nil
-    }
-  }
-
-  func openPack(_ pack: PaperPack) -> PDFDocumentItem? {
-    do {
-      return PDFDocumentItem(url: try ReviewPDF.write(pack: pack, directory: persistence.directory))
-    } catch {
-      errorMessage = error.localizedDescription
-      return nil
-    }
-  }
   #endif
-
-  func recordOutcome(packID: UUID, problemID: String, outcome: String) -> Bool {
-    change { state in
-      guard ReflectionOptions.paperOutcomes.contains(outcome),
-        let index = state.packs.firstIndex(where: { $0.id == packID }),
-        state.packs[index].problemIDs.contains(problemID)
-      else { throw StudyError.unknownProblem }
-      state.packs[index].outcomes[problemID] = outcome
-    }
-  }
 }
