@@ -40,7 +40,8 @@ function recordBridgeError(jobId: string, message: string): void {
 }
 
 function bridgable(question: RecognitionQuestion): boolean {
-  return BRIDGABLE_SELECTION.has(question.selectionEvidence)
+  // v2.1a：学生勾入的题（selectedByStudent）与有批改痕迹的题一样成为错题；unselected 的题永不建题。
+  return (BRIDGABLE_SELECTION.has(question.selectionEvidence) || question.selectedByStudent === true)
     && question.evidence !== null
     && BRIDGABLE_STATUS.has(question.status);
 }
@@ -152,8 +153,8 @@ export function bridgeJob(jobId: string, mobileDataDir: string): void {
       );
       db.prepare('INSERT INTO evidence_record (item_id, content_json, auto_checks_json, confidence_badge, updated_at) VALUES (?,?,?,?,?)')
         .run(itemId, JSON.stringify(content), JSON.stringify(question.verification ?? null), badgeOf(question), now());
-      db.prepare('INSERT INTO mobile_item_link (item_id, job_id, question_id, question_revision) VALUES (?,?,?,?)')
-        .run(itemId, jobId, question.id, question.revision);
+      db.prepare('INSERT INTO mobile_item_link (item_id, job_id, question_id, question_revision, selected_by_student) VALUES (?,?,?,?,?)')
+        .run(itemId, jobId, question.id, question.revision, question.selectedByStudent === true ? 1 : 0);
     }
 
     if (batchId) assignShortIds(batchId);

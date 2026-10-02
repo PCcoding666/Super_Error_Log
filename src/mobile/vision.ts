@@ -175,11 +175,14 @@ export class BailianMobileVision implements MobileVisionBoundary {
     const candidates = data.candidates.slice(0, 30).map((raw, index) => {
       const candidate = record(raw, `candidate[${index}]`);
       let candidateBox: Box; try { candidateBox = decodeModelBox(candidate.box); } catch { throw new MobileVisionError('invalid_output', `候选${index + 1}坐标不合法`, 'inventory', false); }
-      if (typeof candidate.partial !== 'boolean') throw new MobileVisionError('invalid_output', '模型输出字段不合法：partial', 'inventory', false);
+      // S1-R1：partial 只是"是否被照片边缘切掉"的提示，真实模型常漏写；缺失/null 按 false 处理，
+      // 写了但不是布尔（字符串 "false"、数字等）仍判不合法。其余字段校验不放松。
+      if (candidate.partial !== undefined && candidate.partial !== null && typeof candidate.partial !== 'boolean') throw new MobileVisionError('invalid_output', '模型输出字段不合法：partial', 'inventory', false);
+      const partial = candidate.partial ?? false;
       if (candidate.confidence !== undefined && (typeof candidate.confidence !== 'number' || !Number.isFinite(candidate.confidence) || candidate.confidence < 0 || candidate.confidence > 1)) throw new MobileVisionError('invalid_output', '模型输出字段不合法：confidence', 'inventory', false);
       const warning = candidate.warning === undefined || candidate.warning === null ? undefined : stringValue(candidate.warning, 'warning', true);
       return { number: stringValue(candidate.number, 'number'), box: candidateBox, confidence: candidate.confidence as number | undefined,
-        selectionEvidence: selection(candidate.selectionEvidence), partial: candidate.partial, ...(warning?.trim() ? { warning } : {}) };
+        selectionEvidence: selection(candidate.selectionEvidence), partial, ...(warning?.trim() ? { warning } : {}) };
     });
     const warnings = strings(data.warnings, 'warnings', 30);
     if (data.candidates.length > 30 || booleanValue(data.capacityReached, 'capacityReached')) warnings.push(CAPACITY_WARNING);

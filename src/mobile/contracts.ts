@@ -5,7 +5,7 @@ export const MOBILE_CONTRACT_VERSION = 1 as const;
 
 export type RecognitionJobStatus = 'queued' | 'processing' | 'completed' | 'partial' | 'failed' | 'interrupted';
 export type RecognitionPhase = 'inventory' | 'questions' | 'complete';
-export type RecognitionQuestionStatus = 'queued' | 'processing' | 'needs_check' | 'ready' | 'failed' | 'confirmed' | 'skipped';
+export type RecognitionQuestionStatus = 'queued' | 'processing' | 'needs_check' | 'ready' | 'failed' | 'confirmed' | 'skipped' | 'unselected';
 export type SelectionEvidence = 'marked_wrong' | 'corrected' | 'unmarked' | 'unclear';
 
 export interface RecognitionFailure {
@@ -59,6 +59,8 @@ export interface RecognitionQuestion {
   confirmedAt: string | null;
   /** 人工放行标记：needs_check 时学生对照原图后主动确认（AI 未通过完整性核对）。 */
   manualRelease?: boolean;
+  /** v2.1a：学生勾入标记——该题由 unselected 经 /select 进入精读（与批改痕迹自动题之后一视同仁）。 */
+  selectedByStudent?: true;
 }
 
 export interface RecognitionJob {

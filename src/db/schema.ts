@@ -201,11 +201,13 @@ CREATE TABLE IF NOT EXISTS v2_photo (
 );
 
 -- v2.0 T3：手机识别题 ↔ Web 错题记录映射
+-- v2.1a：selected_by_student 记录该题是否由学生勾入（0 自动痕迹题 / 1 学生勾选）。
 CREATE TABLE IF NOT EXISTS mobile_item_link (
   item_id TEXT PRIMARY KEY REFERENCES error_item(id) ON DELETE CASCADE,
   job_id TEXT NOT NULL,
   question_id TEXT NOT NULL,
   question_revision INTEGER NOT NULL,
+  selected_by_student INTEGER NOT NULL DEFAULT 0,
   UNIQUE(job_id, question_id)
 );
 

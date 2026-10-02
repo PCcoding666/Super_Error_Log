@@ -6,7 +6,7 @@
  * 学生原话与 AI 归纳只存库、只给学生本人看：audit 只记 ID，家长聚合不读这两列。
  */
 import { getFollowupProvider } from '../ai/index.js';
-import { FOLLOWUP_FALLBACK_QUESTION, type FollowupSummarize } from '../ai/evidence.js';
+import { FOLLOWUP_FALLBACK_QUESTION, FOLLOWUP_FALLBACK_SELECTED_QUESTION, type FollowupSummarize } from '../ai/evidence.js';
 import type { FollowupProvider, FollowupTurn } from '../ai/provider.js';
 import { getDb, newId, now } from '../db/connection.js';
 import { statusAfterReflection } from '../domain/stateMachine.js';
@@ -77,7 +77,12 @@ export async function askFollowup(itemId: string, provider?: FollowupProvider): 
 
   const evidence = getEvidence(itemId);
   const studentMaterial = evidence?.content.observations.filter(o => o.kind === 'student_work' || o.kind === 'correction') ?? [];
-  let question = FOLLOWUP_FALLBACK_QUESTION;
+  // S1-R1：固定句二选一——学生自己勾入的题（答案在答题卡上、卷面干净）且证据里没有学生作答/订正时，
+  // "卡在哪一步"问偏了（学生其实答了，只是卷面看不到），改用"怎么做的/答案写的什么"。
+  // 有学生作答或订正 → 调模型；模型失败时的退回句按同一规则二选一。
+  const selectedByStudent = (db.prepare('SELECT selected_by_student FROM mobile_item_link WHERE item_id = ? LIMIT 1').get(itemId) as { selected_by_student: number } | undefined)?.selected_by_student === 1;
+  const fallbackQuestion = selectedByStudent && studentMaterial.length === 0 ? FOLLOWUP_FALLBACK_SELECTED_QUESTION : FOLLOWUP_FALLBACK_QUESTION;
+  let question = fallbackQuestion;
   let source: 'ai' | 'fallback' = 'fallback';
   if (evidence && studentMaterial.length > 0) {
     try {

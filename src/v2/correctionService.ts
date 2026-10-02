@@ -268,7 +268,7 @@ export function directCorrection(itemId: string, body: unknown): ApplyResult {
 const REPORT_FIELDS = ['questionText', 'student_work', 'correction', 'teacher_note', 'reference_answer', 'subject', 'knowledgeTags'] as const;
 
 export interface CorrectionFieldStat { field: string; corrected: number; total: number; rate: number }
-export interface CorrectionWeekReport { week: string; itemCount: number; fields: CorrectionFieldStat[]; notAMistake: { count: number; rate: number } }
+export interface CorrectionWeekReport { week: string; itemCount: number; fields: CorrectionFieldStat[]; notAMistake: { count: number; rate: number }; /** v2.1a：该周登记照片里由学生手动勾入并已成为错题的数量。 */ manuallySelected: number }
 
 /** 该题当前证据是否"含该字段"（标量字段恒有；knowledgeTags 需非空；观察记录需存在该类型）。 */
 function evidenceHasField(contentJson: string | null, field: string): boolean {
@@ -291,12 +291,12 @@ function evidenceHasField(contentJson: string | null, field: string): boolean {
 export function getCorrectionsReport(): { weeks: CorrectionWeekReport[] } {
   const db = getDb();
   const items = db.prepare(
-    `SELECT ei.id, vp.registered_at, ei.archived_reason, er.content_json
+    `SELECT ei.id, vp.registered_at, ei.archived_reason, er.content_json, mil.selected_by_student
      FROM mobile_item_link mil
      JOIN error_item ei ON ei.id = mil.item_id
      JOIN v2_photo vp ON vp.job_id = mil.job_id
      LEFT JOIN evidence_record er ON er.item_id = ei.id`,
-  ).all() as Array<{ id: string; registered_at: string; archived_reason: string | null; content_json: string | null }>;
+  ).all() as Array<{ id: string; registered_at: string; archived_reason: string | null; content_json: string | null; selected_by_student: number }>;
   const corrections = db.prepare('SELECT item_id, field FROM correction').all() as Array<{ item_id: string; field: string }>;
 
   const weekOfItem = new Map<string, string>();
@@ -331,6 +331,7 @@ export function getCorrectionsReport(): { weeks: CorrectionWeekReport[] } {
     report.push({
       week, itemCount: bucket.length, fields,
       notAMistake: { count: notAMistakeCount, rate: bucket.length === 0 ? 0 : notAMistakeCount / bucket.length },
+      manuallySelected: bucket.filter(item => item.selected_by_student === 1).length,
     });
   }
   return { weeks: report };

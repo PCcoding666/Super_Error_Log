@@ -28,6 +28,8 @@ import { createV2Router } from '../../src/v2/router.js';
 
 const PAIRING = 't4c-shared-token-0123456789';
 const FALLBACK_QUESTION = '这题你当时卡在哪一步？';
+// S1-R1：学生自己勾入的题（答案在答题卡上、卷面干净）且无可见作答/订正时的固定句。
+const SELECTED_FALLBACK_QUESTION = '这道题你当时是怎么做的？答案写的什么？';
 const STUDENT_ANSWER_1 = '我以为移项不用变号，直接就抄过来了';
 const STUDENT_ANSWER_2 = '另一边我也加了同一个数';
 const AI_SUMMARY_TEXT = '把移项当成了照抄，漏了变号';
@@ -188,8 +190,8 @@ async function setupApp(model = 'fu-ok'): Promise<{ base: string; dataDir: strin
 interface WeekItem { id: string; jobId: string; status: string }
 
 /** 造一道题（一道 job），登记并桥接，返回卡片。 */
-async function bridgeItem(base: string, auth: { authorization: string }, dataDir: string, withStudentWork = true, withTeacherNote = false, withCorrection = false): Promise<WeekItem> {
-  const jobId = await makeJob(dataDir, [question({ withStudentWork, withTeacherNote, withCorrection })]);
+async function bridgeItem(base: string, auth: { authorization: string }, dataDir: string, withStudentWork = true, withTeacherNote = false, withCorrection = false, selectedByStudent = false): Promise<WeekItem> {
+  const jobId = await makeJob(dataDir, [question({ withStudentWork, withTeacherNote, withCorrection, ...(selectedByStudent ? { selectedByStudent: true as const } : {}) })]);
   const registered = await fetch(`${base}/v2/photos/${jobId}/register`, { method: 'POST', headers: auth });
   expect(registered.status).toBe(200);
   const week = (await (await fetch(`${base}/v2/week`, { headers: auth })).json()) as { items: WeekItem[] };
@@ -250,6 +252,38 @@ describe('T4c AI 追问与复盘', () => {
     expect(response.status).toBe(200);
     expect((await response.json()) as AskResponse).toEqual({ turn: 1, question: FALLBACK_QUESTION, source: 'fallback' });
     expect(modelRequests).toHaveLength(0);
+  });
+
+  it('S1-R1 学生勾入的题：无可见作答/订正用新固定句；有作答仍调模型；模型失败退回句按同一规则', async () => {
+    // a) 学生勾入 + 证据无学生作答/订正 → 新固定句，不调模型。
+    {
+      const { base, dataDir, auth } = await setupApp();
+      const item = await bridgeItem(base, auth, dataDir, false, false, false, true);
+      const response = await ask(base, auth, item.id);
+      expect(response.status).toBe(200);
+      expect((await response.json()) as AskResponse).toEqual({ turn: 1, question: SELECTED_FALLBACK_QUESTION, source: 'fallback' });
+      expect(modelRequests).toHaveLength(0);
+    }
+    // b) 学生勾入 + 证据有学生作答 → 仍调模型。
+    {
+      modelRequests.length = 0;
+      const { base, dataDir, auth } = await setupApp();
+      const item = await bridgeItem(base, auth, dataDir, true, false, false, true);
+      const response = await ask(base, auth, item.id);
+      expect(response.status).toBe(200);
+      expect((await response.json()) as AskResponse).toMatchObject({ turn: 1, source: 'ai' });
+      expect(modelRequests).toHaveLength(1);
+    }
+    // c) 学生勾入 + 有作答但模型输出非法 → 退回旧固定句（有可见作答时不问"答案写的什么"）。
+    {
+      modelRequests.length = 0;
+      const { base, dataDir, auth } = await setupApp('fu-bad-json');
+      const item = await bridgeItem(base, auth, dataDir, true, false, false, true);
+      const response = await ask(base, auth, item.id);
+      expect(response.status).toBe(200);
+      expect((await response.json()) as AskResponse).toEqual({ turn: 1, question: FALLBACK_QUESTION, source: 'fallback' });
+      expect(modelRequests).toHaveLength(1);
+    }
   });
 
   it('RED3 两轮追问：secondQuestion 进入第 2 轮；第 2 轮后不再追问；第 3 次 answer 409；单题模型调用 ≤3', async () => {

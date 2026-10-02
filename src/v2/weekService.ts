@@ -36,6 +36,8 @@ export interface V2WeekPhoto {
   bridged: boolean;
   bridgeError: string | null;
   itemCount: number;
+  /** v2.1a：该任务当前 unselected（等学生勾选）的题数；任务读不到时为 0。 */
+  unselectedCount: number;
 }
 
 export interface V2WeekResponse {
@@ -62,6 +64,18 @@ function recognitionOf(mobileDataDir: string, jobId: string): V2WeekPhoto['recog
   }
 }
 
+/** 该任务当前 unselected 的题数；任务读不到时为 0。 */
+function unselectedCountOf(mobileDataDir: string, jobId: string): number {
+  try {
+    const raw = fs.readFileSync(path.join(mobileDataDir, 'jobs', jobId, 'job.json'), 'utf8');
+    const questions = (JSON.parse(raw) as { questions?: unknown }).questions;
+    if (!Array.isArray(questions)) return 0;
+    return questions.filter(question => (question as { status?: unknown }).status === 'unselected').length;
+  } catch {
+    return 0;
+  }
+}
+
 const BACKLOG_STATUSES: readonly ItemStatus[] = ['ready_for_reflection', 'eligible_for_review', 'needs_recheck'];
 
 /** 本周错题卡片。先懒桥接（单个失败不影响返回），再按登记的 ISO 周划分 items / backlog。 */
@@ -83,6 +97,7 @@ export function getWeek(mobileDataDir: string): V2WeekResponse {
       bridged: photo.bridged_revision !== null && photo.bridge_error === null,
       bridgeError: photo.bridge_error,
       itemCount: (db.prepare('SELECT COUNT(*) AS n FROM mobile_item_link WHERE job_id = ?').get(photo.job_id) as { n: number }).n,
+      unselectedCount: unselectedCountOf(mobileDataDir, photo.job_id),
     }));
 
   type JoinedRow = {

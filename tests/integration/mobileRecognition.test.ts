@@ -31,7 +31,8 @@ class FixtureVision implements MobileVisionBoundary {
   questionCalls: string[] = [];
   candidates: InventoryCandidate[] = [
     { number: '1', box, selectionEvidence: 'marked_wrong', partial: false },
-    { number: '2', box, selectionEvidence: 'unclear', partial: false },
+    // v2.1a：unmarked/unclear 的题不再自动精读；本夹具假定所有候选都进精读，故第二题带订正痕迹。
+    { number: '2', box, selectionEvidence: 'corrected', partial: false },
   ];
   fail = new Set(['2']);
   checks = { textComplete: true, questionCropComplete: true, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: [] as string[] };
@@ -260,7 +261,7 @@ describe('mobile recognition HTTP contract', () => {
   });
 
   it('never confirms an edge-partial candidate even when it has no optional warning text', async () => {
-    const vision = new FixtureVision(); vision.fail.clear(); vision.candidates = [{ number: '1', box, selectionEvidence: 'unclear', partial: true }];
+    const vision = new FixtureVision(); vision.fail.clear(); vision.candidates = [{ number: '1', box, selectionEvidence: 'marked_wrong', partial: true }];
     const { request } = await setup(vision); const accepted = await json(await submit(request, await jpeg())); const job = await waitFor(request, accepted.job.id, 'completed'); const question = job.questions[0];
     expect(question.status).toBe('needs_check');
     const response = await request(`/v1/recognitions/${job.id}/questions/${question.id}/confirm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ revision: question.revision, action: 'confirm', sourceCompared: true }) });
@@ -270,8 +271,8 @@ describe('mobile recognition HTTP contract', () => {
   it('blocks both disjoint same-number candidates collapsed onto one occurrence but allows a lone expanded box', async () => {
     const vision = new FixtureVision(); vision.fail.clear();
     vision.candidates = [
-      { number: '4', box: { x: 0, y: 0, width: .4, height: 1 }, selectionEvidence: 'unmarked', partial: false },
-      { number: '4', box: { x: .6, y: 0, width: .4, height: 1 }, selectionEvidence: 'unmarked', partial: false },
+      { number: '4', box: { x: 0, y: 0, width: .4, height: 1 }, selectionEvidence: 'corrected', partial: false },
+      { number: '4', box: { x: .6, y: 0, width: .4, height: 1 }, selectionEvidence: 'corrected', partial: false },
     ];
     vision.resultEvidence = number => ({ ...evidence(number), questionRegion: { x: 0, y: 0, width: .4, height: 1 } });
     const { request } = await setup(vision); const accepted = await json(await submit(request, await jpeg()));
@@ -293,7 +294,7 @@ describe('mobile recognition HTTP contract', () => {
       let raw = ''; for await (const chunk of req) raw += chunk; const body = JSON.parse(raw);
       if (body.model === 'verify') verified.push(JSON.parse(body.messages[1].content[0].text));
       const value = body.model === 'inventory'
-        ? { candidates: [left, right].map(box => ({ number: '4', box, selectionEvidence: 'unmarked', partial: false })), warnings: [], capacityReached: false }
+        ? { candidates: [left, right].map(box => ({ number: '4', box, selectionEvidence: 'corrected', partial: false })), warnings: [], capacityReached: false }
         : body.model === 'transcribe' ? { ...evidence('4'), questionRegion: left }
           : { textComplete: true, questionCropComplete: true, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: [] };
       res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(value) } }] }));
@@ -322,7 +323,7 @@ describe('mobile recognition HTTP contract', () => {
       if (stage === 'verify' && number === '2' && !repaired && code !== 'invalid_output') {
         res.writeHead(code === 'authentication' ? 401 : code === 'permission' ? 403 : 400).end('{"error":"synthetic repair needed"}'); return;
       }
-      const value = stage === 'inventory' ? { candidates: [{ number: '1', box, selectionEvidence: 'unmarked', partial: false }, { number: '2', box, selectionEvidence: 'unmarked', partial: false }], warnings: [], capacityReached: false }
+      const value = stage === 'inventory' ? { candidates: [{ number: '1', box, selectionEvidence: 'marked_wrong', partial: false }, { number: '2', box, selectionEvidence: 'marked_wrong', partial: false }], warnings: [], capacityReached: false }
         : stage === 'transcribe' ? evidence(number)
           : stage === 'verify' && number === '2' && !repaired ? []
             : { textComplete: true, questionCropComplete: true, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: [] };
@@ -400,7 +401,7 @@ describe('mobile recognition HTTP contract', () => {
 
   it('runs one photo job with only one simultaneous per-question model boundary (Task 3 concurrency=1)', async () => {
     const vision = new FixtureVision(); vision.fail.clear(); vision.delayMs = 30;
-    vision.candidates = Array.from({ length: 5 }, (_, index) => ({ number: String(index + 1), box, selectionEvidence: 'unmarked' as const, partial: false }));
+    vision.candidates = Array.from({ length: 5 }, (_, index) => ({ number: String(index + 1), box, selectionEvidence: 'marked_wrong' as const, partial: false }));
     const { request } = await setup(vision); const accepted = await json(await submit(request, await jpeg())); await waitFor(request, accepted.job.id, 'completed');
     // Task 3：逐题并发降为 1（云端 2GB 机器资源保护；回环同样收敛）。
     expect(vision.maximumActive).toBe(1);

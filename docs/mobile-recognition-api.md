@@ -167,7 +167,9 @@ Each redeemed device receives a 32-byte token (30-day expiry, individually revoc
 }
 ```
 
-Job statuses are `queued`, `processing`, `completed`, `partial`, `failed`, or `interrupted`; phases are `inventory`, `questions`, or `complete`. Question statuses are `queued`, `processing`, `needs_check`, `ready`, `failed`, `confirmed`, or `skipped`. `selectionEvidence` is one of `marked_wrong`, `corrected`, `unmarked`, or `unclear`; it is evidence about markings, not a declaration that the candidate is an error.
+Job statuses are `queued`, `processing`, `completed`, `partial`, `failed`, or `interrupted`; phases are `inventory`, `questions`, or `complete`. Question statuses are `queued`, `processing`, `needs_check`, `ready`, `failed`, `confirmed`, `skipped`, or `unselected`. `selectionEvidence` is one of `marked_wrong`, `corrected`, `unmarked`, or `unclear`; it is evidence about markings, not a declaration that the candidate is an error.
+
+Since v2.1a, inventory splits candidates before any per-question work: `marked_wrong`/`corrected` candidates are queued for deep reading as before; `unmarked`/`unclear` candidates become `unselected` — no work unit, no attempt budget, no model request. `unselected` questions never count as in-progress, failed, or usable: a job whose automatic questions all succeed is `completed` even if unselected questions remain, and a job with no automatic questions at all becomes `completed` (`phase: complete`) as soon as inventory finishes. The student can queue unselected questions for deep reading via `POST /v1/recognitions/:id/select`; such questions carry `selectedByStudent: true` afterwards and are then treated exactly like automatically queued ones. A selection can move a terminal job back to `processing`/`questions`; it reaches a terminal state again when those questions finish.
 
 Every failure has `code`, a student-safe Chinese `message`, `stage`, and `retryable`. Additive `recoverable` describes eligibility for an explicit user-requested failed-stage recovery, not the adapter's automatic retry loop. For example, a repaired verification schema failure is `{ "code": "invalid_output", "message": "模型输出字段不合法", "stage": "verify", "retryable": false, "recoverable": true }`. Old records may lack the field; the service derives it without changing historical attempts, and clients must not infer automatic recovery from absence. Verification booleans are independent and are never inferred from missing data. `questionCropPure` means that the evidence crop does not contain an unrelated neighboring question; this question's own work or correction may still be present. Printable diagrams have the stronger `diagramSafe` gate and must contain no answer/work/correction contamination.
 
@@ -258,6 +260,29 @@ Authorization: Bearer <pairing token>
 ```
 
 The collection endpoint returns `{ "jobs": [...] }` newest first. The item endpoint returns `{ "job": ... }`. A missing or malformed job ID returns `404 not_found`. This collection is local to the paired mobile service and does not read student cookies or the web database.
+
+## Select candidates for deep reading
+
+```http
+POST /v1/recognitions/3f7b69dc-9d37-4aaa-b965-bb61243445a0/select
+Authorization: Bearer <pairing token>
+Content-Type: application/json
+
+{ "questionIds": ["a42b4eb2-12ff-499f-92de-e49d7cb36ef7"] }
+```
+
+Queues `unselected` questions for deep reading and marks them `selectedByStudent: true` (revision +1, fresh attempt round). IDs in any other status are ignored, so resubmitting the same selection is idempotent and never pays for a second read. If at least one question transitioned, the job returns to `status: processing`, `phase: questions` (possibly from a terminal state) and the response is `200 { "job": ... }`; if none did, the job is returned unchanged.
+
+Errors: `400 invalid_request` (`questionIds 须为 1–30 个不重复的题目 ID。`) for a non-array, empty or over-30 list, non-UUID entries, or duplicates; `404 not_found` when the job does not exist, or any ID does not belong to the job (`题目不存在。`, the whole request is a no-op); `409 not_selectable` (`这张照片还在找题，稍后再选。`) while the job is still in the inventory phase (queued, running, failed, or interrupted); `429 capacity_full` when the queue is full — the job is unchanged and the selection can be retried later.
+
+## Read a candidate thumbnail
+
+```http
+GET /v1/recognitions/3f7b69dc-9d37-4aaa-b965-bb61243445a0/questions/a42b4eb2-12ff-499f-92de-e49d7cb36ef7/candidate
+Authorization: Bearer <pairing token>
+```
+
+The response is `image/jpeg` with the same headers as the media endpoint: a fresh crop of the job's normalized source at the question's original inventory candidate box (expanded by the same margin as question crops, clamped into the page). Available for any question status — this is how the selection panel renders `unselected` candidates before they have crops of their own. Nothing is persisted. `404 not_found` when the job, question, or candidate box is missing or the source image cannot be read.
 
 ## Retry only failed work
 

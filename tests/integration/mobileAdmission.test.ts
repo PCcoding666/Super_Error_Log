@@ -33,7 +33,7 @@ class SlowVision implements MobileVisionBoundary {
   async inventory(_source: Buffer, _context: VisionContext): Promise<VisionInventoryResult> {
     this.active += 1; this.maximumActive = Math.max(this.maximumActive, this.active);
     await this.gate; this.active -= 1;
-    return { candidates: [{ number: '1', box, selectionEvidence: 'unmarked', partial: false }], warnings: [] };
+    return { candidates: [{ number: '1', box, selectionEvidence: 'marked_wrong', partial: false }], warnings: [] };
   }
   async recognizeQuestion(source: Buffer, candidate: InventoryCandidate, _context: VisionContext): Promise<VisionQuestionResult> {
     this.active += 1; this.maximumActive = Math.max(this.maximumActive, this.active);
@@ -222,7 +222,7 @@ describe('per-question concurrency and image semaphore', () => {
     // SlowVision 多候选：并发为 1 意味着 maximumActive 恒 1。
     class MultiVision extends SlowVision {
       async inventory(_source: Buffer, _context: VisionContext): Promise<VisionInventoryResult> {
-        return { candidates: Array.from({ length: 4 }, (_, index) => ({ number: String(index + 1), box, selectionEvidence: 'unmarked' as const, partial: false })), warnings: [] };
+        return { candidates: Array.from({ length: 4 }, (_, index) => ({ number: String(index + 1), box, selectionEvidence: 'marked_wrong' as const, partial: false })), warnings: [] };
       }
     }
     const vision = new MultiVision();
@@ -310,7 +310,7 @@ describe('per-question concurrency and image semaphore', () => {
         }
       }
       async inventory(_source: Buffer, _context: VisionContext): Promise<VisionInventoryResult> {
-        return { candidates: Array.from({ length: 2 }, (_, index) => ({ number: String(index + 1), box, selectionEvidence: 'unmarked' as const, partial: false })), warnings: [] };
+        return { candidates: Array.from({ length: 2 }, (_, index) => ({ number: String(index + 1), box, selectionEvidence: 'marked_wrong' as const, partial: false })), warnings: [] };
       }
       async recognizeQuestion(source: Buffer, candidate: InventoryCandidate, _context: VisionContext): Promise<VisionQuestionResult> {
         this.calls += 1;
@@ -386,7 +386,7 @@ describe('restart capacity accounting (Task 01-B)', () => {
     async inventory(): Promise<VisionInventoryResult> {
       this.inventoryCalls += 1;
       await new Promise<void>(resolve => { this.gates.push(resolve); });
-      return { candidates: [{ number: '1', box, selectionEvidence: 'unmarked' as const, partial: false }], warnings: [] };
+      return { candidates: [{ number: '1', box, selectionEvidence: 'marked_wrong' as const, partial: false }], warnings: [] };
     }
     async recognizeQuestion(source: Buffer, candidate: InventoryCandidate): Promise<VisionQuestionResult> {
       return { evidence: evidence(candidate.number), verification: { textComplete: true, questionCropComplete: true, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: [] }, questionCrop: source, diagramCrops: [] };

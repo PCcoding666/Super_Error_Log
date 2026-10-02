@@ -53,8 +53,9 @@
 
 1. `POST /v1/recognitions` 上传照片，拿 `job.id`（见 v1 文档）。
 2. `GET /v1/recognitions/:id` 轮询识别进度，直到 `status` 为 `completed` / `partial`（终态）。
-3. `POST /v2/photos/:jobId/register` 登记该任务进入学习闭环。
-4. `GET /v2/week`：调用时服务器先做"懒桥接"（把已登记、已到终态的任务转成错题），随后本周登记照片桥接出的题出现在 `items`，以往周登记且待处理（`ready_for_reflection` / `eligible_for_review` / `needs_recheck`）的题出现在 `backlog`。
+3. **勾选（v2.1a 起）**：找题后只有带批改痕迹的题被精读；没有痕迹的题是 `unselected`（未精读、不计费）。若还有要收入错题本的题，用 `GET /v1/recognitions/:id/questions/:questionId/candidate` 取候选缩略图给学生看，学生确认后 `POST /v1/recognitions/:id/select` 勾选——任务会回到 `processing`，再次轮询到终态。重复勾选幂等；不勾的题永不精读。
+4. `POST /v2/photos/:jobId/register` 登记该任务进入学习闭环。
+5. `GET /v2/week`：调用时服务器先做"懒桥接"（把已登记、已到终态的任务转成错题），随后本周登记照片桥接出的题出现在 `items`，以往周登记且待处理（`ready_for_reflection` / `eligible_for_review` / `needs_recheck`）的题出现在 `backlog`。勾选后新增的题在下一次 `GET /v2/week` 时补入。
 
 未登记的任务永不进入学习记录；重复登记幂等。
 
@@ -85,7 +86,8 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
       "recognition": "done",
       "bridged": true,
       "bridgeError": null,
-      "itemCount": 3
+      "itemCount": 3,
+      "unselectedCount": 2
     }
   ],
   "items": [
@@ -107,6 +109,7 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
 
 - `recognition`：`processing` / `done` / `failed`（读移动任务本身：终态 `completed`/`partial` 为 `done`，`failed` 为 `failed`，其余含不可读为 `processing`）。
 - `bridged`：已桥接且无桥接错误；`bridgeError` 为桥接失败原因（如 `job_unreadable`、`duplicate_source:<jobId>`、`source_media_missing`）。
+- `unselectedCount`（v2.1a 起）：该任务当前还在等学生勾选（`unselected`）的题数；任务读不到时为 0。大于 0 时客户端应提示学生去勾选面板看一眼。
 - 被标记"不是错题"的题从 `items` 消失；`backlog` 是往周登记且仍在候选状态的题。
 
 ### 3.3 `GET /v2/items/:id/crop` — 整题裁图
@@ -375,7 +378,7 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
 ### 3.17 `POST /v2/items/:id/reflection/ask` — 发起/续取追问
 
 无请求正文。成功 `200 {"turn":1,"question":"你原来写 x=1，这一步当时是怎么想的？","source":"ai"}`。
-幂等：已有未回答的问题时原样返回，不再调用模型。证据里没有学生作答/订正时不调模型，直接返回固定开放句 `这题你当时卡在哪一步？`（`source` 为 `fallback`）；模型调用失败同样退回该句。
+幂等：已有未回答的问题时原样返回，不再调用模型。证据里没有学生作答/订正时不调模型，直接返回固定开放句 `这题你当时卡在哪一步？`（`source` 为 `fallback`）；该题由学生自己勾入（答案写在答题卡上、卷面干净）且证据里没有学生作答/订正时，固定句改为 `这道题你当时是怎么做的？答案写的什么？`；模型调用失败按同一规则退回固定句。
 
 - `404 not_found` `题目不存在或不属于手机上传。`
 - `409 conflict` `追问已结束（最多两轮），请提交复盘。`
@@ -539,13 +542,14 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
         { "field": "questionText", "corrected": 1, "total": 3, "rate": 0.3333333333333333 },
         { "field": "student_work", "corrected": 0, "total": 3, "rate": 0 }
       ],
-      "notAMistake": { "count": 0, "rate": 0 }
+      "notAMistake": { "count": 0, "rate": 0 },
+      "manuallySelected": 2
     }
   ]
 }
 ```
 
-`fields[].field` 固定全集：`questionText` / `student_work` / `correction` / `teacher_note` / `reference_answer` / `subject` / `knowledgeTags`。`rate` 为 `corrected/total`（`total` 为 0 时 `rate` 为 0）。`notAMistake` 是该周被标"不是错题"的数量与占比。
+`fields[].field` 固定全集：`questionText` / `student_work` / `correction` / `teacher_note` / `reference_answer` / `subject` / `knowledgeTags`。`rate` 为 `corrected/total`（`total` 为 0 时 `rate` 为 0）。`notAMistake` 是该周被标"不是错题"的数量与占比。`manuallySelected`（v2.1a 起）是该周登记的照片里由学生手动勾入并已成为错题的数量——它与 `notAMistake` 一起反映批改痕迹判断的准确度。
 
 ## 4. 枚举值全集
 

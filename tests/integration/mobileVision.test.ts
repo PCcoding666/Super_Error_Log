@@ -9,8 +9,10 @@ import { BailianMobileVision, MobileVisionError, type VisionAttempt } from '../.
 
 describe('mobile vision adapter over a real local HTTP boundary', () => {
   let server: http.Server; let baseUrl = ''; let source: Buffer; const requests: any[] = [];
-  let mode: 'pass' | 'inventory-warning' | 'invalid' | 'bare-array' | 'verify-array' | 'bad-schema' | 'bad-question-format' | 'currency' | 'currency-english' | 'currency-inline' | 'truncated' | 'oversized' | 'ground' | 'ground-crop-fail' | 'transient' | 'auth' | 'verify-auth' | 'capacity' | 'echo-key' = 'pass'; let transientCalls = 0;
+  let mode: 'pass' | 'inventory-warning' | 'invalid' | 'bare-array' | 'verify-array' | 'bad-schema' | 'bad-question-format' | 'currency' | 'currency-english' | 'currency-inline' | 'truncated' | 'oversized' | 'ground' | 'ground-crop-fail' | 'transient' | 'auth' | 'verify-auth' | 'capacity' | 'echo-key' | 'partial-variant' = 'pass'; let transientCalls = 0;
   let optionalWarning: unknown;
+  const PARTIAL_ABSENT = Symbol('partial-absent');
+  let partialOverride: unknown;
   const evidence = (box = { x: .1, y: .1, width: .8, height: .7 }) => ({ version: 1, questionNumber: '4', questionText: '求 x 的值。', subject: '数学', chapter: '', knowledgeTags: [], questionType: '计算', questionRegion: box,
     requiresDiagram: true, regions: [{ id: 'd1', kind: 'diagram', box: { x: .2, y: .2, width: .2, height: .2 }, confidence: .9, cleanForPrint: true }], observations: [], uncertainties: [] });
   beforeAll(async () => {
@@ -24,6 +26,10 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
       const value = body.model === 'inventory-model'
         ? mode === 'bad-schema' ? { candidates: [{}], warnings: [], capacityReached: false }
           : mode === 'inventory-warning' ? { ...normalInventory, candidates: normalInventory.candidates.map(candidate => ({ ...candidate, warning: optionalWarning })) }
+          : mode === 'partial-variant' ? { ...normalInventory, candidates: normalInventory.candidates.map(candidate => {
+              const { partial: _omitted, ...rest } = candidate;
+              return partialOverride === PARTIAL_ABSENT ? rest : { ...rest, partial: partialOverride };
+            }) }
           : mode === 'capacity' ? { candidates: Array.from({ length: 31 }, (_, index) => ({ number: String(index), box: { x: 0, y: 0, width: 1, height: 1 }, confidence: .8, selectionEvidence: 'unmarked', partial: false })), warnings: [], capacityReached: true }
           : normalInventory
         : body.model === 'transcribe-model' ? { ...evidence(), ...(mode === 'bad-question-format' ? { questionText: '计算 $\\frac{1}{2}$。' }
@@ -104,6 +110,29 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
     expect(requests).toHaveLength(1);
     expect(attempts).toHaveLength(1);
     expect(attempts[0]).toMatchObject({ responseRaw: expect.stringContaining('warning'), error: { code: 'invalid_output' } });
+  });
+
+  // S1-R1：真实模型走查中三次找题有两次因某个候选漏写 partial 而整张照片失败。
+  // partial 只是"是否被照片边缘切掉"的提示，缺失按 false 处理；写了但不是布尔仍判不合法。
+  it.each([
+    { label: 'missing', value: PARTIAL_ABSENT },
+    { label: 'null', value: null },
+  ])('defaults an absent-or-null inventory partial flag ($label) to false instead of failing the photo', async ({ value }) => {
+    mode = 'partial-variant'; partialOverride = value; requests.length = 0; const attempts: VisionAttempt[] = [];
+    const result = await make(attempts).inventory(source, context);
+    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates.map(candidate => candidate.partial)).toEqual([false, false]);
+    expect(requests).toHaveLength(1);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.error).toBeNull();
+  });
+
+  it.each(['false', 'true', 0, 1])('still rejects a nonboolean inventory partial flag %j without retry', async value => {
+    mode = 'partial-variant'; partialOverride = value; requests.length = 0; const attempts: VisionAttempt[] = [];
+    await expect(make(attempts).inventory(source, context)).rejects.toMatchObject({ code: 'invalid_output', stage: 'inventory', retryable: false });
+    expect(requests).toHaveLength(1);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.error?.code).toBe('invalid_output');
   });
 
   it('transcribes from the full original then verifies actual question and diagram crops without trusting model clean labels', async () => {

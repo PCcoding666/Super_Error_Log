@@ -86,7 +86,8 @@ export class MobileRecognitionStore {
         } else if (job.status === 'queued' || job.status === 'processing') {
           if (job.phase === 'questions') {
             const failed = job.questions.filter(question => question.status === 'failed');
-            const usable = job.questions.filter(question => !['failed', 'queued', 'processing'].includes(question.status));
+            // unselected 不参与精读：收拢判定与 finalize 一致，不算可用题也不算失败。
+            const usable = job.questions.filter(question => !['failed', 'queued', 'processing', 'unselected'].includes(question.status));
             job.phase = 'complete';
             if (!failed.length) { job.status = 'completed'; job.error = null; }
             else if (usable.length) { job.status = 'partial'; job.error = { code: 'partial', message: '识别暂未完成，已完成的题目已保留。', stage: 'questions', retryable: failed.some(question => question.error?.retryable) }; }

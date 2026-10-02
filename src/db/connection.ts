@@ -86,6 +86,14 @@ export function migrateBridgeSchema(database: DatabaseSync): void {
       database.exec(`ALTER TABLE v2_photo ADD COLUMN ${column} TEXT`);
     }
   }
+  // v2.1a S1：旧库的 mobile_item_link 补 selected_by_student 列（新库由 SCHEMA_SQL 直接带列）。
+  const hasLink = database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mobile_item_link'").get();
+  if (hasLink) {
+    const linkCols = database.prepare('PRAGMA table_info(mobile_item_link)').all() as Array<{ name: string }>;
+    if (!linkCols.some((c) => c.name === 'selected_by_student')) {
+      database.exec('ALTER TABLE mobile_item_link ADD COLUMN selected_by_student INTEGER NOT NULL DEFAULT 0');
+    }
+  }
 }
 
 /** 测试用：关闭并允许换目录重开 */

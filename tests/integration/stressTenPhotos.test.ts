@@ -40,7 +40,7 @@ const diskFree = process.env.SEL_STRESS_DISK_FREE ? BigInt(process.env.SEL_STRES
 class FixtureVision {
   calls = 0;
   releaseGate = new Promise(resolve => { globalThis.release = resolve; });
-  async inventory() { this.calls += 1; return { candidates: [{ number: '1', box: { x: 0, y: 0, width: 1, height: 1 }, selectionEvidence: 'unmarked', partial: false }], warnings: [] }; }
+  async inventory() { this.calls += 1; return { candidates: [{ number: '1', box: { x: 0, y: 0, width: 1, height: 1 }, selectionEvidence: 'marked_wrong', partial: false }], warnings: [] }; }
   async recognizeQuestion() { await this.releaseGate; this.calls += 1; return { evidence: { version: 1, questionNumber: '1', questionText: 'x', subject: '数学', chapter: '', knowledgeTags: [], questionType: '计算', questionRegion: { x: 0, y: 0, width: 1, height: 1 }, requiresDiagram: false, regions: [], observations: [], uncertainties: [] }, verification: { textComplete: true, questionCropComplete: true, questionCropPure: true, transcriptionMatches: true, diagramSafe: true, issues: [] }, questionCrop: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), diagramCrops: [] }; }
 }
 const vision = new FixtureVision();

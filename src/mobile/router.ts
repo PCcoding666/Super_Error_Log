@@ -221,6 +221,20 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
       response.status(202).json({ job: await service.retry(id(request.params.id), body.questionId as string | null) });
     } catch (error) { next(error); }
   });
+  app.post('/v1/recognitions/:id/select', express.json({ limit: '16kb', strict: true }), async (request, response, next) => {
+    try {
+      const body = bodyObject(request.body);
+      const ids = body.questionIds;
+      if (!Array.isArray(ids) || ids.length < 1 || ids.length > 30
+        || ids.some(item => typeof item !== 'string' || !UUID.test(item))
+        || new Set(ids).size !== ids.length) throw new MobileRequestError(400, 'invalid_request', 'questionIds 须为 1–30 个不重复的题目 ID。');
+      response.json({ job: await service.select(id(request.params.id), ids as string[]) });
+    } catch (error) { next(error); }
+  });
+  app.get('/v1/recognitions/:id/questions/:questionId/candidate', async (request, response, next) => {
+    try { const bytes = await service.getCandidateCrop(id(request.params.id), id(request.params.questionId)); response.type('image/jpeg').send(bytes); }
+    catch (error) { next(error); }
+  });
   app.post('/v1/recognitions/:id/questions/:questionId/confirm', express.json({ limit: '16kb', strict: true }), async (request, response, next) => {
     try {
       const body = bodyObject(request.body);

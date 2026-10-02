@@ -98,6 +98,8 @@ export function validateCoaching(data: unknown): Coaching {
 
 /** 证据里没有学生作答/订正时的固定开放句（不调模型）。 */
 export const FOLLOWUP_FALLBACK_QUESTION = '这题你当时卡在哪一步？';
+/** S1-R1：学生自己勾入的题（答案在答题卡上、卷面干净）且证据里没有学生作答/订正时的固定开放句（不调模型）。 */
+export const FOLLOWUP_FALLBACK_SELECTED_QUESTION = '这道题你当时是怎么做的？答案写的什么？';
 export const FOLLOWUP_MAX_CHARS = 60;
 
 export interface FollowupAsk { question: string; referencedObservationIds: string[] }

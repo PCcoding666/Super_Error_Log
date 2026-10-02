@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
 import sharp from 'sharp';
-import { normalizePhoto } from '../media/images.js';
+import { cropPhoto, normalizePhoto } from '../media/images.js';
 import { canRecover, publicJob, type RecognitionAttemptRound, type RecognitionFailure, type RecognitionJob, type RecognitionQuestion, type StoredRecognitionJob } from './contracts.js';
 import type { Box } from '../media/images.js';
 import { IdempotencyConflictError, MobileRecognitionStore, UnknownMediaError } from './store.js';
 import { MobileVisionError, type InventoryCandidate, type MobileVisionBoundary } from './vision.js';
+import { expandCropMargin } from './modelBox.js';
 import type { AdmissionController } from './admission.js';
 
 export class MobileRequestError extends Error {
@@ -189,6 +190,59 @@ export class MobileRecognitionService {
     }
     this.enqueue({ jobId, kind: 'question', questionId });
     return publicJob(job);
+  }
+
+  /**
+   * v2.1a 学生勾选：把 unselected 的题转为 queued 精读（标 selectedByStudent、开新一轮预算）。
+   * 其他状态的 id 忽略（幂等，重复提交不重复精读）；一道都没转换则原样返回、不改任务状态。
+   * 还在找题（phase inventory，含排队/进行中/找题失败/中断）一律 409。
+   */
+  async select(jobId: string, questionIds: string[]): Promise<RecognitionJob> {
+    this.assertStorageAvailable();
+    let job = await this.requireStored(jobId);
+    if (job.phase === 'inventory') throw new MobileRequestError(409, 'not_selectable', '这张照片还在找题，稍后再选。');
+    const known = new Set(job.questions.map(item => item.id));
+    // 任一 id 不属于该任务：整条请求不生效。
+    for (const questionId of questionIds) {
+      if (!known.has(questionId)) throw new MobileRequestError(404, 'not_found', '题目不存在。');
+    }
+    if (!job.questions.some(item => item.status === 'unselected' && questionIds.includes(item.id))) return publicJob(job);
+    // 容量预约沿用 retry 的做法：满则 429，失败回滚只撤销自己新占的名额。
+    const reserved = this.reserveRetryCapacity(jobId);
+    let transitioned: string[] = [];
+    try {
+      job = await this.persistTransition(() => this.store.updateJob(jobId, current => {
+        transitioned = [];
+        for (const questionId of questionIds) {
+          const target = current.questions.find(item => item.id === questionId)!;
+          if (target.status !== 'unselected') continue;
+          this.newRound(current, questionId);
+          target.status = 'queued'; target.selectedByStudent = true; target.error = null; target.revision += 1;
+          transitioned.push(questionId);
+        }
+        // 至少一道发生转换：任务（可从终态）回到处理中。
+        if (transitioned.length > 0) { current.status = 'processing'; current.phase = 'questions'; current.error = null; this.touch(current); }
+      }));
+    } catch (error) {
+      if (reserved) this.releaseCapacityOnce(jobId);
+      throw error;
+    }
+    for (const questionId of transitioned) this.enqueue({ jobId, kind: 'question', questionId });
+    return publicJob(job);
+  }
+
+  /** 候选题缩略图：按清单候选框从任务原图现算裁出（余量与精读裁图一致），不落盘；任何题目状态都可取。 */
+  async getCandidateCrop(jobId: string, questionId: string): Promise<Buffer> {
+    this.assertStorageAvailable();
+    const job = await this.store.getStoredJob(jobId);
+    if (!job) throw new MobileRequestError(404, 'not_found', '识别任务不存在。');
+    const candidate = job.inventoryCandidates[questionId];
+    if (!job.questions.some(item => item.id === questionId) || !candidate) throw new MobileRequestError(404, 'not_found', '题目不存在。');
+    let source: Buffer;
+    try { source = await this.store.readSource(jobId); }
+    catch { throw new MobileRequestError(404, 'not_found', '题目不存在。'); }
+    try { return await cropPhoto(source, expandCropMargin(candidate.box)); }
+    catch { throw new MobileRequestError(404, 'not_found', '题目不存在。'); }
   }
 
   /** 重试重新占用一个任务容量位：非终态任务恰好占用 1（按 jobId 去重，不重复计照片数）；满则保守拒绝。
@@ -380,8 +434,12 @@ export class MobileRecognitionService {
       job = await this.ownedStorage(() => this.store.updateJob(jobId, current => {
         current.inventoryWarnings = result.warnings;
         current.questions = result.candidates.map(candidate => {
-        const id = crypto.randomUUID(); current.inventoryCandidates[id] = structuredClone(candidate); this.newRound(current, id);
-        return { id, number: candidate.number, revision: 1, status: 'queued', selectionEvidence: candidate.selectionEvidence,
+        const id = crypto.randomUUID(); current.inventoryCandidates[id] = structuredClone(candidate);
+        // v2.1a 分流：有批改痕迹（marked_wrong/corrected）的题照旧排队精读；
+        // 无痕迹/看不清的题标 unselected——不建精读工作单元、不占预算、不发模型请求，等学生勾选。
+        const automatic = candidate.selectionEvidence === 'marked_wrong' || candidate.selectionEvidence === 'corrected';
+        if (automatic) this.newRound(current, id);
+        return { id, number: candidate.number, revision: 1, status: automatic ? 'queued' as const : 'unselected' as const, selectionEvidence: candidate.selectionEvidence,
           evidence: null, verification: null, questionMediaId: null, diagramMediaIds: [], error: null, confirmedAt: null };
       });
         current.phase = 'questions'; current.status = 'processing'; this.touch(current);
@@ -398,7 +456,14 @@ export class MobileRecognitionService {
       this.releaseCapacityOnce(jobId);
       return;
     }
-    await this.processQuestions(job.id, job.questions.map(question => question.id));
+    // 只精读参与队列的题（自动题 + 学生已勾选的题）；unselected 永不入队。
+    const queued = job.questions.filter(question => question.status === 'queued').map(question => question.id);
+    if (queued.length === 0) {
+      // 一道自动题都没有：找题完成即终态 completed，释放入口容量（与其他终态一致，恰好一次）。
+      await this.finalize(job.id);
+      return;
+    }
+    await this.processQuestions(job.id, queued);
   }
 
   private async processQuestions(jobId: string, questionIds: string[]): Promise<void> {
@@ -454,7 +519,8 @@ export class MobileRecognitionService {
         if (question.status === 'needs_check' && !unresolvedOccurrence(job, question) && !occurrenceConflict(job, question)
           && allChecksPass(question, job.inventoryCandidates[question.id])) { question.status = 'ready'; question.revision += 1; }
       }
-      const usable = job.questions.filter(question => !['failed', 'queued', 'processing'].includes(question.status));
+      // unselected 不参与精读：不算进行中、不算失败、不算可用题（partial/failed 判定只看参与精读的题）。
+      const usable = job.questions.filter(question => !['failed', 'queued', 'processing', 'unselected'].includes(question.status));
       job.phase = 'complete';
       if (failed.length === 0) { job.status = 'completed'; job.error = null; }
       else if (usable.length > 0) { job.status = 'partial'; job.error = { code: 'partial', message: '识别暂未完成，已完成的题目已保留。', stage: 'questions', retryable: failed.some(question => question.error?.retryable) }; }
