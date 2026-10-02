@@ -80,4 +80,34 @@ final class QuestionNumberParserTests: XCTestCase {
     XCTAssertEqual(result.ids, ["id-3", "id-17a", "id-17b"], "同一开头整数的多个候选（小问）全部选中")
     XCTAssertEqual(result.missing, [9])
   }
+
+  // MARK: displayLabel（S2-R1）
+
+  // 纯整数（含首尾带空白/标点、括号包着整数）→「第 N 题」。
+  func testDisplayLabelPlainAndBracketedIntegers() {
+    XCTAssertEqual(QuestionNumberParser.displayLabel("3"), "第 3 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("1."), "第 1 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("2、"), "第 2 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("（3）"), "第 3 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("(4)"), "第 4 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel(" 5．"), "第 5 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("6:"), "第 6 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("7："), "第 7 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("12．"), "第 12 题")
+  }
+
+  // 复合/非数字题号：去首尾标点后原样放中间，两侧空格。
+  func testDisplayLabelCompositeKeepsOriginalInMiddle() {
+    XCTAssertEqual(QuestionNumberParser.displayLabel("17(1)"), "第 17(1) 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("17（2）"), "第 17（2） 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("三"), "第 三 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("A1"), "第 A1 题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("附加题"), "第 附加题 题")
+  }
+
+  // 空串（或只剩空白/标点）→「这道题」。
+  func testDisplayLabelEmptyFallsBackToGeneric() {
+    XCTAssertEqual(QuestionNumberParser.displayLabel(""), "这道题")
+    XCTAssertEqual(QuestionNumberParser.displayLabel("  、 "), "这道题")
+  }
 }

@@ -260,4 +260,56 @@ final class LiveTourTests: XCTestCase {
       if tapFirst(app, ids: ["return-view-summary"], labels: ["看结果"]) { sleep(3); shot("loop-summary") }
     }
   }
+
+  /// v2.1a：无批改痕迹的一页 → 勾出错题 → 只读勾出的题 → 进本周错题。
+  /// 前提同上，另需模拟器相册里最新的一张（选择器左上角第一张）是无批改痕迹的试卷照片。
+  @MainActor func testTourPickFromUnmarkedPage() throws {
+    let app = try launch()
+    XCTAssertTrue(app.buttons["add-photos"].waitForExistence(timeout: 15))
+    let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "item-card-"))
+    let startCount = cards.count
+    app.buttons["add-photos"].tap()
+    let photos = app.images.matching(identifier: "PXGGridLayout-Info")
+    XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: 15), app.debugDescription)
+    let photo = photos.firstMatch
+    shot("pick-picker")
+    photo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    let add = app.buttons["Done"].firstMatch.exists ? app.buttons["Done"].firstMatch : app.buttons["Add"].firstMatch
+    XCTAssertTrue(add.waitForExistence(timeout: 5), app.debugDescription)
+    add.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    sleep(3)
+    if app.buttons["consent-upload"].waitForExistence(timeout: 8) {
+      for _ in 0..<5 where !app.buttons["consent-upload"].isHittable { app.swipeUp() }
+      app.buttons["consent-upload"].tap()
+    }
+    // 等找题完成：出现「勾出错题」
+    let pick = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photo-pick-")).firstMatch
+    XCTAssertTrue(pick.waitForExistence(timeout: 240), app.debugDescription)
+    shot("pick-row-on-home")
+    scrollTo(pick, in: app, max: 4)
+    shot("pick-row-visible")
+    pick.tap()
+    let input = app.textFields["pick-input"]
+    XCTAssertTrue(input.waitForExistence(timeout: 10), app.debugDescription)
+    sleep(6); shot("pick-sheet")
+    input.tap(); input.typeText("第2题，8，还有15")
+    sleep(2); shot("pick-sheet-typed")
+    app.swipeUp(); sleep(1); shot("pick-sheet-list")
+    let confirm = app.buttons["pick-confirm"]
+    scrollTo(confirm, in: app, max: 8)
+    shot("pick-sheet-confirm")
+    XCTAssertTrue(confirm.isEnabled, "输入题号后应有题被勾上")
+    confirm.tap()
+    sleep(5); shot("pick-after-submit")
+    let deadline = Date().addingTimeInterval(420)
+    while Date() < deadline, cards.count < startCount + 2 { sleep(10) }
+    shot("pick-after-reading")
+    app.swipeUp(); shot("pick-after-reading-scrolled")
+    XCTAssertGreaterThanOrEqual(cards.count, startCount + 2, "勾出的两道题读完后应进本周错题")
+    let missed = app.buttons["pick-missed"]
+    if missed.exists {
+      scrollTo(missed, in: app, max: 4)
+      missed.tap(); sleep(2); shot("pick-missed-list")
+    }
+  }
 }

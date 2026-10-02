@@ -61,6 +61,21 @@ enum QuestionNumberParser {
     return (ids, missing)
   }
 
+  /// 题号展示（S2-R1）：去掉首尾的空白与 .、．、、:、： 后，
+  /// 整体是一个整数或括号包着一个整数 →「第 3 题」；其余原样放中间、两侧空格；空串 →「这道题」。
+  static func displayLabel(_ number: String) -> String {
+    let trimmed = number.trimmingCharacters(
+      in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ".．、:：")))
+    guard !trimmed.isEmpty else { return "这道题" }
+    if let value = Int(trimmed) { return "第 \(value) 题" }
+    for (open, close) in [("(", ")"), ("（", "）")] as [(Character, Character)]
+    where trimmed.first == open && trimmed.last == close {
+      let inner = trimmed.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
+      if let value = Int(inner) { return "第 \(value) 题" }
+    }
+    return "第 \(trimmed) 题"
+  }
+
   // MARK: - 内部
 
   /// 全角数字转半角。

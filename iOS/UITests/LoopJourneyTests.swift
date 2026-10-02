@@ -37,6 +37,14 @@ final class LoopJourneyTests: XCTestCase {
     importPhoto(app)
     waitUntil("第二张照片自动上传（若再次询问同意则不会发出）") { server.uploadCount == 2 }
     XCTAssertFalse(app.buttons["consent-upload"].exists, "第二次加照片不再出现上传确认")
+
+    // S2-R1：主页向上滚动后截图（XCTAttachment），人工核对状态栏区域是纯底色、没有内容叠上去。
+    app.swipeUp()
+    app.swipeUp()
+    let attachment = XCTAttachment(screenshot: app.screenshot())
+    attachment.name = "home-scrolled-statusbar"
+    attachment.lifetime = .keepAlways
+    add(attachment)
   }
 
   // MARK: - J2 改与移出
@@ -267,7 +275,8 @@ final class LoopJourneyTests: XCTestCase {
     XCTAssertTrue(app.staticTexts["这页没看到批改痕迹"].waitForExistence(timeout: 30),
       "无痕迹页到终态后应提示勾出错题")
 
-    // 勾出错题 → 输入「2」→ 第 2 题被勾上；再手点第 3 题。
+    // 勾出错题 → 输入「1」再续输入「5」：第 1 题先勾上、合成「15」后自动取消，
+    // 并提示「这页没找到第 15 题」（合成页只有 3 道题）。清空后输入「2」勾上第 2 题；再手点第 3 题。
     let pick = app.buttons.matching(NSPredicate(
       format: "identifier BEGINSWITH %@ AND label == %@", "photo-pick-", "勾出错题")).firstMatch
     XCTAssertTrue(pick.waitForExistence(timeout: 5))
@@ -275,6 +284,21 @@ final class LoopJourneyTests: XCTestCase {
     let input = app.textFields["pick-input"]
     XCTAssertTrue(input.waitForExistence(timeout: 5), "勾选面板应出现")
     input.tap()
+    input.typeText("1")
+    XCTAssertTrue(app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label == %@", "pick-row-", "第 1 题，已选")).firstMatch
+        .waitForExistence(timeout: 5), "输入 1 后第 1 题被勾上")
+    input.typeText("5")
+    XCTAssertTrue(app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label == %@", "pick-row-", "第 1 题，未选")).firstMatch
+        .waitForExistence(timeout: 5), "「1」变成「15」后第 1 题自动取消")
+    XCTAssertTrue(app.staticTexts["这页没找到第 15 题"].waitForExistence(timeout: 5),
+      "第 15 题不在这页，应提示没找到")
+    // 清空输入框（退格删掉已输入的字符）。
+    let typed = input.value as? String ?? ""
+    if !typed.isEmpty {
+      input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: typed.count))
+    }
     input.typeText("2")
     XCTAssertTrue(app.buttons.matching(NSPredicate(
       format: "identifier BEGINSWITH %@ AND label == %@", "pick-row-", "第 2 题，已选")).firstMatch

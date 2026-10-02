@@ -44,6 +44,14 @@ struct PhotoFailurePlan: Equatable, Sendable {
         retryTitle: nil, dismissTitle: "移除这张", retryQuestionIDs: nil)
     }
 
+    // S2-R1：终态但一道题都没找到（误选风景照、拍糊、拍偏）——不能悄悄没了，
+    // 如实告知并只允许移除这张（已移除的按现有规则不再出现）。
+    if ["completed", "partial"].contains(job.status), job.questions.isEmpty {
+      return PhotoFailurePlan(title: "这张照片里没找到题目",
+        detail: "把整页拍清楚再拍一张；不是试卷的照片可以直接移除",
+        retryTitle: nil, dismissTitle: "移除这张", retryQuestionIDs: nil)
+    }
+
     guard !failed.isEmpty else { return nil }
 
     if failed.count == questions.count {

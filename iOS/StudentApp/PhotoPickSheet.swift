@@ -2,7 +2,8 @@ import SwiftUI
 import UIKit
 
 // S2：勾选面板——无批改痕迹的页由学生勾出错题。
-// 点选或报/输入题号（QuestionNumberParser 只增不减）；只有勾出的题才精读。
+// 点选或报/输入题号：输入匹配随输入框内容整体重算（PickSelection，S2-R1 起不再只增不减），
+// 学生手点的勾上/取消单独记忆；只有勾出的题才精读。
 // 候选缩略图只在面板存续期间留在内存，不落盘、不写日志；学生输入的题号不落盘。
 
 struct PhotoPickSheet: View {
@@ -11,7 +12,8 @@ struct PhotoPickSheet: View {
   @Environment(\.dismiss) private var dismiss
   @State private var speech = SpeechInput()
   @State private var input = ""
-  @State private var checked: Set<String> = []
+  @State private var selection = PickSelection()
+  @State private var inputIDs: Set<String> = []
   @State private var missing: [Int] = []
   @State private var submitting = false
   @State private var source: PhotoReference?
@@ -23,6 +25,8 @@ struct PhotoPickSheet: View {
   private var questions: [RecognitionQuestion] { task?.job?.questions ?? [] }
   /// 仍可勾的题（未选）；其余状态显示为已勾选、置灰。
   private var selectable: [RecognitionQuestion] { questions.filter { $0.status == "unselected" } }
+  /// 当前勾上的题：输入匹配整体重算 + 学生手点记忆。
+  private var checked: Set<String> { selection.checked(inputIDs: inputIDs) }
   private var checkedCount: Int { selectable.filter { checked.contains($0.id) }.count }
 
   var body: some View {
@@ -76,12 +80,12 @@ struct PhotoPickSheet: View {
     }
   }
 
-  /// 每次输入变化：解析并把对应候选勾上（只增不减，学生可以手动点掉）。
+  /// 每次输入变化：解析并整体重算匹配的题（可增可减）；学生手点的勾上/取消不受影响。
   private func applyInput(_ text: String) {
     let numbers = QuestionNumberParser.parse(text)
     let result = QuestionNumberParser.match(numbers: numbers,
       candidates: selectable.map { (id: $0.id, number: $0.number) })
-    checked.formUnion(result.ids)
+    inputIDs = Set(result.ids)
     missing = result.missing
   }
 
@@ -100,7 +104,7 @@ struct PhotoPickSheet: View {
     let isChecked = !isSelectable || checked.contains(question.id)
     Button {
       guard isSelectable else { return }
-      if checked.contains(question.id) { checked.remove(question.id) } else { checked.insert(question.id) }
+      selection.toggle(question.id, inputIDs: inputIDs)
     } label: {
       HStack(alignment: .top, spacing: 12) {
         Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
@@ -109,7 +113,7 @@ struct PhotoPickSheet: View {
           .frame(width: 44, height: 44)
         VStack(alignment: .leading, spacing: 6) {
           HStack(spacing: 8) {
-            Text("第 \(question.number) 题").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+            Text(QuestionNumberParser.displayLabel(question.number)).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
             if !isSelectable {
               Text(question.active ? "正在识别" : "已在错题本")
                 .font(.caption2.weight(.medium)).foregroundStyle(Palette.muted)
@@ -132,7 +136,7 @@ struct PhotoPickSheet: View {
     }
     .buttonStyle(.plain)
     .disabled(!isSelectable)
-    .accessibilityLabel("第 \(question.number) 题，\(isChecked ? "已选" : "未选")")
+    .accessibilityLabel("\(QuestionNumberParser.displayLabel(question.number))，\(isChecked ? "已选" : "未选")")
     .accessibilityIdentifier("pick-row-\(question.id)")
   }
 

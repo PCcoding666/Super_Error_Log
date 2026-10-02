@@ -37,9 +37,11 @@ struct LoopHomeView: View {
       }.padding(24)
     }
     .background(Palette.paper)
-    // T6k：顶部同色安全区背景——滚动内容不再钻到状态栏（时间、电量）下面。
+    // T6k/S2-R1：顶部同色背景盖住状态栏——inset 本身高 0，
+    // 背景向上延伸进安全区，滚动内容不再钻到状态栏（时间、电量）下面。
     .safeAreaInset(edge: .top, spacing: 0) {
-      Rectangle().fill(Palette.paper).frame(height: 0)
+      Color.clear.frame(height: 0)
+        .background(Palette.paper, ignoresSafeAreaEdges: .top)
     }
     .refreshable { await loopStore.refreshWeek() }
     .safeAreaInset(edge: .bottom, spacing: 0) { undoBar }
@@ -257,7 +259,7 @@ struct LoopHomeView: View {
         nextStep: "点「上传」开始识别", actionable: false, needsRefresh: false)
     // T6k：失败/部分失败的行按方案显示标题、说明与按钮；无方案（罕见状态）退回既有呈现。
     let plan = row.kind == .failed ? row.task.flatMap { PhotoFailurePlan.plan(for: $0) } : nil
-    // S2：识别中且还有没批改痕迹的题 → 行内次要补选按钮。
+    // S2：识别中且还有没勾的题 → 行内次要补选按钮。
     let pickMore = row.kind == .recognizing ? row.task.flatMap { PhotoPickReminder.pickMoreCount($0) } : nil
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .top, spacing: 12) {
@@ -310,7 +312,7 @@ struct LoopHomeView: View {
             .accessibilityIdentifier("photo-pickdone-\(row.name)")
         }
         if let pickMore, let task = row.task {
-          Button("还有 \(pickMore) 道没批改痕迹 · 补选") { pickTask = PickReference(taskID: task.id) }
+          Button("还有 \(pickMore) 道没选 · 补选") { pickTask = PickReference(taskID: task.id) }
             .font(.caption).frame(minHeight: 44)
             .foregroundStyle(Palette.teal)
             .accessibilityIdentifier("photo-pickmore-\(row.name)")

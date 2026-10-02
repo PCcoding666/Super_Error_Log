@@ -144,6 +144,27 @@ final class PhotoFailurePlanTests: XCTestCase {
     XCTAssertTrue(plan.retryWholePhoto)
   }
 
+  // S2-R1：终态但一道题都没找到（误选风景照、拍糊、拍偏）→ 提示没找到题目，只能移除这张。
+  func testCompletedWithZeroQuestionsOffersNoticeAndDismiss() throws {
+    let task = try task(Self.jobJSON(status: "completed", phase: "complete", questions: []))
+    let plan = try XCTUnwrap(PhotoFailurePlan.plan(for: task), "0 道题的完成不能悄悄消失")
+    XCTAssertEqual(plan.title, "这张照片里没找到题目")
+    XCTAssertEqual(plan.detail, "把整页拍清楚再拍一张；不是试卷的照片可以直接移除")
+    XCTAssertNil(plan.retryTitle)
+    XCTAssertNil(plan.retryQuestionIDs)
+    XCTAssertFalse(plan.retryWholePhoto)
+    XCTAssertEqual(plan.dismissTitle, "移除这张")
+  }
+
+  // 0 道题的 partial 同样按「没找到题目」处理。
+  func testPartialWithZeroQuestionsOffersSameNotice() throws {
+    let task = try task(Self.jobJSON(status: "partial", phase: "complete", questions: []))
+    let plan = try XCTUnwrap(PhotoFailurePlan.plan(for: task))
+    XCTAssertEqual(plan.title, "这张照片里没找到题目")
+    XCTAssertNil(plan.retryTitle)
+    XCTAssertEqual(plan.dismissTitle, "移除这张")
+  }
+
   // 没有任何失败时不产出方案。
   func testNoFailureProducesNoPlan() throws {
     let completed = try task(Self.jobJSON(status: "completed", phase: "complete", questions: [

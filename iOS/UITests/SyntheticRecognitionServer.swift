@@ -287,9 +287,18 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
   }
 
   /// 无痕迹页的合成节奏：被勾的题在第二次轮询后读完（confirmed），并按现有桥接节奏登记成错题。
+  /// S2-R1：有痕迹页到终态时带上 3 道已确认题（对齐真实服务器形状——
+  /// 终态且 0 道题只发生在「照片里没找到题目」的情形，客户端据此提示移除）。
   /// 调用方须已持有锁。
   private func advance(_ job: inout JobState, jobIndex: Int) {
-    guard job.unmarked else { return }
+    guard job.unmarked else {
+      guard job.polls >= 2, job.questions.isEmpty else { return }
+      job.questions = (1...3).map { number in
+        QuestionState(id: String(format: "00000000-0000-4000-8000-%012d", jobIndex * 10 + number),
+          number: "\(number)", status: "confirmed")
+      }
+      return
+    }
     job.revision += 1
     guard job.polls >= 2 else { return }
     for qIndex in job.questions.indices where job.questions[qIndex].status == "queued" {

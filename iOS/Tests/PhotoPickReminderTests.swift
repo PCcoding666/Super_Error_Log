@@ -58,8 +58,9 @@ final class PhotoPickReminderTests: XCTestCase {
     XCTAssertFalse(PhotoPickReminder.showsNoMarksRow(legacy), "旧服务器的照片行为不变")
   }
 
-  // 识别中且有自动题：行内补选按钮给出未选题数；没有自动题或未选题时不显示。
-  func testPickMoreCountOnlyWhileRecognizingWithAutomaticQuestions() throws {
+  // S2-R1：识别中且还有未选题就显示行内补选按钮（不再要求有自动题——
+  // 学生自己勾过的无痕迹页在识别中同样显示「还有 N 道没选 · 补选」）；终态不显示。
+  func testPickMoreCountWhileRecognizingWithUnselected() throws {
     let mixed = try task(Self.jobJSON(status: "processing", phase: "questions", questions: [
       Self.questionJSON(id: Self.q1, status: "unselected"),
       Self.questionJSON(id: Self.q2, status: "unselected"),
@@ -69,7 +70,11 @@ final class PhotoPickReminderTests: XCTestCase {
     let noAutomatic = try task(Self.jobJSON(status: "processing", phase: "questions", questions: [
       Self.questionJSON(id: Self.q1, status: "unselected"),
     ]))
-    XCTAssertNil(PhotoPickReminder.pickMoreCount(noAutomatic), "一道自动题都没有时不单独催")
+    XCTAssertEqual(PhotoPickReminder.pickMoreCount(noAutomatic), 1, "没有自动题时同样显示补选")
+    let noneLeft = try task(Self.jobJSON(status: "processing", phase: "questions", questions: [
+      Self.questionJSON(id: Self.q1, status: "processing"),
+    ]))
+    XCTAssertNil(PhotoPickReminder.pickMoreCount(noneLeft), "没有未选题时不显示")
     let terminal = try task(Self.jobJSON(status: "completed", questions: [
       Self.questionJSON(id: Self.q1, status: "unselected"),
       Self.questionJSON(id: Self.q2, status: "confirmed"),
@@ -97,5 +102,10 @@ final class PhotoPickReminderTests: XCTestCase {
       Self.questionJSON(id: Self.q1, status: "confirmed"),
     ]))
     XCTAssertTrue(PhotoPickReminder.missedTasks([legacy]).isEmpty, "旧服务器的照片不进补选")
+    let recognizing = try task(Self.jobJSON(status: "processing", phase: "questions", questions: [
+      Self.questionJSON(id: Self.q1, status: "unselected"),
+    ]))
+    XCTAssertTrue(PhotoPickReminder.missedTasks([recognizing]).isEmpty,
+      "识别中的行内补选按钮已在催，不重复列入补选")
   }
 }

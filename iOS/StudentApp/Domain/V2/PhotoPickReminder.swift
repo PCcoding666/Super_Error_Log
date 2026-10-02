@@ -20,13 +20,12 @@ enum PhotoPickReminder {
     return true
   }
 
-  /// 识别中、有自动题、且还有未选题：行内次要按钮「还有 N 道没批改痕迹 · 补选」的 N；
-  /// nil 不显示（一道自动题都没有时不单独催，识别完成后行照常消失）。
+  /// 识别中且还有未选题：行内次要按钮「还有 N 道没选 · 补选」的 N；nil 不显示。
+  /// S2-R1：不再要求有自动题——学生自己勾过的无痕迹页在识别中同样显示这句。
   static func pickMoreCount(_ task: LocalRecognitionTask) -> Int? {
     guard let job = task.job, job.active else { return nil }
     let unselected = unselectedQuestions(of: task).count
-    let automatic = job.questions.count - unselected
-    guard automatic > 0, unselected > 0 else { return nil }
+    guard unselected > 0 else { return nil }
     return unselected
   }
 
