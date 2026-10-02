@@ -429,6 +429,56 @@ final class StudyStore {
     }
   }
 
+  // MARK: - S2：学生勾题
+
+  /// 勾出错题：调用 select，成功后用返回的任务更新本机、置 pickDone、恢复轮询。
+  /// 进行中重复调用直接返回 false；失败时给出学生能看懂的一句（409 还在找题 / 429 队列满 / 离线沿用现有提示）。
+  @discardableResult
+  func selectQuestions(taskID: UUID, questionIDs: [String]) async -> Bool {
+    guard let client, let task = state.recognitionTasks.first(where: { $0.id == taskID }),
+      let job = task.job, !questionIDs.isEmpty, !busyTasks.contains(taskID) else { return false }
+    busyTasks.insert(taskID)
+    defer { busyTasks.remove(taskID) }
+    do {
+      let updated = try await client.select(job.id, questionIDs: questionIDs)
+      if change({ state in
+        try state.ingest(updated, photoName: task.photoName)
+        if let index = state.recognitionTasks.firstIndex(where: { $0.id == taskID }) {
+          state.recognitionTasks[index].pickDone = true
+        }
+      }) {
+        try await cacheMedia(updated, client: client)
+      }
+      resumePolling()
+      return true
+    } catch {
+      if case RecognitionClientError.server(let status, _) = error, status == 409 {
+        errorMessage = "这张照片还在找题，稍后再选"
+      } else if case RecognitionClientError.server(let status, _) = error, status == 429 {
+        errorMessage = "排队的题太多了，过一会儿再选"
+      } else {
+        errorMessage = error.localizedDescription
+      }
+      return false
+    }
+  }
+
+  /// 「这页没有错题」：只置标记，不发请求。
+  func markPickDone(_ name: String) {
+    _ = change { state in
+      if let index = state.recognitionTasks.firstIndex(where: { $0.photoName == name }) {
+        state.recognitionTasks[index].pickDone = true
+      }
+    }
+  }
+
+  /// 候选题缩略裁图（勾选面板用）。取不到返回 nil，不弹错误；只在面板内存里，不落盘。
+  func candidateImage(taskID: UUID, questionID: String) async -> Data? {
+    guard let client, let jobID = state.recognitionTasks.first(where: { $0.id == taskID })?.job?.id
+    else { return nil }
+    return try? await client.candidateImage(jobID, questionID: questionID)
+  }
+
   func mediaURL(jobID: String, mediaID: String) -> URL {
     persistence.directory.appendingPathComponent("Media/\(jobID)/\(mediaID).jpg")
   }

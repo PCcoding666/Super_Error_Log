@@ -22,6 +22,8 @@ struct LoopHomeView: View {
   @State private var detailItemID: String?
   @State private var retryPhoto: PhotoRetry?
   @State private var recognizedPhotoCount = 0
+  @State private var pickTask: PickReference?
+  @State private var showMissedList = false
 
   var body: some View {
     ScrollView {
@@ -67,6 +69,8 @@ struct LoopHomeView: View {
       }
     }
     .sheet(item: $correctionTarget) { CorrectionSheet(itemID: $0.itemID) }
+    .sheet(item: $pickTask) { PhotoPickSheet(taskID: $0.taskID) }
+    .sheet(isPresented: $showMissedList) { MissedPickListSheet() }
     .navigationDestination(item: $detailItemID) { itemID in
       LoopItemDetailView(itemID: itemID, onCorrect: { correctionTarget = ItemReference(itemID: $0) },
         onDiscard: { id in
@@ -198,10 +202,20 @@ struct LoopHomeView: View {
 
   @ViewBuilder private var photoProgressSection: some View {
     let rows = progressRows
-    if !rows.isEmpty {
+    let missed = PhotoPickReminder.missedTasks(store.state.recognitionTasks)
+    if !rows.isEmpty || !missed.isEmpty {
       VStack(alignment: .leading, spacing: 12) {
-        Text("照片进度").font(.title3.weight(.semibold)).foregroundStyle(Palette.ink)
-        ForEach(rows) { row in photoProgressRow(row) }
+        if !rows.isEmpty {
+          Text("照片进度").font(.title3.weight(.semibold)).foregroundStyle(Palette.ink)
+          ForEach(rows) { row in photoProgressRow(row) }
+        }
+        // S2：补选入口——任何照片还有没勾的题时出现（行内已有勾选入口的照片不重复列）。
+        if !missed.isEmpty {
+          Button("漏了题？从照片里补选") { showMissedList = true }
+            .font(.caption).frame(minHeight: 44)
+            .foregroundStyle(Palette.teal)
+            .accessibilityIdentifier("pick-missed")
+        }
       }
     }
   }
@@ -209,6 +223,8 @@ struct LoopHomeView: View {
   /// 还没上传 / 正在上传 / 正在识别 / 没识别成功 的照片；全部识别完成的不占位置。
   /// T6k：部分失败且没被移除的照片也列出来（失败的那几道不能悄悄没了）；
   /// 被学生移除（dismissPhoto）的失败照片不再出现。
+  /// S2：整页没有批改痕迹（全部待学生勾选）且未处理的照片列出「这页没看到批改痕迹」行；
+  /// 失败方案优先于勾选提示。
   private var progressRows: [PhotoProgressRow] {
     store.state.importedPhotos.compactMap { name in
       let task = store.state.recognitionTasks.first { $0.photoName == name }
@@ -218,6 +234,9 @@ struct LoopHomeView: View {
       if job.status == "completed" || job.status == "partial" {
         if let task, task.dismissedFromProgress != true, PhotoFailurePlan.plan(for: task) != nil {
           return PhotoProgressRow(name: name, task: task, kind: .failed)
+        }
+        if let task, PhotoPickReminder.showsNoMarksRow(task) {
+          return PhotoProgressRow(name: name, task: task, kind: .pick)
         }
         return nil
       }
@@ -238,16 +257,22 @@ struct LoopHomeView: View {
         nextStep: "点「上传」开始识别", actionable: false, needsRefresh: false)
     // T6k：失败/部分失败的行按方案显示标题、说明与按钮；无方案（罕见状态）退回既有呈现。
     let plan = row.kind == .failed ? row.task.flatMap { PhotoFailurePlan.plan(for: $0) } : nil
+    // S2：识别中且还有没批改痕迹的题 → 行内次要补选按钮。
+    let pickMore = row.kind == .recognizing ? row.task.flatMap { PhotoPickReminder.pickMoreCount($0) } : nil
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .top, spacing: 12) {
         LocalPhotoThumbnail(url: store.photoURL(row.name)).frame(width: 62, height: 76).clipped()
           .accessibilityHidden(true)
         VStack(alignment: .leading, spacing: 5) {
-          Text(plan?.title ?? presentation.headline).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+          Text(row.kind == .pick ? "这页没看到批改痕迹" : (plan?.title ?? presentation.headline))
+            .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+          if row.kind == .pick {
+            Text("勾出你做错的题，只有勾出的题会进错题本").font(.caption).foregroundStyle(Palette.muted)
+          }
           if let plan {
             Text(plan.detail).font(.caption).foregroundStyle(Palette.muted)
           }
-          if !presentation.counts.isEmpty {
+          if row.kind != .pick, !presentation.counts.isEmpty {
             Text(presentation.counts).font(.caption).foregroundStyle(Palette.muted)
           }
           if uploading, let task = row.task, let progress = store.uploadProgress[task.id] {
@@ -274,6 +299,21 @@ struct LoopHomeView: View {
           Button("上传") { uploadPending(row.name) }
             .font(.caption.weight(.semibold)).frame(minHeight: 44)
             .accessibilityIdentifier("photo-upload-\(row.name)")
+        }
+        if row.kind == .pick, let task = row.task {
+          Button("勾出错题") { pickTask = PickReference(taskID: task.id) }
+            .font(.caption.weight(.semibold)).frame(minHeight: 44)
+            .accessibilityIdentifier("photo-pick-\(row.name)")
+          Button("这页没有错题") { store.markPickDone(row.name) }
+            .font(.caption).frame(minHeight: 44)
+            .foregroundStyle(Palette.muted)
+            .accessibilityIdentifier("photo-pickdone-\(row.name)")
+        }
+        if let pickMore, let task = row.task {
+          Button("还有 \(pickMore) 道没批改痕迹 · 补选") { pickTask = PickReference(taskID: task.id) }
+            .font(.caption).frame(minHeight: 44)
+            .foregroundStyle(Palette.teal)
+            .accessibilityIdentifier("photo-pickmore-\(row.name)")
         }
         if row.kind == .failed, let task = row.task {
           let retrying = store.busyTasks.contains(task.id)
@@ -488,7 +528,7 @@ struct LoopHomeView: View {
 // MARK: - 照片进度行
 
 private struct PhotoProgressRow: Identifiable {
-  enum Kind { case pending, recognizing, failed, unknown }
+  enum Kind { case pending, recognizing, failed, unknown, pick }
   var id: String { name }
   let name: String
   let task: LocalRecognitionTask?

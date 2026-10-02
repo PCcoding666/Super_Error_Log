@@ -31,7 +31,7 @@ enum RefreshIssue: String, Codable, Sendable {
 }
 
 enum TaskPresentation {
-  static let knownStatuses: Set<String> = ["queued", "processing", "ready", "needs_check", "confirmed", "skipped", "failed"]
+  static let knownStatuses: Set<String> = ["queued", "processing", "ready", "needs_check", "confirmed", "skipped", "failed", "unselected"]
   /// 任务级状态同理：未来新增的任务状态不得落到「全部已确认」分支。
   static let knownJobStatuses: Set<String> = ["queued", "processing", "completed", "partial", "interrupted", "failed"]
 
@@ -48,7 +48,9 @@ enum TaskPresentation {
       return PhotoCardPresentation(tone: .red, headline: "上传待重试，照片仍在本机", counts: "",
         nextStep: "重新上传", actionable: true, needsRefresh: false)
     }
-    let questions = job.questions
+    // S2：未选的题不参与任何计数与完成度判断（不是失败、不是成功、不算识别中，
+    // 也不得让全未选的页落进「已确认 0 道」的兜底分支）。
+    let questions = job.questions.filter { $0.status != "unselected" }
     let n = questions.count
     func countOf(_ status: String) -> Int { questions.filter { $0.status == status }.count }
     let ready = countOf("ready"), check = countOf("needs_check"), failed = countOf("failed")

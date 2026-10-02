@@ -115,6 +115,8 @@ struct RecognitionQuestion: Codable, Equatable, Identifiable, Sendable {
   let confirmedAt: Date?
   /// 人工放行标记（可选，旧记录无此字段则解码为 nil 视同 false）：needs_check 时学生对照原图后主动确认。
   var manualRelease: Bool? = nil
+  /// S2：学生在勾选面板里勾入的题（可选，旧服务器/旧记录无此字段则解码为 nil）。
+  var selectedByStudent: Bool? = nil
 
   var coreValue: RecognitionQuestion {
     var copy = self; copy.candidateBox = nil; copy.error?.recoverable = nil; return copy
@@ -213,20 +215,24 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
   /// T6k：学生把这张失败/部分失败的照片从「照片进度」里移除（旧存档解码为 nil = 未移除）。
   /// 只是不再显示：本机照片文件、识别任务、已进错题本的题都不动。
   var dismissedFromProgress: Bool?
+  /// S2：学生对这张「无批改痕迹」照片已完成勾选（勾过题或点了「这页没有错题」）。
+  /// 旧存档解码为 nil = 未处理，仍提示勾出错题。
+  var pickDone: Bool?
 
   init(id: UUID, photoName: String, uploadName: String, consentedAt: Date? = nil,
     job: RecognitionJob? = nil, lastError: String? = nil, ownedServiceId: String? = nil,
     lastIssueKind: RefreshIssue? = nil, v2Registered: Bool? = nil,
-    dismissedFromProgress: Bool? = nil) {
+    dismissedFromProgress: Bool? = nil, pickDone: Bool? = nil) {
     self.id = id; self.photoName = photoName; self.uploadName = uploadName
     self.consentedAt = consentedAt; self.job = job; self.lastError = lastError
     self.ownedServiceId = ownedServiceId; self.lastIssueKind = lastIssueKind
     self.v2Registered = v2Registered
     self.dismissedFromProgress = dismissedFromProgress
+    self.pickDone = pickDone
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId, lastIssueKind, v2Registered, dismissedFromProgress
+    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId, lastIssueKind, v2Registered, dismissedFromProgress, pickDone
   }
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -244,6 +250,8 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
     v2Registered = try values.decodeIfPresent(Bool.self, forKey: .v2Registered)
     // 旧文档无移除字段：解码为 nil（未移除，照常显示），不拒绝加载。
     dismissedFromProgress = try values.decodeIfPresent(Bool.self, forKey: .dismissedFromProgress)
+    // S2：旧文档无勾选字段：解码为 nil（未处理），不拒绝加载。
+    pickDone = try values.decodeIfPresent(Bool.self, forKey: .pickDone)
   }
 }
 

@@ -140,6 +140,28 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
     return data
   }
 
+  // MARK: - S2：学生勾题
+
+  /// 勾出错题（POST /v1/recognitions/:id/select）。幂等；409 = 还在找题，429 = 队列已满。
+  func select(_ jobID: String, questionIDs: [String]) async throws -> RecognitionJob {
+    try validateID(jobID)
+    for questionID in questionIDs { try validateID(questionID) }
+    var request = makeRequest("v1/recognitions/\(jobID)/select", method: "POST")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONSerialization.data(withJSONObject: ["questionIds": questionIDs])
+    return try await job(request)
+  }
+
+  /// 候选题缩略裁图（GET …/questions/:questionId/candidate）。任何状态都可取。
+  func candidateImage(_ jobID: String, questionID: String) async throws -> Data {
+    try validateID(jobID); try validateID(questionID)
+    let (data, response) = try await send(makeRequest("v1/recognitions/\(jobID)/questions/\(questionID)/candidate"))
+    guard response.mimeType == "image/jpeg", data.starts(with: [0xff, 0xd8, 0xff]), data.count <= 15_000_000 else {
+      throw RecognitionClientError.invalidResponse
+    }
+    return data
+  }
+
   private func validateID(_ id: String) throws {
     guard UUID(uuidString: id) != nil else { throw RecognitionClientError.invalidResponse }
   }

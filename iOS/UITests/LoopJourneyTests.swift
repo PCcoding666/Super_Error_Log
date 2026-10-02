@@ -244,6 +244,76 @@ final class LoopJourneyTests: XCTestCase {
     XCTAssertTrue(app.buttons["item-card-\(Self.item1)"].exists, "操作失败后卡片仍在")
   }
 
+  // MARK: - J6 自己勾错题（无批改痕迹的页）
+
+  /// S2：无痕迹情形由服务器开关控制（unmarkedPages），不影响 J1–J5 的默认情形。
+  /// 无痕迹页的 3 道候选题（与服务器合成内容一致）。
+  static let pickItem2 = "itm_0000000000010001"  // 第 2 题勾入后桥接出的错题
+  static let pickItem3 = "itm_0000000000010002"  // 第 3 题
+
+  func testJ6PickWrongQuestionsFromUnmarkedPage() throws {
+    let server = try SyntheticRecognitionServer(unmarkedPages: true)
+    defer { server.stop() }
+    let app = launch(server)
+    XCTAssertTrue(app.staticTexts["connection-state-ready"].waitForExistence(timeout: 10))
+
+    importPhoto(app)
+    XCTAssertTrue(app.staticTexts["这次将发送 1 张照片。"].waitForExistence(timeout: 5))
+    let consent = app.buttons["consent-upload"]
+    reveal(consent, in: app)
+    consent.tap()
+
+    // 找题完成：这页一道自动题都没有 → 照片进度出现「这页没看到批改痕迹」。
+    XCTAssertTrue(app.staticTexts["这页没看到批改痕迹"].waitForExistence(timeout: 30),
+      "无痕迹页到终态后应提示勾出错题")
+
+    // 勾出错题 → 输入「2」→ 第 2 题被勾上；再手点第 3 题。
+    let pick = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label == %@", "photo-pick-", "勾出错题")).firstMatch
+    XCTAssertTrue(pick.waitForExistence(timeout: 5))
+    pick.tap()
+    let input = app.textFields["pick-input"]
+    XCTAssertTrue(input.waitForExistence(timeout: 5), "勾选面板应出现")
+    input.tap()
+    input.typeText("2")
+    XCTAssertTrue(app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label == %@", "pick-row-", "第 2 题，已选")).firstMatch
+        .waitForExistence(timeout: 5), "输入 2 后第 2 题被勾上")
+    let row3 = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@ AND label == %@", "pick-row-", "第 3 题，未选")).firstMatch
+    reveal(row3, in: app)
+    row3.tap()
+
+    // 按钮显示「把这 2 道加入错题本」→ 提交 → 面板关闭。
+    let confirm = app.buttons["pick-confirm"]
+    XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+    XCTAssertEqual(confirm.label, "把这 2 道加入错题本")
+    confirm.tap()
+    waitUntil("提交成功后面板关闭") { !confirm.exists }
+
+    // 勾入的 2 道读完后进本周错题；照片进度里这张消失；还剩 1 道 → 出现补选入口。
+    XCTAssertTrue(app.buttons["item-card-\(Self.pickItem2)"].waitForExistence(timeout: 40),
+      "勾入的第 2 题应出现在本周错题")
+    XCTAssertTrue(app.buttons["item-card-\(Self.pickItem3)"].waitForExistence(timeout: 10),
+      "勾入的第 3 题应出现在本周错题")
+    XCTAssertFalse(app.staticTexts["这页没看到批改痕迹"].exists, "勾过后提示行消失")
+    XCTAssertTrue(app.buttons["pick-missed"].waitForExistence(timeout: 10),
+      "还剩 1 道没选，应出现「漏了题？从照片里补选」")
+
+    // 另一张无痕迹照片：点「这页没有错题」→ 该行消失，错题数不变。
+    importPhoto(app)
+    waitUntil("第二张照片自动上传（同意已记住）") { server.uploadCount == 2 }
+    XCTAssertTrue(app.staticTexts["这页没看到批改痕迹"].waitForExistence(timeout: 30),
+      "第二张无痕迹页同样提示勾出错题")
+    let pickDone = app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@", "photo-pickdone-")).firstMatch
+    reveal(pickDone, in: app)
+    pickDone.tap()
+    waitUntil("「这页没有错题」后该行消失") { !app.staticTexts["这页没看到批改痕迹"].exists }
+    XCTAssertEqual(app.buttons.matching(NSPredicate(
+      format: "identifier BEGINSWITH %@", "item-card-")).count, 2, "错题数不变")
+  }
+
   // MARK: - 公共步骤
 
   private func launch(_ server: SyntheticRecognitionServer, session: String = UUID().uuidString) -> XCUIApplication {

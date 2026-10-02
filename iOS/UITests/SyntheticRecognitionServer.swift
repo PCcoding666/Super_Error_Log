@@ -19,12 +19,27 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
 
   // MARK: - /v2 状态（锁保护）
 
+  /// S2：无痕迹页的候选题（题号 / 状态 / 学生勾入标记）。
+  private struct QuestionState {
+    let id: String
+    let number: String
+    var status = "unselected"  // unselected → queued → confirmed
+    var revision = 1
+    var selectedByStudent = false
+  }
+
   private struct JobState {
     let id: String
     var polls = 0
     var registeredAt: String?
+    /// S2：无痕迹页（答题卡 + 网上阅卷情形）：找题后全部题 unselected，等学生勾。
+    var unmarked = false
+    /// 无痕迹页使用显式 revision（勾选后 polls 归零但版本只升不降）。
+    var revision = 8
+    var questions: [QuestionState] = []
     /// 识别进度两段式：前两次轮询仍在识别，之后 completed（终态）。
-    var terminal: Bool { polls >= 2 }
+    /// 有待精读的题（queued）时不到终态。
+    var terminal: Bool { polls >= 2 && !questions.contains { $0.status == "queued" || $0.status == "processing" } }
   }
 
   private struct ItemState {
@@ -84,12 +99,15 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
   private var paperLocationSetting = "varies"
   private let image: Data
   let cloudHealth: CloudHealth
+  /// S2：为 true 时上传的照片走「无批改痕迹」情形（3 道全部 unselected）。
+  let unmarkedPages: Bool
   var requestCount: Int { lock.withLock { count } }
   var uploadCount: Int { lock.withLock { uploads } }
   var redeemCount: Int { lock.withLock { redeems } }
 
-  @MainActor init(cloudHealth: CloudHealth = .accepting) throws {
+  @MainActor init(cloudHealth: CloudHealth = .accepting, unmarkedPages: Bool = false) throws {
     self.cloudHealth = cloudHealth
+    self.unmarkedPages = unmarkedPages
     image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 72)).jpegData(withCompressionQuality: 0.9) { context in
       UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 320, height: 72))
       ("合成测试裁图" as NSString).draw(at: CGPoint(x: 8, y: 28), withAttributes: [.font: UIFont.systemFont(ofSize: 14)])
@@ -194,19 +212,38 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
     if method == "POST", path == "/v1/recognitions" {
       let job = lock.withLock { () -> JobState in
         uploads += 1
-        let job = JobState(id: UUID().uuidString)
+        var job = JobState(id: UUID().uuidString)
+        if unmarkedPages {
+          // 无痕迹页：找题后 3 道全部 unselected（题号 1/2/3），等学生勾。
+          job.unmarked = true
+          let base = jobs.count + 1
+          job.questions = (1...3).map { number in
+            QuestionState(id: String(format: "00000000-0000-4000-8000-%012d", base * 10 + number),
+              number: "\(number)")
+          }
+        }
         jobs.append(job)
         return job
       }
       respond(descriptor, data: Data(#"{"job":\#(jobJSON(job))}"#.utf8))
       return
     }
+    // S2：学生勾题（POST /v1/recognitions/:id/select）。
+    if method == "POST", path.hasPrefix("/v1/recognitions/"), path.hasSuffix("/select") {
+      selectQuestions(descriptor, path: path, body: body)
+      return
+    }
     if method == "GET", path.hasPrefix("/v1/recognitions/") {
       if path.contains("/media/") { respond(descriptor, data: image, mime: "image/jpeg"); return }
+      // S2：候选题缩略裁图（任何状态都可取）。
+      if path.contains("/questions/"), path.hasSuffix("/candidate") {
+        respond(descriptor, data: image, mime: "image/jpeg"); return
+      }
       let id = String(path.dropFirst("/v1/recognitions/".count))
       let job = lock.withLock { () -> JobState? in
         guard let index = jobs.firstIndex(where: { $0.id == id }) else { return nil }
         jobs[index].polls += 1
+        advance(&jobs[index], jobIndex: index + 1)
         return jobs[index]
       }
       guard let job else {
@@ -219,15 +256,73 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
     respond(descriptor, data: Data(#"{"error":{"code":"not_found","message":"接口不存在。"}}"#.utf8), status: 404)
   }
 
+  // MARK: - S2：学生勾题
+
+  /// 勾题：未选的题排入精读（queued），其余状态的 id 忽略（幂等）；任务回到进行中。
+  private func selectQuestions(_ descriptor: Int32, path: String, body: Data) {
+    let id = String(path.dropFirst("/v1/recognitions/".count).dropLast("/select".count))
+    guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+      let questionIds = json["questionIds"] as? [String] else {
+      respondError(descriptor, status: 400, code: "invalid_request", message: "请求正文不合法。")
+      return
+    }
+    let job: JobState? = lock.withLock {
+      guard let index = jobs.firstIndex(where: { $0.id == id }) else { return nil }
+      jobs[index].revision += 1
+      jobs[index].polls = 0
+      for questionId in questionIds {
+        guard let qIndex = jobs[index].questions.firstIndex(where: { $0.id == questionId }),
+          jobs[index].questions[qIndex].status == "unselected" else { continue }
+        jobs[index].questions[qIndex].status = "queued"
+        jobs[index].questions[qIndex].revision += 1
+        jobs[index].questions[qIndex].selectedByStudent = true
+      }
+      return jobs[index]
+    }
+    guard let job else {
+      respondError(descriptor, status: 404, code: "not_found", message: "识别任务不存在。")
+      return
+    }
+    respond(descriptor, data: Data(#"{"job":\#(jobJSON(job))}"#.utf8))
+  }
+
+  /// 无痕迹页的合成节奏：被勾的题在第二次轮询后读完（confirmed），并按现有桥接节奏登记成错题。
+  /// 调用方须已持有锁。
+  private func advance(_ job: inout JobState, jobIndex: Int) {
+    guard job.unmarked else { return }
+    job.revision += 1
+    guard job.polls >= 2 else { return }
+    for qIndex in job.questions.indices where job.questions[qIndex].status == "queued" {
+      job.questions[qIndex].status = "confirmed"
+      job.questions[qIndex].revision += 1
+      let number = Int(job.questions[qIndex].number) ?? 0
+      items.append(ItemState(
+        id: String(format: "itm_%012x%02x%02x", jobIndex, 0, number - 1),
+        shortId: "M-\(jobIndex)\(number)", subject: "数学", knowledgeTags: ["一元一次方程"],
+        questionText: "合成无痕迹页第 \(number) 题", jobId: job.id))
+    }
+  }
+
   // MARK: - /v1 识别任务（两段式进度：前两次轮询 processing，之后 completed）
 
   private func jobJSON(_ job: JobState) -> String {
     let terminal = job.terminal
     let status = terminal ? "completed" : "processing"
-    let phase = terminal ? "complete" : "inventory"
+    // 无痕迹页勾题后回到进行中时处在精读阶段（不再是找题）。
+    let phase = terminal ? "complete" : (job.questions.contains { $0.status != "unselected" } ? "questions" : "inventory")
     // revision 随轮询递增：客户端拒绝同 revision 的内容变化（防旧快照覆盖），进度推进必须升版本。
-    let revision = 8 + job.polls
-    return #"{"version":1,"id":"\#(job.id)","revision":\#(revision),"photoName":"合成测试照片.jpg","sourceHash":"synthetic","sourceMediaId":"6ddc034b-b0f8-4288-b9c1-4f496cfb90df","status":"\#(status)","phase":"\#(phase)","inventoryWarnings":[],"questions":[],"error":null,"createdAt":"2026-09-14T10:00:00.000Z","updatedAt":"2026-09-14T10:01:30.000Z"}"#
+    let revision = job.unmarked ? job.revision : 8 + job.polls
+    let questions = job.questions.map(questionJSON).joined(separator: ",")
+    return #"{"version":1,"id":"\#(job.id)","revision":\#(revision),"photoName":"合成测试照片.jpg","sourceHash":"synthetic","sourceMediaId":"6ddc034b-b0f8-4288-b9c1-4f496cfb90df","status":"\#(status)","phase":"\#(phase)","inventoryWarnings":[],"questions":[\#(questions)],"error":null,"createdAt":"2026-09-14T10:00:00.000Z","updatedAt":"2026-09-14T10:01:30.000Z"}"#
+  }
+
+  /// S2：无痕迹页的题目 JSON。confirmed 时带完整证据与题目裁图（与识别精读完成同形状）。
+  private func questionJSON(_ question: QuestionState) -> String {
+    let selected = question.selectedByStudent ? #","selectedByStudent":true"# : ""
+    guard question.status == "confirmed" else {
+      return #"{"id":"\#(question.id)","number":"\#(question.number)","revision":\#(question.revision),"status":"\#(question.status)","selectionEvidence":"unmarked","evidence":null,"verification":null,"questionMediaId":null,"diagramMediaIds":[],"error":null,"confirmedAt":null\#(selected)}"#
+    }
+    return #"{"id":"\#(question.id)","number":"\#(question.number)","revision":\#(question.revision),"status":"confirmed","selectionEvidence":"unmarked","evidence":{"version":1,"questionNumber":"\#(question.number)","questionText":"合成无痕迹页第 \#(question.number) 题","subject":"数学","chapter":"","knowledgeTags":["一元一次方程"],"questionType":"计算","questionRegion":{"x":0.08,"y":0.2,"width":0.84,"height":0.3},"requiresDiagram":false,"regions":[],"observations":[],"uncertainties":[]},"verification":{"textComplete":true,"questionCropComplete":true,"questionCropPure":true,"transcriptionMatches":true,"diagramSafe":true,"issues":[]},"questionMediaId":"1800c1bc-47ab-42bc-a46d-315005bdc695","diagramMediaIds":[],"error":null,"confirmedAt":"2026-09-14T10:01:30.000Z"\#(selected)}"#
   }
 
   // MARK: - /v2 路由
@@ -323,6 +418,8 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
       let stamp = "2026-09-30T08:15:00.123Z"
       jobs[index].registeredAt = stamp
       // 懒桥接的合成等价物：登记即备好这张照片的 3 道题（终态后才出现在周视图）。
+      // S2：无痕迹页不在登记时备题——只有学生勾入并读完的题才进错题本（见 advance）。
+      guard !jobs[index].unmarked else { return (true, stamp) }
       let jobIndex = index + 1
       let seeds = [
         ("M-\(jobIndex)1", "数学", ["一元一次方程"], "已知 x+y=1，求 x 的值。"),

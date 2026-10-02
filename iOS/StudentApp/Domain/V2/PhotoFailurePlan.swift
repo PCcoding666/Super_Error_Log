@@ -18,7 +18,8 @@ struct PhotoFailurePlan: Equatable, Sendable {
 
   static func plan(for task: LocalRecognitionTask) -> PhotoFailurePlan? {
     guard let job = task.job else { return nil }
-    let questions = job.questions
+    // S2：未选的题不参与任何计数（不是失败、不是成功、不是总数）。
+    let questions = job.questions.filter { $0.status != "unselected" }
     let failed = questions.filter { $0.status == "failed" }
     let recoverableIDs = failed.filter { $0.error?.canRecover == true }.map(\.id)
     let inventoryFailure = job.error.flatMap { $0.stage == "inventory" ? $0 : nil }
