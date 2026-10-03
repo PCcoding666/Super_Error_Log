@@ -32,7 +32,7 @@ export async function assembleCloudService(configuration: MobileConfiguration): 
   bridgePending(configuration.dataDir);
   // T5：重启后续做 preparing 状态的打印快照（已完成的题不重做）。
   resumePendingSnapshots();
-  const pairing = await PairingManager.open(configuration.dataDir);
+  const pairing = await PairingManager.open(configuration.dataDir, { pairingUrl: configuration.pairingUrl });
   const admin = await createAdminServer(pairing);
   const app = await createMobileApp({ dataDir: configuration.dataDir, vision: new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true, v2Router: () => createV2Router({ mobileDataDir: configuration.dataDir }) });
   let server: Awaited<ReturnType<typeof app.listen>> | null = null;

@@ -1,7 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { createAdminServer, type AdminServerHandle } from './adminServer.js';
-import { PairingManager } from './pairing.js';
+import { PairingManager, resolvePairingUrl } from './pairing.js';
 
 /**
  * 管理员 CLI 客户端：仅在本机通过 dataDir/admin.sock 与管理入口通信。
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   const socketPath = path.join(dataDir, 'admin.sock');
   try {
     if (command === 'serve') {
-      const manager = await PairingManager.open(dataDir);
+      const manager = await PairingManager.open(dataDir, { pairingUrl: resolvePairingUrl(process.env.SEL_MOBILE_PAIRING_URL) });
       const handle: AdminServerHandle = await createAdminServer(manager);
       process.stdout.write(`管理入口已监听：${handle.socketPath}\n`);
       const shutdown = async (): Promise<void> => {

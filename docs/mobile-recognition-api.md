@@ -78,13 +78,15 @@ The `serve` subcommand runs the admin entry standalone. Since Task 2 the cloud-m
   "payload": {
     "v": 1,
     "serviceId": "e8383d01-d47e-40e0-b0a1-61a7d81b8665",
-    "httpsUrl": "https://study.pccoding666.com",
+    "httpsUrl": "https://8.163.96.197",
     "sessionId": "099ea4a5-e4bf-4182-b986-a9fc7db383e9",
     "secret": "2_39bX4iG76643WfiJRfvW-jYJVxbBdm9ACmHrgGjJ0"
   },
   "expiresAt": "2026-09-17T11:15:42.517Z"
 }
 ```
+
+`httpsUrl` is one of two fixed entry points: `https://8.163.96.197` (IP, default since 2026-10-03; self-signed certificate pinned in the app, see `deploy/README.md` §9) or `https://study.pccoding666.com` (domain, kept). `SEL_MOBILE_PAIRING_URL` selects which one the QR carries; redeem accepts either, but only the exact value the session issued. The app rejects any other address and keeps using the entry it scanned.
 
 Semantics: the secret is 32 bytes base64url, valid 5 minutes, single use. `serviceId` is atomically initialized once per data directory and never rotates. Redeeming with the same client ID and secret within the validity window returns the identical result (in-memory recovery only; after a service restart the session is gone and the phone must rescan). Two different concurrent redeemers on one session: exactly one wins, the other gets `pairing_used`.
 

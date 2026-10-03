@@ -68,7 +68,8 @@ describe('admin Unix-socket entry', () => {
     const body = JSON.parse(response.text) as { payload: { v: number; serviceId: string; httpsUrl: string; sessionId: string; secret: string }, expiresAt: string };
     expect(response.headers['cache-control']).toBe('private, no-store');
     expect(body.payload.v).toBe(1);
-    expect(body.payload.httpsUrl).toBe('https://study.pccoding666.com');
+    // 缺省发 IP 直连入口（SEL_MOBILE_PAIRING_URL 未设置）。
+    expect(body.payload.httpsUrl).toBe('https://8.163.96.197');
     expect(body.payload.sessionId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(Buffer.from(body.payload.secret, 'base64url').length).toBe(32);
     expect(JSON.stringify(body)).not.toContain('token');

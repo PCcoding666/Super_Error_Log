@@ -120,7 +120,7 @@ describe('MobileRecognitionStore', () => {
 });
 
 describe('mobile production configuration', () => {
-  const names = ['SEL_MOBILE_MODE', 'SEL_MOBILE_AI_MODE', 'SEL_AI_MODE', 'SEL_MOBILE_AI_BASE_URL', 'SEL_AI_BASE_URL', 'SEL_MOBILE_AI_API_KEY', 'SEL_AI_API_KEY', 'DASHSCOPE_API_KEY', 'SEL_MOBILE_AI_MODEL', 'SEL_AI_MODEL', 'SEL_MOBILE_PAIRING_TOKEN', 'SEL_MOBILE_AI_TIMEOUT_MS', 'SEL_MOBILE_PORT', 'SEL_MOBILE_HOST', 'SEL_MOBILE_DATA_DIR'] as const;
+  const names = ['SEL_MOBILE_MODE', 'SEL_MOBILE_AI_MODE', 'SEL_AI_MODE', 'SEL_MOBILE_AI_BASE_URL', 'SEL_AI_BASE_URL', 'SEL_MOBILE_AI_API_KEY', 'SEL_AI_API_KEY', 'DASHSCOPE_API_KEY', 'SEL_MOBILE_AI_MODEL', 'SEL_AI_MODEL', 'SEL_MOBILE_PAIRING_TOKEN', 'SEL_MOBILE_AI_TIMEOUT_MS', 'SEL_MOBILE_PORT', 'SEL_MOBILE_HOST', 'SEL_MOBILE_DATA_DIR', 'SEL_MOBILE_PAIRING_URL'] as const;
   const withEnvironment = <T>(values: Partial<Record<typeof names[number], string>>, callback: () => T): T => {
     const before = Object.fromEntries(names.map(name => [name, process.env[name]]));
     try {
@@ -159,5 +159,14 @@ describe('mobile production configuration', () => {
     expect(cloud.mode).toBe('cloud');
     expect(cloud.pairingToken).toBe('');
     expect(() => withEnvironment({ ...valid, SEL_MOBILE_MODE: 'lan' }, () => loadMobileConfiguration(root()))).toThrow(/loopback 或 cloud/);
+  });
+
+  it('pairing QR address defaults to the IP entry, may be set to the domain, and anything else fails closed', () => {
+    const { SEL_MOBILE_PAIRING_TOKEN: _token, ...withoutToken } = valid;
+    const cloud = { ...withoutToken, SEL_MOBILE_MODE: 'cloud' };
+    expect(withEnvironment(cloud, () => loadMobileConfiguration(root())).pairingUrl).toBe('https://8.163.96.197');
+    expect(withEnvironment({ ...cloud, SEL_MOBILE_PAIRING_URL: 'https://study.pccoding666.com' }, () => loadMobileConfiguration(root())).pairingUrl)
+      .toBe('https://study.pccoding666.com');
+    expect(() => withEnvironment({ ...cloud, SEL_MOBILE_PAIRING_URL: 'https://evil.example' }, () => loadMobileConfiguration(root()))).toThrow(/SEL_MOBILE_PAIRING_URL/);
   });
 });
