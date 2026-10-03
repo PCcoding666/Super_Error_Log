@@ -257,13 +257,13 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
 
 /// 双模式配对（Task 4）：
 /// - loopback：现有回环校验不变（http + 127.0.0.1/localhost/[::1] + 16 位口令）。
-/// - cloud：固定云域名 HTTPS + 设备令牌 + deviceId（UUID）+ 可选到期。
+/// - cloud：白名单入口 HTTPS（IP 直连或域名，取自配对二维码）+ 设备令牌 + deviceId（UUID）+ 可选到期。
 /// 注意：Codable 按模式存储；`baseURL`/`token` 提供模式无关访问。
 struct PairingConfiguration: Codable, Equatable, Sendable {
   #if DEBUG
   /// Task 5（仅 DEBUG）：UI 测试把云模式指向本机合成服务器（`-cloud-loopback` 启动参数）。
-  /// Release 构建此覆盖恒为 nil；生产始终使用固定云域名。覆盖必须是合法回环 http URL，
-  /// 其他任何值（包括远程主机）一律忽略——不能借测试通道绕过固定域名约束。
+  /// Release 构建此覆盖恒为 nil；生产始终使用配对时的白名单入口。覆盖必须是合法回环 http URL，
+  /// 其他任何值（包括远程主机）一律忽略——不能借测试通道绕过入口白名单。
   static let testCloudOverride: URL? = {
     let arguments = ProcessInfo.processInfo.arguments
     guard let index = arguments.firstIndex(of: "-cloud-loopback"),
@@ -282,6 +282,7 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
   private let mode: Mode
   private let loopbackURL: URL?
   private let loopbackToken: String?
+  private let cloudURL: URL?
   private let cloudServiceId: String?
   private let cloudToken: String?
   private let cloudDeviceId: String?
@@ -299,23 +300,26 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
     mode = .loopback
     loopbackURL = url
     loopbackToken = token
-    cloudServiceId = nil; cloudToken = nil; cloudDeviceId = nil; cloudExpiresAt = nil
+    cloudURL = nil; cloudServiceId = nil; cloudToken = nil; cloudDeviceId = nil; cloudExpiresAt = nil
   }
 
-  static func cloud(serviceId: String, token: String, deviceId: String, expiresAt: Date?) throws -> PairingConfiguration {
-    guard UUID(uuidString: serviceId) != nil,
+  /// `baseURL` 必须恰为白名单入口之一（`CloudPairing.url(forHost:)` 的规范形式）。
+  static func cloud(baseURL: String, serviceId: String, token: String, deviceId: String, expiresAt: Date?) throws -> PairingConfiguration {
+    guard let url = URL(string: baseURL), let host = url.host(), CloudPairing.url(forHost: host) == baseURL,
+      UUID(uuidString: serviceId) != nil,
       token.count >= 16, !token.contains("\n"), !token.contains("\r"),
       UUID(uuidString: deviceId) != nil
     else { throw RecognitionClientError.invalidPairing }
-    return PairingConfiguration(mode: .cloud, loopbackURL: nil, loopbackToken: nil,
+    return PairingConfiguration(mode: .cloud, loopbackURL: nil, loopbackToken: nil, cloudURL: url,
       cloudServiceId: serviceId, cloudToken: token, cloudDeviceId: deviceId, cloudExpiresAt: expiresAt)
   }
 
-  private init(mode: Mode, loopbackURL: URL?, loopbackToken: String?,
+  private init(mode: Mode, loopbackURL: URL?, loopbackToken: String?, cloudURL: URL?,
     cloudServiceId: String?, cloudToken: String?, cloudDeviceId: String?, cloudExpiresAt: Date?) {
     self.mode = mode
     self.loopbackURL = loopbackURL
     self.loopbackToken = loopbackToken
+    self.cloudURL = cloudURL
     self.cloudServiceId = cloudServiceId
     self.cloudToken = cloudToken
     self.cloudDeviceId = cloudDeviceId
@@ -324,11 +328,11 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
 
   var isCloud: Bool { mode == .cloud }
 
-  /// 模式无关的请求基地址（回环：本机 URL；云端：固定云域名；DEBUG UI 测试：回环覆盖）。
+  /// 模式无关的请求基地址（回环：本机 URL；云端：配对时的白名单入口；DEBUG UI 测试：回环覆盖）。
   var baseURL: URL {
     switch mode {
     case .loopback: loopbackURL!
-    case .cloud: Self.testCloudOverride ?? URL(string: CloudPairing.allowedURL)!
+    case .cloud: Self.testCloudOverride ?? cloudURL!
     }
   }
 
@@ -346,7 +350,7 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
   var expiresAt: Date? { isCloud ? cloudExpiresAt : nil }
 
   /// 编码兼容：回环模式按旧的 { baseURL, token } 形状存储（老数据可读）；
-  /// 云端模式按显式模式字段存储。
+  /// 云端模式按显式模式字段存储，入口地址也存在 baseURL 键里。
   private enum CodingKeys: String, CodingKey {
     case baseURL, token, mode, serviceId, deviceId, expiresAt
   }
@@ -359,7 +363,10 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
       let token = try values.decode(String.self, forKey: .token)
       let deviceId = try values.decode(String.self, forKey: .deviceId)
       let expiresAt = try values.decodeIfPresent(Date.self, forKey: .expiresAt)
-      self = try PairingConfiguration.cloud(serviceId: serviceId, token: token, deviceId: deviceId, expiresAt: expiresAt)
+      // 2026-10-03 之前的云端配对没有入口字段，当时只有域名入口：按域名读取，行为不变。
+      // 存了入口的也重新走白名单校验，不信任磁盘字段。
+      let baseURL = try values.decodeIfPresent(String.self, forKey: .baseURL) ?? CloudPairing.domainURL
+      self = try PairingConfiguration.cloud(baseURL: baseURL, serviceId: serviceId, token: token, deviceId: deviceId, expiresAt: expiresAt)
       return
     }
     // 旧形状（回环）：重新走完整校验，不信任磁盘上的任何字段。
@@ -376,6 +383,7 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
       try container.encode(loopbackToken!, forKey: .token)
     case .cloud:
       try container.encode(Mode.cloud, forKey: .mode)
+      try container.encode(cloudURL!.absoluteString, forKey: .baseURL)
       try container.encode(cloudServiceId!, forKey: .serviceId)
       try container.encode(cloudToken!, forKey: .token)
       try container.encode(cloudDeviceId!, forKey: .deviceId)

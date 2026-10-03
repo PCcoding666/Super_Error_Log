@@ -5,13 +5,17 @@ import Foundation
 // and per-purpose timeouts: checks 15s, uploads 180s.
 final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
   let configuration: PairingConfiguration
+  /// IP 入口的证书固定（测试可注入本机回环主机与临时证书）。
+  let pinning: CloudTLSPinning
   private var session: URLSession!
   private var uploadSession: URLSession!
   /// 上传进度回调（0.0–1.0，delegate 队列触发）。上传串行进行，任一时刻至多一个在传任务。
   var uploadProgressHandler: (@Sendable (Double) -> Void)?
 
-  init(configuration: PairingConfiguration, sessionConfiguration: URLSessionConfiguration = .ephemeral) {
+  init(configuration: PairingConfiguration, sessionConfiguration: URLSessionConfiguration = .ephemeral,
+    pinning: CloudTLSPinning = .production) {
     self.configuration = configuration
+    self.pinning = pinning
     super.init()
     sessionConfiguration.timeoutIntervalForRequest = 15
     sessionConfiguration.timeoutIntervalForResource = 60
@@ -27,8 +31,15 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
   func urlSession(_ session: URLSession, task: URLSessionTask,
     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
     completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-    // 云端入口只接受固定域名；任何重定向（可能携带凭据）一律拒绝。
+    // 云端只连配对时的白名单入口；任何重定向（可能携带凭据）一律拒绝。
     completionHandler(nil)
+  }
+
+  /// IP 入口只信任 App 内固定的证书；域名与其他主机走系统默认校验（CloudTLSPinning）。
+  func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    let (disposition, credential) = pinning.disposition(for: challenge)
+    completionHandler(disposition, credential)
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask,

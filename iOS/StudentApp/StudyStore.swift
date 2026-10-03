@@ -173,12 +173,12 @@ final class StudyStore {
     let qr: CloudPairing.ParsedQR
     do { qr = try CloudPairing.parse(qrText) }
     catch { errorMessage = (error as? CloudPairing.QRParseError)?.errorDescription ?? "二维码无法识别，请重新扫码。"; return }
-    // 兑换免鉴权：默认用占位云配置发起（redeem 不携带 Authorization 头）。
+    // 兑换免鉴权：默认用占位云配置发起（redeem 不携带 Authorization 头），发往二维码里的入口。
     let client: RecognitionClient
     let ownsClient: Bool
     if let transport { client = transport; ownsClient = false }
     else if let bootstrap = try? PairingConfiguration.cloud(
-      serviceId: qr.serviceId, token: String(repeating: "x", count: 32),
+      baseURL: qr.httpsUrl, serviceId: qr.serviceId, token: String(repeating: "x", count: 32),
       deviceId: UUID().uuidString, expiresAt: nil) {
       client = RecognitionClient(configuration: bootstrap); ownsClient = true
     } else { errorMessage = "配对请求无法构造，请重试。"; return }
@@ -187,8 +187,9 @@ final class StudyStore {
       // clientId 按安装稳定：响应在网络丢失后重试时，服务端按同 clientId 幂等返回
       // 同一设备令牌（换新 clientId 会得到 pairing_used 409，无法恢复）。
       let result = try await client.redeem(qr: qr, clientId: Self.clientIdentifier, deviceInfo: "iPhone")
+      // 之后的请求都走扫码时的入口（IP 直连或域名）；换入口须重新扫码。
       let configuration = try PairingConfiguration.cloud(
-        serviceId: result.serviceId, token: result.token,
+        baseURL: qr.httpsUrl, serviceId: result.serviceId, token: result.token,
         deviceId: result.deviceId, expiresAt: result.expiresAt)
       adoptCloudPairing(configuration)
     } catch { errorMessage = error.localizedDescription }
