@@ -4,13 +4,19 @@ import UIKit
 
 // T6c：单一「本周」主页。自上而下：顶部与连接状态、拍这周的错题、照片进度、本周错题卡片。
 // 练习与结果两块留给 T6d/T6e（本视图不放占位）。界面只求可用、清楚。
+// 学生端重做第 1 期：顶部加「今天」卡（WeekPlan 算出的步骤清单 / 做完了 / 周中），底部固定下一步按钮；
+// 练习流程的路由提到这里（HomeFlow.path），下一步按钮、清单行、练习卡推同一套页面；
+// 拍照、勾选面板、上传、扫码仍由主页现有状态触发。其余部分原样留在卡片下面。
 
 struct LoopHomeView: View {
   @Environment(StudyStore.self) private var store
   @Environment(LoopStore.self) private var loopStore
+  @Environment(HomeFlow.self) private var flow
   @State private var photos: [PhotosPickerItem] = []
   @State private var importing = false
   @State private var showCamera = false
+  /// 没有相机的设备（如模拟器）上「拍第一页」改开相册。
+  @State private var showLibrary = false
   @State private var showSettings = false
   @State private var showScanner = false
   @State private var source: PhotoReference?
@@ -29,6 +35,8 @@ struct LoopHomeView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         header
+        TodayStepsCard(result: plan, practiceSlot: plan.practice?.practiceSlot ?? loopStore.settings?.practiceSlot,
+          offlineNote: offlineNote, perform: perform)
         connectionSection
         captureSection
         photoProgressSection
@@ -44,7 +52,22 @@ struct LoopHomeView: View {
         .background(Palette.paper, ignoresSafeAreaEdges: .top)
     }
     .refreshable { await loopStore.refreshWeek() }
-    .safeAreaInset(edge: .bottom, spacing: 0) { undoBar }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      VStack(spacing: 0) {
+        undoBar
+        if let next = plan.next { NextStepBar(model: next, perform: perform) }
+      }
+    }
+    .photosPicker(isPresented: $showLibrary, selection: $photos, maxSelectionCount: 10, matching: .images)
+    .navigationDestination(for: PracticeRoute.self) { route in practiceDestination(route) }
+    .onChange(of: flow.homeRequest) { _, request in
+      guard request != nil, let action = flow.consumeHomeRequest() else { return }
+      // 等导航回到今天再弹出相机 / 面板。
+      Task {
+        try? await Task.sleep(for: .milliseconds(450))
+        perform(action)
+      }
+    }
     .sheet(isPresented: $showSettings) { LoopSettingsView() }
     .sheet(isPresented: $showScanner) {
       CameraScanner { payload in
@@ -104,6 +127,84 @@ struct LoopHomeView: View {
       // 照片识别完成后自动刷新本周错题。
       if new > old { Task { await loopStore.refreshWeek() } }
       recognizedPhotoCount = new
+    }
+  }
+
+  // MARK: - 0. 今天（第 1 期）
+
+  private var plan: WeekPlan.Result {
+    TodayPlan.plan(store: store, loopStore: loopStore, skipped: flow.skipped)
+  }
+
+  /// 没联网时卡片顶上那一行（§3.4）。
+  private var offlineNote: String? {
+    guard loopStore.weekIssue == .offline else { return nil }
+    if let savedAt = loopStore.cacheSavedAt {
+      return "没联网，显示的是 \(savedAt.formatted(date: .omitted, time: .shortened)) 保存的内容"
+    }
+    return "没联网"
+  }
+
+  /// 下一步按钮与清单行：导航交给 HomeFlow；拍照、勾选面板、上传、扫码用主页现有的状态。
+  private func perform(_ action: NextStepAction) {
+    switch action {
+    case .scan:
+      showScanner = true
+    case .rescan:
+      // 与连接行的「重新扫码」相同：先清凭据回到未配对，再打开扫码页。
+      Task {
+        await store.connectionAction()
+        showScanner = true
+      }
+    case .capture:
+      startCapture()
+    case .uploadPending:
+      uploadAllPending()
+    case .openPick(let taskID):
+      pickTask = PickReference(taskID: taskID)
+    default:
+      flow.perform(action)
+    }
+  }
+
+  /// 「拍第一页」：直接打开系统相机；没有相机的设备（模拟器）打开相册。
+  private func startCapture() {
+    guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+      showLibrary = true
+      return
+    }
+    CameraCapture.request { allowed in
+      if allowed { showCamera = true }
+      else { store.errorMessage = "无法使用相机。请添加照片，或在系统设置中允许相机访问。" }
+    }
+  }
+
+  /// 「上传照片」：没同意先问一次，已同意直接传（每批最多 10 张）。
+  private func uploadAllPending() {
+    let names = Array(pendingPhotoNames.prefix(10))
+    guard !names.isEmpty else { return }
+    if store.hasUploadConsent {
+      attemptedAutoUpload.formUnion(names)
+      Task { await store.submitPhotos(names) }
+    } else {
+      consentBatch = UploadConsentBatch(names: names)
+    }
+  }
+
+  @ViewBuilder private func practiceDestination(_ route: PracticeRoute) -> some View {
+    switch route {
+    case .pick:
+      PracticePickView()
+    case .detail(let practiceID):
+      PracticeDetailView(practiceID: practiceID)
+    case .followup(_, let itemID):
+      FollowupView(itemID: itemID).id(itemID)
+    case .print(let practiceID):
+      PracticePrintView(practiceID: practiceID)
+    case .record(let practiceID):
+      PracticeRecordEntry(practiceID: practiceID)
+    case .summary(let practiceID):
+      PracticeSummaryView(practiceID: practiceID)
     }
   }
 
@@ -603,6 +704,29 @@ struct LoopItemDetailView: View {
     .navigationBarTitleDisplayMode(.inline)
     .task {
       await loopStore.loadEvidence(itemID: itemID)
+    }
+  }
+}
+
+// MARK: - 录结果入口
+
+/// 录结果页要这份练习的详情：不是当前打开的那份时先取详情（周末 B 录上一份时会走到这里）。
+struct PracticeRecordEntry: View {
+  let practiceID: String
+  @Environment(LoopStore.self) private var store
+
+  var body: some View {
+    Group {
+      if let practice = store.currentPractice, practice.id == practiceID {
+        PracticeReturnView(practice: practice)
+      } else if let error = store.lastError {
+        Text(error).font(.subheadline).foregroundStyle(CardTone.red.color).padding(24)
+      } else {
+        Text("正在读取练习…").font(.subheadline).foregroundStyle(Palette.muted)
+      }
+    }
+    .task {
+      if store.currentPractice?.id != practiceID { await store.openPractice(id: practiceID) }
     }
   }
 }

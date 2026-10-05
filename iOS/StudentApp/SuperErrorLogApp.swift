@@ -17,6 +17,8 @@ struct SuperErrorLogApp: App {
 struct StudentRootView: View {
   let store: StudyStore
   @State private var loopStore: LoopStore
+  /// 第 1 期：主页路由与「本次打开」的跳过（只在内存里）。
+  @State private var homeFlow = HomeFlow()
   @Environment(\.scenePhase) private var phase
 
   init(store: StudyStore) {
@@ -37,11 +39,12 @@ struct StudentRootView: View {
           Button("重试") { store.reload() }
         }
       } else {
-        NavigationStack { LoopHomeView() }
+        NavigationStack(path: $homeFlow.path) { LoopHomeView() }
       }
     }
     .environment(store)
     .environment(loopStore)
+    .environment(homeFlow)
     .task {
       loopStore.updateClient(store.v2Client)
       store.setActive(phase == .active)
