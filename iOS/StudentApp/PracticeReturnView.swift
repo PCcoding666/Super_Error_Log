@@ -9,6 +9,7 @@ import UIKit
 struct PracticeReturnView: View {
   let practice: V2PracticeDetail
   @Environment(LoopStore.self) private var store
+  @Environment(HomeFlow.self) private var flow
   @State private var form: ReturnForm
   @State private var commonDate: Date
   @State private var submitting = false
@@ -29,7 +30,7 @@ struct PracticeReturnView: View {
   ]
 
   var body: some View {
-    // T6d-w：从主页导航栈推入，去掉内层 NavigationStack；内部「看结果」由主页栈推入回报页。
+    // T6d-w：从主页导航栈推入，去掉内层 NavigationStack；内部「看结果」由主页栈推入回报页（第 1 期：HomeFlow.path）。
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         SectionTitle(title: "录结果", subtitle: "几道题纸上做完后，逐题告诉系统结果。")
@@ -223,11 +224,11 @@ struct PracticeReturnView: View {
   @ViewBuilder private var summaryLink: some View {
     if form.allRecorded {
       Text("这份练习全部录完了。").font(.subheadline).foregroundStyle(Palette.teal)
-      NavigationLink("看结果") { PracticeSummaryView(practiceID: practice.id) }
+      Button("看结果") { flow.push(.summary(practice.id)) }
         .buttonStyle(PrimaryButton())
         .accessibilityIdentifier("return-view-summary")
     } else if form.rows.contains(where: \.isRecorded) {
-      NavigationLink("看结果") { PracticeSummaryView(practiceID: practice.id) }
+      Button("看结果") { flow.push(.summary(practice.id)) }
         .frame(maxWidth: .infinity, minHeight: 44)
         .accessibilityIdentifier("return-view-summary")
     }

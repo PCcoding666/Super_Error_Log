@@ -7,7 +7,7 @@ import UIKit
 struct PracticeDetailView: View {
   let practiceID: String
   @Environment(LoopStore.self) private var store
-  @State private var reflectTarget: String?
+  @Environment(HomeFlow.self) private var flow
   @State private var zoom: PhotoReference?
 
   private var practice: V2PracticeDetail? {
@@ -33,7 +33,6 @@ struct PracticeDetailView: View {
     .background(Palette.paper)
     .navigationTitle("本周练习")
     .navigationBarTitleDisplayMode(.inline)
-    .navigationDestination(item: $reflectTarget) { FollowupView(itemID: $0) }
     .sheet(item: $zoom) { SourcePhotoView(reference: $0) }
     .task {
       if store.currentPractice?.id != practiceID {
@@ -78,7 +77,10 @@ struct PracticeDetailView: View {
         Text("推荐理由：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
-      Button(item.reflected ? "再看一下" : "复盘这道") { reflectTarget = item.id }
+      Button(item.reflected ? "再看一下" : "复盘这道") {
+        // 第 1 期：路由在主页的导航栈上（HomeFlow），说完一道可以直接换到下一道。
+        flow.push(.followup(practiceID: practiceID, itemID: item.id))
+      }
         .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
         .foregroundStyle(Palette.teal)
         .accessibilityIdentifier("reflect-\(item.id)")

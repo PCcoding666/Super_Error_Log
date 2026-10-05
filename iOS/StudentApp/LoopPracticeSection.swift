@@ -1,26 +1,18 @@
 import SwiftUI
 
 // T6d-w：主页「本周练习」整块。
-// 练习相关的状态、导航、刷新全部在本视图内：出现时与回前台时取练习列表与回报，
-// 自己管理 navigationDestination。练习卡的状态句与下一步由 PracticeCardText.make 决定：
-// 去复盘 → PracticeDetailView；打印/再打印 → PracticePrintView；录结果 → PracticeReturnView；
+// 出现时与回前台时取练习列表与回报。练习卡的状态句与下一步由 PracticeCardText.make 决定：
+// 说说为什么错 → PracticeDetailView；打印/再打印 → PracticePrintView；录结果 → PracticeReturnView；
 // 看结果 → PracticeSummaryView。界面只求可用清楚，不做视觉设计。
+// 学生端重做第 1 期：路由提到主页（HomeFlow.path + LoopHomeView 的 navigationDestination），
+// 练习卡按钮、「今天」清单行、底部下一步按钮推同一套页面。
 // T6h：练习卡下方有「选下一份要练的题」（已打印才出现）与「更早的练习」折叠区
 // （点一行切换当前显示的练习并取它的回报）。
 
 struct LoopPracticeSection: View {
   @Environment(LoopStore.self) private var store
+  @Environment(HomeFlow.self) private var flow
   @Environment(\.scenePhase) private var scenePhase
-  @State private var route: Route?
-
-  /// 从主页导航栈推入的练习页面。
-  private enum Route: Hashable {
-    case pick
-    case detail(String)
-    case print(String)
-    case record(String)
-    case summary(String)
-  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -32,24 +24,6 @@ struct LoopPracticeSection: View {
     .onAppear { Task { await load() } }
     .onChange(of: scenePhase) { _, phase in
       if phase == .active { Task { await load() } }
-    }
-    .navigationDestination(item: $route) { route in
-      switch route {
-      case .pick:
-        PracticePickView()
-      case .detail(let practiceID):
-        PracticeDetailView(practiceID: practiceID)
-      case .print(let practiceID):
-        PracticePrintView(practiceID: practiceID)
-      case .record(let practiceID):
-        if let practice = store.currentPractice, practice.id == practiceID {
-          PracticeReturnView(practice: practice)
-        } else {
-          Text("正在读取练习…").font(.subheadline).foregroundStyle(Palette.muted)
-        }
-      case .summary(let practiceID):
-        PracticeSummaryView(practiceID: practiceID)
-      }
     }
   }
 
@@ -71,7 +45,7 @@ struct LoopPracticeSection: View {
     } else {
       Text("选 5–8 道，打印出来，隔几天在纸上重做。")
         .font(.subheadline).foregroundStyle(Palette.muted)
-      Button("选这周要练的题") { route = .pick }
+      Button("选这周要练的题") { flow.push(.pick) }
         .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
         .foregroundStyle(noCandidates ? Palette.muted : Palette.teal)
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 16))
@@ -113,10 +87,10 @@ struct LoopPracticeSection: View {
 
   private func advance(_ step: PracticeCardText.NextStep, practice: V2PracticeDetail) {
     switch step {
-    case .reflect: route = .detail(practice.id)
-    case .print, .reprint: route = .print(practice.id)
-    case .record: route = .record(practice.id)
-    case .viewSummary: route = .summary(practice.id)
+    case .reflect: flow.push(.detail(practice.id))
+    case .print, .reprint: flow.push(.print(practice.id))
+    case .record: flow.push(.record(practice.id))
+    case .viewSummary: flow.push(.summary(practice.id))
     }
   }
 
@@ -139,12 +113,12 @@ struct LoopPracticeSection: View {
     let card = PracticeCardText.make(detail: practice, summary: summary)
     if card.canPickNext {
       if card.allRecorded {
-        Button("选下一份要练的题") { route = .pick }
+        Button("选下一份要练的题") { flow.push(.pick) }
           .buttonStyle(PrimaryButton())
           .accessibilityIdentifier("pick-next-practice")
       } else {
         VStack(alignment: .leading, spacing: 6) {
-          Button("选下一份要练的题") { route = .pick }
+          Button("选下一份要练的题") { flow.push(.pick) }
             .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
             .foregroundStyle(Palette.teal)
             .background(Palette.card, in: RoundedRectangle(cornerRadius: 16))
