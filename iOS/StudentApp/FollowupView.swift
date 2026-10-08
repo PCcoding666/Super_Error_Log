@@ -43,16 +43,31 @@ struct FollowupView: View {
       await beginIfNeeded()
     }
     .onChange(of: store.reflectionPhase, initial: true) { old, new in
+      // 状态机是 LoopStore 里共用的一份：只认这一道题的（评审修正：上一道留下的「说完了」不算这一道的）。
+      guard isMine else { return }
       if case .waitingAnswer(let question, _) = new { lastQuestion = question }
       if case .confirming(let summary, let cause, let attemptState) = new, !old.isSubmitting {
         buildForm(summary: summary, cause: cause, attemptState: attemptState)
       }
-      if case .done = new { markDone() }
+      // 只有这一道在这一页上从「提交中」变成「说完了」才算说完。
+      if case .done = new, old.isSubmitting { markDone() }
+    }
+    .onChange(of: store.isBusyReflection) { _, busy in
+      // 别的题的请求还在路上时没能开始：等它结束再开始这一道。
+      if !busy, !isMine { Task { await beginIfNeeded() } }
     }
   }
 
-  /// 进入即发起追问（服务器幂等：已有未答问题原样返回）；已有进行中状态时原样接上。
+  /// 状态机现在是不是这一道题的。
+  private var isMine: Bool { store.reflectionItemID == itemID }
+
+  /// 进入即发起追问（服务器幂等：已有未答问题原样返回）；这一道已有进行中状态时原样接上；
+  /// 状态机还停在别的题（例如上一道刚说完）时，为这一道重新开始。
   private func beginIfNeeded() async {
+    guard isMine else {
+      await store.startReflection(itemID: itemID)
+      return
+    }
     switch store.reflectionPhase {
     case .idle, .done:
       await store.startReflection(itemID: itemID)
@@ -127,6 +142,15 @@ struct FollowupView: View {
   // MARK: - 状态机内容
 
   @ViewBuilder private var phaseContent: some View {
+    if !isMine {
+      // 还没轮到这一道（状态机停在上一道）：不显示别的题的内容。
+      ProgressView("正在出题…").accessibilityIdentifier("followup-asking")
+    } else {
+      phaseContentForThisItem
+    }
+  }
+
+  @ViewBuilder private var phaseContentForThisItem: some View {
     switch store.reflectionPhase {
     case .idle:
       if let error = store.lastError {

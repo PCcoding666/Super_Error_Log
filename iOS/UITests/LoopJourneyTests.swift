@@ -125,20 +125,53 @@ final class LoopJourneyTests: XCTestCase {
     let question = app.staticTexts["followup-question"]
     XCTAssertTrue(question.waitForExistence(timeout: 10), "追问问题应出现")
 
-    // 回答 → 确认页。
+    // 回答 → 确认页：AI 建议已预选（标「AI 猜的」）、把握没有预选、没选把握时提交不可用 → 选把握 → 提交。
+    answerAndSubmitReflection(app, answerText: "我当时直接把数搬过去了，没想到要变号", checkConfirmPage: true)
+
+    // 第 1 期：说完以后不再自动退回（不走到头），底部给下一步；还有 2 道没说 → 「下一道」。
+    let next = app.buttons["next-step-primary"]
+    XCTAssertTrue(next.waitForExistence(timeout: 15), "提交后底部出现下一步按钮")
+    XCTAssertEqual(next.label, "下一道")
+
+    // 评审修正：点「下一道」换成第 2 道；第 2 道说完之前底部不能出现「说完了」那条下一步按钮。
+    next.tap()
+    let secondQuestion = app.staticTexts["followup-question"]
+    XCTAssertTrue(secondQuestion.waitForExistence(timeout: 15), "第 2 道的问题应出现")
+    XCTAssertFalse(app.buttons["next-step-primary"].exists, "第 2 道还没说完，不显示下一步按钮")
+    XCTAssertFalse(app.otherElements["next-step-bar"].exists, "第 2 道还没说完，不显示下一步按钮")
+    answerAndSubmitReflection(app, answerText: "这道是把分母约错了", checkConfirmPage: false)
+    let nextAgain = app.buttons["next-step-primary"]
+    XCTAssertTrue(nextAgain.waitForExistence(timeout: 15), "第 2 道提交后才出现下一步按钮")
+    XCTAssertEqual(nextAgain.label, "下一道", "还剩第 3 道")
+    XCTAssertTrue(app.staticTexts["next-step-caption"].label.contains("说了 2/3 道"), app.staticTexts["next-step-caption"].label)
+
+    back(app)
+    let reflectAgain = app.buttons["reflect-\(Self.item1)"]
+    XCTAssertTrue(reflectAgain.waitForExistence(timeout: 10), "返回练习详情（不层层回退）")
+    XCTAssertEqual(reflectAgain.label, "再看一下", "说完后该题显示「再看一下」")
+    XCTAssertEqual(app.buttons["reflect-\(Self.item2)"].label, "再看一下")
+    back(app)
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "还有 1 道没说为什么错")).firstMatch.waitForExistence(timeout: 10),
+      "说完两道后练习卡未说数减少")
+  }
+
+  /// 问答屏回答 → 确认页选把握 → 提交（AI 只建议，提交由他点）。
+  private func answerAndSubmitReflection(_ app: XCUIApplication, answerText: String, checkConfirmPage: Bool) {
     let answer = app.textViews["followup-answer"]
+    XCTAssertTrue(answer.waitForExistence(timeout: 10))
     answer.tap()
-    answer.typeText("我当时直接把数搬过去了，没想到要变号")
+    answer.typeText(answerText)
     dismissKeyboard(app)
     let send = app.buttons["followup-send"]
     reveal(send, in: app)
     send.tap()
 
-    // 确认页：AI 建议已预选（标「AI 猜的」）、把握没有预选、没选把握时提交不可用。
     let submit = app.buttons["reflection-submit"]
     XCTAssertTrue(submit.waitForExistence(timeout: 10), "回答后进入确认页")
-    XCTAssertTrue(app.staticTexts["AI 猜的"].waitForExistence(timeout: 5), "AI 建议预选并标注")
-    XCTAssertTrue(app.staticTexts["还差：有没有把握"].exists, "把握不预选，如实提示")
+    if checkConfirmPage {
+      XCTAssertTrue(app.staticTexts["AI 猜的"].firstMatch.waitForExistence(timeout: 5), "AI 建议预选并标注")
+      XCTAssertTrue(app.staticTexts["还差：有没有把握"].exists, "把握不预选，如实提示")
+    }
     XCTAssertFalse(submit.isEnabled, "没选把握时提交按钮不可用")
     let mastery = app.descendants(matching: .any)["reflect-mastery-2"]
     reveal(mastery, in: app)
@@ -151,17 +184,6 @@ final class LoopJourneyTests: XCTestCase {
     XCTAssertTrue(submit.isEnabled, "选了把握后可以提交")
     reveal(submit, in: app)
     submit.tap()
-    // 第 1 期：说完以后不再自动退回（不走到头），底部给下一步；还有 2 道没说 → 「下一道」。
-    let next = app.buttons["next-step-primary"]
-    XCTAssertTrue(next.waitForExistence(timeout: 15), "提交后底部出现下一步按钮")
-    XCTAssertEqual(next.label, "下一道")
-    back(app)
-    let reflectAgain = app.buttons["reflect-\(Self.item1)"]
-    XCTAssertTrue(reflectAgain.waitForExistence(timeout: 10), "返回练习详情")
-    XCTAssertTrue(app.buttons["再看一下"].waitForExistence(timeout: 5), "说完后该题显示「再看一下」")
-    back(app)
-    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "还有 2 道没说为什么错")).firstMatch.waitForExistence(timeout: 10),
-      "说完一道后练习卡未说数减少")
   }
 
   // MARK: - J4 打印、录结果、看结果、下一份
