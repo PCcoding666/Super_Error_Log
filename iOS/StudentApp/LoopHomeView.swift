@@ -1,3 +1,4 @@
+import AVFoundation
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -173,8 +174,9 @@ struct LoopHomeView: View {
   }
 
   /// 「拍第一页」：直接打开系统相机；没有相机的设备（模拟器）打开相册。
+  /// 模拟器上 isSourceTypeAvailable(.camera) 可能为真但没有任何摄像头，所以同时看有没有视频设备。
   private func startCapture() {
-    guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+    guard UIImagePickerController.isSourceTypeAvailable(.camera), AVCaptureDevice.default(for: .video) != nil else {
       showLibrary = true
       return
     }

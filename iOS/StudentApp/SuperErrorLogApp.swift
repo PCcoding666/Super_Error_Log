@@ -27,6 +27,15 @@ struct StudentRootView: View {
       cacheDirectory: store.persistence.directory.appendingPathComponent("Loop", isDirectory: true)))
   }
 
+  /// 本周数据 + 练习列表与当前练习的回报。第 1 期：「今天」卡要靠练习判断是周末、周中还是做完了，
+  /// 不能只等主页底部的练习区出现时才取（第一次配对时那会儿还没有客户端，会一直取不到）。
+  private func refreshLoop() async {
+    await loopStore.refreshWeek()
+    guard store.pairing != nil else { return }
+    await loopStore.loadPractices()
+    if let id = loopStore.currentPractice?.id { await loopStore.loadSummary(practiceID: id) }
+  }
+
   var body: some View {
     @Bindable var store = store
     Group {
@@ -48,12 +57,12 @@ struct StudentRootView: View {
     .task {
       loopStore.updateClient(store.v2Client)
       store.setActive(phase == .active)
-      await loopStore.refreshWeek()
+      await refreshLoop()
     }
     .onChange(of: store.pairing) { _, _ in
       loopStore.updateClient(store.v2Client)
       // 换客户端后重新取本周数据（扫码配对成功后主页随之出卡片）。
-      Task { await loopStore.refreshWeek() }
+      Task { await refreshLoop() }
     }
     .onChange(of: phase) { _, phase in
       if phase == .active {
