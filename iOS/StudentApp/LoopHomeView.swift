@@ -136,13 +136,18 @@ struct LoopHomeView: View {
     TodayPlan.plan(store: store, loopStore: loopStore, skipped: flow.skipped)
   }
 
-  /// 没联网时卡片顶上那一行（§3.4）。
+  /// 没联网 / 连不上服务器时卡片顶上那一行（§3.4）：清单照常显示，说明是哪时保存的内容。
   private var offlineNote: String? {
-    guard loopStore.weekIssue == .offline else { return nil }
-    if let savedAt = loopStore.cacheSavedAt {
-      return "没联网，显示的是 \(savedAt.formatted(date: .omitted, time: .shortened)) 保存的内容"
+    let lead: String
+    switch loopStore.weekIssue {
+    case .offline: lead = "没联网"
+    case .serviceUnavailable: lead = "连不上服务器"
+    default: return nil
     }
-    return "没联网"
+    if let savedAt = loopStore.cacheSavedAt {
+      return "\(lead)，显示的是 \(savedAt.formatted(date: .omitted, time: .shortened)) 保存的内容"
+    }
+    return lead
   }
 
   /// 下一步按钮与清单行：导航交给 HomeFlow；拍照、勾选面板、上传、扫码用主页现有的状态。

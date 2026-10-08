@@ -30,9 +30,14 @@ enum TodayPlan {
     case .unpaired: return .unpaired
     case .unauthorized: return .unauthorized
     case .incompatible: return .incompatible
+    default: break
+    }
+    // 真没联网时连接检查也会失败：先说「没联网」，比「连不上服务器」更准。
+    if loopStore.weekIssue == .offline { return .offline }
+    switch store.connectionState {
     case .busy: return .busy
     case .failed: return .failed
-    default: return loopStore.weekIssue == .offline ? .offline : .ok
+    default: return .ok
     }
   }
 
@@ -117,7 +122,7 @@ struct TodayStepsCard: View {
     case .connect(let reason):
       connectContent(reason)
     case .loading:
-      Text(offlineNote == nil ? "正在读取…" : "没联网，连上后再看今天要做什么")
+      Text(offlineNote == nil ? "正在读取…" : "连上以后再看今天要做什么")
         .font(.subheadline).foregroundStyle(Palette.muted)
         .accessibilityIdentifier("today-loading")
     case .done:
