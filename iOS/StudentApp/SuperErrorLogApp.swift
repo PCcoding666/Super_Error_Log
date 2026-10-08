@@ -34,6 +34,10 @@ struct StudentRootView: View {
     guard store.pairing != nil else { return }
     await loopStore.loadPractices()
     if let id = loopStore.currentPractice?.id { await loopStore.loadSummary(practiceID: id) }
+    // 「今天」卡还要知道前几份已生成练习纸的录没录完（周末 B 建了新练习后，上一份就不是当前那份了）。
+    // 只放进内存里的回报表，不改当前显示的回报。
+    let printed = loopStore.practices.filter { $0.generatedAt != nil && $0.id != loopStore.currentPractice?.id }
+    for practice in printed.prefix(2) { await loopStore.refreshSummary(practiceID: practice.id) }
   }
 
   var body: some View {

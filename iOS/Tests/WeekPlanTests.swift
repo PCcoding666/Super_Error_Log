@@ -40,12 +40,10 @@ final class WeekPlanTests: XCTestCase {
   }
 
   /// 上周的练习纸，生成于 daysAgo 天前（相对周六）。
-  private func lastWeekPractice(daysAgo: Int, items: Int = 6, answered: Int? = 0, correct: Int? = nil,
-    status: String? = "generated") -> WeekPlan.Practice {
+  private func lastWeekPractice(daysAgo: Int, items: Int = 6, answered: Int? = 0, correct: Int? = nil) -> WeekPlan.Practice {
     let generated = Self.calendar.date(byAdding: .day, value: -daysAgo, to: Self.saturday)!
     return WeekPlan.Practice(id: "pkt_last", week: Self.lastWeek, generatedAt: generated, itemCount: items,
-      practiceSlot: "周三晚自习", reflectedCount: items, answered: answered, independentCorrect: correct,
-      status: status)
+      practiceSlot: "周三晚自习", reflectedCount: items, answered: answered, independentCorrect: correct)
   }
 
   private func photo(_ number: Int, _ state: WeekPlan.LocalPhoto.State, job: String? = nil) -> WeekPlan.LocalPhoto {
@@ -283,13 +281,72 @@ final class WeekPlanTests: XCTestCase {
     XCTAssertEqual(reopened.next?.primary?.title, "录练习纸的结果")
   }
 
-  func testListStatusReturnedCountsAsRecordedWhenNoSummary() {
-    let practice = lastWeekPractice(daysAgo: 7, answered: nil, status: "returned")
-    XCTAssertEqual(practice.allRecorded, true)
+  func testWithoutThatPracticesSummaryRecordingIsUnknownAndStaysOpen() {
+    let practice = lastWeekPractice(daysAgo: 7, answered: nil)
+    XCTAssertNil(practice.allRecorded, "没取到这份的回报就不说录完（也不看练习列表的 status）")
     let result = WeekPlan.make(input(practices: [practice], skipped: [.shoot]))
-    XCTAssertEqual(result.steps[1].detail, "录完了")
-    XCTAssertEqual(result.next?.primary?.title, "选这周要练的题")
-    XCTAssertNil(lastWeekPractice(daysAgo: 7, answered: nil, status: "generated").allRecorded, "不知道就不说录完")
+    XCTAssertFalse(result.steps[1].isDone)
+    XCTAssertEqual(result.next?.primary?.title, "录练习纸的结果")
+  }
+
+  // MARK: - 评审修正：周末 B 录完上一份、又建了这周的练习以后（只用生产服务器会给的字段）
+
+  private static func listItem(_ id: String, week: String, created: Date, generated: Date?, count: Int,
+    status: String) -> V2PracticeSummary {
+    V2PracticeSummary(id: id, week: week, status: status, practiceSlot: "周三晚自习", createdAt: created,
+      generatedAt: generated, itemCount: count)
+  }
+
+  private static func detailItem(_ id: String, position: Int, status: V2ItemStatus, reflected: Bool) -> V2PracticeItem {
+    V2PracticeItem(id: id, shortId: "M-0\(position + 1)", subject: "数学", knowledgeTags: ["一元一次方程"],
+      questionExcerpt: "合成题干", badge: .ok, status: status, cropUrl: "/v2/items/\(id)/crop", jobId: "job-x",
+      reason: "本周新错题", tier: 4, reflected: reflected, position: position)
+  }
+
+  private static func report(answered: Int, total: Int, correct: Int) -> V2ReturnSummary {
+    V2ReturnSummary(answered: answered, total: total, independentCorrect: correct, masteredNow: [], again: [],
+      pending: [], calibration: V2Calibration(confidentTotal: 0, missedCount: 0, text: nil, items: []),
+      nextConfirmOn: nil)
+  }
+
+  func testWeekendBAfterRecordingLastWeekAndChoosingThisWeekKeepsRecordDone() {
+    let lastPrinted = Self.calendar.date(byAdding: .day, value: -7, to: Self.saturday)!
+    // 生产服务器练习列表的 status 只当作不透明文本；这里用它真实会给的 scheduled / generated。
+    let list = [
+      Self.listItem("pkt_q", week: Self.thisWeek, created: Self.saturday.addingTimeInterval(-600), generated: nil,
+        count: 3, status: "scheduled"),
+      Self.listItem("pkt_p", week: Self.lastWeek, created: lastPrinted.addingTimeInterval(-600), generated: lastPrinted,
+        count: 6, status: "generated"),
+    ]
+    // 当前打开的是这周刚建的 Q；P 的回报来自按练习分开的回报表（不是「当前回报」那一格）。
+    let current = V2PracticeDetail(id: "pkt_q", week: Self.thisWeek, status: "scheduled", practiceSlot: "周三晚自习",
+      createdAt: Self.saturday.addingTimeInterval(-600), generatedAt: nil,
+      items: (0..<3).map { Self.detailItem("itm_q\($0)", position: $0, status: .scheduled, reflected: false) })
+    let summaries = ["pkt_p": Self.report(answered: 6, total: 6, correct: 4), "pkt_q": Self.report(answered: 0, total: 3, correct: 0)]
+    let practices = WeekPlan.practices(list: list, current: current, summaries: summaries)
+    XCTAssertEqual(practices.map(\.id), ["pkt_q", "pkt_p"])
+    let result = WeekPlan.make(input(photos: ["job-1"], items: 3, practices: practices))
+    XCTAssertEqual(result.stage, .weekendB)
+    XCTAssertEqual(kinds(result), [.shoot, .record, .pick, .choose, .why, .print])
+    XCTAssertTrue(result.steps[1].isDone, "上一份已经录完，不能因为当前回报换成了这周的就又变成没录")
+    XCTAssertEqual(result.steps[1].detail, "录完了，6 道里独立做对 4 道")
+    XCTAssertEqual(result.next?.primary?.title, "说说为什么错")
+  }
+
+  // MARK: - 评审修正：周一、周二生成的练习纸到同一 ISO 周的周末
+
+  func testPaperGeneratedEarlyInTheSameWeekGetsRecordedAtTheWeekend() {
+    let monday = Self.date(2026, 10, 5, 19)  // 与周六 10/10 同在 2026-W41
+    let practice = WeekPlan.Practice(id: "pkt_mon", week: Self.thisWeek, generatedAt: monday, itemCount: 4,
+      practiceSlot: "周三晚自习", reflectedCount: 4, answered: 0)
+    let result = WeekPlan.make(input(practices: [practice]))
+    XCTAssertEqual(WeekPlan.daysSince(monday, today: Self.saturday, calendar: Self.calendar), 5)
+    XCTAssertEqual(result.stage, .weekendB, "生成后满 5 天就是下个周末，不管是不是同一个 ISO 周")
+    XCTAssertEqual(kinds(result), [.shoot, .record, .pick, .choose, .why, .print])
+    XCTAssertEqual(result.steps[1].action, .record(practiceID: "pkt_mon"))
+    XCTAssertFalse(result.steps[3].isDone, "这份算上一份，这周还要另选")
+    XCTAssertEqual(result.currentIndex, 0)
+    XCTAssertEqual(result.next?.primary?.title, "拍第一页", "不会出现全打勾、没有下一步按钮")
   }
 
   // MARK: - §3.4 打开的日子不对
@@ -307,12 +364,31 @@ final class WeekPlanTests: XCTestCase {
     XCTAssertEqual(result.next?.primary?.title, "说说为什么错", "关掉 App 后「跳过」不保存，再问一次")
   }
 
-  func testUnprintedPracticeFromAnEarlierWeekIsStillTheOneToPrint() {
-    let stale = WeekPlan.Practice(id: "pkt_old", week: Self.lastWeek, generatedAt: nil, itemCount: 4,
-      reflectedCount: 4)
+  func testUnprintedPracticeChosenLastSundayIsStillTheOneToPrintOnMonday() {
+    let sunday = Self.date(2026, 10, 4, 20)  // 2026-W40 的最后一天
+    let monday = Self.date(2026, 10, 5, 18)  // 2026-W41
+    let carried = WeekPlan.Practice(id: "pkt_sun", week: Self.lastWeek, createdAt: sunday, generatedAt: nil,
+      itemCount: 4, reflectedCount: 4)
+    let result = WeekPlan.make(input(today: monday, practices: [carried]))
+    XCTAssertTrue(result.steps[2].isDone, "刚选过还没打印的那份题还在，不另选一份")
+    XCTAssertEqual(result.next?.primary?.action, .print(practiceID: "pkt_sun"))
+  }
+
+  func testLongForgottenUnprintedPracticeNoLongerCountsAsThisWeeks() {
+    let created = Self.date(2026, 10, 1, 20)  // 9 天前，上一个 ISO 周
+    let stale = WeekPlan.Practice(id: "pkt_old", week: Self.lastWeek, createdAt: created, generatedAt: nil,
+      itemCount: 4, reflectedCount: 4)
     let result = WeekPlan.make(input(practices: [stale]))
-    XCTAssertTrue(result.steps[2].isDone, "选过还没打印的那份题还在，不另选一份")
-    XCTAssertEqual(result.next?.primary?.action, .print(practiceID: "pkt_old"))
+    XCTAssertEqual(result.stage, .weekendA)
+    XCTAssertFalse(result.steps[0].isDone, "不能因为有一份忘了打印的旧练习就说这周的卷子拍过了")
+    XCTAssertFalse(result.steps[2].isDone)
+    XCTAssertEqual(result.next?.primary?.title, "拍第一页")
+  }
+
+  func testUnprintedPracticeFromThisWeekStaysCurrentEvenWithoutCreationDate() {
+    let chosen = WeekPlan.Practice(id: "pkt_this", week: Self.thisWeek, generatedAt: nil, itemCount: 3, reflectedCount: 3)
+    let result = WeekPlan.make(input(practices: [chosen]))
+    XCTAssertEqual(result.next?.primary?.action, .print(practiceID: "pkt_this"))
   }
 
   func testRecordedOnTheSameDayShowsAllStepsDoneAndNoButton() {

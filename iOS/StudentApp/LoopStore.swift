@@ -104,7 +104,8 @@ final class LoopStore {
   /// 收到了服务器回应（含 502/429）则重试必须走 proposeCorrection 换新的请求标识。
   private(set) var proposalRetryable = false
 
-  private var reflectionItemID: String?
+  /// 正在说为什么错的那道题（界面据此判断状态机属于哪一道，不把上一道的「说完了」当成这一道的）。
+  private(set) var reflectionItemID: String?
   private var evidenceItemID: String?
   private var pendingProposal: PendingCorrectionRequest?
   private var printTask: Task<Void, Never>?
@@ -741,11 +742,26 @@ final class LoopStore {
   func loadSummary(practiceID: String) async {
     guard let client else { return }
     do {
-      summary = try await client.practiceSummary(packetId: practiceID)
+      let fresh = try await client.practiceSummary(packetId: practiceID)
+      summary = fresh
       summaryPracticeID = practiceID
+      summaries[practiceID] = fresh
       persistCache()
     } catch { lastError = Self.errorText(error) }
   }
+
+  /// 第 1 期：只取回报放进按练习分开的内存表，不动当前显示的那一份（summary / summaryPracticeID）。
+  /// 「今天」卡要知道上一份练习纸录完没有；失败不提示（下次刷新再取）。
+  func refreshSummary(practiceID: String) async {
+    guard let client else { return }
+    if let fresh = try? await client.practiceSummary(packetId: practiceID) {
+      summaries[practiceID] = fresh
+      if summaryPracticeID == practiceID { summary = fresh }
+    }
+  }
+
+  /// 第 1 期：每份练习最近取到的回报（只在内存里，不写缓存；启动时用缓存里那一份打底）。
+  private(set) var summaries: [String: V2ReturnSummary] = [:]
 
   // MARK: - 图片
 
@@ -788,6 +804,7 @@ final class LoopStore {
       settings = cache.settings
       summary = cache.summary
       summaryPracticeID = cache.summaryPracticeID
+      if let summary = cache.summary, let id = cache.summaryPracticeID { summaries[id] = summary }
       cacheSavedAt = cache.savedAt
       isShowingCache = cache.week != nil || cache.currentPractice != nil
         || cache.settings != nil || cache.summary != nil

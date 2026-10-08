@@ -101,6 +101,9 @@ enum WeekPlan {
     static let midweekMaxDays = 4
     /// 上一份练习纸生成后超过这么多天还没录完：录结果那行写明是哪天的那一份（§3.4「两周没打开」）。
     static let staleRecordDays = 12
+    /// 选了题还没生成练习纸的那份，跨进新的 ISO 周后还算「这周的练习」的天数（周日选、周一打开仍提示打印）；
+    /// 更久的不再算，也不让「拍这周的卷子」显示为做完。
+    static let unprintedCarryDays = 2
   }
 
   /// 每步大约几分钟（§3.5，估计值，试用后按真实耗时校准）。
@@ -150,33 +153,33 @@ enum WeekPlan {
   }
 
   /// 一份练习：来自练习列表（摘要），有详情 / 回报时补上已说过、已录的数目。
+  /// 是否录完只看这份练习自己的回报（answered/total，API 文档 §3.16），不看练习列表的 status（文档没写它的取值）。
   struct Practice: Equatable, Sendable {
     let id: String
     let week: String
+    /// 建包时间（列表与详情都有）；判断没生成练习纸的那份是不是太旧了。
+    let createdAt: Date?
     let generatedAt: Date?
     let itemCount: Int
     let practiceSlot: String?
     /// 说过为什么错的题数；nil = 没有这份的详情。
     let reflectedCount: Int?
-    /// 录了几道；nil = 没有这份的回报。
+    /// 录了几道；nil = 还没取到这份的回报。
     let answered: Int?
-    /// 独立做对几道；nil = 没有这份的回报。
+    /// 独立做对几道；nil = 还没取到这份的回报。
     let independentCorrect: Int?
-    /// 服务器练习列表的 status（`returned` = 每道都已录）；没有回报时用它判断录完。
-    let status: String?
 
-    init(id: String, week: String, generatedAt: Date?, itemCount: Int, practiceSlot: String? = nil,
-      reflectedCount: Int? = nil, answered: Int? = nil, independentCorrect: Int? = nil, status: String? = nil) {
-      self.id = id; self.week = week; self.generatedAt = generatedAt; self.itemCount = itemCount
-      self.practiceSlot = practiceSlot; self.reflectedCount = reflectedCount; self.answered = answered
-      self.independentCorrect = independentCorrect; self.status = status
+    init(id: String, week: String, createdAt: Date? = nil, generatedAt: Date?, itemCount: Int,
+      practiceSlot: String? = nil, reflectedCount: Int? = nil, answered: Int? = nil, independentCorrect: Int? = nil) {
+      self.id = id; self.week = week; self.createdAt = createdAt; self.generatedAt = generatedAt
+      self.itemCount = itemCount; self.practiceSlot = practiceSlot; self.reflectedCount = reflectedCount
+      self.answered = answered; self.independentCorrect = independentCorrect
     }
 
-    /// 录完了吗：有回报看 answered/total；没有回报看列表 status；都没有 = 不知道（nil）。
+    /// 录完了吗：有这份的回报看 answered/total；没有 = 不知道（nil）。
     var allRecorded: Bool? {
-      if let answered { return itemCount > 0 && answered >= itemCount }
-      if let status { return status == "returned" ? true : nil }
-      return nil
+      guard let answered else { return nil }
+      return itemCount > 0 && answered >= itemCount
     }
   }
 
@@ -327,16 +330,49 @@ enum WeekPlan {
 
   // MARK: - 步骤（§3.2「步骤与完成判定」，§4.1 文案）
 
-  /// 这周的练习：最近一份，且是本周建的；或者最近一份还没生成练习纸（选了题没打印就关了，先把它打出来）。
+  /// 这周的练习（最近一份）：
+  /// - 还没生成练习纸：本周建的；或跨周没多久（≤ unprintedCarryDays 天，选了题没打印就关了，先把它打出来）。
+  ///   更旧的不算，免得一份忘了打印的旧练习永远挡在「这周」。
+  /// - 已生成练习纸：本周建的、且生成后还不到「下个周末」（≤ midweekMaxDays 天）。
+  ///   周一、周二生成的到同一 ISO 周的周末已满 5 天，算上一份（要录结果），不再算这周的。
   static func currentPractice(_ input: Input, weekKey: String) -> Practice? {
     guard let latest = input.practices.first else { return nil }
-    return latest.week == weekKey || latest.generatedAt == nil ? latest : nil
+    if let generatedAt = latest.generatedAt {
+      let fresh = daysSince(generatedAt, today: input.today, calendar: input.calendar) <= Threshold.midweekMaxDays
+      return latest.week == weekKey && fresh ? latest : nil
+    }
+    if latest.week == weekKey { return latest }
+    guard let createdAt = latest.createdAt else { return nil }
+    return daysSince(createdAt, today: input.today, calendar: input.calendar) <= Threshold.unprintedCarryDays ? latest : nil
   }
 
-  /// 上一份练习纸：本周之前、已生成练习纸的最近一份。
+  /// 上一份练习纸：不是这周的那份、已生成练习纸的最近一份（不管哪个 ISO 周）。
   static func previousPractice(_ input: Input, weekKey: String) -> Practice? {
     let current = currentPractice(input, weekKey: weekKey)
-    return input.practices.first { $0.id != current?.id && $0.week != weekKey && $0.generatedAt != nil }
+    return input.practices.first { $0.id != current?.id && $0.generatedAt != nil }
+  }
+
+  /// 把练习列表、当前打开的详情、按练习分开的回报合成 WeekPlan 的输入（新的在前）。
+  /// 刚建的练习还没进列表、或离线只有缓存的详情时，当前详情就是最新的一份。
+  static func practices(list: [V2PracticeSummary], current: V2PracticeDetail?,
+    summaries: [String: V2ReturnSummary]) -> [Practice] {
+    func make(id: String, week: String, createdAt: Date, generatedAt: Date?, itemCount: Int, slot: String?) -> Practice {
+      let detail = current?.id == id ? current : nil
+      let summary = summaries[id]
+      return Practice(id: id, week: week, createdAt: createdAt, generatedAt: detail?.generatedAt ?? generatedAt,
+        itemCount: summary?.total ?? detail?.items.count ?? itemCount, practiceSlot: slot,
+        reflectedCount: detail.map { $0.items.filter(\.reflected).count },
+        answered: summary?.answered, independentCorrect: summary?.independentCorrect)
+    }
+    var result = list.map {
+      make(id: $0.id, week: $0.week, createdAt: $0.createdAt, generatedAt: $0.generatedAt,
+        itemCount: $0.itemCount, slot: $0.practiceSlot)
+    }
+    if let current, !result.contains(where: { $0.id == current.id }) {
+      result.insert(make(id: current.id, week: current.week, createdAt: current.createdAt,
+        generatedAt: current.generatedAt, itemCount: current.items.count, slot: current.practiceSlot), at: 0)
+    }
+    return result
   }
 
   private static func buildSteps(_ input: Input, weekKey: String) -> [Step] {

@@ -60,28 +60,9 @@ enum TodayPlan {
     return photos
   }
 
-  /// 练习列表（新的在前），有详情 / 回报的那一份补上已说过、已录的数目。
-  /// 刚建的练习还没进列表、或离线只有缓存的详情时，当前练习就是最新的一份。
+  /// 练习（新的在前）：列表 + 当前详情 + 按练习分开的回报（LoopStore.summaries，只在内存里）。
   private static func practices(_ loopStore: LoopStore) -> [WeekPlan.Practice] {
-    let current = loopStore.currentPractice
-    let report = loopStore.summary
-    func make(id: String, week: String, generatedAt: Date?, itemCount: Int, slot: String?, status: String?) -> WeekPlan.Practice {
-      let detail = current?.id == id ? current : nil
-      let summary = loopStore.summaryPracticeID == id ? report : nil
-      return WeekPlan.Practice(id: id, week: week, generatedAt: detail?.generatedAt ?? generatedAt,
-        itemCount: summary?.total ?? detail?.items.count ?? itemCount, practiceSlot: slot,
-        reflectedCount: detail.map { $0.items.filter(\.reflected).count },
-        answered: summary?.answered, independentCorrect: summary?.independentCorrect, status: status)
-    }
-    var list = loopStore.practices.map {
-      make(id: $0.id, week: $0.week, generatedAt: $0.generatedAt, itemCount: $0.itemCount,
-        slot: $0.practiceSlot, status: $0.status)
-    }
-    if let current, !list.contains(where: { $0.id == current.id }) {
-      list.insert(make(id: current.id, week: current.week, generatedAt: current.generatedAt,
-        itemCount: current.items.count, slot: current.practiceSlot, status: current.status), at: 0)
-    }
-    return list
+    WeekPlan.practices(list: loopStore.practices, current: loopStore.currentPractice, summaries: loopStore.summaries)
   }
 
   private static func preparingPrintID(_ loopStore: LoopStore) -> String? {
