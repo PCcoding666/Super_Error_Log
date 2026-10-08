@@ -63,7 +63,7 @@ struct StudentRootView: View {
       store.setActive(phase == .active)
     }
     .alert(
-      "请再试一次",
+      "没成功",
       isPresented: Binding(
         get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })
     ) {

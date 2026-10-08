@@ -9,10 +9,10 @@ struct PairingSettingsView: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section("云端识别服务") {
+        Section("服务器") {
           CloudConnectionRow(state: store.connectionState ?? .unpaired, onScan: { showScanner = true })
         }
-        Section("连接本机服务") {
+        Section("开发者选项：本机地址连接（仅开发调试用）") {
           if store.pairing != nil { Text("已保存本机配对").accessibilityIdentifier("pairing-saved") }
           TextField("本机地址", text: $address).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("pairing-address")
           SecureField("本机配对口令", text: $token).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("pairing-token")
@@ -48,10 +48,10 @@ struct CloudConnectionRow: View {
       }
       .accessibilityIdentifier("connection-state-\(state.key)")
       if state == .unpaired {
-        Text("扫码连接这台 Mac 上的识别服务，或使用下方本机地址手动连接。")
+        Text("这一步要大人帮一下：请帮你装 App 的人打开配对二维码，你点下面的按钮扫一下。")
           .font(.caption).foregroundStyle(Palette.muted)
       } else if state == .incompatible {
-        Text("服务版本或归属与配对不一致，需要重新扫码。")
+        Text("请帮你装 App 的人更新 App，或者给你一个新的二维码。")
           .font(.caption).foregroundStyle(Palette.muted)
       }
       actionButton

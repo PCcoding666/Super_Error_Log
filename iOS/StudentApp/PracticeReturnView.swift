@@ -184,7 +184,7 @@ struct PracticeReturnView: View {
 
   @ViewBuilder private var submitSection: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Button("这次先提交已填的 \(form.completedCount) 道", action: submit)
+      Button("提交 \(form.completedCount) 道结果", action: submit)
         .buttonStyle(PrimaryButton())
         .disabled(form.completedCount == 0 || submitting)
         .accessibilityIdentifier("return-submit")

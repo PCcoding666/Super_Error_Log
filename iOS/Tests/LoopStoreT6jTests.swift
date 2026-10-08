@@ -97,7 +97,7 @@ import Foundation
     let store = try makeStore()
     await store.openPractice(id: Self.packetID)
     let before = PracticeCardText.make(detail: try XCTUnwrap(store.currentPractice), summary: nil)
-    XCTAssertTrue(before.statusLine.contains("还有 1 道没复盘"), "前置：还没复盘")
+    XCTAssertTrue(before.statusLine.contains("还有 1 道没说为什么错"), "前置：还没说为什么错")
 
     await store.startReflection(itemID: Self.itemID)
     await store.answerFollowup("我以为移项不用变号")
@@ -105,7 +105,7 @@ import Foundation
       masteryFeeling: 3, summary: nil)
 
     let after = PracticeCardText.make(detail: try XCTUnwrap(store.currentPractice), summary: nil)
-    XCTAssertFalse(after.statusLine.contains("没复盘"), "提交复盘成功后状态句随即更新")
+    XCTAssertFalse(after.statusLine.contains("没说为什么错"), "提交成功后状态句随即更新")
   }
 
   /// 录结果成功后：练习卡状态句变为「已录完」（已录 x/y 道），并出现「看结果」。
@@ -117,7 +117,7 @@ import Foundation
     let store = try makeStore()
     await store.openPractice(id: Self.packetID)
     let before = PracticeCardText.make(detail: try XCTUnwrap(store.currentPractice), summary: nil)
-    XCTAssertTrue(before.statusLine.contains("已打印，做完回来录结果"), "前置：已打印未录")
+    XCTAssertTrue(before.statusLine.contains("练习纸已生成 · 做完回来录结果"), "前置：练习纸已生成未录")
     XCTAssertTrue(before.steps.contains(.record))
     XCTAssertFalse(before.steps.contains(.viewSummary))
 

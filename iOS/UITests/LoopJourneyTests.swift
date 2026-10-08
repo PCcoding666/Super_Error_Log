@@ -110,15 +110,15 @@ final class LoopJourneyTests: XCTestCase {
     try importAndConsent(app)
     try createPracticeFromHome(app)
 
-    // 主页出现练习卡：3 道题、还没打印、可去复盘。
+    // 主页出现练习卡：3 道题、还没打印、可以说说为什么错。
     let practiceCard = app.descendants(matching: .any)["practice-card"]
     XCTAssertTrue(practiceCard.waitForExistence(timeout: 10), "建练习后主页出现练习卡")
-    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "还有 3 道没复盘")).firstMatch.exists)
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "还有 3 道没说为什么错")).firstMatch.exists)
     let reflect = app.buttons["practice-reflect"]
     reveal(reflect, in: app)
     reflect.tap()
 
-    // 练习详情 → 复盘这道 → 追问出现。
+    // 练习详情 → 说说这道为什么错 → AI 问你一句。
     let reflectItem = app.buttons["reflect-\(Self.item1)"]
     XCTAssertTrue(reflectItem.waitForExistence(timeout: 10))
     reflectItem.tap()
@@ -134,11 +134,11 @@ final class LoopJourneyTests: XCTestCase {
     reveal(send, in: app)
     send.tap()
 
-    // 确认页：AI 建议已预选（标「AI 建议」）、「现在的把握」没有预选、没选把握时提交不可用。
+    // 确认页：AI 建议已预选（标「AI 猜的」）、把握没有预选、没选把握时提交不可用。
     let submit = app.buttons["reflection-submit"]
     XCTAssertTrue(submit.waitForExistence(timeout: 10), "回答后进入确认页")
-    XCTAssertTrue(app.staticTexts["AI 建议"].waitForExistence(timeout: 5), "AI 建议预选并标注")
-    XCTAssertTrue(app.staticTexts["还没选现在的把握"].exists, "把握不预选，如实提示")
+    XCTAssertTrue(app.staticTexts["AI 猜的"].waitForExistence(timeout: 5), "AI 建议预选并标注")
+    XCTAssertTrue(app.staticTexts["还差：有没有把握"].exists, "把握不预选，如实提示")
     XCTAssertFalse(submit.isEnabled, "没选把握时提交按钮不可用")
     let mastery = app.descendants(matching: .any)["reflect-mastery-2"]
     reveal(mastery, in: app)
@@ -154,10 +154,10 @@ final class LoopJourneyTests: XCTestCase {
     // 「记下了」只显示约 1 秒即自动关闭；以回到练习详情且该题变为「再看一下」作为提交成功判据。
     let reflectAgain = app.buttons["reflect-\(Self.item1)"]
     XCTAssertTrue(reflectAgain.waitForExistence(timeout: 15), "提交后自动回到练习详情")
-    XCTAssertTrue(app.buttons["再看一下"].waitForExistence(timeout: 5), "复盘后该题显示已复盘")
+    XCTAssertTrue(app.buttons["再看一下"].waitForExistence(timeout: 5), "说完后该题显示「再看一下」")
     back(app)
-    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "还有 2 道没复盘")).firstMatch.waitForExistence(timeout: 10),
-      "复盘一道后练习卡未复盘数减少")
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "还有 2 道没说为什么错")).firstMatch.waitForExistence(timeout: 10),
+      "说完一道后练习卡未说数减少")
   }
 
   // MARK: - J4 打印、录结果、看结果、下一份
@@ -183,7 +183,7 @@ final class LoopJourneyTests: XCTestCase {
     // 返回后练习卡变为已打印并出现「录结果」。
     let record = app.buttons["practice-record"]
     XCTAssertTrue(record.waitForExistence(timeout: 10), "打印后练习卡出现「录结果」")
-    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "已打印，做完回来录结果")).firstMatch.exists)
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "练习纸已生成 · 做完回来录结果")).firstMatch.exists)
     record.tap()
 
     // 录结果：一道「独立做出 + 对了」、一道「没做出来」→ 提交。
@@ -258,6 +258,8 @@ final class LoopJourneyTests: XCTestCase {
   /// 无痕迹页的 3 道候选题（与服务器合成内容一致）。
   static let pickItem2 = "itm_0000000000010001"  // 第 2 题勾入后桥接出的错题
   static let pickItem3 = "itm_0000000000010002"  // 第 3 题
+  /// 无痕迹页的照片行标题（设计稿 §5：只留这一行，主页错题区不再同时说「正在识别」）。
+  static let noMarksRow = "这页没有批改痕迹，点「勾出错题」自己勾"
 
   func testJ6PickWrongQuestionsFromUnmarkedPage() throws {
     let server = try SyntheticRecognitionServer(unmarkedPages: true)
@@ -271,8 +273,8 @@ final class LoopJourneyTests: XCTestCase {
     reveal(consent, in: app)
     consent.tap()
 
-    // 找题完成：这页一道自动题都没有 → 照片进度出现「这页没看到批改痕迹」。
-    XCTAssertTrue(app.staticTexts["这页没看到批改痕迹"].waitForExistence(timeout: 30),
+    // 找题完成：这页一道自动题都没有 → 照片进度出现「这页没有批改痕迹…」。
+    XCTAssertTrue(app.staticTexts[Self.noMarksRow].waitForExistence(timeout: 30),
       "无痕迹页到终态后应提示勾出错题")
 
     // 勾出错题 → 输入「1」再续输入「5」：第 1 题先勾上、合成「15」后自动取消，
@@ -320,20 +322,20 @@ final class LoopJourneyTests: XCTestCase {
       "勾入的第 2 题应出现在本周错题")
     XCTAssertTrue(app.buttons["item-card-\(Self.pickItem3)"].waitForExistence(timeout: 10),
       "勾入的第 3 题应出现在本周错题")
-    XCTAssertFalse(app.staticTexts["这页没看到批改痕迹"].exists, "勾过后提示行消失")
+    XCTAssertFalse(app.staticTexts[Self.noMarksRow].exists, "勾过后提示行消失")
     XCTAssertTrue(app.buttons["pick-missed"].waitForExistence(timeout: 10),
       "还剩 1 道没选，应出现「漏了题？从照片里补选」")
 
     // 另一张无痕迹照片：点「这页没有错题」→ 该行消失，错题数不变。
     importPhoto(app)
     waitUntil("第二张照片自动上传（同意已记住）") { server.uploadCount == 2 }
-    XCTAssertTrue(app.staticTexts["这页没看到批改痕迹"].waitForExistence(timeout: 30),
+    XCTAssertTrue(app.staticTexts[Self.noMarksRow].waitForExistence(timeout: 30),
       "第二张无痕迹页同样提示勾出错题")
     let pickDone = app.buttons.matching(NSPredicate(
       format: "identifier BEGINSWITH %@", "photo-pickdone-")).firstMatch
     reveal(pickDone, in: app)
     pickDone.tap()
-    waitUntil("「这页没有错题」后该行消失") { !app.staticTexts["这页没看到批改痕迹"].exists }
+    waitUntil("「这页没有错题」后该行消失") { !app.staticTexts[Self.noMarksRow].exists }
     XCTAssertEqual(app.buttons.matching(NSPredicate(
       format: "identifier BEGINSWITH %@", "item-card-")).count, 2, "错题数不变")
   }
@@ -364,8 +366,8 @@ final class LoopJourneyTests: XCTestCase {
     let pick = app.buttons["pick-practice"]
     reveal(pick, in: app)
     pick.tap()
-    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "推荐理由：本周新错题")).firstMatch.waitForExistence(timeout: 10),
-      "推荐页显示推荐理由")
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "为什么选它：本周新错题")).firstMatch.waitForExistence(timeout: 10),
+      "推荐页显示为什么选它")
     XCTAssertTrue(app.staticTexts["已选 3 道"].exists, "推荐默认全选")
     let create = app.buttons["create-practice"]
     XCTAssertTrue(create.isEnabled)

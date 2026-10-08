@@ -15,10 +15,17 @@ struct PracticePickView: View {
 
   private var limitReached: Bool { store.selectedItemIDs.count >= 8 }
 
+  /// 设计稿 §4.6：说清楚是建议 5–8 道、最多 8 道（可以少于 5 道）。
+  private var subtitle: String {
+    let count = store.recommended.count
+    let lead = count > 0 ? "AI 先帮你选了 \(count) 道，点一下可以去掉或加上。" : "点一下可以选上或去掉。"
+    return lead + "建议 5–8 道，最多 8 道。"
+  }
+
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
-        SectionTitle(title: "选这周要练的题", subtitle: "选 5–8 道，打印出来，隔几天在纸上重做。")
+        SectionTitle(title: "选这周要练的题", subtitle: subtitle)
         if let error = store.lastError {
           Text(error).font(.subheadline).foregroundStyle(CardTone.red.color)
             .accessibilityIdentifier("pick-error")
@@ -100,7 +107,7 @@ struct PracticePickView: View {
           if let excerpt = item.questionExcerpt, !excerpt.isEmpty {
             Text(excerpt).font(.caption).foregroundStyle(Palette.ink).lineLimit(2)
           }
-          Text("推荐理由：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
+          Text("为什么选它：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -133,7 +140,7 @@ struct PracticePickView: View {
       HStack(spacing: 12) {
         Text("已选 \(store.selectedItemIDs.count) 道").font(.subheadline).foregroundStyle(Palette.ink)
           .accessibilityIdentifier("pick-count")
-        TextField("做题时段", text: $slotText)
+        TextField("什么时候做", text: $slotText)
           .textFieldStyle(.roundedBorder)
           .frame(minHeight: 44)
           .accessibilityIdentifier("pick-slot")

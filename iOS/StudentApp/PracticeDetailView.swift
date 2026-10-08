@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 // T6d-w：练习详情——按 position 列出每道题（裁图缩略、短编号、知识点、推荐理由、是否已复盘），
-// 每题一个复盘入口进入追问复盘页。界面只求可用清楚，不做视觉设计。
+// 每题一个「说说这道为什么错」入口进入 AI 问你一句的页面。界面只求可用清楚，不做视觉设计。
 
 struct PracticeDetailView: View {
   let practiceID: String
@@ -17,7 +17,7 @@ struct PracticeDetailView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
-        Text("复盘不是必须的，但做了之后回来能看到你当时的判断准不准。")
+        Text("每道题 AI 问你一句，你说一句就行。说出来，下次更容易发现自己是哪里想错了。不想说可以跳过，不影响打印。")
           .font(.subheadline).foregroundStyle(Palette.muted)
         if let practice {
           ForEach(practice.items.sorted(by: { $0.position < $1.position }), id: \.id) { item in
@@ -31,7 +31,7 @@ struct PracticeDetailView: View {
       }.padding(24)
     }
     .background(Palette.paper)
-    .navigationTitle("本周练习")
+    .navigationTitle("说说为什么错")
     .navigationBarTitleDisplayMode(.inline)
     .sheet(item: $zoom) { SourcePhotoView(reference: $0) }
     .task {
@@ -65,7 +65,7 @@ struct PracticeDetailView: View {
       VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 8) {
           Text(item.shortId ?? "题目").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-          Text(item.reflected ? "已复盘" : "还没复盘")
+          Text(item.reflected ? "说过了" : "还没说为什么错")
             .font(.caption2.weight(.medium))
             .foregroundStyle(item.reflected ? CardTone.green.color : CardTone.orange.color)
         }
@@ -74,10 +74,10 @@ struct PracticeDetailView: View {
         if let excerpt = item.questionExcerpt, !excerpt.isEmpty {
           Text(excerpt).font(.caption).foregroundStyle(Palette.ink).lineLimit(2)
         }
-        Text("推荐理由：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
+        Text("为什么选它：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
-      Button(item.reflected ? "再看一下" : "复盘这道") {
+      Button(item.reflected ? "再看一下" : "说说这道为什么错") {
         // 第 1 期：路由在主页的导航栈上（HomeFlow），说完一道可以直接换到下一道。
         flow.push(.followup(practiceID: practiceID, itemID: item.id))
       }

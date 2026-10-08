@@ -9,14 +9,23 @@ final class LoopLogicTests: XCTestCase {
   // MARK: - LoopText.itemStatus：题目状态翻成学生看得懂的一句话
 
   func testItemStatusTexts() {
-    XCTAssertEqual(LoopText.itemStatus(.readyForReflection), "待复盘")
-    XCTAssertEqual(LoopText.itemStatus(.eligibleForReview), "已复盘，等着进练习")
+    XCTAssertEqual(LoopText.itemStatus(.readyForReflection), "还没说为什么错")
+    XCTAssertEqual(LoopText.itemStatus(.eligibleForReview), "说过了")
     XCTAssertEqual(LoopText.itemStatus(.scheduled), "已排进本周练习")
-    XCTAssertEqual(LoopText.itemStatus(.packetGenerated), "练习已打印")
+    XCTAssertEqual(LoopText.itemStatus(.packetGenerated), "在练习纸上")
     XCTAssertEqual(LoopText.itemStatus(.needsRecheck), "上次没独立做对，要再练")
-    XCTAssertEqual(LoopText.itemStatus(.temporarilyMastered), "暂时掌握")
-    XCTAssertEqual(LoopText.itemStatus(.stablyMastered), "稳定掌握")
+    XCTAssertEqual(LoopText.itemStatus(.temporarilyMastered), "真会了（还要再确认一次）")
+    XCTAssertEqual(LoopText.itemStatus(.stablyMastered), "稳了")
     XCTAssertEqual(LoopText.itemStatus(.archivedNotWorthReview), "已移出")
+  }
+
+  /// 设计稿 §5：主页错题卡不显示「还没说为什么错」「说过了」这类流程状态（卡片上没有入口）。
+  func testCardStatusHidesFlowStatesOnly() {
+    XCTAssertNil(LoopText.cardStatus(.readyForReflection))
+    XCTAssertNil(LoopText.cardStatus(.eligibleForReview))
+    XCTAssertEqual(LoopText.cardStatus(.packetGenerated), "在练习纸上")
+    XCTAssertEqual(LoopText.cardStatus(.needsRecheck), "上次没独立做对，要再练")
+    XCTAssertEqual(LoopText.cardStatus(.unknown("future_status")), "状态更新中")
   }
 
   func testItemStatusUnknownAndPreBridgeShowUpdating() {

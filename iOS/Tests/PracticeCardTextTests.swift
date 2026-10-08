@@ -33,7 +33,7 @@ final class PracticeCardTextTests: XCTestCase {
 
   func testNotPrintedWithUnreflectedItems() {
     let content = PracticeCardText.make(detail: makeDetail(count: 3, reflectedCount: 1, printed: false), summary: nil)
-    XCTAssertEqual(content.statusLine, "3 道题 · 周三晚自习 · 还有 2 道没复盘 · 还没打印")
+    XCTAssertEqual(content.statusLine, "3 道题 · 周三晚自习 · 还有 2 道没说为什么错 · 还没打印")
   }
 
   func testNotPrintedAllReflected() {
@@ -43,7 +43,7 @@ final class PracticeCardTextTests: XCTestCase {
 
   func testPrintedWithoutAnyReturn() {
     let content = PracticeCardText.make(detail: makeDetail(printed: true), summary: nil)
-    XCTAssertEqual(content.statusLine, "3 道题 · 周三晚自习 · 已打印，做完回来录结果")
+    XCTAssertEqual(content.statusLine, "3 道题 · 周三晚自习 · 练习纸已生成 · 做完回来录结果")
   }
 
   func testPrintedWithPartialReturn() {
@@ -67,7 +67,7 @@ final class PracticeCardTextTests: XCTestCase {
     let withUnreflected = PracticeCardText.make(detail: makeDetail(reflectedCount: 1, printed: false), summary: nil)
     XCTAssertEqual(withUnreflected.steps, [.reflect, .print])
     let allReflected = PracticeCardText.make(detail: makeDetail(reflectedCount: 3, printed: false), summary: nil)
-    XCTAssertEqual(allReflected.steps, [.print], "都复盘完了就不需要'去复盘'，没复盘完也允许打印")
+    XCTAssertEqual(allReflected.steps, [.print], "都说完了就不需要'说说为什么错'，没说完也允许打印")
   }
 
   func testNextStepsAfterPrintingBeforeAnyReturn() {
@@ -86,7 +86,7 @@ final class PracticeCardTextTests: XCTestCase {
   }
 
   func testStepTitlesAreChinese() {
-    XCTAssertEqual(PracticeCardText.NextStep.reflect.title, "去复盘")
+    XCTAssertEqual(PracticeCardText.NextStep.reflect.title, "说说为什么错")
     XCTAssertEqual(PracticeCardText.NextStep.print.title, "打印练习纸")
     XCTAssertEqual(PracticeCardText.NextStep.reprint.title, "再打印一份")
     XCTAssertEqual(PracticeCardText.NextStep.record.title, "录结果")
@@ -136,6 +136,6 @@ final class PracticeCardTextTests: XCTestCase {
 
   func testOlderLineWithoutSlotPrinted() {
     XCTAssertEqual(PracticeCardText.olderLine(makePacketSummary(slot: nil, printed: true, count: 5)),
-      "2026-W39 · 5 道题 · 已打印")
+      "2026-W39 · 5 道题 · 练习纸已生成")
   }
 }

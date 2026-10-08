@@ -16,7 +16,7 @@ struct PracticeSummaryView: View {
         if let summary = store.summary, store.summaryPracticeID == practiceID {
           summaryContent(summary)
         } else if let error = store.lastError {
-          SectionTitle(title: "练习回报", subtitle: "")
+          SectionTitle(title: "这次的结果", subtitle: "")
           PaperCard {
             VStack(alignment: .leading, spacing: 12) {
               Text(error).font(.body).foregroundStyle(Palette.ink)
@@ -26,19 +26,19 @@ struct PracticeSummaryView: View {
             }
           }
         } else {
-          ProgressView("正在读取回报…").accessibilityIdentifier("summary-loading")
+          ProgressView("正在读取结果…").accessibilityIdentifier("summary-loading")
         }
       }.padding(24)
     }
     .background(Palette.paper)
-    .navigationTitle("练习回报")
+    .navigationTitle("这次的结果")
     .navigationBarTitleDisplayMode(.inline)
     .task { await store.loadSummary(practiceID: practiceID) }
   }
 
   @ViewBuilder private func summaryContent(_ summary: V2ReturnSummary) -> some View {
     SectionTitle(
-      title: "练习回报",
+      title: "这次的结果",
       subtitle: "记录了 \(summary.answered) / \(summary.total) 道，其中独立做对 \(summary.independentCorrect) 道。")
 
     if !summary.masteredNow.isEmpty {

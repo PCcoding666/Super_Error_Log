@@ -367,7 +367,7 @@ struct LoopHomeView: View {
         LocalPhotoThumbnail(url: store.photoURL(row.name)).frame(width: 62, height: 76).clipped()
           .accessibilityHidden(true)
         VStack(alignment: .leading, spacing: 5) {
-          Text(row.kind == .pick ? "这页没看到批改痕迹" : (plan?.title ?? presentation.headline))
+          Text(row.kind == .pick ? "这页没有批改痕迹，点「勾出错题」自己勾" : (plan?.title ?? presentation.headline))
             .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
           if row.kind == .pick {
             Text("勾出你做错的题，只有勾出的题会进错题本").font(.caption).foregroundStyle(Palette.muted)
@@ -468,7 +468,7 @@ struct LoopHomeView: View {
           }
         }
       } else if store.pairing == nil {
-        Text("先连接服务（上面点扫码配对），这里才会显示本周错题")
+        Text("连上服务器以后，这里会显示本周错题")
           .font(.subheadline).foregroundStyle(Palette.muted)
           .accessibilityIdentifier("items-unpaired")
       } else {
@@ -482,9 +482,12 @@ struct LoopHomeView: View {
     if store.state.importedPhotos.isEmpty {
       Text("拍一张这周的错题开始").font(.subheadline).foregroundStyle(Palette.muted)
         .accessibilityIdentifier("items-empty-no-photos")
-    } else if !progressRows.isEmpty {
+    } else if progressRows.contains(where: { $0.kind != .pick }) {
+      // 设计稿 §5：没批改痕迹的页只留照片那一行「要你勾」，这里不再说「正在识别」自相矛盾。
       Text("正在识别，完成后题目会出现在这里").font(.subheadline).foregroundStyle(Palette.muted)
         .accessibilityIdentifier("items-empty-recognizing")
+    } else if !progressRows.isEmpty {
+      EmptyView()
     } else {
       Text("这些照片里没找到有批改痕迹的题").font(.subheadline).foregroundStyle(Palette.muted)
         .accessibilityIdentifier("items-empty-no-items")
@@ -504,7 +507,7 @@ struct LoopHomeView: View {
             HStack(spacing: 8) {
               Text(card.shortId ?? "题目").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
               if card.badge == .low {
-                Text("AI 没把握").font(.caption2.weight(.medium)).foregroundStyle(CardTone.orange.color)
+                Text("字可能认错了 · 点开看看").font(.caption2.weight(.medium)).foregroundStyle(CardTone.orange.color)
                   .padding(.horizontal, 6).padding(.vertical, 2)
                   .background(CardTone.orange.color.opacity(0.12), in: Capsule())
               }
@@ -514,7 +517,9 @@ struct LoopHomeView: View {
             if let excerpt = card.questionExcerpt, !excerpt.isEmpty {
               Text(excerpt).font(.caption).foregroundStyle(Palette.ink).lineLimit(2)
             }
-            Text(LoopText.itemStatus(card.status)).font(.caption).foregroundStyle(Palette.teal)
+            if let status = LoopText.cardStatus(card.status) {
+              Text(status).font(.caption).foregroundStyle(Palette.teal)
+            }
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
