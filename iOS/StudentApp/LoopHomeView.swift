@@ -197,8 +197,8 @@ struct LoopHomeView: View {
       PracticePickView()
     case .detail(let practiceID):
       PracticeDetailView(practiceID: practiceID)
-    case .followup(_, let itemID):
-      FollowupView(itemID: itemID).id(itemID)
+    case .followup(let practiceID, let itemID):
+      FollowupView(itemID: itemID, practiceID: practiceID).id(itemID)
     case .print(let practiceID):
       PracticePrintView(practiceID: practiceID)
     case .record(let practiceID):

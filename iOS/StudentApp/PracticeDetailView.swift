@@ -31,12 +31,49 @@ struct PracticeDetailView: View {
       }.padding(24)
     }
     .background(Palette.paper)
+    .safeAreaInset(edge: .bottom, spacing: 0) { nextStepBar }
     .navigationTitle("说说为什么错")
     .navigationBarTitleDisplayMode(.inline)
     .sheet(item: $zoom) { SourcePhotoView(reference: $0) }
     .task {
       if store.currentPractice?.id != practiceID {
         await store.openPractice(id: practiceID)
+      }
+    }
+  }
+
+  // MARK: - 下一步（第 1 期：练习详情不再是死胡同）
+
+  /// 还没说的第一道（按题号顺序）。
+  private var nextUnreflected: (index: Int, item: V2PracticeItem)? {
+    guard let practice else { return nil }
+    let ordered = practice.items.sorted { $0.position < $1.position }
+    return ordered.enumerated().first { !$0.element.reflected }.map { ($0.offset, $0.element) }
+  }
+
+  @ViewBuilder private var nextStepBar: some View {
+    if let practice {
+      let reflected = practice.items.filter(\.reflected).count
+      if practice.generatedAt != nil {
+        // 练习纸已生成：这一步不挡路，回今天看下一步。
+        NextStepBar(model: NextStepModel(caption: "练习纸已生成",
+          primary: .init(title: "回到今天", systemImage: "house", action: .goHome)), perform: flow.perform)
+      } else if let next = nextUnreflected {
+        NextStepBarContainer(caption: "第 \(next.index + 1) 道，共 \(practice.items.count) 道 · 说了 \(reflected) 道",
+          secondary: [.init(title: "跳过，直接打印", systemImage: nil, action: .skipWhy(practiceID: practiceID))],
+          perform: flow.perform) {
+          Button {
+            flow.push(.followup(practiceID: practiceID, itemID: next.item.id))
+          } label: {
+            Label("说第 \(next.index + 1) 道", systemImage: "bubble.left")
+          }
+          .buttonStyle(PrimaryButton())
+          .accessibilityIdentifier("next-step-primary")
+        }
+      } else {
+        NextStepBar(model: NextStepModel(caption: "说完了 ✓ \(practice.items.count) 道里说了 \(reflected) 道",
+          primary: .init(title: "下一步：打印练习纸", systemImage: "printer", action: .print(practiceID: practiceID))),
+          perform: flow.perform)
       }
     }
   }

@@ -8,6 +8,8 @@ import SwiftUI
 struct PracticeSummaryView: View {
   let practiceID: String
   @Environment(LoopStore.self) private var store
+  @Environment(StudyStore.self) private var studyStore
+  @Environment(HomeFlow.self) private var flow
 
   var body: some View {
     ScrollView {
@@ -31,6 +33,7 @@ struct PracticeSummaryView: View {
       }.padding(24)
     }
     .background(Palette.paper)
+    .safeAreaInset(edge: .bottom, spacing: 0) { NextStepBar(model: nextStep, perform: flow.perform) }
     .navigationTitle("这次的结果")
     .navigationBarTitleDisplayMode(.inline)
     .task { await store.loadSummary(practiceID: practiceID) }
@@ -103,6 +106,19 @@ struct PracticeSummaryView: View {
       }
       .accessibilityIdentifier("summary-next-confirm")
     }
+  }
+
+  /// 第 1 期：结果页不再是死胡同。周末 B 录完后直接给今天的下一步（如「下一步：勾出做错的题」）；
+  /// 下一步还要等（AI 在找题）、或者就是这份的录结果、或者今天没有下一步时，「回到今天」。
+  private var nextStep: NextStepModel {
+    let plan = TodayPlan.plan(store: studyStore, loopStore: store, skipped: flow.skipped)
+    if let index = plan.currentIndex, let next = plan.next, let primary = next.primary, next.isEnabled,
+      primary.action != .record(practiceID: practiceID), primary.action != .summary(practiceID: practiceID) {
+      return NextStepModel(caption: next.caption,
+        primary: .init(title: "下一步：\(plan.steps[index].title)", systemImage: primary.systemImage,
+          action: primary.action))
+    }
+    return NextStepModel(caption: "", primary: .init(title: "回到今天", systemImage: "house", action: .goHome))
   }
 
   private func itemCard(shortId: String?, subject: String?, knowledgeTags: [String], reason: String?) -> some View {

@@ -36,6 +36,11 @@ final class HomeFlow {
 
   func goHome() { path = [] }
 
+  /// 换掉最上面一页（说完一道直接换成下一道，返回仍回到练习详情）。
+  func replaceTop(with route: PracticeRoute) {
+    if path.isEmpty { path = [route] } else { path[path.count - 1] = route }
+  }
+
   func skip(_ kind: WeekPlan.StepKind) { skipped.insert(kind) }
 
   func consumeHomeRequest() -> NextStepAction? {
@@ -84,6 +89,7 @@ struct NextStepBar: View {
         }
         .buttonStyle(PrimaryButton())
         .disabled(!model.isEnabled)
+        .accessibilityLabel(primary.title)
         .accessibilityHint(model.caption)
         .accessibilityIdentifier("next-step-primary")
       }

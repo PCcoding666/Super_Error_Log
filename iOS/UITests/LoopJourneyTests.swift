@@ -151,9 +151,13 @@ final class LoopJourneyTests: XCTestCase {
     XCTAssertTrue(submit.isEnabled, "选了把握后可以提交")
     reveal(submit, in: app)
     submit.tap()
-    // 「记下了」只显示约 1 秒即自动关闭；以回到练习详情且该题变为「再看一下」作为提交成功判据。
+    // 第 1 期：说完以后不再自动退回（不走到头），底部给下一步；还有 2 道没说 → 「下一道」。
+    let next = app.buttons["next-step-primary"]
+    XCTAssertTrue(next.waitForExistence(timeout: 15), "提交后底部出现下一步按钮")
+    XCTAssertEqual(next.label, "下一道")
+    back(app)
     let reflectAgain = app.buttons["reflect-\(Self.item1)"]
-    XCTAssertTrue(reflectAgain.waitForExistence(timeout: 15), "提交后自动回到练习详情")
+    XCTAssertTrue(reflectAgain.waitForExistence(timeout: 10), "返回练习详情")
     XCTAssertTrue(app.buttons["再看一下"].waitForExistence(timeout: 5), "说完后该题显示「再看一下」")
     back(app)
     XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "还有 2 道没说为什么错")).firstMatch.waitForExistence(timeout: 10),
@@ -169,7 +173,7 @@ final class LoopJourneyTests: XCTestCase {
     try importAndConsent(app)
     try createPracticeFromHome(app)
 
-    // 打印练习纸 → 准备中 → PDF 预览与「打印 / 分享」。
+    // 打印练习纸 → 准备中 → PDF 预览与底部「打印」。
     let printButton = app.buttons["practice-print"]
     reveal(printButton, in: app)
     printButton.tap()
@@ -177,7 +181,7 @@ final class LoopJourneyTests: XCTestCase {
       "进入打印页先显示准备中")
     XCTAssertTrue(app.descendants(matching: .any)["print-preview"].waitForExistence(timeout: 60),
       "轮询就绪后出现 PDF 预览")
-    XCTAssertTrue(app.buttons["print-share"].exists, "就绪后出现「打印 / 分享」")
+    XCTAssertTrue(app.buttons["print-share"].exists, "就绪后底部出现「打印」")
     back(app)
 
     // 返回后练习卡变为已打印并出现「录结果」。
@@ -401,11 +405,21 @@ final class LoopJourneyTests: XCTestCase {
     button.tap()
   }
 
+  /// 滚到元素能点到为止。第 1 期起每屏底部有固定的下一步按钮：isHittable 不管它是否盖住元素，
+  /// 所以还要求元素整个在下一步按钮上方。
   private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
     for _ in 0..<8 {
-      if element.exists && element.isHittable { break }
+      if element.exists && element.isHittable && !coveredByNextStepBar(element, in: app) { break }
       app.swipeUp()
     }
+  }
+
+  private func coveredByNextStepBar(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+    let bar = app.otherElements["next-step-bar"]
+    guard bar.exists else { return false }
+    // 下一步按钮自己里面的元素不算被盖住。
+    if bar.frame.contains(element.frame) { return false }
+    return element.frame.maxY > bar.frame.minY
   }
 
   private func waitUntil(_ description: String, timeout: TimeInterval = 20, _ predicate: () -> Bool) {

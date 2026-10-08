@@ -11,7 +11,10 @@ import UIKit
 
 struct FollowupView: View {
   let itemID: String
+  /// 第 1 期：说完以后的下一步（下一道 / 打印练习纸）要知道是哪一份练习。
+  var practiceID: String? = nil
   @Environment(LoopStore.self) private var store
+  @Environment(HomeFlow.self) private var flow
   @Environment(\.dismiss) private var dismiss
   @State private var speech = SpeechInput()
   @State private var answer = ""
@@ -27,6 +30,9 @@ struct FollowupView: View {
       }.padding(24)
     }
     .background(Palette.paper)
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if submitted, let next = doneNext { NextStepBar(model: next, perform: performNext) }
+    }
     .navigationTitle("说说为什么错")
     .navigationBarTitleDisplayMode(.inline)
     .task {
@@ -64,12 +70,50 @@ struct FollowupView: View {
     }
   }
 
+  /// 说完了：不再自动退回，底部给下一步（下一道 / 打印练习纸），不走到头（设计稿 §4.7、§3.5）。
+  /// 不知道是哪份练习时（旧入口）沿用原来的 1 秒后返回。
   private func markDone() {
     guard !submitted else { return }
     submitted = true
+    guard practiceID == nil else { return }
     Task {
       try? await Task.sleep(for: .seconds(1))
       dismiss()
+    }
+  }
+
+  /// 这份练习（详情已载入时）。
+  private var practice: V2PracticeDetail? {
+    guard let practiceID, store.currentPractice?.id == practiceID else { return nil }
+    return store.currentPractice
+  }
+
+  /// 按题号顺序，这道之后（没有就从头）第一道还没说的。
+  private var nextUnreflectedID: String? {
+    guard let practice else { return nil }
+    let ordered = practice.items.sorted { $0.position < $1.position }
+    let start = ordered.firstIndex { $0.id == itemID }.map { $0 + 1 } ?? 0
+    let rotated = Array(ordered[start...] + ordered[..<start])
+    return rotated.first { !$0.reflected && $0.id != itemID }?.id
+  }
+
+  private var doneNext: NextStepModel? {
+    guard let practiceID, let practice else { return nil }
+    let reflected = practice.items.filter(\.reflected).count
+    if nextUnreflectedID != nil {
+      return NextStepModel(caption: "说了 \(reflected)/\(practice.items.count) 道",
+        primary: .init(title: "下一道", systemImage: "bubble.left", action: .why(practiceID: practiceID)),
+        secondary: [.init(title: "跳过，直接打印", systemImage: nil, action: .skipWhy(practiceID: practiceID))])
+    }
+    return NextStepModel(caption: "说完了 ✓ \(practice.items.count) 道里说了 \(reflected) 道",
+      primary: .init(title: "下一步：打印练习纸", systemImage: "printer", action: .print(practiceID: practiceID)))
+  }
+
+  private func performNext(_ action: NextStepAction) {
+    if case .why(let practiceID) = action, let next = nextUnreflectedID {
+      flow.replaceTop(with: .followup(practiceID: practiceID, itemID: next))
+    } else {
+      flow.perform(action)
     }
   }
 
@@ -107,7 +151,7 @@ struct FollowupView: View {
     case .confirming, .submitting:
       confirmSection
     case .done:
-      Text("记下了").font(.title3.weight(.semibold)).foregroundStyle(Palette.teal)
+      Text("记下了 ✓").font(.title3.weight(.semibold)).foregroundStyle(Palette.teal)
         .accessibilityIdentifier("reflection-done")
     }
   }
