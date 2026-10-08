@@ -2,7 +2,7 @@ import SwiftUI
 
 // 学生端重做第 1 期（设计稿 §4.1、§4.9、§3.4）：主页顶部的「今天」卡。
 // 周末 A / 周末 B 是步骤清单（做完打勾、当前一步描边写「现在做这个」、每步大约几分钟）；
-// 没连上时说清楚这一步要谁帮。
+// 「做完了」「周中」是两种首页状态（§4.9）；没连上时说清楚这一步要谁帮。
 // 主页其余部分（连接、拍照、照片进度、本周错题、本周练习）第 1 期原样留在这张卡下面。
 
 /// 把今天已有的状态交给 WeekPlan（只读，不新增任何持久化字段）。
@@ -93,6 +93,9 @@ struct TodayStepsCard: View {
   let offlineNote: String?
   let perform: (NextStepAction) -> Void
 
+  /// 与练习纸封面三条规则同一说法（printService.ts 55 行）。
+  private static let paperRules = "做的时候：不看答案，独立做；卡住先看一级提示，再看二级；做完打勾，写上做题日期。"
+
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text("今天").font(.title3.weight(.semibold)).foregroundStyle(Palette.ink)
@@ -117,9 +120,10 @@ struct TodayStepsCard: View {
       Text(offlineNote == nil ? "正在读取…" : "没联网，连上后再看今天要做什么")
         .font(.subheadline).foregroundStyle(Palette.muted)
         .accessibilityIdentifier("today-loading")
-    case .done, .midweek:
-      // 「做完了」「周中」两种首页状态在后面单独一步补上（§4.9）。
-      EmptyView()
+    case .done:
+      doneContent
+    case .midweek:
+      midweekContent
     case .weekendA, .weekendB:
       checklist
     }
@@ -143,6 +147,44 @@ struct TodayStepsCard: View {
     }
     .accessibilityElement(children: .combine)
     .accessibilityIdentifier("today-connect")
+  }
+
+  // MARK: - 做完了 / 周中（§4.9）
+
+  private var doneContent: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label {
+        Text("这周的事做完了").font(.headline).foregroundStyle(Palette.ink)
+      } icon: {
+        Image(systemName: "checkmark.circle.fill").foregroundStyle(CardTone.green.color)
+      }
+      .accessibilityIdentifier("today-done-title")
+      Text("把练习纸带回学校，\(practiceSlot ?? "过几天")在纸上做。")
+        .font(.subheadline).foregroundStyle(Palette.ink)
+      Text(Self.paperRules).font(.subheadline).foregroundStyle(Palette.ink)
+        .fixedSize(horizontal: false, vertical: true)
+      Text("下个周末打开 App，录一下做的结果。").font(.subheadline).foregroundStyle(Palette.muted)
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("today-done")
+  }
+
+  private var midweekContent: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("现在是在纸上做练习的时候").font(.headline).foregroundStyle(Palette.ink)
+        .accessibilityIdentifier("today-midweek-title")
+      if let practice = result.practice {
+        Text(["练习纸：\(practice.itemCount) 道", practiceSlot].compactMap { $0 }.joined(separator: " · "))
+          .font(.subheadline).foregroundStyle(Palette.ink)
+      }
+      Text(Self.paperRules).font(.subheadline).foregroundStyle(Palette.ink)
+        .fixedSize(horizontal: false, vertical: true)
+      Text("没做完也没关系，周末回来再录。当天做对不算真会，隔几天再做对才算，所以别急着对答案。")
+        .font(.subheadline).foregroundStyle(Palette.muted)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("today-midweek")
   }
 
   // MARK: - 步骤清单（§4.1）
