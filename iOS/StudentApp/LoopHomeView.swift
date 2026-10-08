@@ -31,6 +31,9 @@ struct LoopHomeView: View {
   @State private var recognizedPhotoCount = 0
   @State private var pickTask: PickReference?
   @State private var showMissedList = false
+  /// 子页面交给主页做的事（拍照、勾选面板、上传、扫码）：等回到今天、而且没有别的弹出页时再做，
+  /// 不能因为当时正好有弹出页就悄悄丢掉（评审修正）。只在内存里。
+  @State private var pendingHomeAction: NextStepAction?
 
   var body: some View {
     ScrollView {
@@ -63,11 +66,12 @@ struct LoopHomeView: View {
     .navigationDestination(for: PracticeRoute.self) { route in practiceDestination(route) }
     .onChange(of: flow.homeRequest) { _, request in
       guard request != nil, let action = flow.consumeHomeRequest() else { return }
-      // 等导航回到今天再弹出相机 / 面板。
-      Task {
-        try? await Task.sleep(for: .milliseconds(450))
-        perform(action)
-      }
+      pendingHomeAction = action
+      firePendingHomeActionSoon()
+    }
+    .onChange(of: isPresentingSomething) { _, presenting in
+      // 弹出页 / 提示框 / 推入的页面都关掉了：还有没做的就接着做。
+      if !presenting { firePendingHomeActionSoon() }
     }
     .sheet(isPresented: $showSettings) { LoopSettingsView() }
     .sheet(isPresented: $showScanner) {
@@ -170,6 +174,24 @@ struct LoopHomeView: View {
       pickTask = PickReference(taskID: taskID)
     default:
       flow.perform(action)
+    }
+  }
+
+  /// 主页上是否正盖着别的东西（弹出页、提示框、推入的页面）。这时不能再弹出相机 / 面板。
+  private var isPresentingSomething: Bool {
+    showSettings || showScanner || showCamera || showLibrary || showMissedList
+      || source != nil || consentBatch != nil || correctionTarget != nil || pickTask != nil
+      || retryPhoto != nil || detailItemID != nil || store.errorMessage != nil || !flow.path.isEmpty
+  }
+
+  /// 等导航或弹出页的动画结束（约 0.45 秒）再做；那时还盖着别的东西就继续等，等它关掉时再试。
+  private func firePendingHomeActionSoon() {
+    guard pendingHomeAction != nil else { return }
+    Task {
+      try? await Task.sleep(for: .milliseconds(450))
+      guard let action = pendingHomeAction, !isPresentingSomething else { return }
+      pendingHomeAction = nil
+      perform(action)
     }
   }
 
