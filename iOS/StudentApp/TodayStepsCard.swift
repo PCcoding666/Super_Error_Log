@@ -237,22 +237,11 @@ struct TodayStepsCard: View {
                 .background(Palette.teal.opacity(0.12), in: Capsule())
             }
           }
-          HStack(spacing: 0) {
-            Text(step.detail).foregroundStyle(detailColor(step))
-            if let warning = step.warning {
-              Text(" · ").foregroundStyle(Palette.muted)
-              Text(warning).foregroundStyle(CardTone.orange.color)
-            }
-          }
-          .font(.caption)
-          .multilineTextAlignment(.leading)
+          detailLine(step)
+            .font(.caption)
+            .multilineTextAlignment(.leading)
         }
         Spacer(minLength: 4)
-        if step.isDone {
-          EmptyView()
-        } else {
-          Text("约 \(step.minutes) 分钟").font(.caption2).foregroundStyle(Palette.muted)
-        }
         if step.action != nil {
           Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Palette.muted)
         }
@@ -263,11 +252,23 @@ struct TodayStepsCard: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .disabled(step.action == nil)
+    // 没有可去页面的行点了不做事，但不变灰（变灰像「做完了」）。
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(rowLabel(step, index: index, isCurrent: isCurrent))
     .accessibilityAddTraits(.isButton)
     .accessibilityIdentifier("today-step-\(step.kind.rawValue)")
+  }
+
+  /// 一句说明（或完成的说法）· 橙色提醒 · 约 N 分钟（没做完时）。分钟数放这一行，标题行不挤。
+  private func detailLine(_ step: WeekPlan.Step) -> Text {
+    var line = Text(step.detail).foregroundColor(detailColor(step))
+    if let warning = step.warning {
+      line = line + Text(" · ").foregroundColor(Palette.muted) + Text(warning).foregroundColor(CardTone.orange.color)
+    }
+    if !step.isDone {
+      line = line + Text(" · 约 \(step.minutes) 分钟").foregroundColor(Palette.muted)
+    }
+    return line
   }
 
   private func detailColor(_ step: WeekPlan.Step) -> Color {
