@@ -252,14 +252,15 @@ final class WeekPlanJourneyTests: XCTestCase {
     consent.tap()
   }
 
-  /// 系统相册：选第一张（模拟器自带的样例照片），点完成。
+  /// 系统相册：选第一张（模拟器自带的样例照片），点确认（iOS 26 上叫 Done，iOS 18 上叫 Add）。
   private func pickOnePhotoInSystemPicker(_ app: XCUIApplication) {
     let photo = app.images.matching(identifier: "PXGGridLayout-Info").firstMatch
     XCTAssertTrue(photo.waitForExistence(timeout: 10), "系统相册应打开")
     photo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-    let done = app.buttons["Done"].firstMatch
-    XCTAssertTrue(done.waitForExistence(timeout: 5))
-    done.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    let confirm = app.buttons.matching(NSPredicate(format: "identifier IN %@ OR label IN %@",
+      ["Done", "Add"], ["Done", "Add"])).firstMatch
+    XCTAssertTrue(confirm.waitForExistence(timeout: 5), "相册的确认按钮")
+    confirm.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
   }
 
   /// 关掉系统分享面板（不真的打印）。
