@@ -1,0 +1,531 @@
+import type { ReactNode } from 'react';
+import type { PracticeCard, PracticeDetail, PracticeSummary, RecommendResponse } from '../../v2/practiceService.js';
+import type { PrintSnapshot } from '../../v2/printService.js';
+import type { ReturnSummary } from '../../v2/returnService.js';
+import type { ReflectionSuggestionView, ReflectionTurnView, ReflectionView } from '../../v2/reflectionService.js';
+import { ItemCard } from './items.js';
+import { Page, Problem, type BarButton, type BarModel } from './layout.js';
+
+// ---------- 选这周要练的题（§4.6） ----------
+
+export const SLOT_PRESETS = ['周三晚自习', '周末', '本周内'] as const;
+
+export function SlotChoice(props: { current: string; name?: string }): ReactNode {
+  const name = props.name ?? 'practiceSlot';
+  const preset = (SLOT_PRESETS as readonly string[]).includes(props.current);
+  return (
+    <div className="choices-inline">
+      {SLOT_PRESETS.map(slot => (
+        <label key={slot} className="choice"><input type="radio" name={name} value={slot} defaultChecked={props.current === slot} />{slot}</label>
+      ))}
+      <label className="choice" data-slot-other=""><input type="radio" name={name} value="__other" defaultChecked={!preset} />其他…</label>
+      <label className="choice" style={{ flexBasis: '100%' }}>
+        <input type="text" name={`${name}Other`} maxLength={20} defaultValue={preset ? '' : props.current} placeholder="20 字以内，比如：周四午休" aria-label="其他时间" />
+      </label>
+    </div>
+  );
+}
+
+function ChooseRow(props: { card: PracticeCard; checked: boolean }): ReactNode {
+  const { card } = props;
+  return (
+    <label className="choice pick" data-testid="choose-row">
+      <input type="checkbox" name="itemIds" value={card.id} defaultChecked={props.checked} />
+      <span className="grow">
+        <img className="crop" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} loading="lazy" />
+        <span className="excerpt">{card.questionExcerpt ?? ''}</span>
+        <span className="small muted" style={{ display: 'block' }}>为什么选它：{card.reason}</span>
+        {card.badge === 'low' ? <span className="small tone-orange" style={{ display: 'block' }}>字可能认错了 · 点开看看</span> : null}
+      </span>
+    </label>
+  );
+}
+
+export function ChoosePage(props: { recommend: RecommendResponse; practiceSlot: string; caption: string; error?: string | null; reason?: string | null }): ReactNode {
+  const { recommend } = props;
+  const total = recommend.recommended.length + recommend.others.length;
+  const n = recommend.recommended.length;
+  const bar: BarModel = total === 0
+    ? { caption: props.caption, primary: { title: '去拍', key: 'capture', href: '/s/capture' }, secondary: [] }
+    : {
+      caption: props.caption,
+      primary: { title: n > 0 ? `就练这 ${n} 道` : '至少选 1 道', key: 'create', form: 'choose-form', disabled: n === 0, countTemplate: '就练这 {n} 道', emptyTitle: '至少选 1 道' },
+      secondary: [],
+    };
+  return (
+    <Page title="选这周要练的题" bar={bar}>
+      <h1>选这周要练的题</h1>
+      {props.error ? <Problem title={props.error} reason={props.reason} /> : null}
+      {total === 0 ? (
+        <section className="card"><p>现在没有可以练的题。先拍这周的卷子，或者等 AI 找完题。</p></section>
+      ) : (
+        <form method="post" action="/s/choose" id="choose-form" data-pick-count="" data-max={String(recommend.limits.max)} data-min="1" data-wait="正在建练习…">
+          <p>AI 先帮你选了 {n} 道，点一下可以去掉或加上。建议 {recommend.limits.min}–{recommend.limits.max} 道，最多 {recommend.limits.max} 道。</p>
+          <p className="tone-orange hidden" data-max-warning="">最多 {recommend.limits.max} 道。想加这道，先去掉一道。</p>
+          {recommend.notes.length > 0 ? <div className="notes">{recommend.notes.map(note => <p key={note}>{note}</p>)}</div> : null}
+          {recommend.recommended.map(card => <ChooseRow key={card.id} card={card} checked />)}
+          {recommend.others.length > 0 ? (
+            <details>
+              <summary>其他可以选的（{recommend.others.length}）</summary>
+              {recommend.others.map(card => <ChooseRow key={card.id} card={card} checked={false} />)}
+            </details>
+          ) : null}
+          <fieldset>
+            <legend>什么时候做？</legend>
+            <SlotChoice current={props.practiceSlot} />
+            <p className="small muted">会印在练习纸封面上，提醒你哪天做</p>
+          </fieldset>
+        </form>
+      )}
+    </Page>
+  );
+}
+
+// ---------- 说说为什么错（§4.7） ----------
+
+export const ATTEMPT_CHOICES: Array<[string, string]> = [
+  ['完全不会', '完全不会'], ['知道考啥，没想到方法', '知道考什么但没想到方法'], ['方法对，步骤错了', '方法基本正确但步骤出错'],
+  ['本来会，粗心了', '本来会但审题计算书写失误'], ['时间不够', '时间不足'], ['其他', '其他'],
+];
+export const CAUSE_CHOICES: Array<[string, string]> = [
+  ['概念没弄懂', '知识概念'], ['方法选错了', '方法选择'], ['推理中间断了', '推理步骤'], ['算错了', '计算'],
+  ['题目没看全', '审题遗漏'], ['写法不规范', '表达规范'], ['时间不够或走神', '时间注意力状态'],
+];
+export const MASTERY_CHOICES: Array<[string, number]> = [['还是不会', 0], ['看提示可能会', 1], ['现在做应该会', 2], ['过几天也会', 3]];
+
+export function WhyIntroPage(props: { practice: PracticeDetail; index: number; total: number }): ReactNode {
+  const bar: BarModel = {
+    caption: `第 ${props.index + 1} 道，共 ${props.total} 道`,
+    primary: { title: '开始', key: 'start', post: `/s/why/${props.practice.id}/start`, wait: 'AI 在想问你什么…' },
+    secondary: [{ title: '跳过，直接打印', key: 'skipWhy', post: '/s/skip', fields: { step: 'why', practice: props.practice.id }, wait: '正在准备练习纸…' }],
+  };
+  return (
+    <Page title="说说为什么错" bar={bar}>
+      <h1>说说为什么错</h1>
+      <section className="card">
+        <p>每道题 AI 问你一句，你说一句就行。说出来，下次更容易发现自己是哪里想错了。</p>
+        <p className="muted">不想说可以跳过，不影响打印。</p>
+      </section>
+    </Page>
+  );
+}
+
+export function WhyAskPage(props: { practiceId: string; card: PracticeCard; index: number; total: number; turns: ReflectionTurnView[]; error?: string | null; answer?: string }): ReactNode {
+  const { card } = props;
+  const open = props.turns.find(turn => turn.answer === null) ?? null;
+  const answered = props.turns.filter(turn => turn.answer !== null);
+  const bar: BarModel = open
+    ? {
+      caption: `第 ${props.index + 1} 道，共 ${props.total} 道`,
+      primary: { title: '说完了', key: 'answer', form: 'answer-form' },
+      secondary: [{ title: '不回答，直接选', key: 'skipQuestion', href: `/s/why/${props.practiceId}/${card.id}/confirm` }],
+    }
+    : {
+      caption: `第 ${props.index + 1} 道，共 ${props.total} 道`,
+      primary: { title: '开始', key: 'ask', post: `/s/why/${props.practiceId}/${card.id}/ask`, wait: 'AI 在想问你什么…' },
+      secondary: [{ title: '不回答，直接选', key: 'skipQuestion', href: `/s/why/${props.practiceId}/${card.id}/confirm` }],
+    };
+  return (
+    <Page title="说说为什么错" bar={bar}>
+      <h1>说说为什么错</h1>
+      <img className="crop big" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
+      {props.error ? <Problem title="没提交上" detail={props.error} /> : null}
+      {answered.map(turn => (
+        <div key={turn.turn}>
+          <div className="bubble"><span className="who">AI 问你</span><p>{turn.question}</p></div>
+          <div className="answer">{turn.answer}</div>
+        </div>
+      ))}
+      {open ? (
+        <form method="post" action={`/s/why/${props.practiceId}/${card.id}/answer`} id="answer-form" data-wait="AI 在看你的回答…">
+          <div className="bubble" data-testid="ai-question"><span className="who">AI 问你</span><p>{open.question}</p></div>
+          <textarea id="answer-text" name="answer" maxLength={300} required defaultValue={props.answer ?? ''} placeholder="点「点一下开始说」说话，或者直接打字" data-count="#answer-count" />
+          <p className="small muted" id="answer-count">还能写 300 字</p>
+          <div className="voice hidden" data-voice-for="answer-text" data-endpoint="/s/voice" data-testid="voice">
+            <button type="button" data-testid="voice-button">点一下开始说</button> <span className="small muted" data-voice-note="" data-testid="voice-note" />
+          </div>
+        </form>
+      ) : null}
+    </Page>
+  );
+}
+
+function Group<T extends string | number>(props: { legend: string; name: string; choices: Array<[string, T]>; selected: T | null; badge: string | null; hint?: string }): ReactNode {
+  return (
+    <fieldset>
+      <legend>{props.legend}{props.badge && props.selected !== null ? <span className="tag">{props.badge}</span> : null}</legend>
+      {props.hint ? <p className="small muted">{props.hint}</p> : null}
+      <div className="choices-inline">
+        {props.choices.map(([label, value]) => (
+          <label key={String(value)} className="choice"><input type="radio" name={props.name} value={String(value)} defaultChecked={props.selected === value} />{label}</label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+export function WhyConfirmPage(props: { practiceId: string; card: PracticeCard; index: number; total: number; last: boolean;
+  suggestion: ReflectionSuggestionView | null; previous: ReflectionView | null; error?: string | null }): ReactNode {
+  const { card, suggestion, previous } = props;
+  const source = previous ? '你上次选的' : 'AI 猜的';
+  const bar: BarModel = {
+    caption: `第 ${props.index + 1} 道，共 ${props.total} 道`,
+    primary: { title: props.last ? '提交' : '提交，下一道', key: 'submit', form: 'reflection-form' },
+    secondary: [{ title: '这道跳过', key: 'pass', post: `/s/why/${props.practiceId}/${card.id}/pass` }],
+  };
+  const summary = previous?.summary ?? suggestion?.summary ?? '';
+  return (
+    <Page title="说说为什么错" bar={bar} barExtra={<p className="caption tone-orange" data-missing-line="" />}>
+      <h1>说说为什么错</h1>
+      <img className="crop" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
+      {props.error ? <Problem title={props.error} /> : null}
+      <form method="post" action={`/s/why/${props.practiceId}/${card.id}/submit`} id="reflection-form" data-reflection="">
+        <fieldset>
+          <legend>一句话总结（AI 先写了，可以改）{summary ? <span className="tag">{previous ? '你上次选的' : 'AI 写的'}</span> : null}</legend>
+          <input type="text" name="summary" maxLength={60} defaultValue={summary} placeholder="空着也能提交" />
+        </fieldset>
+        <Group legend="当时怎么了？" name="attemptState" choices={ATTEMPT_CHOICES} selected={previous?.attemptState ?? suggestion?.suggestedAttemptState ?? null} badge={source} />
+        <Group legend="主要错在哪？" name="cause" choices={CAUSE_CHOICES} selected={previous?.cause ?? suggestion?.suggestedCause ?? null} badge={source} />
+        <Group legend="现在再做这道题，有把握吗？" name="masteryFeeling" choices={MASTERY_CHOICES} selected={null} badge={null} hint="这个要你自己选，AI 不帮你猜" />
+        <p className="small tone-orange" data-missing="" data-testid="missing" />
+      </form>
+    </Page>
+  );
+}
+
+export function WhyDonePage(props: { practice: PracticeDetail }): ReactNode {
+  const reflected = props.practice.items.filter(item => item.reflected).length;
+  const bar: BarModel = {
+    caption: '',
+    primary: props.practice.generatedAt
+      ? { title: '下一步：打印练习纸', key: 'print', href: `/s/print/${props.practice.id}` }
+      : { title: '下一步：打印练习纸', key: 'print', post: `/s/print/${props.practice.id}`, wait: '正在准备练习纸…' },
+    secondary: [],
+  };
+  return (
+    <Page title="说完了" bar={bar}>
+      <h1>说完了 ✓</h1>
+      <section className="card"><p data-testid="why-done">{props.practice.items.length} 道里说了 {reflected} 道</p></section>
+    </Page>
+  );
+}
+
+// ---------- 打印练习纸（§4.8） ----------
+
+function hintLine(prefix: string, text: string | null): string {
+  if (!text) return `${prefix}（无）`;
+  return text.startsWith(prefix) ? text : prefix + text;
+}
+
+/** A4 练习纸：封面 + 题目页 + 可撕的答案页（与 iOS PracticeLayout 同样的内容与说法）。浏览器打印成纸或 PDF。 */
+export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
+  const { snapshot } = props;
+  const media = (name: string): string => `/s/img/print/${snapshot.packetId}/${name}`;
+  return (
+    <div className="sheet" data-testid="sheet">
+      <section className="page">
+        <h3>{snapshot.cover.title}</h3>
+        <p>{snapshot.week}</p>
+        <p>做题时段：{snapshot.cover.practiceSlot}</p>
+        <p><b>规则：</b></p>
+        {snapshot.cover.rules.map((rule, index) => <p key={rule}>{index + 1}. {rule}</p>)}
+        <p><b>题目清单：</b></p>
+        {snapshot.cover.itemList.map((entry, index) => <p key={index}>{entry.shortId ?? '—'}　{entry.sourceLabel}</p>)}
+        <p style={{ marginTop: '8mm' }}>做题日期：________</p>
+      </section>
+      <section className="page">
+        {snapshot.items.map(item => (
+          <div className="item" key={item.itemId}>
+            <p className="item-head"><b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>{[item.subject, ...item.knowledgeTags].filter(Boolean).join('、')}</p>
+            {item.stemText ? <p className="stem">{item.stemText}</p> : null}
+            {item.mode === 'crop' ? <p className="note">AI 对这题没把握，文字和截图不一致时以截图为准</p> : null}
+            {item.mode === 'crop' && item.cropMedia ? <img src={media(item.cropMedia)} alt="题目截图" /> : null}
+            {item.diagramMedia.map(name => <img key={name} src={media(name)} alt="图示" />)}
+            <p>{item.keyStepPrompt}</p>
+            <div className="blank" />
+            <p className="boxes">{item.checkboxes.map(box => <span key={box}>□ {box}</span>)}<span>做题日期：________</span></p>
+          </div>
+        ))}
+      </section>
+      <section className="page answers">
+        <h3>做完再看</h3>
+        <p>先独立做；卡住了按一级、二级提示的顺序看</p>
+        {snapshot.answerSheet.map((entry, index) => (
+          <div className="answer-entry" key={index}>
+            <p><b>{entry.shortId ?? '—'}</b></p>
+            <p>{hintLine('一级提示：', entry.hint1)}</p>
+            <p>{hintLine('二级提示：', entry.hint2)}</p>
+            <p>{entry.answer.text ? `答案：${entry.answer.text}${entry.answer.label ? `（${entry.answer.label}）` : ''}` : '答案：（无）'}</p>
+            <p>{entry.fallbackNote}</p>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+export type PrintState =
+  | { status: 'none' }
+  | { status: 'preparing'; done: number; total: number }
+  | { status: 'failed'; error: string | null }
+  | { status: 'ready'; snapshot: PrintSnapshot };
+
+export function PrintPage(props: { practiceId: string; state: PrintState; caption: string }): ReactNode {
+  const { state, practiceId } = props;
+  let bar: BarModel;
+  let body: ReactNode;
+  if (state.status === 'none') {
+    bar = { caption: props.caption, primary: { title: '准备练习纸', key: 'prepare', post: `/s/print/${practiceId}`, wait: '正在准备练习纸…' }, secondary: [] };
+    body = <section className="card"><p>先把练习纸准备好：AI 给每道题写好提示和答案，大约 1 分钟。</p></section>;
+  } else if (state.status === 'preparing') {
+    bar = { caption: '大约 1 分钟。可以先离开，回来接着准备。', primary: { title: '正在准备…', key: 'waiting', disabled: true, waiting: true }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
+    body = <section className="card" data-testid="print-preparing"><p>正在准备练习纸… 第 {state.done}/{state.total} 道</p><div className="progress"><i style={{ width: `${state.total ? Math.round(state.done * 100 / state.total) : 0}%` }} /></div></section>;
+  } else if (state.status === 'failed') {
+    bar = { caption: '', primary: { title: '再试一次', key: 'retry', post: `/s/print/${practiceId}`, wait: '正在准备练习纸…' }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
+    body = <Problem title={`练习纸没准备好：${state.error ?? '服务器没说原因'}`} />;
+  } else {
+    const glance = state.snapshot.items.filter(item => item.needsGlance);
+    const printButton: BarButton = { title: '打印', key: 'print', href: `/s/print/${practiceId}/sheet`, print: true };
+    bar = {
+      caption: '打出来，带回学校',
+      captionAfterPrint: '打印机没反应？可以再点一次「再打印」，或者在打印预览里用「存储到文件」发给家里人打印。',
+      primary: printButton,
+      secondary: [],
+    };
+    body = (
+      <>
+        {glance.length > 0 ? (
+          <section className="card" data-testid="glance">
+            <h2 style={{ marginTop: 0 }}>打印前看一眼这 {glance.length} 道</h2>
+            {glance.map(item => (
+              <details key={item.itemId}>
+                <summary>{item.shortId ?? `第 ${item.position + 1} 题`}：{item.glanceReason}</summary>
+                {item.cropMedia ? <img className="crop big" src={`/s/img/print/${practiceId}/${item.cropMedia}`} alt="截图" /> : null}
+              </details>
+            ))}
+          </section>
+        ) : null}
+        <div className="print-root">
+          <div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={state.snapshot} /></div></div>
+        </div>
+        <p className="small"><a href={`/s/print/${practiceId}/sheet`} data-testid="sheet-link">单独打开练习纸</a>（可以在打印预览里「存储到文件」存成 PDF）</p>
+      </>
+    );
+  }
+  const afterPrint = state.status === 'ready' ? (
+    <div className="buttons hidden" data-after-print="" style={{ marginBottom: 8 }}>
+      <a className="btn" href={`/s/print/${practiceId}/sheet`} data-print="" data-testid="reprint">再打印</a>
+      <a className="btn primary" href="/s/?printed=1" data-print-done="" data-testid="print-done">打印好了，回到今天</a>
+    </div>
+  ) : null;
+  return (
+    <Page title="打印练习纸" bar={bar} barExtra={afterPrint} refreshSeconds={state.status === 'preparing' ? 3 : undefined} bodyClass={state.status === 'ready' ? 'print-page' : undefined}>
+      <h1>打印练习纸</h1>
+      {body}
+    </Page>
+  );
+}
+
+/** 单独的练习纸页：没开脚本时用 Safari 的「分享 → 打印」；打印预览里可以「存储到文件」存成 PDF。 */
+export function SheetPage(props: { snapshot: PrintSnapshot }): ReactNode {
+  const bar: BarModel = {
+    caption: '用 Safari 的「分享」→「打印」打出来；打印预览里也能「存储到文件」',
+    primary: { title: '打印好了，回到今天', key: 'printed', href: '/s/?printed=1' },
+    secondary: [{ title: '打印', key: 'print', href: '#', print: true }],
+  };
+  return (
+    <Page title="练习纸" back={{ href: `/s/print/${props.snapshot.packetId}`, label: '‹ 打印练习纸' }} bar={bar}>
+      <div className="print-root"><div className="sheet-wrap"><div className="sheet-scale"><PracticeSheet snapshot={props.snapshot} /></div></div></div>
+    </Page>
+  );
+}
+
+// ---------- 录结果（§4.10，一题一屏） ----------
+
+export const COMPLETIONS: Array<[string, string]> = [
+  ['independent', '独立做出'], ['hint1', '看了一级提示'], ['hint2', '看了二级提示'], ['not_solved', '没做出来'], ['not_done', '没做'],
+];
+
+export interface RecordAnswer { completion: string; correct: string; stuck: string; date: string }
+
+export interface DayOption { value: string; label: string }
+
+function Hidden(props: { state: Record<string, string> }): ReactNode {
+  return <>{Object.entries(props.state).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}</>;
+}
+
+export function RecordDatePage(props: { practiceId: string; days: DayOption[]; state: Record<string, string>; recorded: number; remaining: number; error?: string | null; rejected?: string | null }): ReactNode {
+  const bar: BarModel = {
+    caption: props.recorded > 0 ? `已录 ${props.recorded} 道，还剩 ${props.remaining} 道` : `一共 ${props.remaining} 道`,
+    primary: { title: '下一步', key: 'next', form: 'record-form', name: 'go', value: 'next' },
+    secondary: [{ title: '先跳过，下次再录', key: 'skipRecord', post: '/s/skip', fields: { step: 'record' } }],
+  };
+  return (
+    <Page title="录练习纸的结果" bar={bar}>
+      <h1>练习纸是哪天做的？</h1>
+      {props.rejected ? <Problem title={props.rejected} /> : null}
+      {props.error ? <Problem title={props.error} /> : null}
+      <form method="post" action={`/s/record/${props.practiceId}`} id="record-form">
+        <Hidden state={Object.fromEntries(Object.entries(props.state).filter(([name]) => name !== 'date'))} />
+        <input type="hidden" name="at" value="0" />
+        <div className="choices-inline">
+          {props.days.map(day => (
+            <label key={day.value} className="choice" data-testid="record-day"><input type="radio" name="date" value={day.value} defaultChecked={props.state.date === day.value} />{day.label}</label>
+          ))}
+        </div>
+      </form>
+      <p className="small muted">当天做对不算真会，隔 3 天以上独立做对才算，所以日期要填准。</p>
+      <p className="small muted">不是同一天做的？后面每道可以单独改。</p>
+    </Page>
+  );
+}
+
+export function RecordItemPage(props: { practiceId: string; card: PracticeCard; index: number; total: number; days: DayOption[]; state: Record<string, string>; answer: RecordAnswer; error?: string | null }): ReactNode {
+  const { card } = props;
+  const last = props.index === props.total - 1;
+  const bar: BarModel = {
+    caption: `第 ${props.index + 1} 道，共 ${props.total} 道`,
+    primary: { title: last ? `提交 ${props.total} 道结果` : '下一道', key: last ? 'submit' : 'next', form: 'record-form', name: 'go', value: last ? 'submit' : 'next' },
+    secondary: [{ title: '上一道', key: 'prev', form: 'record-form', name: 'go', value: 'prev' }],
+  };
+  const prefix = card.id;
+  const keep = Object.fromEntries(Object.entries(props.state).filter(([name]) => !name.endsWith(`_${prefix}`)));
+  return (
+    <Page title="录练习纸的结果" bar={bar}>
+      <h1>这道你是怎么做的？</h1>
+      {props.error ? <Problem title={props.error} /> : null}
+      <img className="crop big" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
+      <p className="excerpt">{card.questionExcerpt ?? ''}</p>
+      <form method="post" action={`/s/record/${props.practiceId}`} id="record-form" data-record-item="">
+        <Hidden state={keep} />
+        <input type="hidden" name="at" value={String(props.index + 1)} />
+        <input type="hidden" name="item" value={card.id} />
+        {COMPLETIONS.map(([value, label]) => (
+          <label key={value} className="choice" data-testid={`completion-${value}`}><input type="radio" name="completion" value={value} defaultChecked={props.answer.completion === value} />{label}</label>
+        ))}
+        <fieldset data-correct="">
+          <legend>做对了吗？对照练习纸最后一页的答案</legend>
+          <div className="choices-inline">
+            <label className="choice" data-testid="correct-yes"><input type="radio" name="correct" value="yes" defaultChecked={props.answer.correct === 'yes'} />对了</label>
+            <label className="choice" data-testid="correct-no"><input type="radio" name="correct" value="no" defaultChecked={props.answer.correct === 'no'} />错了</label>
+          </div>
+          <p className="small muted no-js-only">独立做出或看了提示的，才选对没对。</p>
+        </fieldset>
+        <fieldset data-stuck="">
+          <legend>卡在哪一步？（可以不填）</legend>
+          <input type="text" name="stuck" maxLength={100} defaultValue={props.answer.stuck} />
+        </fieldset>
+        <details>
+          <summary>这道不是这天做的？改日期</summary>
+          <select name="itemDate" defaultValue={props.answer.date}>
+            {props.days.map(day => <option key={day.value} value={day.value}>{day.label}</option>)}
+          </select>
+        </details>
+      </form>
+    </Page>
+  );
+}
+
+// ---------- 这次的结果（§4.11） ----------
+
+export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSummary; next: BarButton }): ReactNode {
+  const { summary } = props;
+  const head = summary.answered >= summary.total
+    ? `${summary.total} 道里，独立做对 ${summary.independentCorrect} 道`
+    : `录了 ${summary.answered}/${summary.total} 道，独立做对 ${summary.independentCorrect} 道`;
+  const nothing = summary.masteredNow.length + summary.again.length + summary.pending.length === 0 && !summary.calibration.text;
+  const confirm = summary.nextConfirmOn ? `${Number(summary.nextConfirmOn.slice(5, 7))}/${Number(summary.nextConfirmOn.slice(8, 10))}` : null;
+  const bar: BarModel = { caption: '', primary: props.next, secondary: [] };
+  return (
+    <Page title="这次的结果" bar={bar}>
+      <h1>这次的结果</h1>
+      <p data-testid="results-head"><b>{head}</b></p>
+      {summary.masteredNow.length > 0 ? (
+        <section className="card">
+          <h2 style={{ marginTop: 0 }} className="tone-green">真会了 ✓（{summary.masteredNow.length} 道）</h2>
+          <p className="small muted">隔了几天还能独立做对。{confirm ? `${confirm} 前后会再考你一次，再对就算稳了。` : ''}</p>
+          <ul className="list">{summary.masteredNow.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
+        </section>
+      ) : null}
+      {summary.pending.length > 0 ? (
+        <section className="card">
+          <h2 style={{ marginTop: 0 }}>做对了，过几天再确认（{summary.pending.length} 道）</h2>
+          <p className="small muted">做题那天离练习纸生成太近，过几天再做对才算数。</p>
+          <ul className="list">{summary.pending.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
+        </section>
+      ) : null}
+      {summary.again.length > 0 ? (
+        <section className="card">
+          <h2 style={{ marginTop: 0 }} className="tone-orange">下次再练（{summary.again.length} 道）</h2>
+          <p className="small muted">这几道会自动放进下次的练习。</p>
+          <ul className="list">{summary.again.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
+        </section>
+      ) : null}
+      {summary.calibration.text ? (
+        <section className="card">
+          <p><b>你的感觉准不准：</b>{summary.calibration.text}</p>
+          {summary.calibration.items.length > 0 ? <p className="small muted">{summary.calibration.items.map(item => item.shortId ?? '').filter(Boolean).join('、')}</p> : null}
+        </section>
+      ) : null}
+      {nothing ? <section className="card"><p>这次的结果记下了</p></section> : null}
+    </Page>
+  );
+}
+
+// ---------- 以前的练习 ----------
+
+export function PracticesPage(props: { practices: Array<PracticeSummary & { answered: number | null }> }): ReactNode {
+  const bar: BarModel = { caption: '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
+  return (
+    <Page title="以前的练习" bar={bar}>
+      <h1>以前的练习</h1>
+      {props.practices.length === 0 ? <section className="card"><p>还没有练习。选了题就会出现在这里。</p></section> : (
+        <section className="card"><ul className="list">
+          {props.practices.map(p => {
+            const status = p.generatedAt === null ? '还没生成练习纸'
+              : p.answered !== null && p.answered >= p.itemCount ? '录完了'
+                : p.answered ? `录了 ${p.answered}/${p.itemCount} 道` : '练习纸已生成 · 做完回来录结果';
+            const href = p.generatedAt === null ? `/s/why/${p.id}` : p.answered ? `/s/results/${p.id}` : `/s/record/${p.id}`;
+            return (
+              <li key={p.id}><a className="row" href={href} data-testid="practice-row">
+                <span style={{ flex: 1 }}><b>{p.week}</b> · {p.itemCount} 道{p.practiceSlot ? ` · ${p.practiceSlot}` : ''}<br /><span className="small muted">{status}</span></span>
+                <span className="chev">›</span>
+              </a></li>
+            );
+          })}
+        </ul></section>
+      )}
+    </Page>
+  );
+}
+
+// ---------- 设置（§4.12） ----------
+
+export function SettingsPage(props: { practiceSlot: string; paperLocation: string; saved: boolean; error?: string | null }): ReactNode {
+  const bar: BarModel = { caption: '', primary: { title: '保存', key: 'save', form: 'settings-form' }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] };
+  const places: Array<[string, string]> = [['school', '学校'], ['home', '家'], ['varies', '不固定']];
+  return (
+    <Page title="设置" bar={bar} flash={{ ok: props.saved ? '保存好了' : null, err: props.error ?? null }}>
+      <h1>设置</h1>
+      <form method="post" action="/s/settings" id="settings-form">
+        <fieldset>
+          <legend>做练习的时间</legend>
+          <SlotChoice current={props.practiceSlot} />
+          <p className="small muted">会印在练习纸封面上</p>
+        </fieldset>
+        <fieldset>
+          <legend>原卷平时放在哪</legend>
+          <div className="choices-inline">
+            {places.map(([value, label]) => <label key={value} className="choice"><input type="radio" name="paperLocation" value={value} defaultChecked={props.paperLocation === value} />{label}</label>)}
+          </div>
+          <p className="small muted">决定答案页写「对照原卷第几题」还是「回家后对照原卷」</p>
+        </fieldset>
+      </form>
+      <section className="card">
+        <p><b>连接</b></p>
+        <p className="tone-green" data-testid="connection-ok">已连上服务器 ✓</p>
+        <p><a href="/s/install">怎么放到主屏幕</a></p>
+      </section>
+    </Page>
+  );
+}

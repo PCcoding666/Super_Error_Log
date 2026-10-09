@@ -51,6 +51,28 @@ export function resolvePairingUrl(value: string | undefined): CloudUrl {
   return match;
 }
 
+/**
+ * 学生网页版的配对链接（2026-10-09）：`<网页入口>/s/pair?code=<base64url(配对载荷 JSON)>`。
+ * 网页入口必须是手机 Safari 信任的 HTTPS 主机名——缺省用域名；IP 入口的自签证书只给 App 固定，Safari 不认。
+ * 载荷与 App 二维码里的一模一样（同一次会话、同样 5 分钟、单次使用），兑换走同一个 PairingManager.redeem。
+ */
+export const DEFAULT_WEB_PAIRING_BASE = 'https://study.pccoding666.com';
+
+export function webPairingLink(payload: PairingCodePayload, base: string = DEFAULT_WEB_PAIRING_BASE): string {
+  const code = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  return `${base.replace(/\/$/, '')}/s/pair?code=${code}`;
+}
+
+/** 解出网页配对码；格式不对返回 null（内容是否有效由 redeem 判定）。也接受整条链接。 */
+export function decodeWebPairingCode(input: string): unknown {
+  let code = input.trim();
+  if (code.length === 0 || code.length > 2000) return null;
+  const match = /[?&]code=([A-Za-z0-9_-]+)/.exec(code);
+  if (match) code = match[1]!;
+  if (!/^[A-Za-z0-9_-]+$/.test(code)) return null;
+  try { return JSON.parse(Buffer.from(code, 'base64url').toString('utf8')) as unknown; } catch { return null; }
+}
+
 export class PairingError extends Error {
   constructor(public readonly code: 'invalid_pairing_payload' | 'pairing_expired' | 'pairing_used' | 'pairing_not_found' | 'pairing_unavailable' | 'unauthorized', message: string) {
     super(message); this.name = 'PairingError';

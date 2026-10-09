@@ -20,14 +20,62 @@ export interface CreateMobileAppOptions {
   rateLimiter?: RateLimiter;
   /** 入口容量控制（Task 3）：云端缺省构造默认容量；回环模式不启用。 */
   admission?: AdmissionController;
-  /** 单进程装配（v2.0 T2）：挂载 /v2 路由，与 /v1 共用鉴权与限流。 */
-  v2Router?: () => express.Router;
+  /** 单进程装配（v2.0 T2）：挂载 /v2 路由，与 /v1 共用鉴权与限流。云端模式把限流器交给 /v2（语音转写另有一档）。 */
+  v2Router?: (deps: { limiter: RateLimiter | null }) => express.Router;
+  /** 学生网页版（/s/，仅云端模式）：同源挂载，复用同一个识别 service、配对、限流与准入。 */
+  webClient?: (deps: WebClientDeps) => express.Router;
+}
+
+export interface WebClientDeps {
+  service: MobileRecognitionService;
+  pairing: PairingManager;
+  limiter: RateLimiter;
+  admission: AdmissionController | null;
+  ipOf: (request: express.Request) => string;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** POST /v1/recognitions 的预约状态（挂 response.locals；handler finally 与 close 兜底按标志幂等释放）。 */
-interface AdmissionReserve { slot: boolean; capacity: boolean; handoff: boolean }
+/** 照片上传的预约状态（挂 response.locals；handler finally 与 close 兜底按标志幂等释放）。 */
+export interface AdmissionReserve { slot: boolean; capacity: boolean; handoff: boolean }
+
+/** 新建预约状态并挂 close 兜底：413（解析中抛错不进 handler）与客户端中断两条路径也会归还。 */
+export function trackUploadAdmission(admission: AdmissionController, response: express.Response): AdmissionReserve {
+  const reserve: AdmissionReserve = { slot: false, capacity: false, handoff: false };
+  response.locals.selAdmission = reserve;
+  response.on('close', () => releaseUploadAdmission(admission, reserve));
+  return reserve;
+}
+
+/** 幂等释放：解析槽位总是归还；任务容量只在没有移交给 service（新任务受理成功）时归还。 */
+export function releaseUploadAdmission(admission: AdmissionController, reserve: AdmissionReserve): void {
+  if (reserve.slot) { reserve.slot = false; admission.releaseUploadSlot('upload'); }
+  if (reserve.capacity && !reserve.handoff) { reserve.capacity = false; admission.releaseJobCapacity(); }
+}
+
+export interface AdmissionRejection { status: 429 | 503; code: string; message: string; retryAfterSeconds?: number }
+
+/**
+ * 新照片的准入（Task 3 原子预约）：磁盘门槛 → 解析槽位 → 任务容量。先于正文解析执行，被拒正文不进入内存。
+ * /v1/recognitions 与学生网页版的拍照上传（/s/capture）共用，容量规则只有这一份。
+ */
+export async function acquireUploadAdmission(admission: AdmissionController, reserve: AdmissionReserve): Promise<AdmissionRejection | null> {
+  const gate = await admission.storageGate();
+  if (!gate.ok) {
+    const message = gate.reason === 'disk_low' ? '服务器磁盘空间不足，已停止接收新照片，请联系管理员。' : '错题本数据存储已达到上限，请联系管理员处理。';
+    return { status: 503, code: gate.reason ?? 'storage_full', message };
+  }
+  const slot = admission.tryAcquireUploadSlot('upload');
+  if (!slot.accepted) return { status: 429, code: 'busy', message: '服务器正在处理另一个上传，请稍后重试。', retryAfterSeconds: slot.retryAfterSeconds };
+  reserve.slot = true;
+  const capacity = admission.tryAcquireJobCapacity();
+  if (!capacity.accepted) {
+    admission.releaseUploadSlot('upload'); reserve.slot = false;
+    return { status: 429, code: 'capacity_full', message: '识别队列已满，请稍后再试。', retryAfterSeconds: capacity.retryAfterSeconds };
+  }
+  reserve.capacity = true;
+  return null;
+}
 
 function equalToken(actual: string, expected: string): boolean {
   const left = Buffer.from(actual); const right = Buffer.from(expected);
@@ -118,6 +166,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
         }
         const query = limiter.authedQuery(deviceId);
         if (!query.allowed) { response.setHeader('retry-after', String(query.retryAfterSeconds)); response.status(429).json({ error: { code: 'rate_limited', message: '请求过于频繁，请稍后再试。' } }); return; }
+        response.locals.deviceId = deviceId;
         next();
         return;
       }
@@ -147,13 +196,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
   // close 兜底覆盖 413（raw 中间件抛错不进 handler）与客户端中断两条不进 finally 的路径。
   app.use((request, response, next) => {
     if (!admission || request.method !== 'POST' || request.originalUrl.split('?')[0] !== '/v1/recognitions') { next(); return; }
-    const reserve: AdmissionReserve = { slot: false, capacity: false, handoff: false };
-    response.locals.selAdmission = reserve;
-    const backstop = (): void => {
-      if (reserve.slot) { reserve.slot = false; admission.releaseUploadSlot('upload'); }
-      if (reserve.capacity && !reserve.handoff) { reserve.capacity = false; admission.releaseJobCapacity(); }
-    };
-    response.on('close', backstop);
+    const reserve = trackUploadAdmission(admission, response);
     void (async (): Promise<void> => {
       const keyHeader = request.headers['idempotency-key'];
       // 满队列时相同幂等键的旧任务仍可查验并按字节恢复：同键跳过容量与磁盘门槛（store 幂等处理），
@@ -169,29 +212,14 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
         next();
         return;
       }
-      const gate = await admission.storageGate();
-      if (!gate.ok) {
-        const message = gate.reason === 'disk_low' ? '服务器磁盘空间不足，已停止接收新照片，请联系管理员。' : '错题本数据存储已达到上限，请联系管理员处理。';
-        response.status(503).json({ error: { code: gate.reason ?? 'storage_full', message } });
+      const rejection = await acquireUploadAdmission(admission, reserve);
+      if (rejection) {
+        if (rejection.retryAfterSeconds !== undefined) response.setHeader('retry-after', String(rejection.retryAfterSeconds));
+        response.status(rejection.status).json({ error: { code: rejection.code, message: rejection.message } });
         return;
       }
-      const slot = admission.tryAcquireUploadSlot('upload');
-      if (!slot.accepted) {
-        response.setHeader('retry-after', String(slot.retryAfterSeconds));
-        response.status(429).json({ error: { code: 'busy', message: '服务器正在处理另一个上传，请稍后重试。' } });
-        return;
-      }
-      reserve.slot = true;
-      const capacity = admission.tryAcquireJobCapacity();
-      if (!capacity.accepted) {
-        admission.releaseUploadSlot('upload'); reserve.slot = false;
-        response.setHeader('retry-after', String(capacity.retryAfterSeconds));
-        response.status(429).json({ error: { code: 'capacity_full', message: '识别队列已满，请稍后再试。' } });
-        return;
-      }
-      reserve.capacity = true;
       // 异步检查期间客户端已消失：立即归还，不进入正文解析。
-      if (response.writableEnded || response.destroyed) { backstop(); return; }
+      if (response.writableEnded || response.destroyed) { releaseUploadAdmission(admission, reserve); return; }
       next();
     })().catch(next);
   });
@@ -207,10 +235,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
       response.status(202).json({ job: submitted.job });
     } catch (error) { next(error); }
     finally {
-      if (reserve && admission) {
-        if (reserve.slot) { reserve.slot = false; admission.releaseUploadSlot('upload'); }
-        if (reserve.capacity && !reserve.handoff) { reserve.capacity = false; admission.releaseJobCapacity(); }
-      }
+      if (reserve && admission) releaseUploadAdmission(admission, reserve);
     }
   });
   app.get('/v1/recognitions', async (_request, response, next) => { try { response.json({ jobs: await service.listJobs() }); } catch (error) { next(error); } });
@@ -246,8 +271,12 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
     try { const bytes = await service.getMedia(id(request.params.id), id(request.params.mediaId)); response.type('image/jpeg').send(bytes); }
     catch (error) { next(error); }
   });
-  // T2 单进程装配：/v2 路由挂在 /v1 之后、404 之前。云端公网入口不挂任何 Web 页面（F1）。
-  if (options.v2Router) app.use('/v2', options.v2Router());
+  // T2 单进程装配：/v2 路由挂在 /v1 之后、404 之前。云端公网入口不挂旧的 Web 看板（F1）；
+  // 只挂学生网页版 /s/（设备令牌 cookie 鉴权，没有家长 / 管理页面）。
+  if (options.v2Router) app.use('/v2', options.v2Router({ limiter: mode === 'cloud' ? limiter : null }));
+  if (options.webClient && mode === 'cloud') {
+    app.use('/s', options.webClient({ service, pairing: options.pairing!, limiter, admission, ipOf }));
+  }
   app.use((_request, response) => response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }));
   const errors: ErrorRequestHandler = (error, request, response, _next) => {
     if (response.headersSent) return;
@@ -255,7 +284,8 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
     if (error instanceof MobileRequestError) { response.status(error.status).json({ error: { code: error.code, message: error.message } }); return; }
     if ((error as { type?: string }).type === 'entity.too.large') {
       // 按入口区分超限文案：照片上传 vs 配对兑换（16kb JSON）。
-      const message = request.path === '/v1/pairing/redeem' ? '配对请求超过16 KB限制。' : '照片超过15 MB上传限制。';
+      const message = request.path === '/v1/pairing/redeem' ? '配对请求超过16 KB限制。'
+        : request.path === '/v2/reflections/transcribe' ? '录音超过 5 MB 限制。' : '照片超过15 MB上传限制。';
       response.status(413).json({ error: { code: 'payload_too_large', message } });
       return;
     }
