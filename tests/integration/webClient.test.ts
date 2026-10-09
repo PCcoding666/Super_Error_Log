@@ -301,7 +301,7 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
     const browser = await pairBrowser(env);
     expect(await browser.text('/s/capture')).toContain('上传前看一下');
     const refused = await uploadPhoto(browser, await photo('#f0d0c8'));
-    expect(refused.status).toBe(400);
+    expect(refused.status).toBe(403);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM v2_photo').get()).toEqual({ n: 0 });
     expect((await browser.post('/s/consent')).headers.get('location')).toBe('/s/capture');
     expect(browser.cookies.get('sel_consent')).toBe('v1');

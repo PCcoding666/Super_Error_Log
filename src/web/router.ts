@@ -308,7 +308,12 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       if (wantsJson(request)) { response.status(status).json({ error: { code, message: UPLOAD_ERRORS[code] ?? '没传上去。' } }); return; }
       response.redirect(303, `/s/capture?err=${code}`);
     };
-    if (!hasConsent(request)) { fail('empty', 400); return; }
+    if (!hasConsent(request)) {
+      // 第一次上传前必须先看「上传前看一下」并同意；没同意的照片不收（也不读进内存以外的任何地方）。
+      if (wantsJson(request)) { response.status(403).json({ error: { code: 'consent_required', message: '第一次上传前，先看一下上传说明。' } }); return; }
+      response.redirect(303, '/s/capture');
+      return;
+    }
     const admission = options.admission;
     const reserve = admission ? trackUploadAdmission(admission, response) : null;
     try {
