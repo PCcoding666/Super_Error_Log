@@ -1,8 +1,9 @@
 /**
- * 云端公网入口限流。四档（每分钟窗口）：
+ * 云端公网入口限流。五档（每分钟窗口）：
  * - 配对失败：每来源 IP 10 次 + 全局 60 次
  * - 鉴权失败：每来源 IP 30 次
  * - 已鉴权查询：每设备 300 次
+ * - 语音转写（会调用付费模型）：每设备 10 次，另计入已鉴权查询
  * 桶有过期清理与有界容量；429 响应带 Retry-After（秒）。不记录任何秘密。
  */
 
@@ -12,6 +13,7 @@ export interface RateLimiterOptions {
   pairingFailGlobal?: number;
   authFailPerIp?: number;
   authedQueryPerDevice?: number;
+  transcribePerDevice?: number;
   now?: () => number;
 }
 
@@ -26,6 +28,7 @@ export class RateLimiter {
   private readonly pairingFailGlobal: number;
   private readonly authFailPerIp: number;
   private readonly authedQueryPerDevice: number;
+  private readonly transcribePerDevice: number;
   private readonly now: () => number;
   private readonly buckets = new Map<string, Bucket>();
   private globalPairingBucket: Bucket = { count: 0, resetAt: 0 };
@@ -35,6 +38,7 @@ export class RateLimiter {
     this.pairingFailGlobal = options.pairingFailGlobal ?? 60;
     this.authFailPerIp = options.authFailPerIp ?? 30;
     this.authedQueryPerDevice = options.authedQueryPerDevice ?? 300;
+    this.transcribePerDevice = options.transcribePerDevice ?? 10;
     this.now = options.now ?? ((): number => Date.now());
   }
 
@@ -58,6 +62,13 @@ export class RateLimiter {
   authedQuery(deviceId: string): { allowed: boolean; retryAfterSeconds: number } {
     this.sweep();
     const per = this.bump(`query:${deviceId}`, this.authedQueryPerDevice);
+    return { allowed: !per.blocked, retryAfterSeconds: per.retryAfterSeconds };
+  }
+
+  /** 记录一次语音转写；返回是否仍允许。 */
+  transcribe(deviceId: string): { allowed: boolean; retryAfterSeconds: number } {
+    this.sweep();
+    const per = this.bump(`asr:${deviceId}`, this.transcribePerDevice);
     return { allowed: !per.blocked, retryAfterSeconds: per.retryAfterSeconds };
   }
 

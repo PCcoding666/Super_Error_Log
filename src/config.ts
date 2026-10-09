@@ -22,6 +22,8 @@ export const config = {
   aiModel: defaultModel,
   aiModels: Object.fromEntries(['layout', 'transcribe', 'diagnose', 'coach', 'match', 'crop_inventory', 'crop_verify', 'followup', 'correct'].map(stage =>
     [stage, process.env[`SEL_AI_MODEL_${stage.toUpperCase()}`] || defaultModel])),
+  /** 语音转写模型（学生网页版「说说为什么错」）；不回退到通用 SEL_AI_MODEL（文本模型不能转写）。 */
+  aiAsrModel: process.env.SEL_AI_MODEL_ASR || 'qwen3-asr-flash',
   aiTimeoutMs: Number(process.env.SEL_AI_TIMEOUT_MS ?? 90000),
   mockFault: process.env.SEL_MOCK_FAULT ?? '',
   maxUploadBytes: 15 * 1024 * 1024,
