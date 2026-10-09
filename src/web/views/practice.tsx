@@ -175,7 +175,7 @@ export function WhyConfirmPage(props: { practiceId: string; card: PracticeCard; 
   };
   const summary = previous?.summary ?? suggestion?.summary ?? '';
   return (
-    <Page title="说说为什么错" bar={bar} barExtra={<p className="caption tone-orange" data-missing-line="" />}>
+    <Page title="说说为什么错" bar={bar} barExtra={<p className="caption tone-orange" data-missing="" data-testid="missing" />}>
       <h1>说说为什么错</h1>
       <img className="crop" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
       {props.error ? <Problem title={props.error} /> : null}
@@ -187,7 +187,6 @@ export function WhyConfirmPage(props: { practiceId: string; card: PracticeCard; 
         <Group legend="当时怎么了？" name="attemptState" choices={ATTEMPT_CHOICES} selected={previous?.attemptState ?? suggestion?.suggestedAttemptState ?? null} badge={source} />
         <Group legend="主要错在哪？" name="cause" choices={CAUSE_CHOICES} selected={previous?.cause ?? suggestion?.suggestedCause ?? null} badge={source} />
         <Group legend="现在再做这道题，有把握吗？" name="masteryFeeling" choices={MASTERY_CHOICES} selected={null} badge={null} hint="这个要你自己选，AI 不帮你猜" />
-        <p className="small tone-orange" data-missing="" data-testid="missing" />
       </form>
     </Page>
   );

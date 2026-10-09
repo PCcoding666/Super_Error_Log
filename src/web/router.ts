@@ -56,7 +56,7 @@ export interface WebClientOptions {
   followupProvider?: FollowupProvider;
   correctionProvider?: CorrectionProvider;
   coachProvider?: CoachProvider;
-  /** 学生所在时区（「距生成几天」、录结果的日期按它算）；缺省 Asia/Shanghai。 */
+  /** 「距生成几天」、录结果的日期按哪个时区的日历算；缺省用进程时区（与回传校验、ISO 周一致）。 */
   timeZone?: string;
   now?: () => Date;
 }
@@ -166,7 +166,9 @@ export function dayOptions(generatedAt: Date, now: Date, timeZone: string): DayO
 }
 
 export function createWebClientRouter(options: WebClientOptions): Router {
-  const timeZone = options.timeZone ?? process.env.SEL_STUDENT_TIME_ZONE ?? DEFAULT_TIME_ZONE;
+  // 日历与服务器的领域规则用同一个时区（进程时区）：回传日期校验、ISO 周都按进程本地时间算，
+  // 网页按别的时区算「今天」会让他选到被服务器拒收的日期。生产服务器应为 Asia/Shanghai（见 deploy/README.md）。
+  const timeZone = options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIME_ZONE;
   new Intl.DateTimeFormat('en-US', { timeZone }); // 时区写错启动即失败
   const ctx: WebContext = { mobileDataDir: options.mobileDataDir, service: options.service, timeZone, now: options.now ?? (() => new Date()) };
   const transcriber = (): SpeechTranscriber => options.transcriber ?? getTranscriber();
@@ -217,7 +219,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         if (!(error instanceof PairingError)) throw error;
         const gate = options.limiter.pairingFailure(options.ipOf(request));
         if (!gate.allowed) { response.setHeader('retry-after', String(gate.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds }), 429); return; }
-        render(response, ConnectPage({ reason: 'unpaired', error: error.message }), 400);
+        const status = error.code === 'pairing_expired' ? 410 : error.code === 'pairing_used' ? 409 : error.code === 'pairing_not_found' ? 404 : error.code === 'pairing_unavailable' ? 503 : 400;
+        render(response, ConnectPage({ reason: 'unpaired', error: error.message }), status);
       }
     } catch (error) { next(error); }
   });

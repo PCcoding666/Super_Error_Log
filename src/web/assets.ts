@@ -176,9 +176,9 @@ $$('[data-slot-other]').forEach(function(box){var input=$('input[type=text]',box
 $$('[data-record-item]').forEach(function(f){function upd(){var c=$('input[name=completion]:checked',f);var v=c?c.value:'';var k=$('[data-correct]',f),s=$('[data-stuck]',f);
 if(k)k.classList.toggle('hidden',!(v==='independent'||v==='hint1'||v==='hint2'));if(s)s.classList.toggle('hidden',v!=='not_solved')}f.addEventListener('change',upd);upd()});
 /* 说说为什么错：缺项提示 */
-$$('form[data-reflection]').forEach(function(f){var line=$('[data-missing]',f),btn=$('button[type=submit][data-main]',f)||$('[data-main]');function upd(){var miss=[];
+$$('form[data-reflection]').forEach(function(f){var line=$('[data-missing]'),btn=document.querySelector('button[form="'+f.id+'"]');function upd(){var miss=[];
 if(!$('input[name=attemptState]:checked',f))miss.push('当时怎么了');if(!$('input[name=cause]:checked',f))miss.push('错在哪');if(!$('input[name=masteryFeeling]:checked',f))miss.push('有没有把握');
-if(line){line.textContent=miss.length?'还差：'+miss.join('、'):'';}}f.addEventListener('change',upd);upd()});
+if(line){line.textContent=miss.length?'还差：'+miss.join('、'):'';}if(btn){btn.disabled=miss.length>0;btn.classList.toggle('disabled',miss.length>0)}}f.addEventListener('change',upd);upd()});
 /* 字数 */
 $$('textarea[data-count]').forEach(function(t){var out=$(t.getAttribute('data-count'));function upd(){if(out)out.textContent='还能写 '+Math.max(0,Number(t.getAttribute('maxlength'))-t.value.length)+' 字'}t.addEventListener('input',upd);upd()});
 /* 等待提示：提交后按钮换字，防止连点 */
