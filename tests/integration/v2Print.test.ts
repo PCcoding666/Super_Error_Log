@@ -576,7 +576,9 @@ describe('T5 打印快照', () => {
     expect((JSON.parse(row.content_json) as { questionNumber: string }).questionNumber).toBe('2.');
   });
 
-  it('RED9 生产入口依赖守卫：dist/main.js 可达第三方包只有 express 与 sharp', () => {
+  // 2026-10-09 学生网页版（/s/）挂进生产入口：SSR 视图用 react / react-dom，拍照表单上传用 multer。
+  // 三者本来就在 package.json 的 dependencies 里（npm ci --omit=dev 会装）；白名单只加这三个，并另查任何 devDependency 都不可达。
+  it('RED9 生产入口依赖守卫：dist/main.js 可达第三方包只有 express、sharp 与学生网页版的 react、react-dom、multer', () => {
     const entry = path.resolve('dist/main.js');
     if (!fs.existsSync(entry)) {
       // verify 顺序下测试先于 build 执行时允许跳过；门禁跑 build 后必须真实通过。
@@ -599,8 +601,12 @@ describe('T5 打印快照', () => {
       }
     };
     visit(entry);
+    const allowed = ['express', 'sharp', 'react', 'react-dom', 'multer'];
+    const manifest = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')) as { dependencies: Record<string, string>; devDependencies: Record<string, string> };
+    for (const name of allowed) expect(Object.keys(manifest.dependencies), `${name} 必须是生产依赖`).toContain(name);
     for (const name of bare) {
-      expect(['express', 'sharp'], `dist/main.js 依赖链出现第三方包：${name}`).toContain(name);
+      expect(allowed, `dist/main.js 依赖链出现第三方包：${name}`).toContain(name);
+      expect(Object.keys(manifest.devDependencies), `dist/main.js 依赖链出现开发依赖：${name}`).not.toContain(name);
     }
   });
 });

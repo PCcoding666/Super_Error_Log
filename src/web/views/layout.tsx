@@ -51,7 +51,9 @@ function ButtonView(props: { button: BarButton; primary: boolean }): ReactNode {
 /** 底部固定的下一步按钮（设计稿 §4.0）：上面一行小字，下面主按钮，旁边可有次要按钮。 */
 export function NextBar(props: { model: BarModel; extra?: ReactNode }): ReactNode {
   const { model } = props;
-  const stack = model.primary === null || model.secondary.length > 1;
+  // 一个次要按钮：与主按钮并排；两个及以上：次要按钮一排在上、主按钮整行在下；没有主按钮：竖排。
+  const split = model.primary !== null && model.secondary.length > 1;
+  const stack = model.primary === null || split;
   return (
     <nav className="next-bar" data-testid="next-step-bar" aria-label="下一步">
       <div className="inner">
@@ -60,7 +62,9 @@ export function NextBar(props: { model: BarModel; extra?: ReactNode }): ReactNod
         ) : null}
         {props.extra}
         <div className={`buttons${stack ? ' stack' : ''}`}>
-          {model.secondary.map(button => <ButtonView key={button.key} button={button} primary={false} />)}
+          {split
+            ? <div className="buttons">{model.secondary.map(button => <ButtonView key={button.key} button={button} primary={false} />)}</div>
+            : model.secondary.map(button => <ButtonView key={button.key} button={button} primary={false} />)}
           {model.primary ? <ButtonView button={model.primary} primary /> : null}
         </div>
       </div>
