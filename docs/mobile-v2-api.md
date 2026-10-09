@@ -551,6 +551,16 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
 
 `fields[].field` 固定全集：`questionText` / `student_work` / `correction` / `teacher_note` / `reference_answer` / `subject` / `knowledgeTags`。`rate` 为 `corrected/total`（`total` 为 0 时 `rate` 为 0）。`notAMistake` 是该周被标"不是错题"的数量与占比。`manuallySelected`（v2.1a 起）是该周登记的照片里由学生手动勾入并已成为错题的数量——它与 `notAMistake` 一起反映批改痕迹判断的准确度。
 
+### 3.26 `POST /v2/reflections/transcribe` — 一段录音转文字（2026-10-09）
+
+给不能在手机上本地转写的客户端用（学生网页版；iOS App 仍在手机上转写）。正文是**原始录音字节**，`Content-Type` 为 `audio/mp4`（iOS Safari 的 `MediaRecorder` 产出的 AAC；也接受 `audio/x-m4a`、`audio/aac`）或 `audio/webm`（桌面浏览器测试用，可带 `;codecs=opus`）。
+
+- 上限：≤ 5 MB；MP4 容器声明了时长（`mvhd` / 分片录音的 `mehd`）时还要 ≤ 60 秒。网页端录到 60 秒自动停。
+- 成功 `200 {"text":"我以为移项不用变号，就直接抄过去了。"}`。没听出字时 `text` 为空串。文字不在服务器保存，由学生改完后作为 3.18 的 `answer` 自己提交。
+- 错误：`415 unsupported_media_type` `只接受 audio/mp4 或 audio/webm 录音。` / `400 invalid_audio` `录音是空的，再说一次。` / `400 audio_too_long` `录音超过 60 秒，说短一点再试。` / `413 payload_too_large` `录音超过 5 MB 限制。` / `429 rate_limited` `说得太频繁了，过一会儿再试，或者直接打字。`（云端每设备每分钟 10 次，另计入 300 次的已鉴权查询）/ `502 bad_gateway` `这次没转成文字，再说一次，或者直接打字。`
+- 模型：百炼 OpenAI 兼容接口 `chat/completions`，模型 `SEL_AI_MODEL_ASR`（缺省 `qwen3-asr-flash`），`messages[0].content = [{"type":"input_audio","input_audio":{"data":"data:audio/mp4;base64,…"}}]`，`asr_options: {"language":"zh","enable_itn":false}`。**录音不落盘、不写日志**。mock 模式固定返回上面那句合成文字，不发网络请求。
+- 学生网页版用同源镜像 `POST /s/voice`（同一校验、同一转写器、同一限流档；鉴权是网页版的设备令牌 cookie，不是 `Authorization` 头）。
+
 ## 4. 枚举值全集
 
 **题目状态 `ItemStatus`**（`status` 字段）：`captured`（已采集）/ `needs_review`（待校正）/ `ready_for_reflection`（待反思）/ `eligible_for_review`（可安排复习）/ `scheduled`（已安排）/ `packet_generated`（已入复习包）/ `attempted`（已作答）/ `needs_recheck`（待重练）/ `temporarily_mastered`（暂时掌握）/ `stably_mastered`（稳定掌握）/ `archived_not_worth_review`（已归档）。
