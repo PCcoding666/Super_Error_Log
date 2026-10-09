@@ -133,8 +133,8 @@ enum ConnectionState: Equatable, Sendable {
 
   var title: String {
     switch self {
-    case .unpaired: "未连接识别服务"
-    case .pairedNeedsCheck: "已配对，待检查"
+    case .unpaired: "还没连上服务器"
+    case .pairedNeedsCheck: "等待检查连接"
     case .checking: "正在检查连接"
     case .ready: "可以上传"
     case .busy: "服务繁忙"
@@ -146,14 +146,14 @@ enum ConnectionState: Equatable, Sendable {
 
   var actionTitle: String {
     switch self {
-    case .unpaired: "扫码配对"
+    case .unpaired: "扫码连接"
     case .pairedNeedsCheck: "检查连接"
     case .checking: "请稍候"
     case .ready: "开始上传"
     case .busy: "稍后再试"
     case .failed: "重试连接"
-    case .unauthorized: "重新配对"
-    case .incompatible: "查看帮助"
+    case .unauthorized: "重新扫码"
+    case .incompatible: "扫新的二维码"
     }
   }
 }

@@ -201,9 +201,9 @@ final class LiveTourTests: XCTestCase {
 
     // 去复盘
     scrollTo(any(app, "practice-card"), in: app)
-    XCTAssertTrue(tapFirst(app, ids: ["practice-reflect"], labels: ["去复盘"]), "新练习应可去复盘")
+    XCTAssertTrue(tapFirst(app, ids: ["practice-reflect"], labels: ["说说为什么错"]), "新练习应可去复盘")
     sleep(3); shot("loop-detail")
-    let reflect = app.buttons.matching(NSPredicate(format: "label == %@", "复盘这道")).firstMatch
+    let reflect = app.buttons.matching(NSPredicate(format: "label == %@", "说说这道为什么错")).firstMatch
     XCTAssertTrue(reflect.waitForExistence(timeout: 5), app.debugDescription)
     scrollTo(reflect, in: app, max: 5)
     reflect.tap()
@@ -229,7 +229,7 @@ final class LiveTourTests: XCTestCase {
     app.swipeUp(); shot("loop-confirm-scrolled")
     _ = tapFirst(app, ids: ["reflect-mastery-2"])
     shot("loop-confirm-chosen")
-    _ = tapFirst(app, ids: ["reflection-submit"], labels: ["提交复盘"])
+    _ = tapFirst(app, ids: ["reflection-submit"], labels: ["提交"])
     sleep(4); shot("loop-after-submit")
     // 回到主页
     for _ in 0..<3 where !any(app, "open-settings").exists { back(app) }

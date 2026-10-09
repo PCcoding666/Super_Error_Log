@@ -21,6 +21,9 @@ struct PracticePrintView: View {
   @State private var isRendering = false
   @State private var renderFailed = false
   @State private var glancePhoto: GlancePhoto?
+  /// 点过「打印」（打开过系统分享）：底部换成「打印好了，回到今天」。只在这一页的内存里，不写服务器（§4.8）。
+  @State private var didOpenShare = false
+  @Environment(HomeFlow.self) private var flow
 
   var body: some View {
     // T6d-w：从主页导航栈推入，去掉内层 NavigationStack。
@@ -31,6 +34,7 @@ struct PracticePrintView: View {
       }.padding(24)
     }
     .background(Palette.paper)
+    .safeAreaInset(edge: .bottom, spacing: 0) { nextStepBar }
     .navigationTitle("打印练习纸")
     .navigationBarTitleDisplayMode(.inline)
     .onAppear(perform: prime)
@@ -135,11 +139,6 @@ struct PracticePrintView: View {
           PracticePDFPreview(url: pdfURL)
             .frame(maxWidth: .infinity).frame(height: 480)
             .accessibilityIdentifier("print-preview")
-          ShareLink(item: pdfURL) {
-            Label("打印 / 分享", systemImage: "printer")
-          }
-          .buttonStyle(PrimaryButton())
-          .accessibilityIdentifier("print-share")
         }
       }
     } else if renderFailed {
@@ -155,6 +154,33 @@ struct PracticePrintView: View {
     } else {
       PaperCard {
         ProgressView("正在排版…").accessibilityIdentifier("print-rendering")
+      }
+    }
+  }
+
+  // MARK: - 下一步（第 1 期：打印页不再是死胡同）
+
+  /// 就绪前没有主按钮（可以离开，回来接着准备）；就绪后主按钮是「打印」（系统分享，里面有「打印」）；
+  /// 点过以后换成「打印好了，回到今天」，次要「再打印」。手机不知道他到底打没打印，所以由他自己说。
+  @ViewBuilder private var nextStepBar: some View {
+    if case .ready = store.printPhase, let pdfURL {
+      if didOpenShare {
+        NextStepBarContainer(caption: "打印机没反应？可以点「再打印」，或者用「存储到文件」发给家里人打印。",
+          secondary: [], perform: flow.perform) {
+          Button { flow.goHome() } label: { Label("打印好了，回到今天", systemImage: "house") }
+            .buttonStyle(PrimaryButton())
+            .accessibilityIdentifier("next-step-primary")
+          ShareLink(item: pdfURL) { Text("再打印").frame(maxWidth: .infinity, minHeight: 44) }
+            .font(.subheadline.weight(.medium)).foregroundStyle(Palette.teal)
+            .accessibilityIdentifier("print-share")
+        }
+      } else {
+        NextStepBarContainer(caption: "会打开系统分享，里面有「打印」", secondary: [], perform: flow.perform) {
+          ShareLink(item: pdfURL) { Label("打印", systemImage: "printer") }
+            .buttonStyle(PrimaryButton())
+            .simultaneousGesture(TapGesture().onEnded { didOpenShare = true })
+            .accessibilityIdentifier("print-share")
+        }
       }
     }
   }

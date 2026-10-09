@@ -17,12 +17,27 @@ struct SuperErrorLogApp: App {
 struct StudentRootView: View {
   let store: StudyStore
   @State private var loopStore: LoopStore
+  /// 第 1 期：主页路由与「本次打开」的跳过（只在内存里）。
+  @State private var homeFlow = HomeFlow()
   @Environment(\.scenePhase) private var phase
 
   init(store: StudyStore) {
     self.store = store
     _loopStore = State(initialValue: LoopStore(client: nil,
       cacheDirectory: store.persistence.directory.appendingPathComponent("Loop", isDirectory: true)))
+  }
+
+  /// 本周数据 + 练习列表与当前练习的回报。第 1 期：「今天」卡要靠练习判断是周末、周中还是做完了，
+  /// 不能只等主页底部的练习区出现时才取（第一次配对时那会儿还没有客户端，会一直取不到）。
+  private func refreshLoop() async {
+    await loopStore.refreshWeek()
+    guard store.pairing != nil else { return }
+    await loopStore.loadPractices()
+    if let id = loopStore.currentPractice?.id { await loopStore.loadSummary(practiceID: id) }
+    // 「今天」卡还要知道前几份已生成练习纸的录没录完（周末 B 建了新练习后，上一份就不是当前那份了）。
+    // 只放进内存里的回报表，不改当前显示的回报。
+    let printed = loopStore.practices.filter { $0.generatedAt != nil && $0.id != loopStore.currentPractice?.id }
+    for practice in printed.prefix(2) { await loopStore.refreshSummary(practiceID: practice.id) }
   }
 
   var body: some View {
@@ -37,20 +52,21 @@ struct StudentRootView: View {
           Button("重试") { store.reload() }
         }
       } else {
-        NavigationStack { LoopHomeView() }
+        NavigationStack(path: $homeFlow.path) { LoopHomeView() }
       }
     }
     .environment(store)
     .environment(loopStore)
+    .environment(homeFlow)
     .task {
       loopStore.updateClient(store.v2Client)
       store.setActive(phase == .active)
-      await loopStore.refreshWeek()
+      await refreshLoop()
     }
     .onChange(of: store.pairing) { _, _ in
       loopStore.updateClient(store.v2Client)
       // 换客户端后重新取本周数据（扫码配对成功后主页随之出卡片）。
-      Task { await loopStore.refreshWeek() }
+      Task { await refreshLoop() }
     }
     .onChange(of: phase) { _, phase in
       if phase == .active {
@@ -60,7 +76,7 @@ struct StudentRootView: View {
       store.setActive(phase == .active)
     }
     .alert(
-      "请再试一次",
+      "没成功",
       isPresented: Binding(
         get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })
     ) {

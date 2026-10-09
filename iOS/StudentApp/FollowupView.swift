@@ -4,14 +4,17 @@ import UIKit
 // T6d-w：追问复盘——按 LoopStore 的复盘状态机一屏一件事：问题 → 回答 → 确认 → 提交。
 // T6g：回答输入框接「按住说话」（与 CorrectionSheet 同一用法，语音只回填文字、学生仍自己点发送）；
 // 顶部题图换整题大图（含全部手写证据，取不到退回题干小图）。
-// 硬规则：AI 从不替学生提交复盘；没有学生点「提交复盘」就不产生复盘记录；
+// 硬规则：AI 从不替学生提交；没有学生点「提交」就不产生记录（第 1 期界面叫「说说为什么错」）；
 // 学生的回答与 AI 归纳不写日志、不落本机缓存。
 // 确认页规则全部在 ReflectionForm（Domain/V2），视图只绑定、不重写。
 // 界面只求可用清楚，不做视觉设计。
 
 struct FollowupView: View {
   let itemID: String
+  /// 第 1 期：说完以后的下一步（下一道 / 打印练习纸）要知道是哪一份练习。
+  var practiceID: String? = nil
   @Environment(LoopStore.self) private var store
+  @Environment(HomeFlow.self) private var flow
   @Environment(\.dismiss) private var dismiss
   @State private var speech = SpeechInput()
   @State private var answer = ""
@@ -27,7 +30,10 @@ struct FollowupView: View {
       }.padding(24)
     }
     .background(Palette.paper)
-    .navigationTitle("复盘这道题")
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if submitted, let next = doneNext { NextStepBar(model: next, perform: performNext) }
+    }
+    .navigationTitle("说说为什么错")
     .navigationBarTitleDisplayMode(.inline)
     .task {
       // 语音回填：SpeechInput 已给出「基底 + 本次整句」，直接替换输入框内容（不追加）。
@@ -37,16 +43,31 @@ struct FollowupView: View {
       await beginIfNeeded()
     }
     .onChange(of: store.reflectionPhase, initial: true) { old, new in
+      // 状态机是 LoopStore 里共用的一份：只认这一道题的（评审修正：上一道留下的「说完了」不算这一道的）。
+      guard isMine else { return }
       if case .waitingAnswer(let question, _) = new { lastQuestion = question }
       if case .confirming(let summary, let cause, let attemptState) = new, !old.isSubmitting {
         buildForm(summary: summary, cause: cause, attemptState: attemptState)
       }
-      if case .done = new { markDone() }
+      // 只有这一道在这一页上从「提交中」变成「说完了」才算说完。
+      if case .done = new, old.isSubmitting { markDone() }
+    }
+    .onChange(of: store.isBusyReflection) { _, busy in
+      // 别的题的请求还在路上时没能开始：等它结束再开始这一道。
+      if !busy, !isMine { Task { await beginIfNeeded() } }
     }
   }
 
-  /// 进入即发起追问（服务器幂等：已有未答问题原样返回）；已有进行中状态时原样接上。
+  /// 状态机现在是不是这一道题的。
+  private var isMine: Bool { store.reflectionItemID == itemID }
+
+  /// 进入即发起追问（服务器幂等：已有未答问题原样返回）；这一道已有进行中状态时原样接上；
+  /// 状态机还停在别的题（例如上一道刚说完）时，为这一道重新开始。
   private func beginIfNeeded() async {
+    guard isMine else {
+      await store.startReflection(itemID: itemID)
+      return
+    }
     switch store.reflectionPhase {
     case .idle, .done:
       await store.startReflection(itemID: itemID)
@@ -64,12 +85,50 @@ struct FollowupView: View {
     }
   }
 
+  /// 说完了：不再自动退回，底部给下一步（下一道 / 打印练习纸），不走到头（设计稿 §4.7、§3.5）。
+  /// 不知道是哪份练习时（旧入口）沿用原来的 1 秒后返回。
   private func markDone() {
     guard !submitted else { return }
     submitted = true
+    guard practiceID == nil else { return }
     Task {
       try? await Task.sleep(for: .seconds(1))
       dismiss()
+    }
+  }
+
+  /// 这份练习（详情已载入时）。
+  private var practice: V2PracticeDetail? {
+    guard let practiceID, store.currentPractice?.id == practiceID else { return nil }
+    return store.currentPractice
+  }
+
+  /// 按题号顺序，这道之后（没有就从头）第一道还没说的。
+  private var nextUnreflectedID: String? {
+    guard let practice else { return nil }
+    let ordered = practice.items.sorted { $0.position < $1.position }
+    let start = ordered.firstIndex { $0.id == itemID }.map { $0 + 1 } ?? 0
+    let rotated = Array(ordered[start...] + ordered[..<start])
+    return rotated.first { !$0.reflected && $0.id != itemID }?.id
+  }
+
+  private var doneNext: NextStepModel? {
+    guard let practiceID, let practice else { return nil }
+    let reflected = practice.items.filter(\.reflected).count
+    if nextUnreflectedID != nil {
+      return NextStepModel(caption: "说了 \(reflected)/\(practice.items.count) 道",
+        primary: .init(title: "下一道", systemImage: "bubble.left", action: .why(practiceID: practiceID)),
+        secondary: [.init(title: "跳过，直接打印", systemImage: nil, action: .skipWhy(practiceID: practiceID))])
+    }
+    return NextStepModel(caption: "说完了 ✓ \(practice.items.count) 道里说了 \(reflected) 道",
+      primary: .init(title: "下一步：打印练习纸", systemImage: "printer", action: .print(practiceID: practiceID)))
+  }
+
+  private func performNext(_ action: NextStepAction) {
+    if case .why(let practiceID) = action, let next = nextUnreflectedID {
+      flow.replaceTop(with: .followup(practiceID: practiceID, itemID: next))
+    } else {
+      flow.perform(action)
     }
   }
 
@@ -83,6 +142,15 @@ struct FollowupView: View {
   // MARK: - 状态机内容
 
   @ViewBuilder private var phaseContent: some View {
+    if !isMine {
+      // 还没轮到这一道（状态机停在上一道）：不显示别的题的内容。
+      ProgressView("正在出题…").accessibilityIdentifier("followup-asking")
+    } else {
+      phaseContentForThisItem
+    }
+  }
+
+  @ViewBuilder private var phaseContentForThisItem: some View {
     switch store.reflectionPhase {
     case .idle:
       if let error = store.lastError {
@@ -107,7 +175,7 @@ struct FollowupView: View {
     case .confirming, .submitting:
       confirmSection
     case .done:
-      Text("记下了").font(.title3.weight(.semibold)).foregroundStyle(Palette.teal)
+      Text("记下了 ✓").font(.title3.weight(.semibold)).foregroundStyle(Palette.teal)
         .accessibilityIdentifier("reflection-done")
     }
   }
@@ -144,7 +212,7 @@ struct FollowupView: View {
       .buttonStyle(PrimaryButton())
       .disabled(!ReflectionForm.isValidAnswer(answer) || sending || store.isBusyReflection)
       .accessibilityIdentifier("followup-send")
-      Button("跳过追问，直接选") { store.skipFollowup() }
+      Button("不回答，直接选") { store.skipFollowup() }
         .font(.subheadline).frame(maxWidth: .infinity, minHeight: 44)
         .foregroundStyle(Palette.muted)
         .disabled(sending)
@@ -163,17 +231,17 @@ struct FollowupView: View {
     VStack(alignment: .leading, spacing: 20) {
       Text("确认一下").font(.title3.weight(.semibold)).foregroundStyle(Palette.ink)
       summarySection
-      choiceSection(title: "当时的状态", options: ReflectionForm.attemptStateOptions,
+      choiceSection(title: "当时怎么了？", options: ReflectionForm.attemptStateOptions, labels: Self.attemptStateLabels,
         selected: form.attemptState, mark: form.attemptStateMark, idPrefix: "reflect-state") {
         form.selectAttemptState($0)
       }
-      choiceSection(title: "主要错因", options: ReflectionForm.causeOptions,
+      choiceSection(title: "主要错在哪？", options: ReflectionForm.causeOptions, labels: Self.causeLabels,
         selected: form.cause, mark: form.causeMark, idPrefix: "reflect-cause") {
         form.selectCause($0)
       }
       masterySection
-      if !form.missingHints.isEmpty {
-        Text(form.missingHints.joined(separator: "；")).font(.caption).foregroundStyle(Palette.muted)
+      if let missing = missingText {
+        Text(missing).font(.caption).foregroundStyle(Palette.muted)
           .accessibilityIdentifier("reflection-missing")
       }
       if let error = store.lastError {
@@ -182,7 +250,7 @@ struct FollowupView: View {
       if isSubmitting {
         ProgressView("正在提交…").accessibilityIdentifier("reflection-submitting")
       }
-      Button("提交复盘") { submit() }
+      Button("提交") { submit() }
         .buttonStyle(PrimaryButton())
         .disabled(!form.canSubmit || store.isBusyReflection)
         .accessibilityIdentifier("reflection-submit")
@@ -192,8 +260,9 @@ struct FollowupView: View {
   private var summarySection: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
-        Text("AI 的归纳").font(.headline).foregroundStyle(Palette.ink)
-        if let mark = form.summaryMark { markBadge(mark) }
+        Text(form.summaryMark == .aiSuggestion ? "一句话总结（AI 先写了，可以改）" : "一句话总结")
+          .font(.headline).foregroundStyle(Palette.ink)
+        if let mark = form.summaryMark { markBadge(mark, isSummary: true) }
       }
       TextField("用一句话写下你错在哪", text: summaryBinding, axis: .vertical)
         .textFieldStyle(.roundedBorder)
@@ -209,7 +278,7 @@ struct FollowupView: View {
     Binding(get: { form.summary }, set: { form.editSummary($0) })
   }
 
-  private func choiceSection(title: String, options: [String], selected: String?,
+  private func choiceSection(title: String, options: [String], labels: [String: String], selected: String?,
     mark: ReflectionForm.Mark?, idPrefix: String, select: @escaping (String) -> Void) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
@@ -217,7 +286,8 @@ struct FollowupView: View {
         if let mark { markBadge(mark) }
       }
       ForEach(options, id: \.self) { option in
-        ChoiceRow(title: option, isSelected: selected == option) { select(option) }
+        // 显示大白话别名；选中与提交的仍是服务器原文（标识也按原文，不变）。
+        ChoiceRow(title: labels[option] ?? option, isSelected: selected == option) { select(option) }
           .accessibilityIdentifier("\(idPrefix)-\(option)")
       }
     }
@@ -225,9 +295,11 @@ struct FollowupView: View {
 
   private var masterySection: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("现在的把握").font(.headline).foregroundStyle(Palette.ink)
+      Text("现在再做这道题，有把握吗？").font(.headline).foregroundStyle(Palette.ink)
+      Text("这个要你自己选，AI 不帮你猜").font(.caption).foregroundStyle(Palette.muted)
       ForEach(Array(ReflectionForm.masteryOptions.enumerated()), id: \.offset) { index, text in
-        ChoiceRow(title: "\(index) \(text)", isSelected: form.masteryFeeling == index) {
+        ChoiceRow(title: Self.masteryLabels.indices.contains(index) ? Self.masteryLabels[index] : text,
+          isSelected: form.masteryFeeling == index) {
           form.selectMasteryFeeling(index)
         }
         .accessibilityIdentifier("reflect-mastery-\(index)")
@@ -235,11 +307,47 @@ struct FollowupView: View {
     }
   }
 
-  private func markBadge(_ mark: ReflectionForm.Mark) -> some View {
-    Text(mark == .aiSuggestion ? "AI 建议" : "上次的选择")
+  private func markBadge(_ mark: ReflectionForm.Mark, isSummary: Bool = false) -> some View {
+    Text(mark == .aiSuggestion ? (isSummary ? "AI 写的" : "AI 猜的") : "你上次选的")
       .font(.caption2.weight(.medium)).foregroundStyle(Palette.teal)
       .padding(.horizontal, 6).padding(.vertical, 2)
       .background(Palette.teal.opacity(0.12), in: Capsule())
+  }
+
+  // MARK: - 显示别名（设计稿 §4.7）：只改显示，提交值仍是 V2ReflectionText 原文（「必须原样发回」）
+
+  private static let attemptStateLabels: [String: String] = [
+    "完全不会": "完全不会",
+    "知道考什么但没想到方法": "知道考啥，没想到方法",
+    "方法基本正确但步骤出错": "方法对，步骤错了",
+    "本来会但审题计算书写失误": "本来会，粗心了",
+    "时间不足": "时间不够",
+    "其他": "其他",
+  ]
+
+  private static let causeLabels: [String: String] = [
+    "知识概念": "概念没弄懂",
+    "方法选择": "方法选错了",
+    "推理步骤": "推理中间断了",
+    "计算": "算错了",
+    "审题遗漏": "题目没看全",
+    "表达规范": "写法不规范",
+    "时间注意力状态": "时间不够或走神",
+  ]
+
+  /// 下标即 masteryFeeling 值（0–3）。
+  private static let masteryLabels = ["还是不会", "看提示可能会", "现在做应该会", "过几天也会"]
+
+  /// 缺项时按钮上方一行大白话：「还差：有没有把握」（原 missingHints 的说法）。
+  private var missingText: String? {
+    var missing: [String] = []
+    if form.attemptState == nil { missing.append("当时怎么了") }
+    if form.cause == nil { missing.append("错在哪") }
+    if form.masteryFeeling == nil { missing.append("有没有把握") }
+    var parts: [String] = []
+    if !missing.isEmpty { parts.append("还差：" + missing.joined(separator: "、")) }
+    if !form.summaryIsValid { parts.append("一句话总结超过 \(ReflectionForm.summaryLimit) 字了，删短一点") }
+    return parts.isEmpty ? nil : parts.joined(separator: "；")
   }
 
   /// 点一次只发一次请求（LoopStore 忙时按钮禁用且内部拒绝重入）。

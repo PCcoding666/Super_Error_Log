@@ -68,6 +68,8 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
 
   private struct PacketState {
     let id: String
+    /// 建包时的 ISO 周（与真实服务器一样，建包那一刻的周）。
+    let week: String
     var itemIds: [String]
     let practiceSlot: String
     let createdAt: String
@@ -96,6 +98,8 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
   private var proposals: [ProposalState] = []
   private var proposalCounter = 0
   private var practiceSlotSetting = "本周内"
+  /// 学生端重做第 1 期：周视图的 ISO 周（默认与原合成数据一致）；测试可改成「下一周」来走周末 B。
+  private var currentWeek = "2026-W40"
   private var paperLocationSetting = "varies"
   private let image: Data
   let cloudHealth: CloudHealth
@@ -418,6 +422,55 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
     respondError(descriptor, status: 404, code: "not_found", message: "接口不存在。")
   }
 
+  // MARK: - 学生端重做第 1 期：一周里不同日子的合成场景
+
+  private static func stamp(_ date: Date) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: date)
+  }
+
+  /// 与真实服务器 review_packet.status 同一套：scheduled → generated → returned（每道都录了）。
+  private static func packetStatus(_ packet: PacketState) -> String {
+    if packet.generatedAt == nil { return "scheduled" }
+    return packet.returned.count >= packet.itemIds.count ? "returned" : "generated"
+  }
+
+  /// 周视图现在是哪一周（建包时也记这一周）。
+  func setCurrentWeek(_ week: String) { lock.withLock { currentWeek = week } }
+
+  /// 预置一份「daysAgo 天前已生成练习纸、还没录」的合成练习（题目内容全是编的），返回练习 ID。
+  /// 这些题不属于任何本周照片，所以不出现在本周错题里，只在练习里。
+  @discardableResult
+  func seedPrintedPractice(daysAgo: Int, week: String, itemCount: Int = 3, slot: String = "周三晚自习") -> String {
+    lock.withLock {
+      let seeds = [
+        ("M-91", "数学", ["一元二次方程"], "解方程：x² − 5x + 6 = 0。"),
+        ("M-92", "数学", ["二次函数"], "求 y = x² − 4x + 3 的顶点坐标。"),
+        ("P-93", "物理", ["欧姆定律"], "电阻 6 Ω 两端电压 3 V，求电流。"),
+        ("M-94", "数学", ["相似三角形"], "两个相似三角形的相似比是 2:3，求面积比。"),
+      ]
+      let packetIndex = packets.count + 1
+      var itemIds: [String] = []
+      for offset in 0..<min(itemCount, seeds.count) {
+        let seed = seeds[offset]
+        let id = String(format: "itm_9%011x%02x%02x", packetIndex, 0, offset)
+        var item = ItemState(id: id, shortId: seed.0, subject: seed.1, knowledgeTags: seed.2,
+          questionText: seed.3, jobId: "seed-job-\(packetIndex)")
+        item.status = "packet_generated"
+        item.reflected = true
+        items.append(item)
+        itemIds.append(id)
+      }
+      let generated = Date().addingTimeInterval(-Double(daysAgo) * 86_400)
+      var packet = PacketState(id: String(format: "pkt_%016x", packetIndex), week: week, itemIds: itemIds,
+        practiceSlot: slot, createdAt: Self.stamp(generated.addingTimeInterval(-600)))
+      packet.generatedAt = Self.stamp(generated)
+      packets.append(packet)
+      return packet.id
+    }
+  }
+
   // MARK: - /v2 登记与周视图（§3.1–§3.5）
 
   private func registerPhoto(_ descriptor: Int32, jobId: String) {
@@ -468,7 +521,7 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
         item.status != "archived_not_worth_review"
           && jobs.first(where: { $0.id == item.jobId })?.terminal == true
       }
-      return ["week": "2026-W40", "photos": photos, "items": visible.map(cardJSON), "backlog": [[String: Any]]()]
+      return ["week": currentWeek, "photos": photos, "items": visible.map(cardJSON), "backlog": [[String: Any]]()]
     }
     respondJSON(descriptor, json)
   }
@@ -540,6 +593,7 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
     let detail: [String: Any]? = lock.withLock {
       let packet = PacketState(
         id: String(format: "pkt_%016x", packets.count + 1),
+        week: currentWeek,
         itemIds: itemIds,
         practiceSlot: slot ?? practiceSlotSetting,
         createdAt: "2026-09-30T08:20:00.000Z")
@@ -558,8 +612,8 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
       ["packets": packets.reversed().map { packet in
         [
           "id": packet.id,
-          "week": "2026-W40",
-          "status": packet.generatedAt == nil ? "scheduled" : "packet_generated",
+          "week": packet.week,
+          "status": Self.packetStatus(packet),
           "practiceSlot": packet.practiceSlot,
           "createdAt": packet.createdAt,
           "generatedAt": packet.generatedAt ?? NSNull(),
@@ -596,8 +650,8 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
     }
     return [
       "id": packet.id,
-      "week": "2026-W40",
-      "status": packet.generatedAt == nil ? "scheduled" : "packet_generated",
+      "week": packet.week,
+      "status": Self.packetStatus(packet),
       "practiceSlot": packet.practiceSlot,
       "createdAt": packet.createdAt,
       "generatedAt": packet.generatedAt ?? NSNull(),
@@ -633,7 +687,8 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
       packets[index].printPolls += 1
       let polls = packets[index].printPolls
       if polls >= 2 {
-        packets[index].generatedAt = "2026-09-30T08:21:00.000Z"
+        // 第 1 期：练习纸生成时间用「现在」，首页的「距生成几天」才对得上（原来写死 2026-09-30）。
+        packets[index].generatedAt = Self.stamp(Date())
         return ["status": "ready", "snapshot": snapshotJSON(packets[index])]
       }
       return ["status": "preparing", "progress": ["done": polls, "total": packets[index].itemIds.count]]
@@ -681,8 +736,8 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
     }
     return [
       "packetId": packet.id,
-      "week": "2026-W40",
-      "preparedAt": packet.generatedAt ?? "2026-09-30T08:21:00.000Z",
+      "week": packet.week,
+      "preparedAt": packet.generatedAt ?? Self.stamp(Date()),
       "cover": [
         "title": "本周练习",
         "practiceSlot": packet.practiceSlot,

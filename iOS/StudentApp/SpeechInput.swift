@@ -6,7 +6,7 @@ import SwiftUI
 // requiresOnDeviceRecognition = true；AVAudioEngine 取麦克风；音频不落盘、不上传，
 // 只把转出的文字放进输入框，学生可改后再发。
 // T6c-R1：权限不在面板出现时请求——识别器存在且授权是「还没问过」或「已允许」就显示
-// 「按住说话」，第一次按下才请求两项权限（本次按压不录音，通过后提示再按一次）；
+// 「按住说话」，第一次按下才请求两项权限（本次按压不录音，通过后提示「好了，现在按住按钮说话」）；
 // 被拒绝或设备不支持时只留键盘。回填是相对按下时基底的整句替换（SpeechText.merge），不追加。
 
 @MainActor @Observable
@@ -14,7 +14,7 @@ final class SpeechInput {
   private(set) var isRecording = false
   /// 界面呈现：按住即可说 / 显示按钮但按下先请求权限 / 只留键盘。
   private(set) var presentation: SpeechGate.Presentation = .keyboardOnly
-  /// 授权通过后提示学生再按一次；开始录音时清除。
+  /// 授权通过后提示学生现在按住说话；开始录音时清除。
   private(set) var hint: String?
   /// 识别出的文字：基底 + 本次整句（替换语义，调用方直接回填输入框）。
   var onText: (String) -> Void = { _ in }
@@ -64,7 +64,7 @@ final class SpeechInput {
     }
   }
 
-  /// 第一次按下：请求语音识别与麦克风授权。通过后提示「再按一次开始说」；任一被拒只留键盘。
+  /// 第一次按下：请求语音识别与麦克风授权。通过后提示「好了，现在按住按钮说话」；任一被拒只留键盘。
   private func requestPermissions() async {
     defer { isRequestingPermissions = false }
     guard let recognizer, recognizer.isAvailable else { presentation = .keyboardOnly; return }
@@ -72,7 +72,7 @@ final class SpeechInput {
     let micGranted = speechGranted ? await AVAudioApplication.requestRecordPermission() : false
     if speechGranted, micGranted {
       presentation = .holdToTalk
-      hint = "再按一次开始说"
+      hint = "好了，现在按住按钮说话"
     } else {
       presentation = .keyboardOnly
     }

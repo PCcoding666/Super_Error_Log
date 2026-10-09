@@ -4,17 +4,17 @@ import Foundation
 // 文案中文、直白；未知状态不猜，显示「状态更新中」。
 
 enum LoopText {
-  /// 题目状态 → 学生看得懂的一句话。
+  /// 题目状态 → 学生看得懂的一句话（服务器状态名不变，只是显示）。
   static func itemStatus(_ status: V2ItemStatus) -> String {
     switch status {
-    case .readyForReflection: "待复盘"
-    case .eligibleForReview: "已复盘，等着进练习"
+    case .readyForReflection: "还没说为什么错"
+    case .eligibleForReview: "说过了"
     case .scheduled: "已排进本周练习"
-    case .packetGenerated: "练习已打印"
+    case .packetGenerated: "在练习纸上"
     case .attempted: "上次当场做对，隔几天再验证"
     case .needsRecheck: "上次没独立做对，要再练"
-    case .temporarilyMastered: "暂时掌握"
-    case .stablyMastered: "稳定掌握"
+    case .temporarilyMastered: "真会了（还要再确认一次）"
+    case .stablyMastered: "稳了"
     case .archivedNotWorthReview: "已移出"
     case .captured, .needsReview, .unknown: "状态更新中"
     }
@@ -31,7 +31,16 @@ enum LoopText {
     }
   }
 
-  /// 「不是错题」按钮是否显示：只有「待复盘」「已复盘，等着进练习」能移出（服务器规则）。
+  /// 主页错题卡上的状态句：卡片不显示「还没说为什么错」「说过了」这类流程状态（设计稿 §5，
+  /// 卡片上没有对应入口，只在详情里说）；其余同 itemStatus。
+  static func cardStatus(_ status: V2ItemStatus) -> String? {
+    switch status {
+    case .readyForReflection, .eligibleForReview: nil
+    default: itemStatus(status)
+    }
+  }
+
+  /// 「不是错题」按钮是否显示：只有「还没说为什么错」「说过了」能移出（服务器规则）。
   static func canDiscard(_ status: V2ItemStatus) -> Bool {
     switch status {
     case .readyForReflection, .eligibleForReview: true

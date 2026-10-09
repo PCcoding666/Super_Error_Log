@@ -2,12 +2,12 @@ import SwiftUI
 import UIKit
 
 // T6d-w：练习详情——按 position 列出每道题（裁图缩略、短编号、知识点、推荐理由、是否已复盘），
-// 每题一个复盘入口进入追问复盘页。界面只求可用清楚，不做视觉设计。
+// 每题一个「说说这道为什么错」入口进入 AI 问你一句的页面。界面只求可用清楚，不做视觉设计。
 
 struct PracticeDetailView: View {
   let practiceID: String
   @Environment(LoopStore.self) private var store
-  @State private var reflectTarget: String?
+  @Environment(HomeFlow.self) private var flow
   @State private var zoom: PhotoReference?
 
   private var practice: V2PracticeDetail? {
@@ -17,7 +17,7 @@ struct PracticeDetailView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
-        Text("复盘不是必须的，但做了之后回来能看到你当时的判断准不准。")
+        Text("每道题 AI 问你一句，你说一句就行。说出来，下次更容易发现自己是哪里想错了。不想说可以跳过，不影响打印。")
           .font(.subheadline).foregroundStyle(Palette.muted)
         if let practice {
           ForEach(practice.items.sorted(by: { $0.position < $1.position }), id: \.id) { item in
@@ -31,13 +31,49 @@ struct PracticeDetailView: View {
       }.padding(24)
     }
     .background(Palette.paper)
-    .navigationTitle("本周练习")
+    .safeAreaInset(edge: .bottom, spacing: 0) { nextStepBar }
+    .navigationTitle("说说为什么错")
     .navigationBarTitleDisplayMode(.inline)
-    .navigationDestination(item: $reflectTarget) { FollowupView(itemID: $0) }
     .sheet(item: $zoom) { SourcePhotoView(reference: $0) }
     .task {
       if store.currentPractice?.id != practiceID {
         await store.openPractice(id: practiceID)
+      }
+    }
+  }
+
+  // MARK: - 下一步（第 1 期：练习详情不再是死胡同）
+
+  /// 还没说的第一道（按题号顺序）。
+  private var nextUnreflected: (index: Int, item: V2PracticeItem)? {
+    guard let practice else { return nil }
+    let ordered = practice.items.sorted { $0.position < $1.position }
+    return ordered.enumerated().first { !$0.element.reflected }.map { ($0.offset, $0.element) }
+  }
+
+  @ViewBuilder private var nextStepBar: some View {
+    if let practice {
+      let reflected = practice.items.filter(\.reflected).count
+      if practice.generatedAt != nil {
+        // 练习纸已生成：这一步不挡路，回今天看下一步。
+        NextStepBar(model: NextStepModel(caption: "练习纸已生成",
+          primary: .init(title: "回到今天", systemImage: "house", action: .goHome)), perform: flow.perform)
+      } else if let next = nextUnreflected {
+        NextStepBarContainer(caption: "第 \(next.index + 1) 道，共 \(practice.items.count) 道 · 说了 \(reflected) 道",
+          secondary: [.init(title: "跳过，直接打印", systemImage: nil, action: .skipWhy(practiceID: practiceID))],
+          perform: flow.perform) {
+          Button {
+            flow.push(.followup(practiceID: practiceID, itemID: next.item.id))
+          } label: {
+            Label("说第 \(next.index + 1) 道", systemImage: "bubble.left")
+          }
+          .buttonStyle(PrimaryButton())
+          .accessibilityIdentifier("next-step-primary")
+        }
+      } else {
+        NextStepBar(model: NextStepModel(caption: "说完了 ✓ \(practice.items.count) 道里说了 \(reflected) 道",
+          primary: .init(title: "下一步：打印练习纸", systemImage: "printer", action: .print(practiceID: practiceID))),
+          perform: flow.perform)
       }
     }
   }
@@ -66,7 +102,7 @@ struct PracticeDetailView: View {
       VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 8) {
           Text(item.shortId ?? "题目").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-          Text(item.reflected ? "已复盘" : "还没复盘")
+          Text(item.reflected ? "说过了" : "还没说为什么错")
             .font(.caption2.weight(.medium))
             .foregroundStyle(item.reflected ? CardTone.green.color : CardTone.orange.color)
         }
@@ -75,10 +111,13 @@ struct PracticeDetailView: View {
         if let excerpt = item.questionExcerpt, !excerpt.isEmpty {
           Text(excerpt).font(.caption).foregroundStyle(Palette.ink).lineLimit(2)
         }
-        Text("推荐理由：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
+        Text("为什么选它：\(item.reason)").font(.caption).foregroundStyle(Palette.muted)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
-      Button(item.reflected ? "再看一下" : "复盘这道") { reflectTarget = item.id }
+      Button(item.reflected ? "再看一下" : "说说这道为什么错") {
+        // 第 1 期：路由在主页的导航栈上（HomeFlow），说完一道可以直接换到下一道。
+        flow.push(.followup(practiceID: practiceID, itemID: item.id))
+      }
         .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
         .foregroundStyle(Palette.teal)
         .accessibilityIdentifier("reflect-\(item.id)")

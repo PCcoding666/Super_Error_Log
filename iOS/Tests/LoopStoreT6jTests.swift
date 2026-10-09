@@ -97,7 +97,7 @@ import Foundation
     let store = try makeStore()
     await store.openPractice(id: Self.packetID)
     let before = PracticeCardText.make(detail: try XCTUnwrap(store.currentPractice), summary: nil)
-    XCTAssertTrue(before.statusLine.contains("还有 1 道没复盘"), "前置：还没复盘")
+    XCTAssertTrue(before.statusLine.contains("还有 1 道没说为什么错"), "前置：还没说为什么错")
 
     await store.startReflection(itemID: Self.itemID)
     await store.answerFollowup("我以为移项不用变号")
@@ -105,7 +105,7 @@ import Foundation
       masteryFeeling: 3, summary: nil)
 
     let after = PracticeCardText.make(detail: try XCTUnwrap(store.currentPractice), summary: nil)
-    XCTAssertFalse(after.statusLine.contains("没复盘"), "提交复盘成功后状态句随即更新")
+    XCTAssertFalse(after.statusLine.contains("没说为什么错"), "提交成功后状态句随即更新")
   }
 
   /// 录结果成功后：练习卡状态句变为「已录完」（已录 x/y 道），并出现「看结果」。
@@ -117,7 +117,7 @@ import Foundation
     let store = try makeStore()
     await store.openPractice(id: Self.packetID)
     let before = PracticeCardText.make(detail: try XCTUnwrap(store.currentPractice), summary: nil)
-    XCTAssertTrue(before.statusLine.contains("已打印，做完回来录结果"), "前置：已打印未录")
+    XCTAssertTrue(before.statusLine.contains("练习纸已生成 · 做完回来录结果"), "前置：练习纸已生成未录")
     XCTAssertTrue(before.steps.contains(.record))
     XCTAssertFalse(before.steps.contains(.viewSummary))
 
@@ -129,6 +129,27 @@ import Foundation
     XCTAssertTrue(after.statusLine.contains("已录完"), "录结果成功后状态句随即变化")
     XCTAssertTrue(after.steps.contains(.viewSummary), "出现「看结果」")
     XCTAssertFalse(after.steps.contains(.record))
+  }
+
+  // MARK: - 学生端重做第 1 期：按练习分开的回报（只在内存里）
+
+  /// 取了 Q 的回报以后，P 的回报还在 summaries 里（「今天」卡判断上一份录没录完靠它）；
+  /// refreshSummary 只填这张表，不换掉当前显示的那一份。
+  func testSummariesAreKeptPerPracticeInMemory() async throws {
+    let otherID = "pkt_9a8b7c6d5e4f3021"
+    LoopSyntheticProtocol.respond("GET", "/v2/practice/\(Self.packetID)/summary", body: Self.summaryAnsweredOneJSON)
+    LoopSyntheticProtocol.respond("GET", "/v2/practice/\(otherID)/summary",
+      body: #"{"answered":0,"total":3,"independentCorrect":0,"masteredNow":[],"again":[],"pending":[],"calibration":{"confidentTotal":0,"missedCount":0,"text":null,"items":[]},"nextConfirmOn":null}"#)
+    let store = try makeStore()
+    await store.loadSummary(practiceID: Self.packetID)
+    await store.loadSummary(practiceID: otherID)
+    XCTAssertEqual(store.summaryPracticeID, otherID)
+    XCTAssertEqual(store.summaries[Self.packetID]?.answered, 1, "换成别的练习后，前一份的回报还在")
+    XCTAssertEqual(store.summaries[otherID]?.total, 3)
+
+    await store.refreshSummary(practiceID: Self.packetID)
+    XCTAssertEqual(store.summaryPracticeID, otherID, "refreshSummary 不换当前显示的那一份")
+    XCTAssertEqual(store.summary?.total, 3)
   }
 
   // MARK: - 夹具

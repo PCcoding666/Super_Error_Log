@@ -1,7 +1,8 @@
 import Foundation
 
 // 练习卡的状态句与下一步（task-6p-brief §5）。
-// "已打印"的判定：generatedAt != nil；没复盘完也允许打印，状态句里提示。
+// "练习纸已生成"的判定：generatedAt != nil（手机不知道是否真的打印了，不说「已打印」）；
+// 没说完为什么错也允许打印，状态句里提示。
 enum PracticeCardText {
 
   enum NextStep: Equatable, CaseIterable {
@@ -9,7 +10,7 @@ enum PracticeCardText {
 
     var title: String {
       switch self {
-      case .reflect: "去复盘"
+      case .reflect: "说说为什么错"
       case .print: "打印练习纸"
       case .reprint: "再打印一份"
       case .record: "录结果"
@@ -39,12 +40,12 @@ enum PracticeCardText {
 
     var steps: [NextStep] = []
     if !printed {
-      if unreflected > 0 { parts.append("还有 \(unreflected) 道没复盘") }
+      if unreflected > 0 { parts.append("还有 \(unreflected) 道没说为什么错") }
       parts.append("还没打印")
       if unreflected > 0 { steps.append(.reflect) }
       steps.append(.print)
     } else if !allRecorded {
-      parts.append(answered == 0 ? "已打印，做完回来录结果" : "已录 \(answered)/\(total) 道")
+      parts.append(answered == 0 ? "练习纸已生成 · 做完回来录结果" : "已录 \(answered)/\(total) 道")
       steps.append(.record)
       steps.append(.reprint)
       if answered >= 1 { steps.append(.viewSummary) }
@@ -63,7 +64,7 @@ enum PracticeCardText {
     var parts = [practice.week]
     if let slot = practice.practiceSlot, !slot.isEmpty { parts.append(slot) }
     parts.append("\(practice.itemCount) 道题")
-    parts.append(practice.generatedAt == nil ? "还没打印" : "已打印")
+    parts.append(practice.generatedAt == nil ? "还没打印" : "练习纸已生成")
     return parts.joined(separator: " · ")
   }
 }

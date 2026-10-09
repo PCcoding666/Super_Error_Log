@@ -1,16 +1,23 @@
+import AVFoundation
 import PhotosUI
 import SwiftUI
 import UIKit
 
 // T6c：单一「本周」主页。自上而下：顶部与连接状态、拍这周的错题、照片进度、本周错题卡片。
 // 练习与结果两块留给 T6d/T6e（本视图不放占位）。界面只求可用、清楚。
+// 学生端重做第 1 期：顶部加「今天」卡（WeekPlan 算出的步骤清单 / 做完了 / 周中），底部固定下一步按钮；
+// 练习流程的路由提到这里（HomeFlow.path），下一步按钮、清单行、练习卡推同一套页面；
+// 拍照、勾选面板、上传、扫码仍由主页现有状态触发。其余部分原样留在卡片下面。
 
 struct LoopHomeView: View {
   @Environment(StudyStore.self) private var store
   @Environment(LoopStore.self) private var loopStore
+  @Environment(HomeFlow.self) private var flow
   @State private var photos: [PhotosPickerItem] = []
   @State private var importing = false
   @State private var showCamera = false
+  /// 没有相机的设备（如模拟器）上「拍第一页」改开相册。
+  @State private var showLibrary = false
   @State private var showSettings = false
   @State private var showScanner = false
   @State private var source: PhotoReference?
@@ -24,11 +31,16 @@ struct LoopHomeView: View {
   @State private var recognizedPhotoCount = 0
   @State private var pickTask: PickReference?
   @State private var showMissedList = false
+  /// 子页面交给主页做的事（拍照、勾选面板、上传、扫码）：等回到今天、而且没有别的弹出页时再做，
+  /// 不能因为当时正好有弹出页就悄悄丢掉（评审修正）。只在内存里。
+  @State private var pendingHomeAction: NextStepAction?
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         header
+        TodayStepsCard(result: plan, practiceSlot: plan.practice?.practiceSlot ?? loopStore.settings?.practiceSlot,
+          offlineNote: offlineNote, perform: perform)
         connectionSection
         captureSection
         photoProgressSection
@@ -44,7 +56,23 @@ struct LoopHomeView: View {
         .background(Palette.paper, ignoresSafeAreaEdges: .top)
     }
     .refreshable { await loopStore.refreshWeek() }
-    .safeAreaInset(edge: .bottom, spacing: 0) { undoBar }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      VStack(spacing: 0) {
+        undoBar
+        if let next = plan.next { NextStepBar(model: next, perform: perform) }
+      }
+    }
+    .photosPicker(isPresented: $showLibrary, selection: $photos, maxSelectionCount: 10, matching: .images)
+    .navigationDestination(for: PracticeRoute.self) { route in practiceDestination(route) }
+    .onChange(of: flow.homeRequest) { _, request in
+      guard request != nil, let action = flow.consumeHomeRequest() else { return }
+      pendingHomeAction = action
+      firePendingHomeActionSoon()
+    }
+    .onChange(of: isPresentingSomething) { _, presenting in
+      // 弹出页 / 提示框 / 推入的页面都关掉了：还有没做的就接着做。
+      if !presenting { firePendingHomeActionSoon() }
+    }
     .sheet(isPresented: $showSettings) { LoopSettingsView() }
     .sheet(isPresented: $showScanner) {
       CameraScanner { payload in
@@ -104,6 +132,108 @@ struct LoopHomeView: View {
       // 照片识别完成后自动刷新本周错题。
       if new > old { Task { await loopStore.refreshWeek() } }
       recognizedPhotoCount = new
+    }
+  }
+
+  // MARK: - 0. 今天（第 1 期）
+
+  private var plan: WeekPlan.Result {
+    TodayPlan.plan(store: store, loopStore: loopStore, skipped: flow.skipped)
+  }
+
+  /// 没联网 / 连不上服务器时卡片顶上那一行（§3.4）：清单照常显示，说明是哪时保存的内容。
+  private var offlineNote: String? {
+    let lead: String
+    switch loopStore.weekIssue {
+    case .offline: lead = "没联网"
+    case .serviceUnavailable: lead = "连不上服务器"
+    default: return nil
+    }
+    if let savedAt = loopStore.cacheSavedAt {
+      return "\(lead)，显示的是 \(savedAt.formatted(date: .omitted, time: .shortened)) 保存的内容"
+    }
+    return lead
+  }
+
+  /// 下一步按钮与清单行：导航交给 HomeFlow；拍照、勾选面板、上传、扫码用主页现有的状态。
+  private func perform(_ action: NextStepAction) {
+    switch action {
+    case .scan:
+      showScanner = true
+    case .rescan:
+      // 与连接行的「重新扫码」相同：先清凭据回到未配对，再打开扫码页。
+      Task {
+        await store.connectionAction()
+        showScanner = true
+      }
+    case .capture:
+      startCapture()
+    case .uploadPending:
+      uploadAllPending()
+    case .openPick(let taskID):
+      pickTask = PickReference(taskID: taskID)
+    default:
+      flow.perform(action)
+    }
+  }
+
+  /// 主页上是否正盖着别的东西（弹出页、提示框、推入的页面）。这时不能再弹出相机 / 面板。
+  private var isPresentingSomething: Bool {
+    showSettings || showScanner || showCamera || showLibrary || showMissedList
+      || source != nil || consentBatch != nil || correctionTarget != nil || pickTask != nil
+      || retryPhoto != nil || detailItemID != nil || store.errorMessage != nil || !flow.path.isEmpty
+  }
+
+  /// 等导航或弹出页的动画结束（约 0.45 秒）再做；那时还盖着别的东西就继续等，等它关掉时再试。
+  private func firePendingHomeActionSoon() {
+    guard pendingHomeAction != nil else { return }
+    Task {
+      try? await Task.sleep(for: .milliseconds(450))
+      guard let action = pendingHomeAction, !isPresentingSomething else { return }
+      pendingHomeAction = nil
+      perform(action)
+    }
+  }
+
+  /// 「拍第一页」：直接打开系统相机；没有相机的设备（模拟器）打开相册。
+  /// 模拟器上 isSourceTypeAvailable(.camera) 可能为真但没有任何摄像头，所以同时看有没有视频设备。
+  private func startCapture() {
+    guard UIImagePickerController.isSourceTypeAvailable(.camera), AVCaptureDevice.default(for: .video) != nil else {
+      showLibrary = true
+      return
+    }
+    CameraCapture.request { allowed in
+      if allowed { showCamera = true }
+      else { store.errorMessage = "无法使用相机。请添加照片，或在系统设置中允许相机访问。" }
+    }
+  }
+
+  /// 「上传照片」：没同意先问一次，已同意直接传（每批最多 10 张）。
+  private func uploadAllPending() {
+    let names = Array(pendingPhotoNames.prefix(10))
+    guard !names.isEmpty else { return }
+    if store.hasUploadConsent {
+      attemptedAutoUpload.formUnion(names)
+      Task { await store.submitPhotos(names) }
+    } else {
+      consentBatch = UploadConsentBatch(names: names)
+    }
+  }
+
+  @ViewBuilder private func practiceDestination(_ route: PracticeRoute) -> some View {
+    switch route {
+    case .pick:
+      PracticePickView()
+    case .detail(let practiceID):
+      PracticeDetailView(practiceID: practiceID)
+    case .followup(let practiceID, let itemID):
+      FollowupView(itemID: itemID, practiceID: practiceID).id(itemID)
+    case .print(let practiceID):
+      PracticePrintView(practiceID: practiceID)
+    case .record(let practiceID):
+      PracticeRecordEntry(practiceID: practiceID)
+    case .summary(let practiceID):
+      PracticeSummaryView(practiceID: practiceID)
     }
   }
 
@@ -266,7 +396,7 @@ struct LoopHomeView: View {
         LocalPhotoThumbnail(url: store.photoURL(row.name)).frame(width: 62, height: 76).clipped()
           .accessibilityHidden(true)
         VStack(alignment: .leading, spacing: 5) {
-          Text(row.kind == .pick ? "这页没看到批改痕迹" : (plan?.title ?? presentation.headline))
+          Text(row.kind == .pick ? "这页没有批改痕迹，点「勾出错题」自己勾" : (plan?.title ?? presentation.headline))
             .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
           if row.kind == .pick {
             Text("勾出你做错的题，只有勾出的题会进错题本").font(.caption).foregroundStyle(Palette.muted)
@@ -367,7 +497,7 @@ struct LoopHomeView: View {
           }
         }
       } else if store.pairing == nil {
-        Text("先连接服务（上面点扫码配对），这里才会显示本周错题")
+        Text("连上服务器以后，这里会显示本周错题")
           .font(.subheadline).foregroundStyle(Palette.muted)
           .accessibilityIdentifier("items-unpaired")
       } else {
@@ -381,9 +511,12 @@ struct LoopHomeView: View {
     if store.state.importedPhotos.isEmpty {
       Text("拍一张这周的错题开始").font(.subheadline).foregroundStyle(Palette.muted)
         .accessibilityIdentifier("items-empty-no-photos")
-    } else if !progressRows.isEmpty {
+    } else if progressRows.contains(where: { $0.kind != .pick }) {
+      // 设计稿 §5：没批改痕迹的页只留照片那一行「要你勾」，这里不再说「正在识别」自相矛盾。
       Text("正在识别，完成后题目会出现在这里").font(.subheadline).foregroundStyle(Palette.muted)
         .accessibilityIdentifier("items-empty-recognizing")
+    } else if !progressRows.isEmpty {
+      EmptyView()
     } else {
       Text("这些照片里没找到有批改痕迹的题").font(.subheadline).foregroundStyle(Palette.muted)
         .accessibilityIdentifier("items-empty-no-items")
@@ -403,7 +536,7 @@ struct LoopHomeView: View {
             HStack(spacing: 8) {
               Text(card.shortId ?? "题目").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
               if card.badge == .low {
-                Text("AI 没把握").font(.caption2.weight(.medium)).foregroundStyle(CardTone.orange.color)
+                Text("字可能认错了 · 点开看看").font(.caption2.weight(.medium)).foregroundStyle(CardTone.orange.color)
                   .padding(.horizontal, 6).padding(.vertical, 2)
                   .background(CardTone.orange.color.opacity(0.12), in: Capsule())
               }
@@ -413,7 +546,9 @@ struct LoopHomeView: View {
             if let excerpt = card.questionExcerpt, !excerpt.isEmpty {
               Text(excerpt).font(.caption).foregroundStyle(Palette.ink).lineLimit(2)
             }
-            Text(LoopText.itemStatus(card.status)).font(.caption).foregroundStyle(Palette.teal)
+            if let status = LoopText.cardStatus(card.status) {
+              Text(status).font(.caption).foregroundStyle(Palette.teal)
+            }
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -603,6 +738,29 @@ struct LoopItemDetailView: View {
     .navigationBarTitleDisplayMode(.inline)
     .task {
       await loopStore.loadEvidence(itemID: itemID)
+    }
+  }
+}
+
+// MARK: - 录结果入口
+
+/// 录结果页要这份练习的详情：不是当前打开的那份时先取详情（周末 B 录上一份时会走到这里）。
+struct PracticeRecordEntry: View {
+  let practiceID: String
+  @Environment(LoopStore.self) private var store
+
+  var body: some View {
+    Group {
+      if let practice = store.currentPractice, practice.id == practiceID {
+        PracticeReturnView(practice: practice)
+      } else if let error = store.lastError {
+        Text(error).font(.subheadline).foregroundStyle(CardTone.red.color).padding(24)
+      } else {
+        Text("正在读取练习…").font(.subheadline).foregroundStyle(Palette.muted)
+      }
+    }
+    .task {
+      if store.currentPractice?.id != practiceID { await store.openPractice(id: practiceID) }
     }
   }
 }
