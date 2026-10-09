@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { PairingManager } from '../../src/mobile/pairing.js';
+import { PairingManager, resolvePairingUrl } from '../../src/mobile/pairing.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SESSION_TTL_MS = 5 * 60 * 1000;
@@ -249,6 +249,37 @@ describe('PairingManager sessions and device tokens', () => {
       await expect(manager.redeem(candidate, uuid(), 'iPhone')).rejects.toMatchObject({ code: 'invalid_pairing_payload' });
     }
     await expect(manager.redeem(payload, 'not-a-uuid', 'iPhone')).rejects.toMatchObject({ code: 'invalid_pairing_payload' });
+  });
+
+  it('二维码默认发 IP 入口；可配置为域名；两个入口都能兑换，其他地址或与会话不符的地址被拒绝', async () => {
+    const ipManager = await PairingManager.open(await tempDir());
+    const ipSession = ipManager.createSession().payload;
+    expect(ipSession.httpsUrl).toBe('https://8.163.96.197');
+    await expect(ipManager.redeem(ipSession, uuid(), 'iPhone')).resolves.toMatchObject({ protocolVersion: 1 });
+
+    const domainManager = await PairingManager.open(await tempDir(), { pairingUrl: 'https://study.pccoding666.com' });
+    const domainSession = domainManager.createSession().payload;
+    expect(domainSession.httpsUrl).toBe('https://study.pccoding666.com');
+    await expect(domainManager.redeem(domainSession, uuid(), 'iPhone')).resolves.toMatchObject({ protocolVersion: 1 });
+
+    const other = ipManager.createSession().payload;
+    for (const httpsUrl of ['https://8.163.96.198', 'https://8.163.96.197:443', 'http://8.163.96.197', 'https://8.163.96.197/']) {
+      await expect(ipManager.redeem({ ...other, httpsUrl }, uuid(), 'iPhone')).rejects.toMatchObject({ code: 'invalid_pairing_payload' });
+    }
+    // 白名单内但不是本会话发出的地址：同样拒绝（兑换必须原样回送二维码里的地址）。
+    await expect(ipManager.redeem({ ...other, httpsUrl: 'https://study.pccoding666.com' }, uuid(), 'iPhone'))
+      .rejects.toMatchObject({ code: 'invalid_pairing_payload' });
+    await expect(ipManager.redeem(other, uuid(), 'iPhone')).resolves.toMatchObject({ protocolVersion: 1 });
+  });
+
+  it('SEL_MOBILE_PAIRING_URL 只接受白名单：缺省为 IP，其他值启动即失败', () => {
+    expect(resolvePairingUrl(undefined)).toBe('https://8.163.96.197');
+    expect(resolvePairingUrl('')).toBe('https://8.163.96.197');
+    expect(resolvePairingUrl('https://8.163.96.197')).toBe('https://8.163.96.197');
+    expect(resolvePairingUrl('https://study.pccoding666.com')).toBe('https://study.pccoding666.com');
+    for (const value of ['https://evil.example', 'http://8.163.96.197', 'https://8.163.96.197/', '8.163.96.197']) {
+      expect(() => resolvePairingUrl(value)).toThrow(/SEL_MOBILE_PAIRING_URL/);
+    }
   });
 
   it('二维码秘密与设备令牌解码后恰好 32 字节', async () => {

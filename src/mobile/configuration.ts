@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolvePairingUrl, type CloudUrl } from './pairing.js';
 
 const BEIJING_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 
@@ -10,6 +11,8 @@ export interface MobileConfiguration {
   /** loopback：现有本地共享令牌模式；cloud：广州云端模式（Task 2 起接入设备令牌鉴权）。 */
   mode: 'loopback' | 'cloud';
   pairingToken: string;
+  /** 配对二维码里发给手机的入口（SEL_MOBILE_PAIRING_URL；缺省 IP 直连，域名仍可选）。未给出时按缺省处理。 */
+  pairingUrl?: CloudUrl;
   vision: { baseUrl: string; apiKey: string; timeoutMs: number; bailianOnly: true; models: { inventory: string; transcribe: string; verify: string; ground: string } };
 }
 
@@ -34,6 +37,7 @@ export function loadMobileConfiguration(root = process.cwd()): MobileConfigurati
   const port = Number(process.env.SEL_MOBILE_PORT ?? 3101);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error('SEL_MOBILE_PORT 不合法');
   const host = process.env.SEL_MOBILE_HOST ?? '127.0.0.1'; if (host !== '127.0.0.1') throw new Error('移动识别本轮只允许监听 127.0.0.1');
-  return { host, port, dataDir: path.resolve(root, process.env.SEL_MOBILE_DATA_DIR ?? 'data/mobile-recognition'), mode, pairingToken,
+  const pairingUrl = resolvePairingUrl(process.env.SEL_MOBILE_PAIRING_URL);
+  return { host, port, dataDir: path.resolve(root, process.env.SEL_MOBILE_DATA_DIR ?? 'data/mobile-recognition'), mode, pairingToken, pairingUrl,
     vision: { baseUrl: BEIJING_ENDPOINT, apiKey, timeoutMs, bailianOnly: true, models } };
 }

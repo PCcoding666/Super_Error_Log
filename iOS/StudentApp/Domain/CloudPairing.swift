@@ -1,11 +1,19 @@
 import Foundation
 
 /// Task 4: 云端扫码配对解析、健康快照与连接状态机。
-/// 仅接受固定云域名 `https://study.pccoding666.com` 的 HTTPS 二维码；拒绝任意服务器、
-/// 携带凭据/端口/路径/查询的 URL；协议代次必须为 1。
+/// 只接受白名单里两个固定入口的 HTTPS 二维码：IP 直连 `https://8.163.96.197`（2026-10-03 起服务端默认，
+/// 证书由 CloudTLSPinning 固定）与域名 `https://study.pccoding666.com`（保留，系统证书校验）。
+/// 拒绝任意其他服务器、携带凭据/端口/路径/查询的 URL；协议代次必须为 1。
 enum CloudPairing {
-  static let allowedHost = "study.pccoding666.com"
-  static let allowedURL = "https://study.pccoding666.com"
+  static let ipHost = "8.163.96.197"
+  static let domainHost = "study.pccoding666.com"
+  static let allowedHosts = [ipHost, domainHost]
+  static let domainURL = "https://\(domainHost)"
+
+  /// 白名单主机对应的规范入口地址（无尾斜杠）；其他主机返回 nil。
+  static func url(forHost host: String) -> String? {
+    allowedHosts.contains(host) ? "https://\(host)" : nil
+  }
 
   struct ParsedQR: Equatable, Sendable {
     let v: Int
@@ -21,7 +29,7 @@ enum CloudPairing {
       switch self {
       case .invalidJSON: "二维码内容不是有效的配对 JSON。"
       case .invalidVersion: "配对二维码版本不受支持，请更新应用后重试。"
-      case .invalidURL: "配对二维码指向的服务不受信任；只接受官方云域名 HTTPS 地址。"
+      case .invalidURL: "配对二维码指向的服务不受信任；只接受官方云服务的 HTTPS 地址。"
       case .invalidServiceID: "二维码中的服务标识不合法。"
       case .invalidSessionID: "二维码中的配对会话不合法。"
       case .invalidSecret: "二维码中的配对密钥不合法。"
@@ -42,9 +50,9 @@ enum CloudPairing {
     do { document = try JSONDecoder().decode(Document.self, from: Data(text.utf8)) }
     catch { throw QRParseError.invalidJSON }
     guard document.v == 1 else { throw QRParseError.invalidVersion }
-    // 固定云域名：https、无端口、无路径/查询/fragment、无用户信息。
+    // 固定入口白名单：https、主机在白名单内、无端口、无路径/查询/fragment、无用户信息。
     guard let parts = URLComponents(string: document.httpsUrl),
-      parts.scheme == "https", parts.host == allowedHost, parts.port == nil,
+      parts.scheme == "https", let host = parts.host, let httpsUrl = url(forHost: host), parts.port == nil,
       parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
       ["", "/"].contains(parts.path)
     else { throw QRParseError.invalidURL }
@@ -56,7 +64,7 @@ enum CloudPairing {
       document.secret.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_".contains($0)) })
     else { throw QRParseError.invalidSecret }
     return ParsedQR(v: document.v, serviceId: document.serviceId,
-      httpsUrl: allowedURL, sessionId: document.sessionId, secret: document.secret)
+      httpsUrl: httpsUrl, sessionId: document.sessionId, secret: document.secret)
   }
 }
 

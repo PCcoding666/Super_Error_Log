@@ -17,10 +17,14 @@ enum V2CropScope: String, Sendable {
 /// 错误文案令牌脱敏。无 UIKit/SwiftUI，不写日志，不保存任何状态。
 final class V2Client: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
   let configuration: PairingConfiguration
+  /// IP 入口的证书固定（与 RecognitionClient 相同；测试可注入）。
+  let pinning: CloudTLSPinning
   private var session: URLSession!
 
-  init(configuration: PairingConfiguration, sessionConfiguration: URLSessionConfiguration = .ephemeral) {
+  init(configuration: PairingConfiguration, sessionConfiguration: URLSessionConfiguration = .ephemeral,
+    pinning: CloudTLSPinning = .production) {
     self.configuration = configuration
+    self.pinning = pinning
     super.init()
     sessionConfiguration.timeoutIntervalForRequest = 60
     sessionConfiguration.timeoutIntervalForResource = 300
@@ -34,6 +38,13 @@ final class V2Client: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
     // 任何重定向（可能携带凭据）一律拒绝。
     completionHandler(nil)
+  }
+
+  /// IP 入口只信任 App 内固定的证书；域名与其他主机走系统默认校验（CloudTLSPinning）。
+  func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    let (disposition, credential) = pinning.disposition(for: challenge)
+    completionHandler(disposition, credential)
   }
 
   func close() { session.invalidateAndCancel() }

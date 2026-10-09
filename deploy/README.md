@@ -68,6 +68,9 @@ SEL_DATA_DIR=/var/lib/super-error-log
 SEL_AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 SEL_AI_API_KEY=<百炼密钥，与 SEL_MOBILE_AI_API_KEY 相同>
 SEL_AI_MODEL=<模型名>
+# 可选（2026-10-03 起）：配对二维码里发给手机的入口。缺省发 IP 直连 https://8.163.96.197；
+# 只允许这两个值之一，其他值启动即失败。兑换时两个入口都接受。见 §9。
+# SEL_MOBILE_PAIRING_URL=https://study.pccoding666.com
 ```
 
 参考 `.env.example`；缺任何必填项服务启动会直接失败（fail-hard，不静默降级 mock）。
@@ -260,3 +263,154 @@ systemctl start super-error-log-caddy
 ```
 
 如果失败发生在完整迁移之前，先保持 Caddy 停止，修复前置问题并将已验证归档恢复到**新的空独立目录**，完成 8.2 权限/内容检查后再启动安全回滚单元。不能把故障目标直接覆盖为旧快照；若已有新证书/账户写入，先私有备份并人工合并。没有可用且可验证的备份时停止自动恢复、交由运维处理。整个流程不删除旧存储，不用 777、公开学生目录或 root 运行 Caddy 来绕过问题。
+
+## 9. IP 直连入口（自签证书 + App 固定证书；用户书面批准"同意部署"后按顺序执行）
+
+背景：从境外连域名时 TLS 握手被重置（`docs/quality/2026-10-02-deploy-0.2.0-rc3.md`），不带 SNI 的握手正常。App 改为直连公网 IP `8.163.96.197`，域名入口保留。按 IP 连接时 ATS 不约束、系统也不信任自签证书，安全全靠 App 内固定的那张证书（`iOS/StudentApp/Resources/cloud-ip-cert.pem`）：服务器出示的证书必须与它逐字节一致，系统信任的证书也拒绝。
+
+### 9.1 范围
+
+- 新增：`/etc/super-error-log/tls-ip/`（证书与私钥）；Caddyfile 新增 `https://8.163.96.197` 站点和全局 `default_sni 8.163.96.197`（手机按 IP 连接不发 SNI，ECS 网卡是内网地址，不设置时 Caddy 找不到证书）；可选环境变量 `SEL_MOBILE_PAIRING_URL`（§2）。
+- 不动：80 端口与原网站、域名站点及其 ACME 证书与续期、Caddy systemd 单元、应用数据。
+- 顺序约束：新版 Caddyfile 引用证书文件，文件不存在时 Caddy 整体起不来，域名入口也会断。所以**先生成证书（9.3），再切 current，最后重启 Caddy（9.5）**。
+- 下面的服务器命令沿用 §8 的写法，在 `set -euo pipefail` 的 root shell 里分段执行：任一检查失败即停下，不往下做。
+
+### 9.2 暂存新版（不切 current）
+
+按 §3 上传、校验、解包到新的发布目录，并在其中 `npm ci --omit=dev`；**此时不切 current、不重启任何服务**。按 §6 做发布前备份。
+
+### 9.3 在服务器上生成证书（root）
+
+```bash
+set -euo pipefail
+read -r -p '已校验的新版发布目录绝对路径: ' SEL_NEW_RELEASE
+test -f "$SEL_NEW_RELEASE/deploy/generate-ip-cert.sh"
+getent group caddy                       # 期望一行 caddy:x:<gid>:
+test ! -e /etc/super-error-log/tls-ip    # 已存在就停下核对；不删除、不覆盖
+bash "$SEL_NEW_RELEASE/deploy/generate-ip-cert.sh" --ip 8.163.96.197 --dir /etc/super-error-log/tls-ip --group caddy
+```
+
+预期输出（指纹每次不同，**记下来**，9.4 和 9.6 要核对）：
+
+```
+证书已生成：/etc/super-error-log/tls-ip/cert.pem（拷回仓库供 App 固定）
+私钥：/etc/super-error-log/tls-ip/key.pem（0640，组 caddy；只留在本机，不要拷出、不要打印）
+subject=CN = 8.163.96.197
+notAfter=<约两年后的日期> GMT
+SHA256 Fingerprint=<32 组冒号分隔的十六进制>
+```
+
+脚本失败会删掉它刚建的目录（不碰其他文件），修好原因后重跑。然后核对权限：
+
+```bash
+stat -c '%A %U:%G %n' /etc/super-error-log/tls-ip /etc/super-error-log/tls-ip/*
+# 期望：
+# drwxr-x--- root:caddy /etc/super-error-log/tls-ip
+# -rw-r--r-- root:root /etc/super-error-log/tls-ip/cert.pem
+# -rw-r----- root:caddy /etc/super-error-log/tls-ip/key.pem
+runuser -u caddy -- test -r /etc/super-error-log/tls-ip/key.pem && echo 'caddy 可读私钥'
+runuser -u supererrorlog -- test -r /etc/super-error-log/tls-ip/key.pem || echo '应用用户读不到私钥'
+```
+
+### 9.4 证书拷回仓库，构建 App（本地 Mac）
+
+只拷 `cert.pem`，**私钥永远不离开服务器**。
+
+```bash
+cd ~/MyProject/Super_Error_Log          # 已合入本分支的工作区
+mkdir -p iOS/StudentApp/Resources
+scp root@<ECS>:/etc/super-error-log/tls-ip/cert.pem iOS/StudentApp/Resources/cloud-ip-cert.pem
+openssl x509 -in iOS/StudentApp/Resources/cloud-ip-cert.pem -noout -subject -fingerprint -sha256
+# 期望：subject 含 CN=8.163.96.197；指纹与 9.3 记下的完全一致
+grep -c 'PRIVATE KEY' iOS/StudentApp/Resources/cloud-ip-cert.pem   # 期望 0
+git add iOS/StudentApp/Resources/cloud-ip-cert.pem
+git commit -m 'chore(ios): pin the IP entry certificate'
+```
+
+按 `iOS/README.md` 构建并安装 App。装机前确认构建产物里有这张证书且指纹一致：
+
+```bash
+openssl x509 -in <构建产物目录>/SuperErrorLog.app/cloud-ip-cert.pem -noout -fingerprint -sha256   # 与 9.3 一致
+```
+
+App 里没有这个文件时，连 IP 入口一律失败（设计如此：没有可比对的证书就拒绝）；域名入口不受影响。
+
+### 9.5 切换应用并重启 Caddy（root）
+
+沿用 9.3 的 shell（`SEL_NEW_RELEASE` 已设置）；换了会话就先重新设置它。
+
+```bash
+# 先校验新版 Caddyfile（会实际加载证书文件），通过后才切换。
+/usr/local/bin/caddy validate --config "$SEL_NEW_RELEASE/deploy/caddy/Caddyfile" 2>&1 | tail -n 1
+# 期望 Valid configuration。若报 open /etc/super-error-log/tls-ip/...: no such file，说明 9.3 没做：停下
+ln -sfn "$SEL_NEW_RELEASE" /opt/super-error-log/current
+systemctl restart super-error-log
+systemctl is-active super-error-log                      # 期望 active
+systemctl restart super-error-log-caddy                  # admin off，只能重启；域名入口随之中断约 1 秒
+systemctl is-active super-error-log-caddy                # 期望 active
+journalctl -u super-error-log-caddy --since '2min ago' --no-pager | grep -E 'permission denied|"level":"error"' | grep -v 'config autosave' || echo '无新错误'
+journalctl -u super-error-log-caddy --since '2min ago' --no-pager | grep -c 'already loaded' || true   # 期望 1：IP 证书来自文件，不走 ACME
+ss -ltnp | grep -E ':(80|443|3101) '                     # 443 仍是 caddy，80 仍是原网站，3101 只在 127.0.0.1
+```
+
+日志里两条是预期的：`no OCSP stapling for [8.163.96.197]`（warn，自签证书没有 OCSP）；`unable to create folder for config autosave: mkdir /home/caddy: permission denied`（迁移前就有的既有报错，见 `docs/quality/2026-09-27-caddy-maintenance.md`，与本节无关）。
+
+切换后新生成的配对二维码默认带 IP 地址。手机还没装 9.4 的新版 App、又必须重新配对时，临时在 `/etc/super-error-log/env` 加 `SEL_MOBILE_PAIRING_URL=https://study.pccoding666.com` 并 `systemctl restart super-error-log`；装好新版后删掉这行再重启。
+
+### 9.6 验证
+
+服务器上（不经外网）：
+
+```bash
+openssl s_client -connect 127.0.0.1:443 -noservername </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256
+# 期望：与 9.3 的指纹一致（不带 SNI 拿到的是 IP 证书）
+echo | openssl s_client -connect 127.0.0.1:443 -servername study.pccoding666.com 2>/dev/null | openssl x509 -noout -issuer -enddate
+# 期望：仍是 Let's Encrypt 签发，到期日与切换前一致（域名入口不变）
+curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/v2/health   # 期望 401
+```
+
+从外部（如境外的本地 Mac；在仓库根目录执行）：
+
+```bash
+CERT=iOS/StudentApp/Resources/cloud-ip-cert.pem
+curl -sS -o /dev/null -w '%{http_code}\n' --cacert "$CERT" https://8.163.96.197/v2/health   # 期望 401
+curl -sS -o /dev/null -w '%{http_code}\n' --cacert "$CERT" https://8.163.96.197/v1/health   # 期望 401
+curl -sS -o /dev/null -w '%{http_code}\n' --cacert "$CERT" https://8.163.96.197/parent      # 期望 404
+curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
+# 不给证书：期望失败（exit=60，证书不受信任）——说明 IP 入口不是靠系统信任放行的
+```
+
+国内网络到 IP 入口的可达性只能由国内的手机实测（9.7）。
+
+### 9.7 手机改用 IP 入口
+
+1. 装好 9.4 构建的新版 App。
+2. 服务器上生成配对码，确认地址是 IP：
+   ```bash
+   /opt/super-error-log/node-v24/bin/node /opt/super-error-log/current/dist/mobile/admin-cli.js --data-dir /var/lib/super-error-log pairing-code
+   # 期望载荷中 "httpsUrl": "https://8.163.96.197"；5 分钟内有效、只能用一次
+   ```
+3. 按既有方式做成二维码，手机扫码；连接状态应显示「可以上传」。
+4. 已配对、没重新扫码的手机继续走域名（App 不会自动改入口）。旧版 App 扫 IP 二维码会提示「配对二维码指向的服务不受信任」，先升级 App。
+
+### 9.8 回滚
+
+- **只是手机连 IP 有问题**：`/etc/super-error-log/env` 加 `SEL_MOBILE_PAIRING_URL=https://study.pccoding666.com`，`systemctl restart super-error-log`，用域名二维码重新配对（新版 App 仍接受域名）。Caddy 不用动。
+- **Caddy 起不来，或域名入口受影响**：切回上一版（旧版 Caddyfile 没有 IP 站点），应用与 Caddy 都重启：
+  ```bash
+  ln -sfn /opt/super-error-log/releases/<上一版号> /opt/super-error-log/current
+  systemctl restart super-error-log
+  systemctl restart super-error-log-caddy
+  systemctl is-active super-error-log super-error-log-caddy                            # 期望两行 active
+  curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/v2/health    # 服务器上执行，期望 401
+  ```
+- `/etc/super-error-log/tls-ip/` **保留不删**：旧版不引用它，再次前滚时直接复用。不要重新生成——新证书与 App 里固定的不一致，IP 入口会全部被拒。
+
+### 9.9 换证书
+
+证书有效期 730 天。App 只比对证书本身、不看有效期，所以到期不会让 App 断开，但 9.6 的 `curl --cacert` 会报过期。换证书（到期前或私钥疑似泄露时）：
+
+1. 用新目录重跑 9.3（如 `--dir /etc/super-error-log/tls-ip-<年份>`）；脚本拒绝覆盖已有目录。
+2. 新发布版本的 Caddyfile 改用新目录的两条路径；仓库里替换 `iOS/StudentApp/Resources/cloud-ip-cert.pem`。
+3. App 只固定一张证书：新 App 连不上旧证书、旧 App 连不上新证书。先装好新 App，紧接着按 9.5 切换服务器；中间这段可临时用域名二维码过渡。
+4. 旧目录改名留存，不删除。

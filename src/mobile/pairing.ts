@@ -3,7 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const PAIRING_PROTOCOL_VERSION = 1 as const;
-const CLOUD_URL = 'https://study.pccoding666.com';
+/**
+ * 配对二维码可携带的云端入口（与 App 的 CloudPairing 白名单一致）：
+ * IP 直连（默认；自签证书由 App 固定，见 deploy/README.md §9）与域名（保留）。
+ * 二维码只发其中一个（SEL_MOBILE_PAIRING_URL）；兑换时载荷里的地址须在白名单内，且与该会话发出的一致。
+ */
+export const CLOUD_URLS = ['https://8.163.96.197', 'https://study.pccoding666.com'] as const;
+export type CloudUrl = typeof CLOUD_URLS[number];
+export const DEFAULT_PAIRING_URL: CloudUrl = 'https://8.163.96.197';
 const SESSION_TTL_MS = 5 * 60 * 1000;
 const DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -12,7 +19,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 export interface PairingCodePayload {
   v: 1;
   serviceId: string;
-  httpsUrl: 'https://study.pccoding666.com';
+  httpsUrl: CloudUrl;
   sessionId: string;
   secret: string;
 }
@@ -34,7 +41,15 @@ export interface DeviceTokenRecord {
   createdAt: string;
 }
 
-export interface PairingManagerOptions { now?: () => Date }
+export interface PairingManagerOptions { now?: () => Date; pairingUrl?: CloudUrl }
+
+/** 解析二维码要发的入口地址：未设置时用 IP；只允许白名单内的值，其他值启动即失败。 */
+export function resolvePairingUrl(value: string | undefined): CloudUrl {
+  if (value === undefined || value === '') return DEFAULT_PAIRING_URL;
+  const match = CLOUD_URLS.find(url => url === value);
+  if (!match) throw new Error(`SEL_MOBILE_PAIRING_URL 只能是 ${CLOUD_URLS.join(' 或 ')}，收到：${value}`);
+  return match;
+}
 
 export class PairingError extends Error {
   constructor(public readonly code: 'invalid_pairing_payload' | 'pairing_expired' | 'pairing_used' | 'pairing_not_found' | 'pairing_unavailable' | 'unauthorized', message: string) {
@@ -72,7 +87,7 @@ function isUuid(value: unknown): value is string {
 function validPayload(value: unknown): value is PairingCodePayload {
   if (!value || typeof value !== 'object') return false;
   const payload = value as Record<string, unknown>;
-  return payload.v === 1 && payload.httpsUrl === CLOUD_URL
+  return payload.v === 1 && CLOUD_URLS.some(url => url === payload.httpsUrl)
     && isUuid(payload.serviceId) && isUuid(payload.sessionId)
     && typeof payload.secret === 'string' && Buffer.from(payload.secret, 'base64url').length === 32;
 }
@@ -130,9 +145,11 @@ export class PairingManager {
   private mutation: Promise<void> = Promise.resolve();
   private redeemChain: Promise<void> = Promise.resolve();
   private readonly now: () => Date;
+  private readonly pairingUrl: CloudUrl;
 
   private constructor(readonly dataDir: string, readonly serviceId: string, options?: PairingManagerOptions) {
     this.now = options?.now ?? ((): Date => new Date());
+    this.pairingUrl = options?.pairingUrl ?? DEFAULT_PAIRING_URL;
   }
 
   static async open(dataDir: string, options?: PairingManagerOptions): Promise<PairingManager> {
@@ -154,7 +171,7 @@ export class PairingManager {
   createSession(): { payload: PairingCodePayload; expiresAt: Date } {
     const expiresAt = new Date(this.now().getTime() + SESSION_TTL_MS);
     const payload: PairingCodePayload = {
-      v: 1, serviceId: this.serviceId, httpsUrl: CLOUD_URL,
+      v: 1, serviceId: this.serviceId, httpsUrl: this.pairingUrl,
       sessionId: crypto.randomUUID(), secret: crypto.randomBytes(32).toString('base64url'),
     };
     this.sessions.set(payload.sessionId, { payload, expiresAt, redeemed: null });
@@ -178,7 +195,8 @@ export class PairingManager {
     const payload = input;
     const session = this.sessions.get(payload.sessionId);
     if (!session) throw new PairingError('pairing_not_found', '配对会话不存在或已失效，请重新扫码。');
-    if (session.payload.secret !== payload.secret || session.payload.serviceId !== payload.serviceId) {
+    if (session.payload.secret !== payload.secret || session.payload.serviceId !== payload.serviceId
+      || session.payload.httpsUrl !== payload.httpsUrl) {
       throw new PairingError('invalid_pairing_payload', '配对码内容与服务会话不符。');
     }
     // 过期检查先于恢复：已兑换会话过期后同样拒绝，内存秘密随会话一并丢弃。

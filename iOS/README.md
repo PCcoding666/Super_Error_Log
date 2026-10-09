@@ -48,6 +48,9 @@ Swift 包 `StudentCore`（`iOS/Package.swift`）只含纯逻辑与客户端：`D
 `RecognitionClient.swift`、`PairingStore.swift`、`StudyStore.swift`、`V2Client.swift`、
 `LoopStore.swift`；视图文件全部在 `exclude` 里（不进包、只进 App target，Xcode 工程是同步目录）。
 `swift test` 在 macOS 上跑（需 macOS 14+），用 `URLProtocol` 合成传输，不连真实服务。
+云端 IP 入口的固定证书是 `StudentApp/Resources/cloud-ip-cert.pem`（部署时在服务器生成后拷入，见 `deploy/README.md` §9），
+构建时自动打进 App；缺这个文件时 App 连 IP 入口一律拒绝，域名入口不受影响。`CloudIPEntryTests` 的真实握手用例
+用 `/usr/bin/openssl` 临时生成证书、在进程内起只监听 127.0.0.1 的 TLS 服务（需 macOS 15+）。
 注意：`SYMROOT=build/Manual` 等相对路径按**项目目录**（`iOS/`）解析。
 
 ## 界面回归测试（合成服务器，不连真实服务、不调用 AI）

@@ -68,7 +68,7 @@ final class CloudPairingTests: XCTestCase {
     configuration.protocolClasses = [SyntheticRedeemProtocol.self]
     let client = RecognitionClient(
       configuration: try PairingConfiguration.cloud(
-        serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+        baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
         token: "synthetic-device-token-32-bytes-test!",
         deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb",
         expiresAt: nil),
@@ -111,7 +111,7 @@ final class CloudPairingTests: XCTestCase {
     configuration.protocolClasses = [SyntheticRedeemProtocol.self]
     let client = RecognitionClient(
       configuration: try PairingConfiguration.cloud(
-        serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+        baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
         token: "synthetic-device-token-32-bytes-test!",
         deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb",
         expiresAt: nil),
@@ -128,25 +128,25 @@ final class CloudPairingTests: XCTestCase {
 
   func testCloudPairingConfigurationAcceptsOnlyFixedDomain() throws {
     XCTAssertNoThrow(try PairingConfiguration.cloud(
-      serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+      baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
       token: "synthetic-device-token-32-bytes-test!",
       deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb",
       expiresAt: nil))
     // token must be non-trivial and clean
     XCTAssertThrowsError(try PairingConfiguration.cloud(
-      serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+      baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
       token: "short",
       deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb",
       expiresAt: nil))
     // deviceId must be a UUID
     XCTAssertThrowsError(try PairingConfiguration.cloud(
-      serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+      baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
       token: "synthetic-device-token-32-bytes-test!",
       deviceId: "not-a-uuid",
       expiresAt: nil))
     // serviceId must be a UUID
     XCTAssertThrowsError(try PairingConfiguration.cloud(
-      serviceId: "nope",
+      baseURL: Self.cloudURL, serviceId: "nope",
       token: "synthetic-device-token-32-bytes-test!",
       deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb",
       expiresAt: nil))
@@ -253,7 +253,7 @@ final class CloudPairingTests: XCTestCase {
     configuration.protocolClasses = [SyntheticRedeemProtocol.self]
     return RecognitionClient(
       configuration: try PairingConfiguration.cloud(
-        serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+        baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
         token: "synthetic-device-token-32-bytes-test!",
         deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb",
         expiresAt: nil),
@@ -287,12 +287,12 @@ final class CloudPairingTests: XCTestCase {
     configuration.protocolClasses = [CloudStoreProtocol.self]
     // 注入合成传输：占位云配置（URL 固定云域名，但 URLProtocol 拦截该会话的全部请求）。
     let redeemTransport = RecognitionClient(configuration: try PairingConfiguration.cloud(
-      serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+      baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
       token: "synthetic-device-token-32-bytes-test!",
       deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb", expiresAt: nil),
       sessionConfiguration: configuration)
     let client = RecognitionClient(configuration: try PairingConfiguration.cloud(
-      serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
+      baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
       token: "synthetic-device-token-32-bytes-test!",
       deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb", expiresAt: nil),
       sessionConfiguration: configuration)
@@ -327,7 +327,7 @@ final class CloudPairingTests: XCTestCase {
       let configuration = URLSessionConfiguration.ephemeral
       configuration.protocolClasses = [CloudStoreProtocol.self]
       return RecognitionClient(configuration: try PairingConfiguration.cloud(
-        serviceId: serviceId, token: "synthetic-device-token-32-bytes-test!",
+        baseURL: Self.cloudURL, serviceId: serviceId, token: "synthetic-device-token-32-bytes-test!",
         deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb", expiresAt: nil),
         sessionConfiguration: configuration)
     }
