@@ -68,6 +68,9 @@ SEL_DATA_DIR=/var/lib/super-error-log
 SEL_AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 SEL_AI_API_KEY=<百炼密钥，与 SEL_MOBILE_AI_API_KEY 相同>
 SEL_AI_MODEL=<模型名>
+# 可选（2026-10-09 起）：学生网页版「说说为什么错」的语音转写模型，缺省 qwen3-asr-flash；
+# 用上面同一个 SEL_AI_API_KEY（该密钥要有这个模型的调用权限）。SEL_AI_BASE_URL 必须是百炼北京接口，否则启动即失败。
+# SEL_AI_MODEL_ASR=qwen3-asr-flash
 # 可选（2026-10-03 起）：配对二维码里发给手机的入口。缺省发 IP 直连 https://8.163.96.197；
 # 只允许这两个值之一，其他值启动即失败。兑换时两个入口都接受。见 §9。
 # SEL_MOBILE_PAIRING_URL=https://study.pccoding666.com
@@ -76,7 +79,7 @@ SEL_AI_MODEL=<模型名>
 参考 `.env.example`；缺任何必填项服务启动会直接失败（fail-hard，不静默降级 mock）。
 `SEL_MOBILE_HOST` 只允许 `127.0.0.1`——公网入口只有 Caddy。
 v2.0 T2 起入口为 `dist/main.js`：同一端口（3101）同时服务 `/v1` 识别与 `/v2` 手机接口（均设备令牌鉴权）。
-**云端公网入口不挂任何 Web 页面**（`/parent`、`/trends`、`/items` 等一律 404；Web 看板待有登录方案后再设计）。
+**云端公网入口不挂旧的 Web 看板**（`/parent`、`/trends`、`/items` 等一律 404；Web 看板待有登录方案后再设计）。唯一的网页是学生网页版 `/s/`（设备令牌 cookie 鉴权，只有学生自己的页面，见 §10）。
 旧的 `dist/mobile/server.js` 仅保留给开发调试，不再作为线上入口。
 
 `/v2` 使用 Web 的 AI 配置（`SEL_AI_BASE_URL`、`SEL_AI_API_KEY`、`SEL_AI_MODEL*`），与上面的 `SEL_MOBILE_AI_*` 配置为同值；
@@ -149,6 +152,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/v2/health
 curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/parent      # 期望 404
 curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/            # 期望 404
 curl -s -o /dev/null -w '%{http_code}\n' -X POST https://study.pccoding666.com/batches  # 期望 404
+
+# 学生网页版（§10）：外壳公开，内容要设备令牌 cookie
+curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/s/manifest.webmanifest   # 期望 200
+curl -s https://study.pccoding666.com/s/ | grep -c '先连上服务器'                              # 期望 1（没 cookie 只有连接页）
 ```
 
 ## 6. 回滚与备份
@@ -414,3 +421,42 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 2. 新发布版本的 Caddyfile 改用新目录的两条路径；仓库里替换 `iOS/StudentApp/Resources/cloud-ip-cert.pem`。
 3. App 只固定一张证书：新 App 连不上旧证书、旧 App 连不上新证书。先装好新 App，紧接着按 9.5 切换服务器；中间这段可临时用域名二维码过渡。
 4. 旧目录改名留存，不删除。
+
+## 10. 学生网页版（`/s/`，Safari「添加到主屏幕」；2026-10-09 起）
+
+在 Apple 开发者账号批下来之前，学生用 iPhone 的 Safari 打开网页版、添加到主屏幕当 App 用。网页版跟 App 是同一个服务、同一套数据和规则。
+
+### 10.1 部署上不需要新东西
+
+- 由同一个 `super-error-log` 单元（`dist/main.js`，127.0.0.1:3101）在云端模式下直接提供 `/s/`；**没有新进程、新端口、新依赖、新目录**。样式、脚本、图标都编译在 `dist/` 里（发布白名单不变）。
+- Caddy 不用改：`/s/` 经现有的 `study.pccoding666.com` 站点反代过去（请求体上限 15 MB 不变，照片和录音都在其内）。Caddyfile 没开访问日志，配对链接里的一次性码不会落进日志。
+- 环境变量：只多一个可选的 `SEL_AI_MODEL_ASR`（§2，缺省 `qwen3-asr-flash`，用同一个百炼密钥）。百炼配置不全时 `dist/main.js` 启动即失败（与 /v2 其他模型调用同一个守卫），不会悄悄退回 mock。
+- 时区：网页上的「今天」「距练习纸生成几天」、录结果可选的日期，和服务器的回传日期校验、ISO 周一样，都按**服务器进程的时区**算。上线前确认 `timedatectl | grep 'Time zone'` 是 `Asia/Shanghai`；如果是 UTC，北京时间 0–8 点之间网页和 App 的「今天」会差一天（本次不改单元文件，需要时另行批准加 `Environment=TZ=Asia/Shanghai`）。
+
+### 10.2 前提：学生手机上必须是**受信任的 HTTPS 主机名**
+
+- 网页版只能走域名 `https://study.pccoding666.com/s/`（Let's Encrypt 证书，Safari 信任）。**IP 入口 `https://8.163.96.197` 的自签证书只给 App 固定用，Safari 不接受**——在 Safari 里打开会报「此连接非私人连接」，「添加到主屏幕」后的网页 App、摄像头上传、录音、Service Worker 都要求安全连接，不能让学生点「继续访问」。
+- §9 的背景是「从境外连域名时 TLS 握手被重置」。**所以第一件事是用学生手机、在学生实际用的网络（家里 Wi-Fi 和手机流量各试一次）上打开 `https://study.pccoding666.com/s/`**，能看到「先连上服务器」才往下做。
+- 如果在学生的网络里域名也被重置：网页版这条路走不通，需要另一个受信任的主机名，例如给域名办 ICP 备案、换一个在学生网络里可达且有公共 CA 证书的主机名再反代过来，或者给 IP 申请公共 CA 签发的 IP 证书（Let's Encrypt 已开始签发短期 IP 证书；Caddy 版本与签发条件本次未核实）。这些都要 Peng 决定，不在本次范围。
+
+### 10.3 配对（网页版）
+
+- 同一个命令同时给出 App 的二维码载荷和网页版链接（同一次会话，二选一，5 分钟内有效，只能用一次）：
+  ```bash
+  /opt/super-error-log/node-v24/bin/node /opt/super-error-log/current/dist/mobile/admin-cli.js --data-dir /var/lib/super-error-log pairing-code
+  # 输出最后一行：https://study.pccoding666.com/s/pair?code=…
+  ```
+  链接里载荷的 `httpsUrl` 仍按 `SEL_MOBILE_PAIRING_URL` 发（缺省 IP），网页版不用它，只用链接本身的域名；需要别的受信任主机名时加 `--web-base https://<主机名>`。
+- 把链接发给学生（或做成二维码让他用「相机」扫）。**要在 Safari 里打开**：在微信里打开时页面会提示「在 Safari 中打开」，并且不让在微信里连接（码只能用一次）。打开后点「连接这台手机」才兑换。
+- 设备列表里显示为「网页版 · iPhone Safari」；撤销方式与 App 相同（`admin-cli … revoke <deviceId>`），撤销后网页显示「需要重新扫码」。
+- 主屏幕上的网页 App 在 iOS 上可能有自己独立的 cookie：如果从主屏幕打开时又让连接，再生成一条链接，让学生在主屏幕 App 的连接页里「粘贴链接」连接。
+
+### 10.4 第一次真机使用的 2 分钟检查
+
+1. 服务器上：`curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/s/manifest.webmanifest` 期望 200；`/v2/health` 仍 401，`/` 仍 404。
+2. 学生手机（学生的网络）Safari 打开 `https://study.pccoding666.com/s/`：看到「先连上服务器」，地址栏没有证书警告。
+3. 生成配对链接（10.3），在手机 Safari 打开 → 点「连接这台手机」→ 看到「连上了 ✓」和「今天大约 13 分钟，一共 5 步」。
+4. 分享 →「添加到主屏幕」→ 从主屏幕图标打开：全屏、没有地址栏，仍是「今天」（如果是连接页，按 10.3 最后一条粘贴新链接）。
+5. 点「拍第一页」→「同意，上传」→ 拍一页（用合成或无个人信息的纸）→ 出现「已拍 1 张」→「拍完了，下一步」→ 一两分钟内变成「找到 N 道…」。
+6. 可选：在「说说为什么错」里点「点一下开始说」，允许麦克风，说一句话，文字出现在文本框里（这是第一次真实调用百炼语音识别）。
+

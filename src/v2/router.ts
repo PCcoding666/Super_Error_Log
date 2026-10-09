@@ -14,6 +14,9 @@ import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from
 import { acceptCorrection, directCorrection, getCorrectionsReport, getEvidenceView, proposeCorrection } from './correctionService.js';
 import { getPrintStatus, readPrintMedia, requestPrint } from './printService.js';
 import type { FollowupProvider, CorrectionProvider, CoachProvider } from '../ai/provider.js';
+import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
+import type { RateLimiter } from '../mobile/rateLimit.js';
+import { TRANSCRIBE_MAX_BYTES, transcribeClip } from './transcribe.js';
 
 export const V2_PROTOCOL_VERSION = 2 as const;
 
@@ -28,6 +31,10 @@ export interface V2RouterOptions {
   correctionProvider?: CorrectionProvider;
   /** T5 打印快照提示/答案模型能力；缺省走全局 getCoachProvider()（mock 模式为确定性实现）。 */
   coachProvider?: CoachProvider;
+  /** 语音转写（POST /reflections/transcribe）；缺省走全局 getTranscriber()（mock 模式为固定转写）。 */
+  transcriber?: SpeechTranscriber;
+  /** 云端模式的限流器：转写每设备另有一档（回环模式不限流，传 null）。设备 ID 由挂载方的鉴权中间件放在 response.locals.deviceId。 */
+  limiter?: RateLimiter | null;
 }
 
 /**
@@ -238,6 +245,23 @@ export function createV2Router(options: V2RouterOptions = {}): Router {
     const result = directCorrection(String(request.params.id), request.body);
     if (!result.ok) { sendCorrectError(response, result); return; }
     response.json({ revision: result.revision, card: result.card });
+  });
+
+  // 语音转写：录音只在内存里经过，不落盘、不记日志；返回文字由学生自己改完再提交（见 src/v2/transcribe.ts）。
+  r.post('/reflections/transcribe', express.raw({ type: () => true, limit: TRANSCRIBE_MAX_BYTES }), async (request, response, next) => {
+    try {
+      const deviceId = typeof response.locals.deviceId === 'string' ? response.locals.deviceId : null;
+      if (options.limiter && deviceId) {
+        const gate = options.limiter.transcribe(deviceId);
+        if (!gate.allowed) {
+          response.setHeader('retry-after', String(gate.retryAfterSeconds));
+          response.status(429).json({ error: { code: 'rate_limited', message: '说得太频繁了，过一会儿再试，或者直接打字。' } });
+          return;
+        }
+      }
+      const outcome = await transcribeClip(options.transcriber ?? getTranscriber(), request.body, request.headers['content-type']);
+      response.status(outcome.status).json(outcome.body);
+    } catch (error) { next(error); }
   });
 
   // 修正即测量报告：只输出计数，不含题目文字。

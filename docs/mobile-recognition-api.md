@@ -92,6 +92,10 @@ Semantics: the secret is 32 bytes base64url, valid 5 minutes, single use. `servi
 
 Each redeemed device receives a 32-byte token (30-day expiry, individually revocable). Tokens are persisted as SHA-256 hashes only — `devices.json` (mode `0600`) never contains a plaintext token, and admin responses never echo one. A durable write must succeed before the token is returned; on failure the session stays unredeemed and the redeem can be retried. `GET /devices` lists device records without hashes; `POST /devices/:id/revoke` invalidates one device immediately and idempotently. Unknown paths return `404`; all other methods are rejected.
 
+### Web pairing link (student web client, 2026-10-09)
+
+The same one-time session can also be redeemed by the student web client at `/s/`. `admin-cli pairing-code` prints, after the QR payload, a link `https://study.pccoding666.com/s/pair?code=<base64url(JSON payload)>` (`--web-base` picks another trusted HTTPS hostname). Opening the link shows a confirmation page; the redeem happens only when the student taps 「连接这台手机」, through the same `PairingManager.redeem` (same expiry, single use, same failure rate limit). The resulting device token is stored in an httpOnly cookie `sel_device` (`Path=/s`, `SameSite=Lax`, `Secure` on non-local hosts) and is checked with the same authentication and per-device rate limits as `/v1` and `/v2`. The cookie is never sent to `/v1` or `/v2`. The web pages call the services in-process; the only JSON endpoint they use is `POST /s/voice` (mirror of `POST /v2/reflections/transcribe`, see the v2 doc §3.26). The web link host must be trusted by Safari: the IP entry's self-signed certificate is pinned by the app only.
+
 ## Data types
 
 `RecognitionJob`:
