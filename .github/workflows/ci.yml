@@ -1,0 +1,107 @@
+name: CI
+
+# 每个 PR 和每次推送到主线分支都自动验证。部署不在这里：部署仍是手动的，见 deploy/README.md。
+# 说明文档：docs/ci.md
+
+on:
+  pull_request:
+  push:
+    branches:
+      - codex/ai-error-review-mvp
+      - main
+
+# 同一个 PR（或同一个分支）有新提交时，取消还在跑的旧运行。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# 只读仓库内容即可；不需要任何密钥，也不写回仓库。
+permissions:
+  contents: read
+
+jobs:
+  # 等价于 `npm run verify`（typecheck -> build -> test -> test:e2e），拆成可见的步骤，
+  # 哪一步红了一眼就能看出来。
+  server:
+    name: server (typecheck, build, vitest, playwright)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # 全程使用 mock 模式：不需要、也不会读取任何 AI 密钥，不会发出真实模型请求。
+      SEL_AI_MODE: mock
+      # package-lock.json 里全部 255 个下载地址都指向 registry.npmmirror.com（国内镜像）。
+      # 这里让 npm 改从官方源 registry.npmjs.org 下载；锁文件里的 sha512 校验照常执行，所以装到的内容不变。
+      NPM_CONFIG_REPLACE_REGISTRY_HOST: always
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js 24
+        # package.json engines 要求 node >= 24（用到 node:sqlite），runner 自带的是 22，所以必须显式安装。
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          node --version
+          npm --version
+          npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Install Playwright Chromium
+        # 必须在 Vitest 之前：tests/globalSetup.ts 会调用 generateFixtures()（用 Chromium 渲染合成试卷），
+        # src/services/pdfService.ts 生成 A4 PDF 也用 Chromium；干净的 checkout 里 fixtures/assets 不存在，所以第一次 `npm test` 就要用到浏览器。
+        run: npx playwright install --with-deps chromium
+
+      - name: Unit and integration tests (Vitest)
+        run: npm test
+
+      - name: End-to-end tests (Playwright)
+        id: e2e
+        # playwright.config.ts 自己会启动两个服务（3199 和 3196/3197），数据在 data-e2e/ 与系统临时目录。
+        # 额外参数只影响产物：加 html 报告，并在失败时保留 trace，方便从云端排查；通过与否的判定不变。
+        run: npm run test:e2e -- --reporter=list,html --trace=retain-on-failure
+        env:
+          PLAYWRIGHT_HTML_OPEN: never
+
+      - name: Upload Playwright artifacts
+        if: ${{ failure() && steps.e2e.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-failure
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # 只跑 StudentCore 包的单元测试（合成传输，不连网络、不连真实服务）。
+  # 范围外（目前不做）：iOS/UITests 下的界面回归测试需要模拟器、签名步骤和约 9 分钟以上的运行时间，
+  # 见 iOS/README.md「界面回归测试」。要加的话另起一个 job，不要塞进这个。
+  ios-unit:
+    name: ios-unit (swift test)
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      # 固定到仓库验证过的 Xcode 26.6（macos-26 镜像里的默认版本，Swift 6.2；Package.swift 需要 swift-tools 6.0）。
+      # 以后镜像换了默认版本也不会悄悄变；如果镜像移除了这个版本，这一步会明确报错，改这一行即可。
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          sw_vers
+
+      - name: Swift package tests
+        run: swift test --package-path iOS
