@@ -75,6 +75,9 @@ final class CloudConnectionJourneyTests: XCTestCase {
     defer { server.stop() }
     let app = launchCloudApp(server)
     XCTAssertTrue(app.staticTexts["connection-state-failed"].waitForExistence(timeout: 10))
+    // 本周数据（合成服务器的 /v2 正常）到了之后「今天」卡才长成 5 步清单，页面高度才定型；
+    // 之前去量按钮位置、去点，页面还会再变高。
+    XCTAssertTrue(app.staticTexts["today-header"].waitForExistence(timeout: 10), "本周数据加载完，页面高度定型")
     let retry = app.buttons["retry-connection"]
     let rescan = app.buttons["rescan-connection"]
     XCTAssertTrue(retry.waitForExistence(timeout: 5), "连接失败仍保留重试入口")
@@ -89,6 +92,7 @@ final class CloudConnectionJourneyTests: XCTestCase {
 
     // 「重试连接」还是重试：再发一次检查，仍是连接失败，配对和按钮都在，不弹扫码页。
     let requestsBeforeRetry = server.requestCount
+    scrollToSettledHittable(retry, in: app)
     retry.tap()
     waitUntil("重试会再发一次健康检查") { server.requestCount > requestsBeforeRetry }
     XCTAssertTrue(app.staticTexts["connection-state-failed"].waitForExistence(timeout: 10))
@@ -97,6 +101,9 @@ final class CloudConnectionJourneyTests: XCTestCase {
     XCTAssertFalse(app.otherElements["pairing-scanner"].exists, "重试不得打开扫码页")
 
     // 「重新扫码」：清掉配对回到未配对，并打开扫码页。
+    // 重试期间（.checking）行里只剩重试按钮，页面会变矮；恢复 .failed 后按钮位置可能已经变了，
+    // 所以每次点之前都重新滚到可点并等停稳，不靠 XCUITest 点击时的临时滚动。
+    scrollToSettledHittable(app.buttons["rescan-connection"], in: app)
     app.buttons["rescan-connection"].tap()
     // 模拟器没有相机，扫码页是一块黑屏（带稳定标识 pairing-scanner）。
     let scanner = app.otherElements["pairing-scanner"]
@@ -212,6 +219,31 @@ final class CloudConnectionJourneyTests: XCTestCase {
       RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     }
     XCTFail(description)
+  }
+
+  /// 把元素滚到可点的位置，并等它停下来（可点且 frame 连续 3 次采样不变，每次间隔 0.1 秒）才返回。
+  /// iPhone 13 上连接行默认落在底部「下一步」条的下面（不可点）：交给 XCUITest 在点击时临时滚动再点，
+  /// 在整类顺序跑时出现过一次点击没触发按钮（行仍是连接失败）。这里改成先自己滚、等位置停稳再点；
+  /// 是按条件等待，不是固定睡眠，停不稳就让用例失败。
+  @MainActor
+  private func scrollToSettledHittable(_ element: XCUIElement, in app: XCUIApplication,
+                                       file: StaticString = #filePath, line: UInt = #line) {
+    var swipes = 0
+    while !element.isHittable && swipes < 4 {
+      app.swipeUp()
+      swipes += 1
+    }
+    var last = CGRect.null
+    var stable = 0
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline {
+      let frame = element.frame
+      stable = (element.isHittable && frame == last) ? stable + 1 : 0
+      if stable >= 3 { return }
+      last = frame
+      RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    }
+    XCTFail("\(element.identifier) 没有停稳在可点的位置", file: file, line: line)
   }
 
   @MainActor
