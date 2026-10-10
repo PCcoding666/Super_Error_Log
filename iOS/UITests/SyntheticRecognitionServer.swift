@@ -14,6 +14,8 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
   /// 云端语义的合成 health 行为（供 `-cloud-loopback` DEBUG 注入路径消费）。
   enum CloudHealth {
     case accepting, busy, unauthorized, rateLimited
+    /// 旧入口连不上（例如换了网络后域名被重置）：收下连接但不回任何响应就关掉，客户端得到传输错误。
+    case unreachable
     var acceptingJobs: Bool { self == .accepting }
   }
 
@@ -201,6 +203,8 @@ final class SyntheticRecognitionServer: @unchecked Sendable {
         respond(descriptor, data: Data(#"{"error":{"code":"unauthorized","message":"设备令牌无效。"}}"#.utf8), status: 401)
       case .rateLimited:
         respond(descriptor, data: Data(#"{"error":{"code":"rate_limited","message":"请求过于频繁，请稍后再试。"}}"#.utf8), status: 429)
+      case .unreachable:
+        break // 不写任何响应：exchange 返回后连接被关闭。
       }
       return
     }
