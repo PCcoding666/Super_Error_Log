@@ -3,13 +3,17 @@ import { config } from '../config.js';
 /**
  * 「说说为什么错」的语音转文字（学生网页版用；iOS App 在手机上本地转写，不走这里）。
  * - mock 模式（默认、测试）：固定返回一句合成的转写，不发任何网络请求。
- * - bailian 模式：调用百炼（DashScope）OpenAI 兼容接口的千问 ASR（默认 qwen3-asr-flash），
+ * - bailian 模式：调用百炼（DashScope）**原生**多模态接口的千问音频识别（默认 qwen-audio-3.1-asr-flash；
+ *   该模型不在 OpenAI 兼容的 chat/completions 上，兼容接口对它返回 404），
  *   音频以 Base64 Data URL 放在请求体里，只在内存里经过一次，**服务器不落盘、不记日志**。
  * - 其他模式或缺配置：fail-hard（启动守卫 + 取用时再查一次），绝不悄悄退回 mock。
  */
 
-export const ASR_DEFAULT_MODEL = 'qwen3-asr-flash';
+export const ASR_DEFAULT_MODEL = 'qwen-audio-3.1-asr-flash';
+/** SEL_AI_BASE_URL 必须等于它（北京地域；文本模型仍走这个兼容接口）。 */
 export const ASR_BAILIAN_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+/** 语音转写实际调用的原生接口：固定常量（北京地域），不做成环境变量。 */
+export const ASR_NATIVE_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
 /** mock 模式固定转写（合成句子，不含任何真实学生内容）。 */
 export const MOCK_TRANSCRIPT = '我以为移项不用变号，就直接抄过去了。';
 
@@ -35,7 +39,6 @@ export class MockTranscriber implements SpeechTranscriber {
 }
 
 export interface BailianTranscriberOptions {
-  baseUrl: string;
   apiKey: string;
   model: string;
   timeoutMs?: number;
@@ -43,30 +46,61 @@ export interface BailianTranscriberOptions {
   fetchImpl?: typeof fetch;
 }
 
+/** 浏览器录音 MIME → 原生接口 `parameters.format`（已核实 m4a/aac/webm 都能识别）；iOS Safari 产出 audio/mp4（AAC）。 */
+const FORMAT_BY_MIME: Readonly<Record<string, string>> = {
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/webm': 'webm',
+};
+/** m4a 的几种别名统一成 audio/mp4 放进 Data URL（与已核实的请求一致）。 */
+const DATA_URL_MIME: Readonly<Record<string, string>> = { 'audio/x-m4a': 'audio/mp4', 'audio/m4a': 'audio/mp4' };
+
+function normalizeMime(mimeType: string): string {
+  return mimeType.split(';')[0]!.trim().toLowerCase();
+}
+
+/** 从原生接口响应里取转写文字：优先 output.text，其次 output.sentence.text（对象或数组）；都没有返回 null。 */
+function extractText(body: unknown): string | null {
+  const output = (body as { output?: { text?: unknown; sentence?: unknown } } | null | undefined)?.output;
+  if (!output || typeof output !== 'object') return null;
+  if (typeof output.text === 'string') return output.text.trim();
+  const sentences = Array.isArray(output.sentence) ? output.sentence : [output.sentence];
+  const parts = sentences.map(item => (item && typeof item === 'object' ? (item as { text?: unknown }).text : undefined));
+  if (parts.length > 0 && parts.every(part => typeof part === 'string')) return (parts as string[]).join('').trim();
+  return null;
+}
+
 export class BailianTranscriber implements SpeechTranscriber {
   readonly source = 'bailian' as const;
   constructor(private readonly options: BailianTranscriberOptions) {}
 
-  /** 请求体（可单测；不含密钥）。 */
+  /**
+   * 请求体（可单测；不含密钥）。不带 sample_rate：2026-10-11 用真实调用核实，省略后 16 k/44.1 k/48 k 的
+   * AAC 与 48 k Opus-WebM 都能正确转写，浏览器录音的真实采样率因此不用我们去猜。
+   */
   requestBody(audio: Buffer, mimeType: string): Record<string, unknown> {
+    const mime = normalizeMime(mimeType);
+    const format = FORMAT_BY_MIME[mime];
+    if (!format) throw new TranscribeError('provider_error', `语音转写不支持这种录音格式：${mime || '空'}。`);
     return {
       model: this.options.model,
-      messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: `data:${mimeType};base64,${audio.toString('base64')}` } }] }],
-      stream: false,
-      // 学生说的是普通话；数字保持原样（不做 ITN），以免把「移项」之类改写。
-      asr_options: { language: 'zh', enable_itn: false },
+      input: { messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: `data:${DATA_URL_MIME[mime] ?? mime};base64,${audio.toString('base64')}` } }] }] },
+      parameters: { format },
     };
   }
 
   async transcribe(audio: Buffer, mimeType: string, signal?: AbortSignal): Promise<string> {
+    const requestBody = JSON.stringify(this.requestBody(audio, mimeType));
     const timeout = AbortSignal.timeout(this.options.timeoutMs ?? 30_000);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response: Response;
     try {
-      response = await (this.options.fetchImpl ?? fetch)(`${this.options.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      response = await (this.options.fetchImpl ?? fetch)(ASR_NATIVE_ENDPOINT, {
         method: 'POST',
         headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify(this.requestBody(audio, mimeType)),
+        body: requestBody,
         signal: combined,
       });
     } catch {
@@ -76,12 +110,9 @@ export class BailianTranscriber implements SpeechTranscriber {
     if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`);
     let body: unknown;
     try { body = await response.json(); } catch { throw new TranscribeError('invalid_output', '语音转写结果无法解析。'); }
-    const content = (body as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]?.message?.content;
-    if (typeof content === 'string') return content.trim();
-    if (Array.isArray(content)) {
-      return content.map(part => (part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string' ? (part as { text: string }).text : '')).join('').trim();
-    }
-    throw new TranscribeError('invalid_output', '语音转写结果里没有文字。');
+    const text = extractText(body);
+    if (text === null) throw new TranscribeError('invalid_output', '语音转写结果里没有文字。');
+    return text;
   }
 }
 
@@ -99,7 +130,7 @@ export function assertAsrConfigured(cfg: AsrConfig): void {
 export function createTranscriber(cfg: AsrConfig & { aiTimeoutMs?: number }): SpeechTranscriber {
   if (cfg.aiMode === 'mock') return new MockTranscriber();
   assertAsrConfigured(cfg);
-  return new BailianTranscriber({ baseUrl: cfg.aiBaseUrl, apiKey: cfg.aiApiKey, model: cfg.aiAsrModel, timeoutMs: Math.min(cfg.aiTimeoutMs ?? 30_000, 60_000) });
+  return new BailianTranscriber({ apiKey: cfg.aiApiKey, model: cfg.aiAsrModel, timeoutMs: Math.min(cfg.aiTimeoutMs ?? 30_000, 60_000) });
 }
 
 let shared: SpeechTranscriber | null = null;
