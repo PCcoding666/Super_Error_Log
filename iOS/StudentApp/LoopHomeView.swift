@@ -162,10 +162,9 @@ struct LoopHomeView: View {
       showScanner = true
     case .rescan:
       // 与连接行的「重新扫码」相同：先清凭据回到未配对，再打开扫码页。
-      Task {
-        await store.connectionAction()
-        showScanner = true
-      }
+      // 直接走 repairByRescan（不看当前状态）；不经 connectionAction，它对「连不上」只会重查、不清凭据。
+      store.repairByRescan()
+      showScanner = true
     case .capture:
       startCapture()
     case .uploadPending:
