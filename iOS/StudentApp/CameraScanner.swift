@@ -49,6 +49,8 @@ final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMe
   override func viewDidLoad() {
     super.viewDidLoad()
     view.backgroundColor = .black
+    // 稳定标识：模拟器没有相机，扫码页是一块黑屏；UI 测试靠它确认扫码页确实弹出来了。
+    view.accessibilityIdentifier = "pairing-scanner"
     configureSession()
   }
 
