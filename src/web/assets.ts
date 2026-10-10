@@ -189,6 +189,8 @@ body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-
 /* 练习纸（A4）：屏幕上缩放预览，打印时只印纸 */
 .sheet-wrap{overflow:hidden;margin:12px 0}
 .sheet{color:#111;background:#fff;font:12pt/1.55 "PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Songti SC",serif}
+/* 练习纸版式不在本轮范围：把页面上通用的段落规则（间距、行长、换行策略）挡在纸外面，纸上保持原来的 6px 段距。 */
+.sheet p{margin:6px 0;max-width:none;text-wrap:wrap}
 .sheet .page{background:#fff;width:210mm;min-height:297mm;padding:16mm 16mm 18mm;margin:0 0 12px;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .sheet h3{font-size:20pt;margin:0 0 6mm}
 .sheet .item{break-inside:avoid;page-break-inside:avoid;border-top:1px solid #bbb;padding:5mm 0 4mm}
