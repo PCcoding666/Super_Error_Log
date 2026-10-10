@@ -23,6 +23,7 @@ import type { MobileRecognitionService } from '../../src/mobile/service.js';
 import type { InventoryCandidate, MobileVisionBoundary, VisionInventoryResult, VisionQuestionResult } from '../../src/mobile/vision.js';
 import { createV2Router } from '../../src/v2/router.js';
 import { createWebClientRouter, dayOptions } from '../../src/web/router.js';
+import { readTrail } from '../../src/web/trail.js';
 import { syntheticMp4 } from '../helpers/syntheticAudio.js';
 
 const roots: string[] = [];
@@ -506,5 +507,84 @@ describe('录结果的日期选项', () => {
     expect(week).toHaveLength(7);
     expect(week[0]).toEqual({ value: '2026-10-04', label: '周日 10/4' });
     expect(week[6]).toEqual({ value: '2026-10-10', label: '今天' });
+  });
+});
+
+describe('互动记录：每个动作只记时间、路由模板、动作标识、设备 ID（docs/web-interaction-trail.md）', () => {
+  it('看页、点按（随请求带来 / 不跳页时的 HEAD）、提交、跳过、出错都写进审计日志，不带任何内容', async () => {
+    const env = await setup();
+    const stranger = new Browser(env.base);
+    await stranger.get('/s/');
+    const browser = await pairBrowser(env);
+    const [device] = await env.manager.listDevices();
+    const deviceId = device!.deviceId;
+    await browser.get('/s/?paired=1');
+    // 页面脚本把点了哪个按钮放进 sel_tap，随下一个请求带来；带来后清掉。同一条点按再来一次不重复记。
+    browser.cookies.set('sel_tap', encodeURIComponent('a1b2c3.primary.capture@/s/'));
+    await browser.get('/s/capture');
+    expect(browser.cookies.has('sel_tap')).toBe(false);
+    browser.cookies.set('sel_tap', encodeURIComponent('a1b2c3.primary.capture@/s/'));
+    await browser.get('/s/capture');
+    // 不跳页的点按（拍照、打印、录音）：脚本立刻发 HEAD 把它带来，服务器记完回 204。
+    browser.cookies.set('sel_tap', encodeURIComponent('d4e5f6.primary.capture@/s/capture|e7.error.mic_denied@/s/why/pkt_0123456789abcdef/itm_0123456789abcdef'));
+    const beacon = await browser.request('/s/capture', { method: 'HEAD' });
+    expect(beacon.status).toBe(204);
+    await browser.post('/s/consent');
+    await browser.post('/s/skip', { step: 'shoot' });
+    expect((await uploadPhoto(browser, Buffer.from('definitely not an image'))).status).toBe(400);
+    expect((await browser.get('/s/items/itm_0123456789abcdef')).status).toBe(404);
+    expect((await browser.get('/s/some-page-that-does-not-exist')).status).toBe(404);
+    // 脚本的自动刷新（等 AI 的页面）记成 refresh，不和他自己打开的页面混在一起。
+    browser.cookies.set('sel_tap', encodeURIComponent('r1.auto.refresh@/s/photos'));
+    await browser.get('/s/photos');
+
+    const rows = readTrail(deviceId);
+    const lines = rows.map(row => `${row.kind} ${row.route}#${row.action}`);
+    expect(lines).toEqual(expect.arrayContaining([
+      'submit /s/pair#submit',
+      'view /s/#open',
+      'tap /s/#primary.capture',
+      'view /s/capture#open',
+      'tap /s/capture#primary.capture',
+      'error /s/why/:pid/:itemId#client:mic_denied',
+      'submit /s/consent#submit',
+      'skip /s/skip#shoot',
+      'error /s/capture#400:unreadable',
+      'error /s/items/:id#404',
+      'error /s/*#404',
+      'view /s/photos#refresh',
+    ]));
+    expect(lines.filter(line => line === 'tap /s/#primary.capture')).toHaveLength(1);
+    expect(readTrail(null).map(row => `${row.kind} ${row.route}#${row.action}`)).toContain('view /s/#connect');
+    // 每一行都有时间戳和这台设备的 ID；路由与动作里没有任何 ID、配对码、查询参数或内容。
+    for (const row of rows) {
+      expect(row.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(row.deviceId).toBe(deviceId);
+      expect(`${row.route}#${row.action}`).not.toMatch(/pkt_|itm_[0-9a-f]|[0-9a-f]{8}-[0-9a-f]{4}|code=|\?|not an image|[\u4e00-\u9fff]/);
+    }
+    expect(new Set(rows.map(row => row.kind))).toEqual(new Set(['view', 'tap', 'submit', 'skip', 'error']));
+  });
+
+  it('这周的练习纸生成以后又拍了卷子：「勾出做错的题」说明新题去哪，主按钮回到今天（门槛 G3）', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const first = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(first.jobId)).status === 'completed');
+    const choose = await browser.text('/s/choose');
+    const itemIds = [...choose.matchAll(/name="itemIds"(?: checked="")? value="(itm_[0-9a-f]+)"/g)].map(match => match[1]!);
+    const packetId = (await browser.post('/s/choose', { itemIds })).headers.get('location')!.split('/').pop()!;
+    await browser.post('/s/skip', { step: 'why', practice: packetId });
+    await waitFor(async () => (await browser.text(`/s/print/${packetId}`)).includes('data-testid="sheet"'));
+    expect(await browser.text('/s/?printed=1')).toContain('这周的事做完了');
+    // 做完以后又拍了一张（周中入口「又发了卷子？现在拍」也走到这里）。
+    const again = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(again.jobId)).status === 'completed');
+    const photos = await browser.text('/s/photos');
+    expect(photos).toContain('data-testid="photos-after-week"');
+    expect(photos).toContain('这几道下个周末再选');
+    expect(photos).toContain('下个周末「选这周要练的题」时，它们会出现在里面');
+    expect(photos).toMatch(/<a class="btn primary" href="\/s\/" data-testid="next-step-primary"[^>]*>回到今天<\/a>/);
+    expect(photos).not.toContain('下一步：选这周要练的题');
   });
 });

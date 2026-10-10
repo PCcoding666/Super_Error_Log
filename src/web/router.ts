@@ -35,6 +35,7 @@ import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
 import { CLIENT_SCRIPT, SERVICE_WORKER, STYLES, iconPng, manifest } from './assets.js';
 import { COOKIE, clearCookie, giveConsent, hasConsent, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, type TodayState, type WebContext } from './state.js';
+import { trailRecorder, trailTaps } from './trail.js';
 import { DEFAULT_TIME_ZONE, localDayOrdinal, localDayText, stepCaption, type StepKind } from './weekPlan.js';
 import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, OfflinePage, PairPage, TodayPage } from './views/today.js';
 import { CapturePage, ConsentPage, PhotosPage, PickPage } from './views/photos.js';
@@ -180,6 +181,10 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.setHeader(name, value);
     next();
   });
+  // 互动记录：每个请求结束时记看页 / 提交 / 跳过 / 出错（只记路由模板、动作标识、设备 ID，见 trail.ts）。
+  r.use(trailRecorder());
+  /** 给这次请求的互动记录标一个出错原因（固定的短标识，不是给人看的文案）。 */
+  const failed = (response: Response, code: string): void => { response.locals.trailError = code; };
 
   // ---------- 公开资源（无学生数据） ----------
   r.get('/manifest.webmanifest', (_request, response) => { response.type('application/manifest+json').send(JSON.stringify(manifest())); });
@@ -214,11 +219,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         const seconds = (Date.parse(result.expiresAt) - Date.now()) / 1000;
         setCookie(request, response, COOKIE.device, result.token, seconds);
         audit('web_client_paired', 'device', result.deviceId);
+        response.locals.deviceId = result.deviceId;
         response.redirect(303, '/s/?paired=1');
       } catch (error) {
         if (!(error instanceof PairingError)) throw error;
+        failed(response, error.code);
         const gate = options.limiter.pairingFailure(options.ipOf(request));
-        if (!gate.allowed) { response.setHeader('retry-after', String(gate.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds }), 429); return; }
+        if (!gate.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(gate.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds }), 429); return; }
         const status = error.code === 'pairing_expired' ? 410 : error.code === 'pairing_used' ? 409 : error.code === 'pairing_not_found' ? 404 : error.code === 'pairing_unavailable' ? 503 : 400;
         render(response, ConnectPage({ reason: 'unpaired', error: error.message }), status);
       }
@@ -234,6 +241,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         if (reason === 'unauthorized') clearCookie(request, response, COOKIE.device);
         if (request.method !== 'GET') { if (wantsJson(request) || request.path === '/voice') { response.status(401).json({ error: { code: 'unauthorized', message: '需要重新连接。' } }); } else { response.redirect(303, '/s/'); } return; }
         if (!isPage) { response.status(401).type('text/plain').send('unauthorized'); return; }
+        if (reason === 'unauthorized') failed(response, 'unauthorized'); else response.locals.trailView = 'connect';
         render(response, ConnectPage({ reason }), reason === 'unauthorized' ? 401 : 200);
       };
       if (!token) { reject('unpaired'); return; }
@@ -242,22 +250,25 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       catch (error) {
         if (!(error instanceof PairingError)) throw error;
         const fail = options.limiter.authFailure(options.ipOf(request));
-        if (!fail.allowed) { response.setHeader('retry-after', String(fail.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: fail.retryAfterSeconds }), 429); return; }
+        if (!fail.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(fail.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: fail.retryAfterSeconds }), 429); return; }
         reject('unauthorized');
         return;
       }
+      response.locals.deviceId = deviceId;
       const query = options.limiter.authedQuery(deviceId);
       if (!query.allowed) {
+        failed(response, 'busy');
         response.setHeader('retry-after', String(query.retryAfterSeconds));
         if (request.path === '/voice' || wantsJson(request)) { response.status(429).json({ error: { code: 'rate_limited', message: '请求过于频繁，请稍后再试。' } }); return; }
         render(response, BusyPage({ retryAfterSeconds: query.retryAfterSeconds }), 429);
         return;
       }
-      if (request.method === 'POST' && crossSite(request)) { response.status(403).send('forbidden'); return; }
-      response.locals.deviceId = deviceId;
+      if (request.method === 'POST' && crossSite(request)) { failed(response, 'cross_site'); response.status(403).send('forbidden'); return; }
       next();
     } catch (error) { next(error); }
   });
+  // 页面脚本记下的点按（cookie sel_tap）在这里收下；不跳页的点按发来的 HEAD 到这里就结束。
+  r.use(trailTaps());
 
   const page = (handler: (request: Request, response: Response) => Promise<void> | void) =>
     async (request: Request, response: Response, next: express.NextFunction): Promise<void> => {
@@ -280,6 +291,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const skips = readSkips(request);
     skips.steps.add(step);
     writeSkips(request, response, skips);
+    response.locals.trailSkip = step;
     const practiceId = str(request.body?.practice);
     if (step === 'why' && PACKET_ID.test(practiceId) && getPractice(practiceId)) {
       requestPrint(practiceId, options.coachProvider);
@@ -305,11 +317,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   r.post('/capture', async (request, response, next) => {
     const fail = (code: string, status: number): void => {
+      failed(response, code);
       if (wantsJson(request)) { response.status(status).json({ error: { code, message: UPLOAD_ERRORS[code] ?? '没传上去。' } }); return; }
       response.redirect(303, `/s/capture?err=${code}`);
     };
     if (!hasConsent(request)) {
       // 第一次上传前必须先看「上传前看一下」并同意；没同意的照片不收（也不读进内存以外的任何地方）。
+      failed(response, 'consent_required');
       if (wantsJson(request)) { response.status(403).json({ error: { code: 'consent_required', message: '第一次上传前，先看一下上传说明。' } }); return; }
       response.redirect(303, '/s/capture');
       return;
@@ -358,9 +372,20 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.get('/photos', page(async (request, response) => {
     const state = await loadToday(ctx, request);
     const refresh = state.photos.some(photo => photo.state === 'finding');
-    const bar = nextStepBar(state, 'pick');
     const err = request.query.err === 'retry' ? '这次没重试成功，过一会儿再试。' : null;
-    render(response, PhotosPage({ photos: state.photos.filter(photo => !(photo.dismissed && photo.failure)), bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, flash: { err } }));
+    const photos = state.photos.filter(photo => !(photo.dismissed && photo.failure));
+    // 这周的练习纸已经生成（做完了 / 周中）以后又拍了卷子：这周的练习已经定了，不再带他去选题；
+    // 说清楚新找到的题去了哪（进错题本，下个周末再选），下一步是「回到今天」（门槛 G3）。
+    if (state.plan.stage === 'done' || state.plan.stage === 'midweek') {
+      const needsPick = photos.find(photo => photo.state === 'needsPick');
+      const bar: BarModel = needsPick
+        ? { caption: '', primary: { title: `勾第 ${needsPick.number} 张`, key: 'openPick', href: `/s/photos/${needsPick.jobId}` }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] }
+        : { caption: refresh ? 'AI 在后台找题，可以先回去' : '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
+      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, flash: { err } }));
+      return;
+    }
+    const bar = nextStepBar(state, 'pick');
+    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, flash: { err } }));
   }));
 
   const weekPhoto = async (request: Request, jobId: string) => {
@@ -379,10 +404,10 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const jobId = requireMatch(String(request.params.jobId), UUID);
     const { photo } = await weekPhoto(request, jobId);
     const ids = list(request.body?.questionIds).filter(id => UUID.test(id));
-    if (ids.length === 0) { render(response, PickPage({ photo, error: '先勾出做错的题。' }), 400); return; }
+    if (ids.length === 0) { failed(response, 'none_picked'); render(response, PickPage({ photo, error: '先勾出做错的题。' }), 400); return; }
     try { await options.service.select(jobId, [...new Set(ids)].slice(0, 30)); }
     catch (error) {
-      if (error instanceof MobileRequestError) { render(response, PickPage({ photo, error: error.message }), error.status); return; }
+      if (error instanceof MobileRequestError) { failed(response, 'select_failed'); render(response, PickPage({ photo, error: error.message }), error.status); return; }
       throw error;
     }
     response.redirect(303, '/s/photos');
@@ -407,7 +432,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       if (ids.length === 0) await options.service.retry(jobId, null);
       else for (const id of ids) await options.service.retry(jobId, id);
     } catch (error) {
-      if (error instanceof MobileRequestError) { response.redirect(303, '/s/photos?err=retry'); return; }
+      if (error instanceof MobileRequestError) { failed(response, 'retry_failed'); response.redirect(303, '/s/photos?err=retry'); return; }
       throw error;
     }
     response.redirect(303, '/s/photos');
@@ -449,7 +474,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const itemId = String(request.params.id);
     findItem(itemId);
     const result = discardV2Item(itemId);
-    if (!result.ok) { render(response, detail(itemId, result.message), result.httpStatus); return; }
+    if (!result.ok) { failed(response, 'discard_refused'); render(response, detail(itemId, result.message), result.httpStatus); return; }
     response.redirect(303, `/s/items?removed=${itemId}`);
   }));
 
@@ -476,7 +501,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const result = await proposeCorrection(itemId, {
       instruction, method, revision: Number(str(request.body?.revision)), clientRequestId: str(request.body?.clientRequestId),
     }, options.correctionProvider);
-    if (!result.ok) { render(response, fixPage(itemId, { error: result.message, instruction }), result.httpStatus); return; }
+    if (!result.ok) { failed(response, 'fix_failed'); render(response, fixPage(itemId, { error: result.message, instruction }), result.httpStatus); return; }
     render(response, fixPage(itemId, { instruction, proposal: { proposalId: result.proposalId, revision: result.revision, changes: result.changes, clarify: result.clarify } }));
   }));
 
@@ -484,7 +509,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const itemId = String(request.params.id);
     findItem(itemId);
     const result = acceptCorrection(itemId, { proposalId: str(request.body?.proposalId), revision: Number(str(request.body?.revision)) });
-    if (!result.ok) { render(response, fixPage(itemId, { error: result.message }), result.httpStatus); return; }
+    if (!result.ok) { failed(response, 'fix_accept_failed'); render(response, fixPage(itemId, { error: result.message }), result.httpStatus); return; }
     response.redirect(303, `/s/items/${itemId}`);
   }));
 
@@ -504,7 +529,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const after = str(request.body?.questionText).replace(/\r\n/g, '\n');
     if (after.trim() === '' || after === evidence.questionText) { response.redirect(303, `/s/items/${itemId}`); return; }
     const result = directCorrection(itemId, { revision: Number(str(request.body?.revision)), changes: [{ field: 'questionText', before: evidence.questionText, after }] });
-    if (!result.ok) { render(response, EditPage({ item, evidence: getEvidenceView(itemId) ?? evidence, error: result.message }), result.httpStatus); return; }
+    if (!result.ok) { failed(response, 'edit_failed'); render(response, EditPage({ item, evidence: getEvidenceView(itemId) ?? evidence, error: result.message }), result.httpStatus); return; }
     response.redirect(303, `/s/items/${itemId}`);
   }));
 
@@ -517,12 +542,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   r.post('/choose', form, page(async (request, response) => {
     const itemIds = [...new Set(list(request.body?.itemIds).filter(id => ITEM_ID.test(id)))];
-    if (itemIds.length === 0) { render(response, await choosePage(request, '至少选 1 道'), 400); return; }
-    if (itemIds.length > 8) { render(response, await choosePage(request, '最多 8 道。想加这道，先去掉一道。'), 400); return; }
+    if (itemIds.length === 0) { failed(response, 'none_chosen'); render(response, await choosePage(request, '至少选 1 道'), 400); return; }
+    if (itemIds.length > 8) { failed(response, 'too_many'); render(response, await choosePage(request, '最多 8 道。想加这道，先去掉一道。'), 400); return; }
     const slotChoice = str(request.body?.practiceSlot);
     const practiceSlot = (slotChoice === '__other' ? str(request.body?.practiceSlotOther) : slotChoice).trim();
     const result = createPractice({ itemIds, ...(practiceSlot ? { practiceSlot } : {}) });
     if (!result.ok) {
+      failed(response, result.httpStatus === 409 ? 'conflict' : 'create_failed');
       const message = result.httpStatus === 409 ? '有几道题刚刚变了，已经重新推荐。再看一眼。' : result.message;
       render(response, await choosePage(request, message, result.httpStatus === 409 ? result.message : null), result.httpStatus);
       return;
@@ -587,6 +613,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const answer = str(request.body?.answer).trim();
     const result = await answerFollowup(card.id, { answer }, options.followupProvider);
     if (!result.ok && result.httpStatus === 400) {
+      failed(response, 'answer_invalid');
       render(response, WhyAskPage({ practiceId: practice.id, card, index, total: practice.items.length, turns: getV2Reflection(card.id)?.turns ?? [], error: result.message, answer }), 400);
       return;
     }
@@ -619,10 +646,10 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       (CAUSES as readonly string[]).includes(cause) ? null : '错在哪',
       /^[0-3]$/.test(mastery) ? null : '有没有把握',
     ].filter(Boolean);
-    if (missing.length > 0) { render(response, confirmPage(request, practice, card.id, `还差：${missing.join('、')}`), 400); return; }
+    if (missing.length > 0) { failed(response, 'missing'); render(response, confirmPage(request, practice, card.id, `还差：${missing.join('、')}`), 400); return; }
     // 由学生自己点「提交」才写入；AI 只给过建议（领域规则）。
     const result = submitV2Reflection(card.id, { attemptState, cause, masteryFeeling: Number(mastery), summary: str(request.body?.summary).trim().slice(0, 60) });
-    if (!result.ok) { render(response, confirmPage(request, practice, card.id, result.message), result.httpStatus); return; }
+    if (!result.ok) { failed(response, 'submit_failed'); render(response, confirmPage(request, practice, card.id, result.message), result.httpStatus); return; }
     await goNextWhy(response, practice.id, remaining(request, practiceOf(practice.id), card.id));
   }));
 
@@ -632,6 +659,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const skips = readSkips(request);
     skips.passedItems.add(card.id);
     writeSkips(request, response, skips);
+    response.locals.trailSkip = 'item';
     await goNextWhy(response, practice.id, practice.items.filter(item => !item.reflected && !skips.passedItems.has(item.id)));
   }));
 
@@ -705,6 +733,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const at = Number(str(body.at));
     const go = str(body.go);
     const total = pending.length;
+    response.locals.trailAction = at === 0 ? 'submit:date' : go === 'prev' ? 'submit:prev' : at >= total ? 'submit:final' : 'submit:next';
     const showItem = (index: number, error?: string | null): void => {
       const card = pending[index]!;
       render(response, RecordItemPage({ practiceId: practice.id, card, index, total, days, state, answer: answerOf(state, card.id), error }), error ? 400 : 200);
@@ -714,7 +743,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     };
     if (!Number.isInteger(at) || at < 0 || at > total) { showDate(); return; }
     if (at === 0) {
-      if (!state.date) { showDate('先选一下是哪天做的'); return; }
+      if (!state.date) { failed(response, 'date_missing'); showDate('先选一下是哪天做的'); return; }
       showItem(0);
       return;
     }
@@ -729,13 +758,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const itemDate = str(body.itemDate);
     if (dayValues.has(itemDate) && itemDate !== state.date) state[`d_${card.id}`] = itemDate; else delete state[`d_${card.id}`];
     if (go === 'prev') { if (at === 1) showDate(); else showItem(at - 2); return; }
-    if (!state[`c_${card.id}`]) { showItem(at - 1, '先选这道是怎么做的'); return; }
-    if (NEEDS_CORRECT.has(completion) && !state[`k_${card.id}`]) { showItem(at - 1, '对照练习纸最后一页的答案，选一下做对了没有'); return; }
+    if (!state[`c_${card.id}`]) { failed(response, 'completion_missing'); showItem(at - 1, '先选这道是怎么做的'); return; }
+    if (NEEDS_CORRECT.has(completion) && !state[`k_${card.id}`]) { failed(response, 'correct_missing'); showItem(at - 1, '对照练习纸最后一页的答案，选一下做对了没有'); return; }
     if (at < total) { showItem(at); return; }
     // 最后一道：一次提交全部（服务器逐条判定）。
-    if (!state.date) { showDate('先选一下是哪天做的'); return; }
+    if (!state.date) { failed(response, 'date_missing'); showDate('先选一下是哪天做的'); return; }
     for (let index = 0; index < total; index += 1) {
-      if (!state[`c_${pending[index]!.id}`]) { showItem(index, '这道还没录'); return; }
+      if (!state[`c_${pending[index]!.id}`]) { failed(response, 'item_missing'); showItem(index, '这道还没录'); return; }
     }
     const results = pending.map(item => {
       const c = state[`c_${item.id}`]!;
@@ -746,9 +775,10 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       };
     });
     const outcome = submitReturns(practice.id, { results });
-    if (!outcome.ok) { showDate(outcome.message); return; }
+    if (!outcome.ok) { failed(response, 'return_failed'); showDate(outcome.message); return; }
     const rejected = outcome.results.find(entry => !entry.ok);
     if (rejected) {
+      failed(response, 'return_rejected');
       const label = pending.find(item => item.id === rejected.itemId)?.shortId ?? '';
       response.redirect(303, `/s/record/${practice.id}?rejected=${encodeURIComponent(`${label} ${rejected.error ?? ''}`.trim())}`);
       return;
@@ -782,7 +812,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const slotChoice = str(request.body?.practiceSlot);
     const practiceSlot = (slotChoice === '__other' ? str(request.body?.practiceSlotOther) : slotChoice).trim();
     const result = updateV2Settings({ practiceSlot, paperLocation: str(request.body?.paperLocation) });
-    if (!result.ok) { render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。' }), 400); return; }
+    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。' }), 400); return; }
     response.redirect(303, '/s/settings?saved=1');
   }));
 
@@ -791,6 +821,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     try {
       const gate = options.limiter.transcribe(String(response.locals.deviceId));
       if (!gate.allowed) {
+        failed(response, 'rate_limited');
         response.setHeader('retry-after', String(gate.retryAfterSeconds));
         response.status(429).json({ error: { code: 'rate_limited', message: '说得太频繁了，过一会儿再试，或者直接打字。' } });
         return;
