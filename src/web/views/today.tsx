@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { actionHref, type TodayState } from '../state.js';
+import { actionHref, type PhotoView, type TodayState } from '../state.js';
 import { actionKey, header, type Choice, type ConnectReason, type NextStepModel, type Step } from '../weekPlan.js';
 import { Page, Problem, type BarButton, type BarModel } from './layout.js';
 
@@ -40,9 +40,8 @@ function StepRow(props: { step: Step; index: number; current: boolean }): ReactN
         <span className="step-title">{step.title}</span>
         {step.isOptional && !step.isDone ? <span className="chip">可跳过</span> : null}
         {current ? <span className="chip now">现在做这个</span> : null}
-        <span className={`small tone-${step.tone}`} style={{ display: 'block' }}>{step.detail}</span>
-        {step.warning ? <span className="small tone-orange" style={{ display: 'block' }}>{step.warning}</span> : null}
-        <span className="small muted" style={{ display: 'block' }}>约 {step.minutes} 分钟</span>
+        <span className="step-detail"><span className={`tone-${step.tone}`}>{step.detail}</span> <span className="step-min">· 约 {step.minutes} 分钟</span></span>
+        {step.warning ? <span className="step-detail tone-orange">{step.warning}</span> : null}
       </span>
       {step.action ? <span className="chev" aria-hidden="true">›</span> : null}
     </>
@@ -52,7 +51,7 @@ function StepRow(props: { step: Step; index: number; current: boolean }): ReactN
     <li>
       {step.action
         ? <a className={cls} href={actionHref(step.action)} data-testid={`today-step-${step.kind}`} aria-label={label}>{inner}</a>
-        : <div className={`row ${cls}`} data-testid={`today-step-${step.kind}`} aria-label={label}>{inner}</div>}
+        : <div className={`row ${cls}`} data-testid={`today-step-${step.kind}`} aria-label={label} role="group">{inner}</div>}
     </li>
   );
 }
@@ -60,20 +59,38 @@ function StepRow(props: { step: Step; index: number; current: boolean }): ReactN
 function Rhythm(props: { active: number }): ReactNode {
   const parts: Array<[string, string]> = [['周末', '拍卷子·打印'], ['周中', '在纸上做'], ['下个周末', '录结果']];
   return (
-    <div className="rhythm" aria-label="一周的节奏">
-      {parts.map(([when, what], index) => <span key={when} className={index === props.active ? 'on' : ''}><b>{when}</b>{what}</span>)}
-    </div>
+    <ol className="rhythm" aria-label="一周的节奏">
+      {parts.map(([when, what], index) => (
+        <li key={when} className={index === props.active ? 'on' : ''} aria-current={index === props.active ? 'step' : undefined}><b>{when}</b>{what}</li>
+      ))}
+    </ol>
   );
 }
 
+/** 「放到主屏幕」提示：放在清单下面，不压在当前步骤上；点了「知道了」以后只剩「随时可以看」里的一行。主屏幕打开时都不显示。 */
 function InstallHint(): ReactNode {
   return (
     <section className="card a2hs" data-testid="install-hint">
-      <p><b>放到主屏幕，像 App 一样打开</b></p>
-      <p className="small">在 Safari 里：点屏幕下方的「分享」按钮（方框里一个向上的箭头）→ 往下找「添加到主屏幕」→ 点「添加」。以后从主屏幕上的「错题本」打开。</p>
-      <form method="post" action="/s/install/seen" className="inline-form"><button className="link-btn" type="submit">知道了</button></form>
-      {' · '}<a href="/s/install" className="small">看看怎么做</a>
+      <h2 className="card-title">放到主屏幕，像 App 一样打开</h2>
+      <p className="small">在 Safari 里点下方的「分享」（方框里一个向上的箭头）→「添加到主屏幕」→「添加」。以后从主屏幕上的「错题本」打开。</p>
+      <div className="actions">
+        <form method="post" action="/s/install/seen" className="inline-form"><button className="link-btn" type="submit" data-key="install-seen">知道了</button></form>
+        <a href="/s/install" className="more-inline" data-key="install-how">看看怎么做</a>
+      </div>
     </section>
+  );
+}
+
+/** 这周的事做完以后（做完了 / 周中）又拍了卷子：告诉他新拍的去了哪、要不要他勾。 */
+function NewPhotosNote(props: { photos: PhotoView[] }): ReactNode {
+  const needsPick = props.photos.find(photo => photo.state === 'needsPick');
+  const finding = props.photos.some(photo => photo.state === 'finding');
+  if (!needsPick && !finding) return null;
+  return (
+    <div data-testid="today-new-photos">
+      <p className="small">{needsPick ? `新拍的第 ${needsPick.number} 张要你勾出做错的题。` : '新拍的卷子：AI 正在找题。'}找到的题会进错题本，下个周末再选进练习。</p>
+      <a className="more" href={needsPick ? `/s/photos/${needsPick.jobId}` : '/s/photos'} data-key="today-new-photos">{needsPick ? `勾第 ${needsPick.number} 张` : '看看新拍的卷子'}<span aria-hidden="true">›</span></a>
+    </div>
   );
 }
 
@@ -85,32 +102,35 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
   if (plan.stage === 'done') {
     content = (
       <section className="card" data-testid="today-done">
-        <h2 data-testid="today-done-title" style={{ marginTop: 0 }}><span className="tone-green">✓</span> 这周的事做完了</h2>
+        <h2 className="card-title" data-testid="today-done-title"><span className="tone-green" aria-hidden="true">✓</span> 这周的事做完了</h2>
         <p>把练习纸带回学校，<b>{slot}</b>在纸上做。</p>
         <p>{PAPER_RULES}</p>
         <p className="muted">下个周末打开错题本，录一下做的结果。</p>
+        <NewPhotosNote photos={props.state.photos} />
       </section>
     );
   } else if (plan.stage === 'midweek') {
     content = (
       <section className="card" data-testid="today-midweek">
-        <h2 data-testid="today-midweek-title" style={{ marginTop: 0 }}>现在是在纸上做练习的时候</h2>
+        <h2 className="card-title" data-testid="today-midweek-title">现在是在纸上做练习的时候</h2>
         {plan.practice ? <p>{[`练习纸：${plan.practice.itemCount} 道`, slot].join(' · ')}</p> : null}
         <p>{PAPER_RULES}</p>
         <p className="muted">没做完也没关系，周末回来再录。当天做对不算真会，隔几天再做对才算，所以别急着对答案。</p>
+        <NewPhotosNote photos={props.state.photos} />
       </section>
     );
   } else {
+    const doneCount = plan.steps.filter(step => step.isDone).length;
     content = (
       <section className="card" data-testid="today-card">
-        <p style={{ display: 'flex', justifyContent: 'space-between', margin: 0 }}>
+        <p className="steps-head">
           <b data-testid="today-header">{header(plan)}</b>
-          <span className="small muted">{plan.steps.filter(step => step.isDone).length}/{plan.steps.length}</span>
+          <span className="small muted" aria-label={`做完 ${doneCount} 步，共 ${plan.steps.length} 步`}>{doneCount}/{plan.steps.length}</span>
         </p>
         <ul className="steps">
           {plan.steps.map((step, index) => <StepRow key={step.kind} step={step} index={index} current={index === plan.currentIndex} />)}
         </ul>
-        {plan.currentIndex === null ? <p className="muted small" style={{ marginTop: 8 }}>这周的步骤都做完了。</p> : null}
+        {plan.currentIndex === null ? <p className="muted small">这周的步骤都做完了。</p> : null}
       </section>
     );
   }
@@ -118,13 +138,14 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
     <Page title="今天" back={null} bar={barFromPlan(plan.next)} flash={props.flash}>
       <h1>今天</h1>
       <Rhythm active={active} />
-      {props.showInstallHint ? <InstallHint /> : null}
       {content}
-      <section className="card">
-        <p className="muted small" style={{ marginTop: 0 }}>随时可以看</p>
+      {props.showInstallHint ? <InstallHint /> : null}
+      <section className="card" aria-labelledby="anytime-title">
+        <h2 className="section-label" id="anytime-title">随时可以看</h2>
         <ul className="list">
-          <li><a className="row" href="/s/items" data-testid="today-items"><span style={{ flex: 1 }}>这周的错题（{week.items.length}）</span><span className="chev">›</span></a></li>
-          <li><a className="row" href="/s/practices" data-testid="today-practices"><span style={{ flex: 1 }}>以前的练习</span><span className="chev">›</span></a></li>
+          <li><a className="row" href="/s/items" data-testid="today-items"><span className="row-text">这周的错题（{week.items.length}）</span><span className="chev" aria-hidden="true">›</span></a></li>
+          <li><a className="row" href="/s/practices" data-testid="today-practices"><span className="row-text">以前的练习</span><span className="chev" aria-hidden="true">›</span></a></li>
+          {props.showInstallHint ? null : <li className="a2hs-row"><a className="row" href="/s/install" data-testid="today-install"><span className="row-text">放到主屏幕</span><span className="chev" aria-hidden="true">›</span></a></li>}
         </ul>
       </section>
     </Page>
@@ -134,7 +155,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
 const CONNECT_COPY: Record<ConnectReason, { title: string; detail: string; button: string }> = {
   unpaired: {
     title: '先连上服务器',
-    detail: '这一步要大人帮一下：请帮你装错题本的人给你一个配对二维码或链接。用手机自带的「相机」扫二维码，点弹出来的链接；或者把链接粘贴到下面。只要做一次。',
+    detail: '这一步要大人帮一下：请帮你装错题本的人给你一个配对二维码或链接。只要做一次。',
     button: '扫码连接',
   },
   unauthorized: {
@@ -156,18 +177,19 @@ export function ConnectPage(props: { reason: ConnectReason; error?: string | nul
   return (
     <Page title={copy.title} back={null} showSettings={false} bar={bar}>
       <h1 data-testid="connect-title">{copy.title}</h1>
+      <p className="lead">{copy.detail}</p>
+      {props.error ? <Problem title="这个二维码用不了" detail="请帮你装错题本的人重新生成一个，再扫一次。" reason={props.error} /> : null}
       <section className="card" id="connect" data-testid="today-connect">
-        <p>{copy.detail}</p>
-        <ol className="small">
-          <li>打开手机自带的「相机」，对准二维码，点屏幕上弹出的链接（用 Safari 打开）。</li>
-          <li>如果大人发给你的是一个链接：长按它选「拷贝」，粘贴到下面，点「用这个链接连接」。</li>
-          <li>放到主屏幕以后，如果主屏幕上的错题本还要你连接，请大人再给一个新链接，粘贴到这里。</li>
+        <h2 className="card-title">两种连法</h2>
+        <ol className="steps-text">
+          <li><b>二维码：</b>打开手机自带的「相机」对准它，点屏幕上弹出的链接（用 Safari 打开）。</li>
+          <li><b>链接：</b>长按它选「拷贝」，粘贴到下面，再点「用这个链接连接」。</li>
         </ol>
-        {props.error ? <Problem title="这个二维码用不了" detail="请帮你装错题本的人重新生成一个，再扫一次。" reason={props.error} /> : null}
         <form method="post" action="/s/pair" id="connect-form">
-          <label htmlFor="connect-link" className="small muted">配对链接</label>
+          <label htmlFor="connect-link" className="field-label">配对链接</label>
           <input id="connect-link" type="text" name="link" inputMode="url" autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="https://…/s/pair?code=…" />
         </form>
+        <p className="hint">放到主屏幕以后，如果主屏幕上的错题本还要你连接，请大人再给一个新链接，粘贴到这里。</p>
       </section>
     </Page>
   );
@@ -182,10 +204,10 @@ export function PairPage(props: { code: string; clientId: string; inAppBrowser: 
     <Page title="连接这台手机" back={null} showSettings={false} bar={bar}>
       <h1>连接这台手机</h1>
       <section className="card">
-        <p>点下面的「连接这台手机」，这台手机就能用错题本了。</p>
+        <p>点下面的「连接这台手机」，这台手机就能用错题本了。照片、错题和练习都存在服务器上，换手机也不会丢。</p>
         {props.inAppBrowser
           ? <p className="tone-orange" data-testid="in-app-warning"><b>现在是在聊天软件里打开的。</b>请点右上角「…」，选「在 Safari 中打开」，再点连接——连在这里，以后从 Safari 和主屏幕都打不开。</p>
-          : <p className="muted small">连好以后，按提示把错题本放到主屏幕上。</p>}
+          : <p className="muted small">连好以后，按提示把错题本放到主屏幕上。这个链接只能用一次。</p>}
         <form method="post" action="/s/pair" id="pair-form">
           <input type="hidden" name="code" value={props.code} />
           <input type="hidden" name="clientId" value={props.clientId} />
@@ -200,16 +222,17 @@ export function InstallPage(): ReactNode {
   return (
     <Page title="放到主屏幕" bar={bar}>
       <h1>放到主屏幕</h1>
+      <p className="lead">放到主屏幕以后，错题本会像 App 一样全屏打开，不用每次找网址。</p>
       <section className="card">
-        <p>放到主屏幕以后，错题本会像 App 一样全屏打开，不用每次找网址。</p>
-        <ol>
+        <h2 className="card-title">在 Safari 里，四步</h2>
+        <ol className="steps-text">
           <li>用 <b>Safari</b> 打开错题本（微信里打开的先点右上角「…」→「在 Safari 中打开」）。</li>
           <li>点屏幕下方的「分享」按钮（方框里一个向上的箭头）。</li>
           <li>往下找「添加到主屏幕」，点它，再点右上角「添加」。</li>
           <li>以后从主屏幕上的「错题本」图标打开。</li>
         </ol>
-        <p className="muted small">如果主屏幕上的错题本打开后让你重新连接，请大人再给一个新链接，粘贴进去就好。</p>
       </section>
+      <p className="hint">如果主屏幕上的错题本打开后让你重新连接，请大人再给一个新链接，粘贴进去就好。</p>
     </Page>
   );
 }
@@ -233,7 +256,10 @@ export function BusyPage(props: { retryAfterSeconds: number }): ReactNode {
   return (
     <Page title="服务器有点忙" back={null} bar={bar}>
       <h1>服务器有点忙</h1>
-      <section className="card"><p>服务器有点忙，过一会儿再试。照片和错题都在，不会丢。</p></section>
+      <section className="card">
+        <p>现在来的请求太多了，过一会儿再点下面的按钮。</p>
+        <p className="muted small">已经传上去的照片和错题都在服务器上，不会丢。</p>
+      </section>
     </Page>
   );
 }
@@ -242,8 +268,11 @@ export function ErrorPage(props: { title: string; detail: string; reason?: strin
   const bar: BarModel = { caption: '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
   return (
     <Page title={props.title} bar={bar}>
-      <h1>没成功</h1>
-      <Problem title={props.title} detail={props.detail} reason={props.reason} />
+      <h1>{props.title}</h1>
+      <section className="card" role="alert" data-testid="problem">
+        <p>{props.detail}</p>
+        {props.reason ? <details><summary data-key="problem-reason">具体原因</summary><p className="muted small">{props.reason}</p></details> : null}
+      </section>
     </Page>
   );
 }

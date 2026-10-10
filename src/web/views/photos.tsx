@@ -16,7 +16,11 @@ export function ConsentPage(): ReactNode {
       <h1>上传前看一下</h1>
       <section className="card" data-testid="consent">
         <p>拍的照片会传到广州的云服务器，再交给阿里云百炼的 AI 找出做错的题。照片上可能有你的名字和字迹，介意的话先遮住再拍。</p>
-        <p className="small muted">用网页拍的照片不会存进手机相册，只存在服务器上；从相册选的，原图还留在相册里。上传前会去掉照片里的位置等拍摄信息。阿里云怎么处理数据，不由这个网页决定。</p>
+        <ul className="steps-text small">
+          <li>用网页拍的照片不会存进手机相册，只存在服务器上；从相册选的，原图还留在相册里。</li>
+          <li>上传前会去掉照片里的位置等拍摄信息。</li>
+          <li>阿里云怎么处理数据，不由这个网页决定。</li>
+        </ul>
       </section>
     </Page>
   );
@@ -43,15 +47,25 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
   return (
     <Page title="拍这周的卷子" bar={bar} flash={props.flash}>
       <h1>拍这周的卷子</h1>
-      <p>整页拍全，别裁边；题目和你写的答案都要拍进去。一页拍一张。</p>
+      <p className="lead">整页拍全，别裁边；题目和你写的答案都要拍进去。一页拍一张。</p>
+      {has ? null : (
+        <section className="card" data-testid="capture-tips">
+          <h2 className="card-title">拍之前</h2>
+          <ul className="steps-text small">
+            <li>把卷子平放在桌上，光线亮一点，别有影子。</li>
+            <li>手机正对着拍，四个角都在框里。</li>
+            <li>拍好一页会回到这里，再拍下一页。</li>
+          </ul>
+        </section>
+      )}
       <form method="post" action="/s/capture" encType="multipart/form-data" data-upload="" id="upload-form">
         <input id="camera-input" className="visually-hidden" type="file" name="photo" accept="image/*" capture="environment" data-testid="camera-input" />
         <input id="library-input" className="visually-hidden" type="file" name="photo" accept="image/*" data-testid="library-input" />
         <p className="no-js-only small muted">选好照片后点「上传这张」。</p>
-        <button className="btn no-js-only" type="submit" style={{ marginTop: 8 }}>上传这张</button>
+        <button className="btn no-js-only" type="submit" data-key="upload-nojs">上传这张</button>
         <div className="hidden" data-upload-progress=""><div className="progress"><i /></div></div>
         <p className="small" data-upload-message="" data-testid="upload-message" aria-live="polite" />
-        <button type="button" className="btn hidden" data-upload-retry="">再试一次</button>
+        <button type="button" className="btn hidden" data-upload-retry="" data-key="upload-retry">再试一次</button>
       </form>
       {has ? <p data-testid="photo-count"><b>已拍 {props.photos.length} 张</b></p> : null}
       <div className="grid">
@@ -64,7 +78,7 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
             </figure>
           );
         })}
-        {has ? <label className="add-tile" htmlFor="camera-input" data-testid="add-page">＋ 再拍一页</label> : null}
+        {has ? <label className="add-tile" htmlFor="camera-input" data-testid="add-page" data-key="add-page">＋ 再拍一页</label> : null}
       </div>
     </Page>
   );
@@ -82,34 +96,33 @@ function PhotoRow(props: { photo: PhotoView }): ReactNode {
   if (photo.state === 'finding') {
     const more = pickMoreCount(photo.job);
     return (
-      <li className="row" data-testid={`photo-row-${photo.number}`}>
+      <li className="row row-block" data-testid={`photo-row-${photo.number}`}>
         <span className="tone-blue">{prefix}AI 正在找题…</span>
-        {more ? <a href={`/s/photos/${photo.jobId}`} className="small">还有 {more} 道没勾 · 漏了题可以补</a> : null}
+        {more ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more">还有 {more} 道没勾 · 漏了题可以补<span aria-hidden="true">›</span></a> : null}
       </li>
     );
   }
   if (photo.state === 'needsPick') {
     return (
       <li><a className="row" href={`/s/photos/${photo.jobId}`} data-testid={`photo-row-${photo.number}`}>
-        <span className="tone-orange" style={{ flex: 1 }}>{prefix}这页没有批改痕迹，点这里勾出错题</span><span className="chev">›</span>
+        <span className="tone-orange row-text">{prefix}这页没有批改痕迹，点这里勾出错题</span><span className="chev" aria-hidden="true">›</span>
       </a></li>
     );
   }
   if (photo.state === 'failed' && photo.failure) {
     const plan = photo.failure;
     return (
-      <li className="row" data-testid={`photo-row-${photo.number}`} style={{ display: 'block' }}>
-        <p className="tone-red" style={{ margin: 0 }}>{prefix}{plan.title}</p>
+      <li className="row row-block" data-testid={`photo-row-${photo.number}`}>
+        <p className="tone-red flush">{prefix}{plan.title}</p>
         <p className="small muted">{plan.detail}</p>
-        <div>
+        <div className="actions">
           {plan.retryTitle ? (
             <form method="post" action={`/s/photos/${photo.jobId}/retry`} className="inline-form">
               {(plan.retryQuestionIds ?? []).map(id => <input key={id} type="hidden" name="questionIds" value={id} />)}
-              <button className="link-btn" type="submit">{plan.retryTitle}</button>
+              <button className="link-btn" type="submit" data-key="photo-retry">{plan.retryTitle}</button>
             </form>
           ) : null}
-          {plan.retryTitle ? ' · ' : null}
-          <form method="post" action={`/s/photos/${photo.jobId}/dismiss`} className="inline-form"><button className="link-btn" type="submit">{plan.dismissTitle}</button></form>
+          <form method="post" action={`/s/photos/${photo.jobId}/dismiss`} className="inline-form"><button className="link-btn" type="submit" data-key="photo-dismiss">{plan.dismissTitle}</button></form>
         </div>
       </li>
     );
@@ -119,24 +132,35 @@ function PhotoRow(props: { photo: PhotoView }): ReactNode {
   const left = unselectedQuestions(photo.job).length;
   const text = picked === 0 ? `找到 ${auto} 道有红叉的题` : `${auto + picked} 道已进错题本`;
   return (
-    <li className="row" data-testid={`photo-row-${photo.number}`} style={{ display: 'block' }}>
+    <li className="row row-block" data-testid={`photo-row-${photo.number}`}>
       <span className="tone-green">{prefix}{text}</span>
-      {left > 0 && !photo.pickDone ? <><br /><a href={`/s/photos/${photo.jobId}`} className="small">还有 {left} 道没勾 · 漏了题可以补</a></> : null}
+      {left > 0 && !photo.pickDone ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more">还有 {left} 道没勾 · 漏了题可以补<span aria-hidden="true">›</span></a> : null}
     </li>
   );
 }
 
-export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh: boolean; itemCount: number; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
+/**
+ * 这周的练习纸已经生成以后（做完了 / 周中）又拍了卷子：不再把他带去选题（这周的练习已经定了），
+ * 而是说清楚新找到的题去了哪里（进错题本，下个周末「选这周要练的题」时会出现），并给「回到今天」。门槛 G3。
+ */
+export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh: boolean; itemCount: number; afterWeek?: boolean; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
   return (
     <Page title="勾出做错的题" bar={props.bar} refreshSeconds={props.refresh ? 4 : undefined} flash={props.flash}>
       <h1>勾出做错的题</h1>
-      <p>有红叉、订正的题，AI 会自己找出来。没批改过的页（比如答题卡另交的），要你自己勾。</p>
+      <p className="lead">有红叉、订正的题，AI 会自己找出来。没批改过的页（比如答题卡另交的），要你自己勾。</p>
+      {props.afterWeek ? (
+        <section className="card callout" data-testid="photos-after-week">
+          <h2 className="card-title">这几道下个周末再选</h2>
+          <p>这周的练习纸已经生成了，新拍的卷子不会加进去。</p>
+          <p>{props.refresh ? 'AI 找好以后，' : ''}新找到的题会进<b>错题本</b>，在「这周的错题」里能看到；下个周末「选这周要练的题」时，它们会出现在里面。</p>
+        </section>
+      ) : null}
       {props.photos.length === 0 ? (
-        <section className="card"><p>这周还没拍卷子</p><a className="btn" href="/s/capture">去拍</a></section>
+        <section className="card"><p>这周还没拍卷子</p><a className="btn" href="/s/capture" data-key="empty-capture">去拍</a></section>
       ) : (
         <section className="card"><ul className="list">{props.photos.map(photo => <PhotoRow key={photo.jobId} photo={photo} />)}</ul></section>
       )}
-      {props.itemCount > 0 ? <p><a href="/s/items" data-testid="photos-items">看看找到的错题（{props.itemCount} 道）›</a></p> : null}
+      {props.itemCount > 0 ? <a className="more" href="/s/items" data-testid="photos-items">看看找到的错题（{props.itemCount} 道）<span aria-hidden="true">›</span></a> : null}
     </Page>
   );
 }
@@ -152,9 +176,9 @@ export function PickPage(props: { photo: PhotoView; error?: string | null }): Re
     secondary: [{ title: '这页没有做错的题', key: 'none', post: `/s/photos/${photo.jobId}/none` }],
   };
   return (
-    <Page title={`第 ${photo.number} 张：勾出做错的题`} back={{ href: '/s/photos', label: '‹ 勾出做错的题' }} bar={bar}>
+    <Page title={`第 ${photo.number} 张：勾出做错的题`} back={{ href: '/s/photos', label: '勾出做错的题' }} bar={bar}>
       <h1>第 {photo.number} 张：勾出做错的题</h1>
-      <p><a href={`/s/img/photo/${photo.jobId}?full=1`} target="_blank" rel="noreferrer">看原图</a></p>
+      <a className="more" href={`/s/img/photo/${photo.jobId}?full=1`} target="_blank" rel="noreferrer" data-key="pick-full-photo">看这一页的原图<span aria-hidden="true">›</span></a>
       {props.error ? <Problem title="没加进去" detail={props.error} /> : null}
       {selectable.length === 0 ? <p className="muted">这张照片上的题都处理过了。</p> : null}
       <form method="post" action={`/s/photos/${photo.jobId}/select`} id="pick-form" data-pick-count="" data-max="30" data-min="1" data-wait="正在加入…">
