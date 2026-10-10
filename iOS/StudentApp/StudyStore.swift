@@ -205,20 +205,28 @@ final class StudyStore {
   }()
 
   /// Task 5 UI：连接操作入口。unauthorized/incompatible → 重新配对（清空凭据，UI 随后弹出扫码页）；
-  /// 其余非 ready 态 → 强制重查。
+  /// 其余非 ready 态 → 强制重查（`.failed` 仍然只是「重试」，不会清凭据）。
   func connectionAction() async {
     switch connectionState {
     case .unauthorized, .incompatible:
       // 重新配对入口由 UI 呈现扫码页；这里先清凭据回到未配对态。
-      _ = connectionTracker.repair()
-      connectionGeneration += 1
-      connectionState = .unpaired
-      PairingStore.remove(scope: persistence.directory.lastPathComponent)
-      client?.close(); client = nil; pairing = nil
-      v2Client?.close(); v2Client = nil
+      repairByRescan()
     case .ready, .busy, .failed, .pairedNeedsCheck, .checking, .unpaired, .none:
       _ = await checkConnection(force: true)
     }
+  }
+
+  /// 清掉已保存的配对回到未配对态，不看当前连接状态（调用方随后弹出扫码页）。
+  /// 授权失效 / 版本不兼容走这里；连不上服务器（`.failed`，例如换了网络后旧入口不通）时，
+  /// 学生也可以主动「重新扫码」换一个入口，所以这里不能只认 unauthorized/incompatible。
+  /// 代次 +1，迟到的旧响应一律丢弃；只删钥匙串里的配对，本机照片与学习记录不动。
+  func repairByRescan() {
+    _ = connectionTracker.repair()
+    connectionGeneration += 1
+    connectionState = .unpaired
+    PairingStore.remove(scope: persistence.directory.lastPathComponent)
+    client?.close(); client = nil; pairing = nil
+    v2Client?.close(); v2Client = nil
   }
 
   /// 连接检查：合并并发检查；30 秒缓存仅用于状态显示。

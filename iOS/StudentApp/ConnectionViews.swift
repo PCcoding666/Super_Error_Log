@@ -77,6 +77,12 @@ struct CloudConnectionRow: View {
     }
   }
 
+  private var retryButton: some View {
+    Button(state.actionTitle) { Task { await store.connectionAction() } }
+      .buttonStyle(.borderedProminent)
+      .accessibilityIdentifier("retry-connection")
+  }
+
   @ViewBuilder
   private var actionButton: some View {
     switch state {
@@ -90,10 +96,23 @@ struct CloudConnectionRow: View {
       Text("已连接，新照片会自动上传识别")
         .font(.caption).foregroundStyle(Palette.muted)
         .accessibilityIdentifier("connection-ready-note")
-    case .pairedNeedsCheck, .checking, .busy, .failed:
-      Button(state.actionTitle) { Task { await store.connectionAction() } }
-        .buttonStyle(.borderedProminent)
-        .accessibilityIdentifier("retry-connection")
+    case .pairedNeedsCheck, .checking, .busy:
+      retryButton
+    case .failed:
+      // 连不上时主按钮仍是「重试连接」（只重查，不动配对）。换了网络、旧入口不通的时候，
+      // 重试永远不会好——另给一个次要的「重新扫码」：清掉旧配对，打开扫码页换一个入口。
+      retryButton
+      VStack(alignment: .leading, spacing: 4) {
+        Button("重新扫码") {
+          store.repairByRescan()
+          onScan?()
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier("rescan-connection")
+        Text("换了网络连不上？让大人再给一个二维码，重新扫一下。")
+          .font(.caption).foregroundStyle(Palette.muted)
+          .accessibilityIdentifier("rescan-connection-hint")
+      }
     case .unauthorized, .incompatible:
       Button(state.actionTitle) {
         // 先清凭据回到未配对，再弹出扫码页让用户立即重新配对。

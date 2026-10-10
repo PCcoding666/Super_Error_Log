@@ -20,6 +20,7 @@ final class CloudConnectionJourneyTests: XCTestCase {
     XCTAssertTrue(retry.waitForExistence(timeout: 5), "busy 状态必须提供重试入口")
     XCTAssertTrue(retry.isEnabled)
     XCTAssertEqual(app.buttons["repair-connection"].exists, false, "busy 不需要重新配对")
+    XCTAssertEqual(app.buttons["rescan-connection"].exists, false, "busy 只重试，不提供重新扫码")
   }
 
   @MainActor
@@ -31,11 +32,29 @@ final class CloudConnectionJourneyTests: XCTestCase {
     let repair = app.buttons["repair-connection"]
     XCTAssertTrue(repair.waitForExistence(timeout: 5))
     XCTAssertEqual(app.buttons["retry-connection"].exists, false, "授权失效必须引导重新配对，而不是原地重试")
+    XCTAssertEqual(app.buttons["rescan-connection"].exists, false, "授权失效已有「重新扫码」主按钮（repair-connection），不重复")
     // 重新配对先清凭据回到未配对，未配对态必须提供真实的扫码入口（不得是死按钮）。
     repair.tap()
     XCTAssertTrue(app.staticTexts["connection-state-unpaired"].waitForExistence(timeout: 5))
     XCTAssertTrue(app.buttons["scan-to-pair"].waitForExistence(timeout: 5),
                   "未配对状态必须提供「扫码配对」入口")
+  }
+
+  @MainActor
+  func testNextStepRescanFromExpiredConnectionClearsPairingAndOpensScanner() throws {
+    // 主页底部「下一步」的「重新扫码」（NextStepAction.rescan）与连接行走同一条清配对路径：
+    // 授权失效时点它，要回到未配对并打开扫码页。
+    let server = try SyntheticRecognitionServer(cloudHealth: .unauthorized)
+    defer { server.stop() }
+    let app = launchCloudApp(server)
+    XCTAssertTrue(app.staticTexts["connection-state-unauthorized"].waitForExistence(timeout: 10))
+    let primary = app.buttons["next-step-primary"]
+    XCTAssertTrue(primary.waitForExistence(timeout: 5))
+    XCTAssertEqual(primary.label, "重新扫码")
+    primary.tap()
+    XCTAssertTrue(app.otherElements["pairing-scanner"].waitForExistence(timeout: 10), "下一步的重新扫码必须打开扫码页")
+    XCTAssertTrue(app.staticTexts["connection-state-unpaired"].waitForExistence(timeout: 5))
+    XCTAssertEqual(server.redeemCount, 1)
   }
 
   @MainActor
@@ -47,6 +66,55 @@ final class CloudConnectionJourneyTests: XCTestCase {
     XCTAssertTrue(app.staticTexts["connection-state-failed"].waitForExistence(timeout: 10))
     XCTAssertTrue(app.buttons["retry-connection"].waitForExistence(timeout: 5))
     XCTAssertEqual(app.buttons["repair-connection"].exists, false)
+  }
+
+  @MainActor
+  func testUnreachableOffersRetryAndRescanAndRescanOpensScannerAfterClearingPairing() throws {
+    // 换了网络、旧入口连不上（传输错误，不是 401）：重试永远不会好，所以除了「重试连接」还要有「重新扫码」。
+    let server = try SyntheticRecognitionServer(cloudHealth: .unreachable)
+    defer { server.stop() }
+    let app = launchCloudApp(server)
+    XCTAssertTrue(app.staticTexts["connection-state-failed"].waitForExistence(timeout: 10))
+    // 本周数据（合成服务器的 /v2 正常）到了之后「今天」卡才长成 5 步清单，页面高度才定型；
+    // 之前去量按钮位置、去点，页面还会再变高。
+    XCTAssertTrue(app.staticTexts["today-header"].waitForExistence(timeout: 10), "本周数据加载完，页面高度定型")
+    let retry = app.buttons["retry-connection"]
+    let rescan = app.buttons["rescan-connection"]
+    XCTAssertTrue(retry.waitForExistence(timeout: 5), "连接失败仍保留重试入口")
+    XCTAssertTrue(rescan.waitForExistence(timeout: 5), "连接失败必须另给「重新扫码」")
+    XCTAssertTrue(retry.isEnabled)
+    XCTAssertTrue(rescan.isEnabled)
+    XCTAssertEqual(rescan.label, "重新扫码")
+    XCTAssertTrue(app.staticTexts["换了网络连不上？让大人再给一个二维码，重新扫一下。"].exists,
+                  "次要按钮下面有一行说明")
+    XCTAssertEqual(app.buttons["repair-connection"].exists, false, "连不上不是授权失效")
+    XCTAssertEqual(server.redeemCount, 1)
+
+    // 「重试连接」还是重试：再发一次检查，仍是连接失败，配对和按钮都在，不弹扫码页。
+    let requestsBeforeRetry = server.requestCount
+    scrollToSettledHittable(retry, in: app)
+    retry.tap()
+    waitUntil("重试会再发一次健康检查") { server.requestCount > requestsBeforeRetry }
+    XCTAssertTrue(app.staticTexts["connection-state-failed"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.buttons["rescan-connection"].waitForExistence(timeout: 5))
+    XCTAssertFalse(app.staticTexts["connection-state-unpaired"].exists, "重试不得清掉配对")
+    XCTAssertFalse(app.otherElements["pairing-scanner"].exists, "重试不得打开扫码页")
+
+    // 「重新扫码」：清掉配对回到未配对，并打开扫码页。
+    // 重试期间（.checking）行里只剩重试按钮，页面会变矮；恢复 .failed 后按钮位置可能已经变了，
+    // 所以每次点之前都重新滚到可点并等停稳，不靠 XCUITest 点击时的临时滚动。
+    scrollToSettledHittable(app.buttons["rescan-connection"], in: app)
+    app.buttons["rescan-connection"].tap()
+    // 模拟器没有相机，扫码页是一块黑屏（带稳定标识 pairing-scanner）。
+    let scanner = app.otherElements["pairing-scanner"]
+    XCTAssertTrue(scanner.waitForExistence(timeout: 10), "重新扫码必须打开扫码页")
+    XCTAssertTrue(app.staticTexts["connection-state-unpaired"].waitForExistence(timeout: 5),
+                  "重新扫码先清掉旧配对")
+    XCTAssertEqual(app.buttons["rescan-connection"].exists, false)
+    XCTAssertEqual(app.buttons["retry-connection"].exists, false)
+    XCTAssertEqual(server.redeemCount, 1, "扫码页没有给出新二维码前不会重新兑换")
+    // 未配对态必须有真实的扫码入口（与授权失效用例相同的断言），而不是死胡同。
+    XCTAssertTrue(app.buttons["scan-to-pair"].waitForExistence(timeout: 5))
   }
 
   @MainActor
@@ -151,6 +219,31 @@ final class CloudConnectionJourneyTests: XCTestCase {
       RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     }
     XCTFail(description)
+  }
+
+  /// 把元素滚到可点的位置，并等它停下来（可点且 frame 连续 3 次采样不变，每次间隔 0.1 秒）才返回。
+  /// iPhone 13 上连接行默认落在底部「下一步」条的下面（不可点）：交给 XCUITest 在点击时临时滚动再点，
+  /// 在整类顺序跑时出现过一次点击没触发按钮（行仍是连接失败）。这里改成先自己滚、等位置停稳再点；
+  /// 是按条件等待，不是固定睡眠，停不稳就让用例失败。
+  @MainActor
+  private func scrollToSettledHittable(_ element: XCUIElement, in app: XCUIApplication,
+                                       file: StaticString = #filePath, line: UInt = #line) {
+    var swipes = 0
+    while !element.isHittable && swipes < 4 {
+      app.swipeUp()
+      swipes += 1
+    }
+    var last = CGRect.null
+    var stable = 0
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline {
+      let frame = element.frame
+      stable = (element.isHittable && frame == last) ? stable + 1 : 0
+      if stable >= 3 { return }
+      last = frame
+      RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    }
+    XCTFail("\(element.identifier) 没有停稳在可点的位置", file: file, line: line)
   }
 
   @MainActor
