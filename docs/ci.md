@@ -1,17 +1,18 @@
 # 持续集成（GitHub Actions）
 
-工作流文件：`.github/workflows/ci.yml`。每个 PR、以及每次推送到 `codex/ai-error-review-mvp` 或 `main`，都会自动跑下面两个 job。同一个 PR（或分支）有新提交时，旧的运行会被自动取消。
+工作流文件：`.github/workflows/ci.yml`。每个 PR、以及每次推送到 `codex/ai-error-review-mvp` 或 `main`，都会自动跑 `server`；`ios-unit` 只在改动涉及 iOS 时才跑（见下文「iOS 门控」）。同一个 PR（或分支）有新提交时，旧的运行会被自动取消。
 
 **CI 只验证，不部署。** 部署仍然是手动的，步骤见 `deploy/README.md`；这里没有任何部署步骤，也没有任何密钥。
 
-## 两个 job
+## job 一览
 
 | job | 运行环境 | 跑什么 | 预计耗时 |
 | --- | --- | --- | --- |
+| `changes` | `ubuntu-24.04` | `dorny/paths-filter@v4` 判断改动是否涉及 `iOS/**` 或 `ci.yml`，输出 `ios`；只读权限 | 不到 1 分钟 |
 | `server` | `ubuntu-24.04`，Node 24 | `npm ci` → `npm run typecheck` → `npm run build` → `npx playwright install --with-deps chromium` → `npm test`（Vitest）→ `npm run test:e2e`（Playwright） | 约 6–10 分钟 |
-| `ios-unit` | `macos-26`，Xcode 26.6 | `swift test --package-path iOS` | 约 3–6 分钟 |
+| `ios-unit` | `macos-26`，Xcode 26.6 | `swift test --package-path iOS`；仅当 `changes` 的 `ios` 为 `true` | 约 3–6 分钟 |
 
-两个 job 并行，互不依赖。耗时是估计值（本机实测整套 `server` 流程约 3 分钟、`swift test` 含首次编译约 35 秒；GitHub 的标准 runner 核数少、启动也要时间，所以按 2–3 倍估）。跑过几次之后以 Actions 页面上的实际耗时为准，并改掉这一栏。
+`server` 不依赖 `changes`，每次都跑，和 `changes` 并行；`ios-unit` 等 `changes` 跑完再决定跑不跑。耗时是估计值（本机实测整套 `server` 流程约 3 分钟、`swift test` 含首次编译约 35 秒；GitHub 的标准 runner 核数少、启动也要时间，所以按 2–3 倍估）。跑过几次之后以 Actions 页面上的实际耗时为准，并改掉这一栏。
 
 ### server
 
@@ -38,9 +39,29 @@
 - **真实 Caddy 集成**（`caddyIpEntry.test.ts` 的真实 Caddy 部分）和 **真机/相机/语音**。
 - **部署**。不自动部署；合并到哪个分支都不会触发部署。
 
+## iOS 门控
+
+macOS runner 在私有仓库按 10 倍计费，所以 `ios-unit` 只在下面两类改动出现时运行：
+
+- `iOS/**` 下的任何文件；
+- `.github/workflows/ci.yml` 本身（改了工作流就要真跑一遍确认没改坏）。
+
+怎么判断「改动」：
+
+- **pull_request**：看整个 PR 相对目标分支改了哪些文件（通过 GitHub API），所以 PR 里只要有一次提交碰过 iOS，之后每次推送都会跑。
+- **push**：只看这一次推送相对推送前的提交改了什么（`changes` 里把 `base` 设成当前分支名）。如果不设，会和默认分支 `main` 比较，对长期分支 `codex/ai-error-review-mvp` 来说永远包含 iOS 改动，门控就失效了。
+
+不满足条件时 `ios-unit` 仍然出现在检查列表里，状态是 **skipped**。GitHub 分支保护把 skipped 当作通过，所以以后在分支保护里只把 `server` 设为必需检查即可，不会被 `ios-unit` 卡住。
+
+注意：
+
+- 如果 `changes` 本身失败（例如强制推送后，推送前的提交取不到），`ios-unit` 也会被跳过，同时 `changes` 显示红色。看到红色的 `changes` 就手动重跑一次。
+- 只改了 `docs/`、`src/`、`tests/` 等的提交不会触发 iOS 测试。如果哪天 iOS 代码开始依赖 `iOS/` 之外的文件，要把对应路径加到 `ci.yml` 里 `changes` 的 `filters`。
+- `dorny/paths-filter` 是第三方 action，按大版本标签（`v4`）引用，和其他 action 一致；`changes` 只有只读权限，没有任何密钥。要更严格可以改成固定到提交 SHA。
+
 ## 费用提示
 
-仓库是私有的，Actions 分钟数计入账户额度，macOS runner 按 10 倍计。`ios-unit` 每跑一次大约消耗 30–60 个计费分钟，具体以账户 Billing 页面为准。取消旧运行（`concurrency`）已经能省掉一部分；还嫌多的话，可以让 `ios-unit` 只在 `iOS/**` 有改动时运行。
+仓库是私有的，Actions 分钟数计入账户额度，macOS runner 按 10 倍计。`ios-unit` 每跑一次大约消耗 30–60 个计费分钟，具体以账户 Billing 页面为准。门控之后只有碰 iOS 的改动才会花这笔钱，取消旧运行（`concurrency`）也能再省一部分。
 
 ## 本地复现
 
