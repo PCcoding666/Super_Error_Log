@@ -593,3 +593,66 @@ describe('互动记录：每个动作只记时间、路由模板、动作标识�
     expect(photos).not.toContain('下一步：选这周要练的题');
   });
 });
+
+describe('稀疏的屏用现有数据填满；服务器忙页不替没连上的人说「都在」（quality round 1 iteration 2）', () => {
+  it('说说为什么错开头、说完了、打印首屏、以前的练习都列出这份练习里的题', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const job = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
+    const choose = await browser.text('/s/choose');
+    const itemIds = [...choose.matchAll(/name="itemIds"(?: checked="")? value="(itm_[0-9a-f]+)"/g)].map(match => match[1]!);
+    const packetId = (await browser.post('/s/choose', { itemIds })).headers.get('location')!.split('/').pop()!;
+    const text = async (path: string): Promise<string> => (await browser.text(path)).replace(/<[^>]+>/g, '');
+
+    // 开头一屏：这次的几道，每道一行，第一道写「从这道开始」。
+    const intro = await browser.text(`/s/why/${packetId}`);
+    expect(intro).toContain('data-testid="why-items"');
+    expect((intro.match(/class="row qrow"/g) ?? []).length).toBe(itemIds.length);
+    expect(await text(`/s/why/${packetId}`)).toContain(`这次的 ${itemIds.length} 道`);
+    expect(await text(`/s/why/${packetId}`)).toContain('从这道开始');
+
+    // 每道都「这道跳过」以后：说完了一屏列出每道「这次没说」。
+    for (const itemId of itemIds) await browser.post(`/s/why/${packetId}/${itemId}/pass`);
+    const done = await browser.text(`/s/why/${packetId}`);
+    expect(done).toContain('data-testid="why-done-items"');
+    expect(done.replace(/<[^>]+>/g, '')).toContain(`${itemIds.length} 道里说了 0 道`);
+    expect(done.match(/<span class="meta-line">这次没说<\/span>/g) ?? []).toHaveLength(itemIds.length);
+
+    // 打印首屏：手机字号的题目清单在 A4 预览前面；预览本身照旧。
+    await browser.post(`/s/print/${packetId}`);
+    await waitFor(async () => (await browser.text(`/s/print/${packetId}`)).includes('data-testid="sheet"'));
+    const print = await browser.text(`/s/print/${packetId}`);
+    expect(print.indexOf('data-testid="print-summary"')).toBeGreaterThan(-1);
+    expect(print.indexOf('data-testid="print-summary"')).toBeLessThan(print.indexOf('data-testid="print-preview"'));
+    expect(await text(`/s/print/${packetId}`)).toContain(`这张练习纸上有 ${itemIds.length} 道题`);
+
+    // 以前的练习：每份写出题号。
+    const practices = await text('/s/practices');
+    expect(practices).toContain('每个周末一份练习纸');
+    expect(practices).toMatch(/M-0\d、M-0\d/);
+  });
+
+  it('服务器忙：连着的手机说「照片和错题都在」，还没连上的不说', async () => {
+    const env = await setup({ limiter: new RateLimiter({ pairingFailPerIp: 1, authedQueryPerDevice: 4 }) });
+    const stranger = new Browser(env.base);
+    let unpaired = '';
+    for (let attempt = 0; attempt < 4 && !unpaired; attempt += 1) {
+      const response = await stranger.post('/s/pair', { link: 'https://example.invalid/s/pair?code=nope' });
+      if (response.status === 429) unpaired = await response.text();
+    }
+    expect(unpaired).toContain('服务器有点忙');
+    expect(unpaired).toContain('还没连上服务器');
+    expect(unpaired).not.toContain('照片和错题都在');
+    expect(unpaired).not.toContain('data-testid="settings-link"');
+
+    const browser = await pairBrowser(env);
+    let paired = '';
+    for (let attempt = 0; attempt < 10 && !paired; attempt += 1) {
+      const response = await browser.get('/s/');
+      if (response.status === 429) paired = await response.text();
+    }
+    expect(paired).toContain('已经传上去的照片和错题都在服务器上');
+  });
+});
