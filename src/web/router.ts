@@ -166,6 +166,17 @@ export function dayOptions(generatedAt: Date, now: Date, timeZone: string): DayO
   return days;
 }
 
+/**
+ * 连接失败时「具体原因」里给学生看的话（设计稿 §6：不说「配对」「配对码」）。服务器的错误码与日志不变。
+ */
+const PAIRING_REASONS: Record<string, string> = {
+  invalid_pairing_payload: '链接不完整，可能复制漏了一段。',
+  pairing_used: '这个二维码已经被另一台手机用过了，每个只能用一次。',
+  pairing_expired: '这个二维码过期了。',
+  pairing_not_found: '这个二维码已经失效了。',
+  pairing_unavailable: '服务器暂时连不上，过一会儿再试。',
+};
+
 export function createWebClientRouter(options: WebClientOptions): Router {
   // 日历与服务器的领域规则用同一个时区（进程时区）：回传日期校验、ISO 周都按进程本地时间算，
   // 网页按别的时区算「今天」会让他选到被服务器拒收的日期。生产服务器应为 Asia/Shanghai（见 deploy/README.md）。
@@ -203,7 +214,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // ---------- 配对：打开链接 → 确认页 → 点一下兑换 → httpOnly cookie ----------
   r.get('/pair', (request, response) => {
     const code = str(request.query.code);
-    if (decodeWebPairingCode(code) === null) { render(response, ConnectPage({ reason: 'unpaired', error: '链接里的配对码不完整，可能复制漏了一段。' }), 400); return; }
+    if (decodeWebPairingCode(code) === null) { render(response, ConnectPage({ reason: 'unpaired', error: PAIRING_REASONS.invalid_pairing_payload }), 400); return; }
     render(response, PairPage({ code, clientId: crypto.randomUUID(), inAppBrowser: inAppBrowser(request) }));
   });
 
@@ -214,7 +225,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       const payload = decodeWebPairingCode(raw);
       const clientId = UUID.test(str(request.body?.clientId)) ? str(request.body?.clientId) : crypto.randomUUID();
       try {
-        if (payload === null) throw new PairingError('invalid_pairing_payload', '链接里的配对码不完整，可能复制漏了一段。');
+        if (payload === null) throw new PairingError('invalid_pairing_payload', PAIRING_REASONS.invalid_pairing_payload!);
         const result = await options.pairing.redeem(payload, clientId, deviceInfo(request));
         const seconds = (Date.parse(result.expiresAt) - Date.now()) / 1000;
         setCookie(request, response, COOKIE.device, result.token, seconds);
@@ -227,7 +238,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         const gate = options.limiter.pairingFailure(options.ipOf(request));
         if (!gate.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(gate.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds }), 429); return; }
         const status = error.code === 'pairing_expired' ? 410 : error.code === 'pairing_used' ? 409 : error.code === 'pairing_not_found' ? 404 : error.code === 'pairing_unavailable' ? 503 : 400;
-        render(response, ConnectPage({ reason: 'unpaired', error: error.message }), status);
+        render(response, ConnectPage({ reason: 'unpaired', error: PAIRING_REASONS[error.code] ?? '这个二维码用不了。' }), status);
       }
     } catch (error) { next(error); }
   });

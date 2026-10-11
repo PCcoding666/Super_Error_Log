@@ -228,6 +228,13 @@ export function WhyDonePage(props: { practice: PracticeDetail }): ReactNode {
 
 // ---------- 打印练习纸（§4.8） ----------
 
+/** 打印前看一眼的原因（printService 的原文）换成设计稿词表的说法：不说「AI 没把握」（§6）。只改显示。 */
+export function plainGlance(reason: string | null): string {
+  if (!reason) return '打印前看一眼截图';
+  if (reason.includes('AI 没把握')) return '字可能认错了，打印前看一眼截图全不全';
+  return reason;
+}
+
 function hintLine(prefix: string, text: string | null): string {
   if (!text) return `${prefix}（无）`;
   return text.startsWith(prefix) ? text : prefix + text;
@@ -322,7 +329,7 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
             <h2 className="card-title">打印前看一眼这 {glance.length} 道</h2>
             {glance.map(item => (
               <details key={item.itemId}>
-                <summary data-key="print-glance">{item.shortId ?? `第 ${item.position + 1} 题`}：{item.glanceReason}</summary>
+                <summary data-key="print-glance">{item.shortId ?? `第 ${item.position + 1} 题`}：{plainGlance(item.glanceReason)}</summary>
                 {item.cropMedia ? <img className="crop big" src={`/s/img/print/${practiceId}/${item.cropMedia}`} alt="截图" /> : null}
               </details>
             ))}

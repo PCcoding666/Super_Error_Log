@@ -82,7 +82,7 @@ export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView
       {props.error ? <Problem title="没成功" detail={props.error} /> : null}
       <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full`} alt="整题照片" /></a>
       <p className="hint">整题照片 · 点开可以两指放大</p>
-      {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">AI 对这道题没把握：字或图可能认错了。对照上面的照片看一眼，不对就点「改一下」。</p> : null}
+      {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">{quoted('字可能认错了：对照上面的照片看一眼，不对就点「改一下」。')}</p> : null}
       <section className="card">
         <h2 className="card-title">AI 认出的题目</h2>
         <p className="pre" data-testid="question-text">{evidence?.questionText ?? item.questionExcerpt ?? ''}</p>

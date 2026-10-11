@@ -155,7 +155,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
 const CONNECT_COPY: Record<ConnectReason, { title: string; detail: string; button: string }> = {
   unpaired: {
     title: '先连上服务器',
-    detail: '这一步要大人帮一下：请帮你装错题本的人给你一个配对二维码或链接。只要做一次。',
+    detail: '这一步要大人帮一下：请帮你装错题本的人给你一个连接用的二维码或链接。只要做一次。',
     button: '扫码连接',
   },
   unauthorized: {
@@ -186,7 +186,7 @@ export function ConnectPage(props: { reason: ConnectReason; error?: string | nul
           <li><b>链接：</b>长按它选「拷贝」，粘贴到下面，再点「用这个链接连接」。</li>
         </ol>
         <form method="post" action="/s/pair" id="connect-form">
-          <label htmlFor="connect-link" className="field-label">配对链接</label>
+          <label htmlFor="connect-link" className="field-label">连接用的链接</label>
           <input id="connect-link" type="text" name="link" inputMode="url" autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="https://…/s/pair?code=…" />
         </form>
         <p className="hint">放到主屏幕以后，如果主屏幕上的错题本还要你连接，请大人再给一个新链接，粘贴到这里。</p>
