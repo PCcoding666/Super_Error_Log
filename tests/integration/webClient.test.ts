@@ -355,7 +355,7 @@ describe('勾出做错的题：没批改的页由学生勾，勾了才精读', (
     const today = await browser.text('/s/');
     expect(today).toContain('第 1 张要你勾');
     expect(today).toContain('勾第 1 张');
-    expect(await browser.text('/s/photos')).toContain('这页没有批改痕迹，点这里勾出错题');
+    expect((await browser.text('/s/photos')).replace(/<[^>]+>/g, '')).toContain('这页没有批改痕迹，点这里勾出错题');
     const pick = await browser.text(`/s/photos/${jobId}`);
     const ids = [...pick.matchAll(/name="questionIds" value="([^"]+)"/g)].map(match => match[1]!);
     expect(ids).toHaveLength(3);

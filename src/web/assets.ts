@@ -76,6 +76,7 @@ main p,main li{max-width:32em}
 .step-detail{display:block;font-size:var(--fs-2);margin-top:var(--s-1)}
 .step-min{color:var(--muted);white-space:nowrap}
 .step-detail{text-wrap:balance}
+.ph{display:inline-block}
 .steps .chev{align-self:center;flex:0 0 auto}
 .chip{display:inline-block;font-size:var(--fs-1);font-weight:600;line-height:var(--lh-tight);padding:1px var(--s-2);border-radius:var(--r-pill);margin-left:var(--s-2);vertical-align:1px;background:var(--mint);color:var(--muted);white-space:nowrap}
 .chip.now{background:color-mix(in srgb,var(--teal) 14%,var(--card));color:var(--teal)}

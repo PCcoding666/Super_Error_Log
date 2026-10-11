@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { RecognitionJob } from '../../mobile/contracts.js';
 import type { PhotoView } from '../state.js';
 import { pickMoreCount, unselectedQuestions } from '../photoPlan.js';
-import { Page, Problem, type BarButton, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, type BarButton, type BarModel } from './layout.js';
 
 /** 上传前看一下（§4.3）。事实要素不删；按网页的实际情况改了两处：照片不进相册、上传前去掉位置信息。 */
 export function ConsentPage(): ReactNode {
@@ -105,7 +105,7 @@ function PhotoRow(props: { photo: PhotoView }): ReactNode {
   if (photo.state === 'needsPick') {
     return (
       <li><a className="row" href={`/s/photos/${photo.jobId}`} data-testid={`photo-row-${photo.number}`}>
-        <span className="tone-orange row-text">{prefix}这页没有批改痕迹，点这里勾出错题</span><span className="chev" aria-hidden="true">›</span>
+        <span className="tone-orange row-text"><Phrased text={`${prefix}这页没有批改痕迹，点这里勾出错题`} /></span><span className="chev" aria-hidden="true">›</span>
       </a></li>
     );
   }
@@ -113,8 +113,8 @@ function PhotoRow(props: { photo: PhotoView }): ReactNode {
     const plan = photo.failure;
     return (
       <li className="row row-block" data-testid={`photo-row-${photo.number}`}>
-        <p className="tone-red flush">{prefix}{plan.title}</p>
-        <p className="small muted">{plan.detail}</p>
+        <p className="tone-red flush"><Phrased text={`${prefix}${plan.title}`} /></p>
+        <p className="small muted"><Phrased text={plan.detail} /></p>
         <div className="actions">
           {plan.retryTitle ? (
             <form method="post" action={`/s/photos/${photo.jobId}/retry`} className="inline-form">
@@ -133,7 +133,7 @@ function PhotoRow(props: { photo: PhotoView }): ReactNode {
   const text = picked === 0 ? `找到 ${auto} 道有红叉的题` : `${auto + picked} 道已进错题本`;
   return (
     <li className="row row-block" data-testid={`photo-row-${photo.number}`}>
-      <span className="tone-green">{prefix}{text}</span>
+      <span className="tone-green"><Phrased text={`${prefix}${text}`} /></span>
       {left > 0 && !photo.pickDone ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more">还有 {left} 道没勾 · 漏了题可以补<span aria-hidden="true">›</span></a> : null}
     </li>
   );

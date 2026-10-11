@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { actionHref, type PhotoView, type TodayState } from '../state.js';
 import { actionKey, header, type Choice, type ConnectReason, type NextStepModel, type Step } from '../weekPlan.js';
-import { Page, Problem, type BarButton, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, type BarButton, type BarModel } from './layout.js';
 
 /** 与练习纸封面三条规则同一说法（printService.ts 55 行）。 */
 export const PAPER_RULES = '做的时候：不看答案，独立做；卡住先看一级提示，再看二级；做完打勾，写上做题日期。';
@@ -40,8 +40,8 @@ function StepRow(props: { step: Step; index: number; current: boolean }): ReactN
         <span className="step-title">{step.title}</span>
         {step.isOptional && !step.isDone ? <span className="chip">可跳过</span> : null}
         {current ? <span className="chip now">现在做这个</span> : null}
-        <span className="step-detail"><span className={`tone-${step.tone}`}>{step.detail}</span> <span className="step-min">· 约 {step.minutes} 分钟</span></span>
-        {step.warning ? <span className="step-detail tone-orange">{step.warning}</span> : null}
+        <span className="step-detail"><span className={`tone-${step.tone}`}><Phrased text={step.detail} /></span> <span className="step-min">· 约 {step.minutes} 分钟</span></span>
+        {step.warning ? <span className="step-detail tone-orange"><Phrased text={step.warning} /></span> : null}
       </span>
       {step.action ? <span className="chev" aria-hidden="true">›</span> : null}
     </>
@@ -88,7 +88,7 @@ function NewPhotosNote(props: { photos: PhotoView[] }): ReactNode {
   if (!needsPick && !finding) return null;
   return (
     <div data-testid="today-new-photos">
-      <p className="small">{needsPick ? `新拍的第 ${needsPick.number} 张要你勾出做错的题。` : '新拍的卷子：AI 正在找题。'}找到的题会进错题本，下个周末再选进练习。</p>
+      <p className="small"><Phrased text={`${needsPick ? `新拍的第 ${needsPick.number} 张要你勾出做错的题。` : '新拍的卷子：AI 正在找题。'}找到的题会进错题本，下个周末再选进练习。`} /></p>
       <a className="more" href={needsPick ? `/s/photos/${needsPick.jobId}` : '/s/photos'} data-key="today-new-photos">{needsPick ? `勾第 ${needsPick.number} 张` : '看看新拍的卷子'}<span aria-hidden="true">›</span></a>
     </div>
   );

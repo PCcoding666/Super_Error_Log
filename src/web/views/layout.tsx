@@ -143,3 +143,14 @@ export function Problem(props: { title: string; detail?: string; reason?: string
     </div>
   );
 }
+
+/**
+ * 中文短句的断行：在标点（，；。：、！？）后面分成不可拆的小段（inline-block），换行只落在小段之间，
+ * 不会把一个词拆到两行（例如「没 / 批改」「正 / 好」）。小段比一行还长时照常在段内换行。
+ * 只用于一两行的短句（清单说明行、照片状态行、小字提示）；长段落照常按字换行（中文排版的惯例）。文字内容不变。
+ */
+export function Phrased(props: { text: string }): ReactNode {
+  const pieces = props.text.split(/(?<=[，；。：、！？])(?=\S)/u);
+  if (pieces.length < 2) return props.text;
+  return <>{pieces.map((piece, index) => <span key={index} className="ph">{piece}</span>)}</>;
+}
