@@ -24,6 +24,8 @@ export interface WebContext {
 export interface PhotoView {
   number: number;
   jobId: string;
+  /** 服务器登记这张照片的时间（v2_photo.registered_at）。 */
+  registeredAt: string;
   job: RecognitionJob | null;
   state: LocalPhotoState | null;
   failure: PhotoFailurePlan | null;
@@ -49,7 +51,7 @@ export async function loadPhotos(ctx: WebContext, week: V2WeekResponse, marks: P
     try { job = await ctx.service.getJob(photo.jobId); } catch { job = null; }
     const flags = { pickDone: marks.pickDone.has(photo.jobId), dismissed: marks.dismissed.has(photo.jobId) };
     return {
-      number: index + 1, jobId: photo.jobId, job, state: photoState(job, flags), failure: photoFailurePlan(job),
+      number: index + 1, jobId: photo.jobId, registeredAt: photo.registeredAt, job, state: photoState(job, flags), failure: photoFailurePlan(job),
       pickDone: flags.pickDone, dismissed: flags.dismissed, itemCount: photo.itemCount, unselectedCount: photo.unselectedCount,
     };
   }));

@@ -251,14 +251,15 @@ export function OfflinePage(): ReactNode {
   );
 }
 
-export function BusyPage(props: { retryAfterSeconds: number }): ReactNode {
+/** 服务器忙（429）。还没连上（或连接失效）的人看不到也没传过东西，不说「照片和错题都在」。 */
+export function BusyPage(props: { retryAfterSeconds: number; connected: boolean }): ReactNode {
   const bar: BarModel = { caption: `大约 ${Math.max(1, Math.ceil(props.retryAfterSeconds / 60))} 分钟后再试`, primary: { title: '过一会儿再试', key: 'retry', href: '/s/' }, secondary: [] };
   return (
-    <Page title="服务器有点忙" back={null} bar={bar}>
+    <Page title="服务器有点忙" back={null} showSettings={props.connected} bar={bar}>
       <h1>服务器有点忙</h1>
       <section className="card">
         <p>现在来的请求太多了，过一会儿再点下面的按钮。</p>
-        <p className="muted small">已经传上去的照片和错题都在服务器上，不会丢。</p>
+        <p className="muted small" data-testid="busy-note">{props.connected ? '已经传上去的照片和错题都在服务器上，不会丢。' : '还没连上服务器。等一会儿，再用同一个二维码或链接试一次。'}</p>
       </section>
     </Page>
   );

@@ -582,8 +582,13 @@ describe('互动记录：每个动作只记时间、路由模板、动作标识�
     await waitFor(async () => (await env.service.getJob(again.jobId)).status === 'completed');
     const photos = await browser.text('/s/photos');
     expect(photos).toContain('data-testid="photos-after-week"');
-    expect(photos).toContain('这几道下个周末再选');
-    expect(photos).toContain('下个周末「选这周要练的题」时，它们会出现在里面');
+    expect(photos).toContain('新拍的题下个周末再选');
+    // 哪张是新拍的：练习纸生成以后才拍的第 2 张标「新拍的」，第 1 张（已经进了这周的练习）不标。
+    expect(photos).toContain('data-testid="photo-new-2"');
+    expect(photos).not.toContain('data-testid="photo-new-1"');
+    const photosText = photos.replace(/<[^>]+>/g, '');
+    expect(photosText).toContain('下面标着「新拍的」那 1 张不会加进去');
+    expect(photosText).toContain('下个周末选题时，它们会出现在里面');
     expect(photos).toMatch(/<a class="btn primary" href="\/s\/" data-testid="next-step-primary"[^>]*>回到今天<\/a>/);
     expect(photos).not.toContain('下一步：选这周要练的题');
   });

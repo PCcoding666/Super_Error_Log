@@ -236,7 +236,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         if (!(error instanceof PairingError)) throw error;
         failed(response, error.code);
         const gate = options.limiter.pairingFailure(options.ipOf(request));
-        if (!gate.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(gate.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds }), 429); return; }
+        if (!gate.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(gate.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds, connected: false }), 429); return; }
         const status = error.code === 'pairing_expired' ? 410 : error.code === 'pairing_used' ? 409 : error.code === 'pairing_not_found' ? 404 : error.code === 'pairing_unavailable' ? 503 : 400;
         render(response, ConnectPage({ reason: 'unpaired', error: PAIRING_REASONS[error.code] ?? '这个二维码用不了。' }), status);
       }
@@ -261,7 +261,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       catch (error) {
         if (!(error instanceof PairingError)) throw error;
         const fail = options.limiter.authFailure(options.ipOf(request));
-        if (!fail.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(fail.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: fail.retryAfterSeconds }), 429); return; }
+        if (!fail.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(fail.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: fail.retryAfterSeconds, connected: false }), 429); return; }
         reject('unauthorized');
         return;
       }
@@ -271,7 +271,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         failed(response, 'busy');
         response.setHeader('retry-after', String(query.retryAfterSeconds));
         if (request.path === '/voice' || wantsJson(request)) { response.status(429).json({ error: { code: 'rate_limited', message: '请求过于频繁，请稍后再试。' } }); return; }
-        render(response, BusyPage({ retryAfterSeconds: query.retryAfterSeconds }), 429);
+        render(response, BusyPage({ retryAfterSeconds: query.retryAfterSeconds, connected: true }), 429);
         return;
       }
       if (request.method === 'POST' && crossSite(request)) { failed(response, 'cross_site'); response.status(403).send('forbidden'); return; }
@@ -392,7 +392,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       const bar: BarModel = needsPick
         ? { caption: '', primary: { title: `勾第 ${needsPick.number} 张`, key: 'openPick', href: `/s/photos/${needsPick.jobId}` }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] }
         : { caption: refresh ? 'AI 在后台找题，可以先回去' : '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
-      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, flash: { err } }));
+      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.createdAt ?? null, flash: { err } }));
       return;
     }
     const bar = nextStepBar(state, 'pick');

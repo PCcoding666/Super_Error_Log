@@ -90,14 +90,16 @@ function autoCount(job: RecognitionJob | null): { auto: number; picked: number }
   return { auto: questions.length - picked, picked };
 }
 
-function PhotoRow(props: { photo: PhotoView }): ReactNode {
+function PhotoRow(props: { photo: PhotoView; isNew?: boolean }): ReactNode {
   const { photo } = props;
   const prefix = `第 ${photo.number} 张 · `;
+  // 这周的练习纸生成以后才拍的那几张：标「新拍的」，和已经进了这周练习的照片分开（门槛 G3）。
+  const tag = props.isNew ? <span className="tag" data-testid={`photo-new-${photo.number}`}>新拍的</span> : null;
   if (photo.state === 'finding') {
     const more = pickMoreCount(photo.job);
     return (
       <li className="row row-block" data-testid={`photo-row-${photo.number}`}>
-        <span className="tone-blue">{prefix}AI 正在找题…</span>
+        <span className="tone-blue">{prefix}AI 正在找题…</span>{tag}
         {more ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more">还有 {more} 道没勾 · 漏了题可以补<span aria-hidden="true">›</span></a> : null}
       </li>
     );
@@ -105,7 +107,7 @@ function PhotoRow(props: { photo: PhotoView }): ReactNode {
   if (photo.state === 'needsPick') {
     return (
       <li><a className="row" href={`/s/photos/${photo.jobId}`} data-testid={`photo-row-${photo.number}`}>
-        <span className="tone-orange row-text"><Phrased text={`${prefix}这页没有批改痕迹，点这里勾出错题`} /></span><span className="chev" aria-hidden="true">›</span>
+        <span className="tone-orange row-text"><Phrased text={`${prefix}这页没有批改痕迹，点这里勾出错题`} />{tag}</span><span className="chev" aria-hidden="true">›</span>
       </a></li>
     );
   }
@@ -113,7 +115,7 @@ function PhotoRow(props: { photo: PhotoView }): ReactNode {
     const plan = photo.failure;
     return (
       <li className="row row-block" data-testid={`photo-row-${photo.number}`}>
-        <p className="tone-red flush"><Phrased text={`${prefix}${plan.title}`} /></p>
+        <p className="tone-red flush"><Phrased text={`${prefix}${plan.title}`} />{tag}</p>
         <p className="small muted"><Phrased text={plan.detail} /></p>
         <div className="actions">
           {plan.retryTitle ? (
@@ -133,7 +135,7 @@ function PhotoRow(props: { photo: PhotoView }): ReactNode {
   const text = picked === 0 ? `找到 ${auto} 道有红叉的题` : `${auto + picked} 道已进错题本`;
   return (
     <li className="row row-block" data-testid={`photo-row-${photo.number}`}>
-      <span className="tone-green"><Phrased text={`${prefix}${text}`} /></span>
+      <span className="tone-green"><Phrased text={`${prefix}${text}`} /></span>{tag}
       {left > 0 && !photo.pickDone ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more">还有 {left} 道没勾 · 漏了题可以补<span aria-hidden="true">›</span></a> : null}
     </li>
   );
@@ -143,22 +145,25 @@ function PhotoRow(props: { photo: PhotoView }): ReactNode {
  * 这周的练习纸已经生成以后（做完了 / 周中）又拍了卷子：不再把他带去选题（这周的练习已经定了），
  * 而是说清楚新找到的题去了哪里（进错题本，下个周末「选这周要练的题」时会出现），并给「回到今天」。门槛 G3。
  */
-export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh: boolean; itemCount: number; afterWeek?: boolean; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
+export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh: boolean; itemCount: number; afterWeek?: boolean; newSince?: string | null; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
+  const since = props.afterWeek && props.newSince ? Date.parse(props.newSince) : NaN;
+  const isNew = (photo: PhotoView): boolean => Number.isFinite(since) && Date.parse(photo.registeredAt) > since;
+  const newCount = props.photos.filter(isNew).length;
   return (
     <Page title="勾出做错的题" bar={props.bar} refreshSeconds={props.refresh ? 4 : undefined} flash={props.flash}>
       <h1>勾出做错的题</h1>
       <p className="lead">有红叉、订正的题，AI 会自己找出来。没批改过的页（比如答题卡另交的），要你自己勾。</p>
       {props.afterWeek ? (
         <section className="card callout" data-testid="photos-after-week">
-          <h2 className="card-title">这几道下个周末再选</h2>
-          <p>这周的练习纸已经生成了，新拍的卷子不会加进去。</p>
-          <p>{props.refresh ? 'AI 找好以后，' : ''}新找到的题会进<b>错题本</b>，在「这周的错题」里能看到；下个周末「选这周要练的题」时，它们会出现在里面。</p>
+          <h2 className="card-title">新拍的题下个周末再选</h2>
+          <p data-testid="photos-new-note">{newCount > 0 ? quoted(`这周的练习纸已经生成了，下面标着「新拍的」那 ${newCount} 张不会加进去。`) : '这周的练习纸已经生成了，新拍的卷子不会加进去。'}</p>
+          <p>{props.refresh ? 'AI 找好以后，' : ''}新找到的题会进<b>错题本</b>{quoted('，「这周的错题」里能看到；下个周末选题时，它们会出现在里面。')}</p>
         </section>
       ) : null}
       {props.photos.length === 0 ? (
         <section className="card"><p>这周还没拍卷子</p><a className="btn" href="/s/capture" data-key="empty-capture">去拍</a></section>
       ) : (
-        <section className="card"><ul className="list">{props.photos.map(photo => <PhotoRow key={photo.jobId} photo={photo} />)}</ul></section>
+        <section className="card"><ul className="list">{props.photos.map(photo => <PhotoRow key={photo.jobId} photo={photo} isNew={isNew(photo)} />)}</ul></section>
       )}
       {props.itemCount > 0 ? <a className="more" href="/s/items" data-testid="photos-items">看看找到的错题（{props.itemCount} 道）<span aria-hidden="true">›</span></a> : null}
     </Page>

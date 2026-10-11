@@ -271,8 +271,10 @@ test.describe('下个周末', () => {
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张', { timeout: 20_000 });
     await next(page, '拍完了，下一步');
     await expect(page).toHaveURL(/\/s\/photos$/);
-    await expect(page.getByTestId('photos-after-week')).toContainText('这几道下个周末再选');
-    await expect(page.getByTestId('photos-after-week')).toContainText('下个周末「选这周要练的题」时，它们会出现在里面');
+    await expect(page.getByTestId('photos-after-week')).toContainText('新拍的题下个周末再选');
+    await expect(page.getByTestId('photo-new-2')).toHaveText('新拍的');
+    await expect(page.getByTestId('photo-new-1')).toHaveCount(0);
+    await expect(page.getByTestId('photos-after-week')).toContainText('下个周末选题时，它们会出现在里面');
     await expect(primary(page)).toHaveText('回到今天');
     await next(page, '回到今天');
     await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
