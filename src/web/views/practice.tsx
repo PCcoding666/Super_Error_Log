@@ -421,8 +421,8 @@ export function RecordItemPage(props: { practiceId: string; card: PracticeCard; 
   const bar: BarModel = {
     caption: `第 ${props.index + 1} 道，共 ${props.total} 道`,
     primary: { title: last ? `提交 ${props.total} 道结果` : '下一道', key: last ? 'submit' : 'next', form: 'record-form', name: 'go', value: last ? 'submit' : 'next' },
-    // 第 1 道的「上一步」回到选日期那一屏，所以写明是「改日期」。
-    secondary: [{ title: props.index === 0 ? '改日期' : '上一道', key: 'prev', form: 'record-form', name: 'go', value: 'prev' }],
+    // 第 1 道的「上一步」回到选日期那一屏（整张练习纸的日期）；和下面「只有这道不是那天做的？」（只改这一道）说法分开。
+    secondary: [{ title: props.index === 0 ? '回去改整张的日期' : '上一道', key: 'prev', form: 'record-form', name: 'go', value: 'prev' }],
   };
   const prefix = card.id;
   const keep = Object.fromEntries(Object.entries(props.state).filter(([name]) => !name.endsWith(`_${prefix}`)));
@@ -452,7 +452,7 @@ export function RecordItemPage(props: { practiceId: string; card: PracticeCard; 
           <input type="text" id="record-stuck" name="stuck" maxLength={100} defaultValue={props.answer.stuck} placeholder="比如：第二步移项" />
         </div>
         <details>
-          <summary data-key="record-item-date">这道不是这天做的？改日期</summary>
+          <summary data-key="record-item-date">只有这道不是那天做的？</summary>
           <label htmlFor="record-item-date" className="field-label">这道是哪天做的</label>
           <select id="record-item-date" name="itemDate" defaultValue={props.answer.date}>
             {props.days.map(day => <option key={day.value} value={day.value}>{day.label}</option>)}
