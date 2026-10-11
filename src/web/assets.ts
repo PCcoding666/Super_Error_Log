@@ -62,7 +62,7 @@ main p,main li{max-width:32em}
 .card-title{font-size:var(--fs-4);line-height:var(--lh-tight);font-weight:600;margin:0 0 var(--s-2)}
 .flash{border-radius:var(--r-2);padding:var(--s-3) var(--s-4);margin:var(--s-3) 0;background:var(--mint)}
 .flash.err{background:color-mix(in srgb,var(--red) 14%,var(--card));color:var(--ink)}
-.tone-gray{color:var(--gray)}.tone-blue{color:var(--blue)}.tone-orange{color:var(--orange)}.tone-green{color:var(--green)}.tone-red{color:var(--red)}
+.tone-teal{color:var(--teal)}.tone-gray{color:var(--gray)}.tone-blue{color:var(--blue)}.tone-orange{color:var(--orange)}.tone-green{color:var(--green)}.tone-red{color:var(--red)}
 .rhythm{display:flex;gap:var(--s-1);margin:var(--s-1) 0 var(--s-3);padding:0;list-style:none}
 .rhythm li{flex:1;text-align:center;font-size:var(--fs-1);line-height:var(--lh-tight);padding:var(--s-2) var(--s-1);border-radius:var(--r-1);background:var(--card);border:1px solid var(--line);color:var(--muted)}
 .rhythm li.on{background:var(--teal);color:var(--on-teal);border-color:var(--teal)}
@@ -98,7 +98,8 @@ main p,main li{max-width:32em}
 .card-title.sub{font-size:var(--fs-3);margin-top:var(--s-4)}
 .photo-link{display:block}
 .flash-row{display:flex;align-items:center;justify-content:space-between;gap:var(--s-3);padding-top:0;padding-bottom:0;min-height:52px}
-.thumb{width:84px;height:64px;object-fit:cover;border-radius:var(--r-1);background:var(--mint);flex:0 0 auto}
+.thumb{width:84px;height:64px;object-fit:cover;border-radius:var(--r-1);background:var(--mint);flex:0 0 auto;filter:var(--photo-dim)}
+.qrow .thumb{width:56px;height:56px}
 .crop{display:block;width:100%;height:96px;object-fit:contain;object-position:left center;border-radius:var(--r-1);margin:var(--s-2) 0;filter:var(--photo-dim)}
 .crop.big{height:auto;max-height:none}
 .excerpt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -152,6 +153,7 @@ summary{cursor:pointer;font-weight:600;min-height:var(--tap);padding:10px 0;line
 .more-inline{display:inline-flex;align-items:center;min-height:var(--tap);font-weight:600;text-decoration:none;color:var(--teal)}
 .actions{display:flex;flex-wrap:wrap;gap:0 var(--s-5);margin-top:var(--s-1)}
 .section-label{font-size:var(--fs-2);line-height:var(--lh-tight);color:var(--muted);font-weight:400;margin:0 0 var(--s-1)}
+.section-label.out{margin:var(--s-5) 0 var(--s-2)}
 .steps-text{margin:var(--s-2) 0;padding-left:1.4em}
 .steps-text li{margin:var(--s-2) 0}
 .standalone .a2hs-row{display:none}

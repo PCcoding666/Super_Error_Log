@@ -595,7 +595,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const practice = practiceOf(String(request.params.pid));
     const queue = remaining(request, practice);
     if (queue.length === 0) { render(response, WhyDonePage({ practice })); return; }
-    render(response, WhyIntroPage({ practice, index: practice.items.indexOf(queue[0]!), total: practice.items.length }));
+    render(response, WhyIntroPage({ practice, index: practice.items.indexOf(queue[0]!), total: practice.items.length, pending: queue.map(item => item.id) }));
   }));
 
   r.post('/why/:pid/start', page(async (request, response) => {
@@ -809,7 +809,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
 
   r.get('/practices', page((_request, response) => {
-    const practices = listPractices().map(p => ({ ...p, answered: p.generatedAt ? getReturnSummary(p.id)?.answered ?? null : null }));
+    const practices = listPractices().map(p => {
+      const summary = p.generatedAt ? getReturnSummary(p.id) : null;
+      const shortIds = (getPractice(p.id)?.items ?? []).map(item => item.shortId).filter((id): id is string => Boolean(id));
+      return { ...p, answered: summary?.answered ?? null, independentCorrect: summary && summary.answered > 0 ? summary.independentCorrect : null, shortIds };
+    });
     render(response, PracticesPage({ practices }));
   }));
 

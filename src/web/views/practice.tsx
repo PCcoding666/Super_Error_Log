@@ -106,7 +106,28 @@ export const CAUSE_CHOICES: Array<[string, string]> = [
 ];
 export const MASTERY_CHOICES: Array<[string, number]> = [['还是不会', 0], ['看提示可能会', 1], ['现在做应该会', 2], ['过几天也会', 3]];
 
-export function WhyIntroPage(props: { practice: PracticeDetail; index: number; total: number }): ReactNode {
+/** 一份练习里的几道题：小裁图 + 编号 + 科目与知识点 + 一行状态（说过了 / 跳过了…）。只用现有数据。 */
+function PracticeItemRows(props: { items: PracticeDetail['items']; status: (item: PracticeDetail['items'][number], index: number) => { text: string; tone?: string } | null; testId?: string }): ReactNode {
+  return (
+    <ul className="list" data-testid={props.testId}>
+      {props.items.map((item, index) => {
+        const status = props.status(item, index);
+        return (
+          <li key={item.id} className="row qrow">
+            <img className="thumb" src={`/s/img/item/${item.id}`} alt="" loading="lazy" />
+            <span className="row-text">
+              <b>{item.shortId ?? `第 ${index + 1} 道`}</b>
+              <span className="meta-line muted">{[item.subject, ...item.knowledgeTags].filter(Boolean).join(' · ') || '错题'}</span>
+              {status ? <span className={`meta-line${status.tone ? ` tone-${status.tone}` : ''}`}>{status.text}</span> : null}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+export function WhyIntroPage(props: { practice: PracticeDetail; index: number; total: number; pending: string[] }): ReactNode {
   const bar: BarModel = {
     caption: `第 ${props.index + 1} 道，共 ${props.total} 道`,
     primary: { title: '开始', key: 'start', post: `/s/why/${props.practice.id}/start`, wait: 'AI 在想问你什么…' },
@@ -119,6 +140,14 @@ export function WhyIntroPage(props: { practice: PracticeDetail; index: number; t
         <p>每道题 AI 问你一句，你说一句就行。说出来，下次更容易发现自己是哪里想错了。</p>
         {props.index > 0 ? <p data-testid="why-resume">前 {props.index} 道已经说过或跳过了，从第 {props.index + 1} 道接着说。</p> : null}
         <p className="muted">不想说可以跳过，不影响打印。</p>
+      </section>
+      <section className="card">
+        <h2 className="card-title">这次的 {props.total} 道</h2>
+        <PracticeItemRows items={props.practice.items} testId="why-items" status={(item, index) => (
+          item.reflected ? { text: '说过了 ✓', tone: 'green' }
+            : !props.pending.includes(item.id) ? { text: '跳过了' }
+              : index === props.index ? { text: props.index > 0 ? '从这道接着说' : '从这道开始', tone: 'teal' } : null
+        )} />
       </section>
     </Page>
   );
@@ -221,6 +250,11 @@ export function WhyDonePage(props: { practice: PracticeDetail }): ReactNode {
         <p className="card-title" data-testid="why-done">{props.practice.items.length} 道里说了 {reflected} 道</p>
         <p className="muted">{reflected > 0 ? '你说的会记下来。下周录完结果，能看看当时的感觉准不准。' : '这次没说也没关系，下次可以再说。'}</p>
         <p>{props.practice.generatedAt ? '下一步：把练习纸打出来，带回学校。' : '下一步：准备练习纸。AI 给每道题写好提示和答案，大约 1 分钟。'}</p>
+      </section>
+      <section className="card">
+        <h2 className="card-title">这次的 {props.practice.items.length} 道</h2>
+        <PracticeItemRows items={props.practice.items} testId="why-done-items" status={item => (item.reflected ? { text: '说过了 ✓', tone: 'green' } : { text: '这次没说' })} />
+        <p className="small muted">这几道都会印在练习纸上，说没说都一样要做。</p>
       </section>
     </Page>
   );
@@ -335,7 +369,24 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
             ))}
           </section>
         ) : null}
-        <h2 className="visually-hidden">练习纸预览</h2>
+        {/* 首屏先用手机字号列出这张纸上的题（A4 预览缩小后看不清）；预览和纸面本身不变。 */}
+        <section className="card" data-testid="print-summary">
+          <h2 className="card-title">这张练习纸上有 {state.snapshot.items.length} 道题</h2>
+          <ul className="list">
+            {state.snapshot.items.map(item => (
+              <li key={item.itemId} className="row qrow">
+                <img className="thumb" src={`/s/img/item/${item.itemId}`} alt="" loading="lazy" />
+                <span className="row-text">
+                  <b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>
+                  <span className="meta-line muted">{[item.subject, ...item.knowledgeTags].filter(Boolean).join(' · ') || '错题'}</span>
+                  {item.stemText ? <span className="meta-line excerpt">{item.stemText}</span> : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="small muted"><Phrased text={`什么时候做：${state.snapshot.cover.practiceSlot}。答案在最后一页，做完再看。`} /></p>
+        </section>
+        <h2 className="section-label out">整张练习纸（A4 预览）</h2>
         <div className="print-root">
           <div className="sheet-frame"><div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={state.snapshot} /></div></div></div>
         </div>
@@ -511,26 +562,42 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
 
 // ---------- 以前的练习 ----------
 
-export function PracticesPage(props: { practices: Array<PracticeSummary & { answered: number | null }> }): ReactNode {
+export interface PracticeRow extends PracticeSummary {
+  answered: number | null;
+  /** 录过结果时：独立做对几道（服务器的回报，没有就是 null）。 */
+  independentCorrect: number | null;
+  /** 这份练习里的题号（练习纸编号），按纸上的顺序。 */
+  shortIds: string[];
+}
+
+export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
   const bar: BarModel = { caption: '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
   return (
     <Page title="以前的练习" bar={bar}>
       <h1>以前的练习</h1>
       {props.practices.length === 0 ? <section className="card"><p>还没有练习。选了题就会出现在这里。</p></section> : (
-        <section className="card"><ul className="list">
-          {props.practices.map(p => {
-            const status = p.generatedAt === null ? '还没生成练习纸'
-              : p.answered !== null && p.answered >= p.itemCount ? '录完了'
-                : p.answered ? `录了 ${p.answered}/${p.itemCount} 道` : '练习纸已生成 · 做完回来录结果';
-            const href = p.generatedAt === null ? `/s/why/${p.id}` : p.answered ? `/s/results/${p.id}` : `/s/record/${p.id}`;
-            return (
-              <li key={p.id}><a className="row" href={href} data-testid="practice-row">
-                <span className="row-text"><b>{weekRangeText(p.week, 'short')}</b> · {p.itemCount} 道{p.practiceSlot ? ` · ${p.practiceSlot}` : ''}<span className="meta-line muted">{status}</span></span>
-                <span className="chev" aria-hidden="true">›</span>
-              </a></li>
-            );
-          })}
-        </ul></section>
+        <>
+          <p className="lead">每个周末一份练习纸。没录的点开可以录结果，录过的点开能看这次的结果。</p>
+          <section className="card"><ul className="list">
+            {props.practices.map(p => {
+              const status = p.generatedAt === null ? '还没生成练习纸'
+                : p.answered !== null && p.answered >= p.itemCount ? `录完了${p.independentCorrect !== null ? ` · 独立做对 ${p.independentCorrect} 道` : ''}`
+                  : p.answered ? `录了 ${p.answered}/${p.itemCount} 道` : '练习纸已生成 · 做完回来录结果';
+              const href = p.generatedAt === null ? `/s/why/${p.id}` : p.answered ? `/s/results/${p.id}` : `/s/record/${p.id}`;
+              return (
+                <li key={p.id}><a className="row" href={href} data-testid="practice-row">
+                  <span className="row-text">
+                    <b>{weekRangeText(p.week, 'short')}</b> · {p.itemCount} 道{p.practiceSlot ? ` · ${p.practiceSlot}` : ''}
+                    {p.shortIds.length > 0 ? <span className="meta-line muted">{p.shortIds.join('、')}</span> : null}
+                    <span className={`meta-line${p.answered !== null && p.answered >= p.itemCount ? ' tone-green' : ' muted'}`}>{status}</span>
+                  </span>
+                  <span className="chev" aria-hidden="true">›</span>
+                </a></li>
+              );
+            })}
+          </ul></section>
+          <p className="hint">当天做对不算真会，隔 3 天以上独立做对才算。</p>
+        </>
       )}
     </Page>
   );
