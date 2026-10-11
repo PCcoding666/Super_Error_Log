@@ -659,7 +659,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     ].filter(Boolean);
     if (missing.length > 0) { failed(response, 'missing'); render(response, confirmPage(request, practice, card.id, `还差：${missing.join('、')}`), 400); return; }
     // 由学生自己点「提交」才写入；AI 只给过建议（领域规则）。
-    const result = submitV2Reflection(card.id, { attemptState, cause, masteryFeeling: Number(mastery), summary: str(request.body?.summary).trim().slice(0, 60) });
+    const result = submitV2Reflection(card.id, { attemptState, cause, masteryFeeling: Number(mastery), summary: str(request.body?.summary).replace(/\s+/g, ' ').trim().slice(0, 60) });
     if (!result.ok) { failed(response, 'submit_failed'); render(response, confirmPage(request, practice, card.id, result.message), result.httpStatus); return; }
     await goNextWhy(response, practice.id, remaining(request, practiceOf(practice.id), card.id));
   }));

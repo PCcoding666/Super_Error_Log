@@ -196,7 +196,7 @@ export function WhyConfirmPage(props: { practiceId: string; card: PracticeCard; 
       {props.error ? <Problem title={props.error} /> : null}
       <form method="post" action={`/s/why/${props.practiceId}/${card.id}/submit`} id="reflection-form" data-reflection="">
         <label htmlFor="reflection-summary" className="field-label">一句话总结（AI 先写了，可以改）{summary ? <span className="tag">{previous ? '你上次选的' : 'AI 写的'}</span> : null}</label>
-        <input type="text" id="reflection-summary" name="summary" maxLength={60} defaultValue={summary} placeholder="空着也能提交" />
+        <textarea id="reflection-summary" className="autogrow" name="summary" rows={2} maxLength={60} defaultValue={summary} placeholder="空着也能提交" data-single-line="" enterKeyHint="done" />
         <Group legend="当时怎么了？" name="attemptState" choices={ATTEMPT_CHOICES} selected={previous?.attemptState ?? suggestion?.suggestedAttemptState ?? null} badge={source} />
         <Group legend="主要错在哪？" name="cause" choices={CAUSE_CHOICES} selected={previous?.cause ?? suggestion?.suggestedCause ?? null} badge={source} />
         <Group legend="现在再做这道题，有把握吗？" name="masteryFeeling" choices={MASTERY_CHOICES} selected={null} badge={null} hint="这个要你自己选，AI 不帮你猜" />

@@ -125,6 +125,8 @@ legend{font-weight:600;margin-bottom:var(--s-2);padding:0;line-height:var(--lh-t
 textarea,input[type=text],input[type=date],select{width:100%;font:inherit;line-height:var(--lh-tight);color:var(--ink);background:var(--card);border:1.5px solid var(--field);border-radius:var(--r-2);padding:var(--s-3);min-height:52px}
 textarea:focus,input[type=text]:focus,select:focus{border-color:var(--teal)}
 textarea{min-height:120px;resize:vertical;line-height:var(--lh-text)}
+/* 一句话总结：跟着内容长高（AI 写的那句不被截断）；不支持 field-sizing 的浏览器由脚本按 scrollHeight 调高 */
+textarea.autogrow{min-height:52px;resize:none;field-sizing:content;overflow:hidden;word-break:keep-all;overflow-wrap:anywhere}
 ::placeholder{color:var(--muted);opacity:1}
 .bubble{background:var(--mint);border-radius:var(--r-2) var(--r-2) var(--r-2) var(--r-1);padding:var(--s-3) var(--s-4);margin:var(--s-3) 0}
 .bubble .who{font-size:var(--fs-1);color:var(--muted);font-weight:600}
@@ -278,6 +280,8 @@ $$('form[data-reflection]').forEach(function(f){var line=$('[data-missing]'),btn
 if(!$('input[name=attemptState]:checked',f))miss.push('当时怎么了');if(!$('input[name=cause]:checked',f))miss.push('错在哪');if(!$('input[name=masteryFeeling]:checked',f))miss.push('有没有把握');
 if(line){line.textContent=miss.length?'还差：'+miss.join('、'):'';}if(btn){btn.disabled=miss.length>0;btn.classList.toggle('disabled',miss.length>0)}}f.addEventListener('change',upd);upd()});
 /* 字数 */
+/* 一句话总结：一行话，回车不换行；跟着内容长高 */
+$$('textarea[data-single-line]').forEach(function(t){t.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.isComposing)e.preventDefault()});if(window.CSS&&CSS.supports&&CSS.supports('field-sizing','content'))return;function fit(){t.style.height='auto';t.style.height=(t.scrollHeight+3)+'px'}t.addEventListener('input',fit);fit()});
 $$('textarea[data-count]').forEach(function(t){var out=$(t.getAttribute('data-count'));function upd(){if(out)out.textContent='还能写 '+Math.max(0,Number(t.getAttribute('maxlength'))-t.value.length)+' 字'}t.addEventListener('input',upd);upd()});
 /* 等待提示：提交后按钮换字，防止连点 */
 $$('form[data-wait]').forEach(function(f){f.addEventListener('submit',function(){var b=document.querySelector('button[form="'+f.id+'"]')||$('button[type=submit]',f);if(b){b.textContent=f.getAttribute('data-wait');b.classList.add('waiting');setTimeout(function(){b.disabled=true},0)}})});
