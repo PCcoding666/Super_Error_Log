@@ -289,18 +289,20 @@ $$('.sheet-wrap').forEach(function(w){var s=$('.sheet-scale',w);if(!s)return;fun
 $$('[data-voice-for]').forEach(function(box){var target=document.getElementById(box.getAttribute('data-voice-for'));var btn=$('button',box),note=$('[data-voice-note]',box),method=$('input[name=method]',box.closest('form')||document);
 var ok=target&&btn&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder;
 if(!ok){if(note)note.textContent='可以直接打字';return}
-box.classList.remove('hidden');var rec=null,chunks=[],timer=null,stream=null;
+box.classList.remove('hidden');var rec=null,chunks=[],timer=null,stream=null,starting=false;
 function type(){var c=['audio/mp4','audio/webm;codecs=opus','audio/webm'];for(var i=0;i<c.length;i++){if(MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(c[i]))return c[i]}return ''}
 function reset(){btn.classList.remove('on');btn.textContent='点一下开始说';btn.disabled=false}
 function stop(){if(rec&&rec.state!=='inactive')rec.stop();if(timer){clearTimeout(timer);timer=null}}
 btn.addEventListener('click',function(){if(rec&&rec.state==='recording'){stop();return}
-navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){stream=s;chunks=[];var t=type();rec=t?new MediaRecorder(s,{mimeType:t}):new MediaRecorder(s);
+/* 打开麦克风要一会儿（第一次还会问权限）：马上给反馈，这期间再点不会开第二个录音 */
+if(starting)return;starting=true;btn.disabled=true;btn.textContent='正在打开麦克风…';
+navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){starting=false;btn.disabled=false;stream=s;chunks=[];var t=type();rec=t?new MediaRecorder(s,{mimeType:t}):new MediaRecorder(s);
 rec.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data)};
 rec.onstop=function(){stream.getTracks().forEach(function(x){x.stop()});var blob=new Blob(chunks,{type:(rec.mimeType||t||'audio/mp4')});btn.textContent='正在转成文字…';btn.classList.remove('on');btn.disabled=true;
 fetch(box.getAttribute('data-endpoint'),{method:'POST',headers:{'content-type':blob.type.split(';')[0]||'audio/mp4'},body:blob,credentials:'same-origin'}).then(function(r){return r.json().then(function(b){return{ok:r.ok,status:r.status,b:b}})}).then(function(x){
 if(x.ok&&x.b.text){target.value=(target.value?target.value+' ':'')+x.b.text;target.dispatchEvent(new Event('input'));if(method)method.value='voice';if(note)note.textContent='转好了，看一眼，不对就改'}
 else if(x.ok){if(note)note.textContent='没听清，再说一次';trailAdd('error','voice_empty');trailSend()}else{if(note)note.textContent=(x.b.error&&x.b.error.message)||'这次没转成文字，再说一次，或者直接打字。';trailAdd('error','voice_'+x.status);trailSend()}reset()}).catch(function(){if(note)note.textContent='没传上去，可以直接打字';trailAdd('error','voice_network');reset()})};
-rec.start();btn.classList.add('on');btn.textContent='正在听…再点一下结束';if(note)note.textContent='最多说 60 秒';timer=setTimeout(stop,60000)}).catch(function(){if(note)note.textContent='用不了麦克风，可以直接打字。';box.querySelector('button').classList.add('hidden');trailAdd('error','mic_denied');trailSend()})})});
+rec.start();btn.classList.add('on');btn.textContent='正在听…再点一下结束';if(note)note.textContent='最多说 60 秒';timer=setTimeout(stop,60000)}).catch(function(){starting=false;reset();if(note)note.textContent='用不了麦克风，可以直接打字。';box.querySelector('button').classList.add('hidden');trailAdd('error','mic_denied');trailSend()})})});
 /* 离线页：真没联网时换标题 */
 var off=$('[data-offline-title]');if(off&&navigator.onLine===false){off.textContent='没联网';var d=$('[data-offline-detail]');if(d)d.textContent='连上 Wi-Fi 或流量后点「再试一次」。拍过的照片和错题都在服务器上，不会丢。'}
 });})();
