@@ -70,6 +70,15 @@ final class PracticeLayoutTests: XCTestCase {
     page.elements.compactMap(\.text)
   }
 
+  /// 这些页上的题号标题（加粗 12pt 的文本元素）。
+  /// 分成带显式类型的几步：整条链写在一个表达式里，Swift 6.2 会报「表达式太复杂，无法在合理时间内类型检查」
+  ///（6.4 能过，但要 1–4 秒）。
+  private func headerTexts(in pages: [PracticePage]) -> [String] {
+    let elements: [PracticeElement] = pages.flatMap { $0.elements }
+    let headers: [PracticeElement] = elements.filter { $0.kind == .text && $0.bold && $0.fontSize == 12 }
+    return headers.compactMap(\.text)
+  }
+
   /// 长题干：CJK 每字 12pt，版心 515pt，每行 42 字。
   private func longStem(lines: Int) -> String {
     String(repeating: "题", count: lines * 42)
@@ -102,7 +111,7 @@ final class PracticeLayoutTests: XCTestCase {
       answers: [makeAnswer(0), makeAnswer(1), makeAnswer(2)])
     let result = compute(snapshot)
     let questionPages = result.pages.filter { $0.role == .question }
-    let headers = questionPages.flatMap { $0.elements }.filter { $0.kind == .text && $0.bold && $0.fontSize == 12 }.compactMap(\.text)
+    let headers: [String] = headerTexts(in: questionPages)
     XCTAssertEqual(headers, ["M-01", "M-02", "M-03"])
   }
 
@@ -187,7 +196,9 @@ final class PracticeLayoutTests: XCTestCase {
       "small.jpg": CGSize(width: 100, height: 100),   // 150dpi → 48×48pt，不放大
       "wide.jpg": CGSize(width: 2000, height: 500),   // 150dpi → 960×240pt，只受宽上限
     ])
-    let images = result.pages.filter { $0.role == .question }.flatMap { $0.elements }.filter { $0.kind == .image }
+    let questionPages: [PracticePage] = result.pages.filter { $0.role == .question }
+    let questionElements: [PracticeElement] = questionPages.flatMap { $0.elements }
+    let images: [PracticeElement] = questionElements.filter { $0.kind == .image }
     XCTAssertEqual(images.count, 3)
     let big = images.first { $0.imageName == "big.jpg" }!
     XCTAssertEqual(big.rect.height, 734 * 0.45, accuracy: 0.6, "高不超过 0.45 × 版心高")
@@ -312,8 +323,8 @@ final class PracticeLayoutTests: XCTestCase {
     let result = compute(snapshot)
     XCTAssertEqual(result.pages[0].role, .cover)
     XCTAssertEqual(result.pages.last?.role, .answer)
-    let questionHeaders = result.pages.filter { $0.role == .question }.flatMap { $0.elements }
-      .filter { $0.kind == .text && $0.bold && $0.fontSize == 12 }.compactMap(\.text)
+    let questionPages: [PracticePage] = result.pages.filter { $0.role == .question }
+    let questionHeaders: [String] = headerTexts(in: questionPages)
     XCTAssertEqual(questionHeaders, ["M-01", "M-02", "M-03"])
     let answerTexts = result.pages.filter { $0.role == .answer }.flatMap { texts($0) }
     for position in 0..<3 { XCTAssertTrue(answerTexts.contains("M-0\(position + 1)")) }
@@ -393,9 +404,10 @@ final class PracticeLayoutTests: XCTestCase {
       answers: (0..<8).map { makeAnswer($0) })
     let result = compute(snapshot)
     XCTAssertEqual(result.pages[0].role, .cover)
-    let questionHeaders = result.pages.filter { $0.role == .question }.flatMap { $0.elements }
-      .filter { $0.kind == .text && $0.bold && $0.fontSize == 12 }.compactMap(\.text)
-    XCTAssertEqual(questionHeaders, (0..<8).map { "M-0\($0 + 1)" })
+    let questionPages: [PracticePage] = result.pages.filter { $0.role == .question }
+    let questionHeaders: [String] = headerTexts(in: questionPages)
+    let expectedHeaders: [String] = (0..<8).map { "M-0\($0 + 1)" }
+    XCTAssertEqual(questionHeaders, expectedHeaders)
     let answerTexts = result.pages.filter { $0.role == .answer }.flatMap { texts($0) }
     for position in 0..<8 { XCTAssertTrue(answerTexts.contains("M-0\(position + 1)")) }
     XCTAssertGreaterThanOrEqual(result.pages.count, 4)
