@@ -144,6 +144,13 @@ export function Problem(props: { title: string; detail?: string; reason?: string
   );
 }
 
+/** 「」里的短引语（≤ 12 个字，按钮名、菜单名）保持在同一行，不被拆成「「相 / 机」」。其余文字原样。 */
+export function quoted(text: string): ReactNode {
+  const parts = text.split(/(「[^「」]{1,12}」)/u);
+  if (parts.length < 2) return text;
+  return <>{parts.map((part, index) => (index % 2 === 1 ? <span key={index} className="q">{part}</span> : part))}</>;
+}
+
 /**
  * 中文短句的断行：在标点（，；。：、！？）后面分成不可拆的小段（inline-block），换行只落在小段之间，
  * 不会把一个词拆到两行（例如「没 / 批改」「正 / 好」）。小段比一行还长时照常在段内换行。
@@ -151,6 +158,6 @@ export function Problem(props: { title: string; detail?: string; reason?: string
  */
 export function Phrased(props: { text: string }): ReactNode {
   const pieces = props.text.split(/(?<=[，；。：、！？])(?=\S)/u);
-  if (pieces.length < 2) return props.text;
-  return <>{pieces.map((piece, index) => <span key={index} className="ph">{piece}</span>)}</>;
+  if (pieces.length < 2) return quoted(props.text);
+  return <>{pieces.map((piece, index) => <span key={index} className="ph">{quoted(piece)}</span>)}</>;
 }

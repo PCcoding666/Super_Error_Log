@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { RecognitionJob } from '../../mobile/contracts.js';
 import type { PhotoView } from '../state.js';
 import { pickMoreCount, unselectedQuestions } from '../photoPlan.js';
-import { Page, Phrased, Problem, type BarButton, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, quoted, type BarButton, type BarModel } from './layout.js';
 
 /** 上传前看一下（§4.3）。事实要素不删；按网页的实际情况改了两处：照片不进相册、上传前去掉位置信息。 */
 export function ConsentPage(): ReactNode {
@@ -61,7 +61,7 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
       <form method="post" action="/s/capture" encType="multipart/form-data" data-upload="" id="upload-form">
         <input id="camera-input" className="visually-hidden" type="file" name="photo" accept="image/*" capture="environment" data-testid="camera-input" />
         <input id="library-input" className="visually-hidden" type="file" name="photo" accept="image/*" data-testid="library-input" />
-        <p className="no-js-only small muted">选好照片后点「上传这张」。</p>
+        <p className="no-js-only small muted">{quoted('选好照片后点「上传这张」。')}</p>
         <button className="btn no-js-only" type="submit" data-key="upload-nojs">上传这张</button>
         <div className="hidden" data-upload-progress=""><div className="progress"><i /></div></div>
         <p className="small" data-upload-message="" data-testid="upload-message" aria-live="polite" />

@@ -5,7 +5,7 @@ import type { ReturnSummary } from '../../v2/returnService.js';
 import type { ReflectionSuggestionView, ReflectionTurnView, ReflectionView } from '../../v2/reflectionService.js';
 import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';
-import { Page, Problem, type BarButton, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, quoted, type BarButton, type BarModel } from './layout.js';
 
 // ---------- 选这周要练的题（§4.6） ----------
 
@@ -333,7 +333,7 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
           <div className="sheet-frame"><div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={state.snapshot} /></div></div></div>
         </div>
         <a className="more" href={`/s/print/${practiceId}/sheet`} data-testid="sheet-link">单独打开练习纸<span aria-hidden="true">›</span></a>
-        <p className="hint">单独打开以后，可以在打印预览里「存储到文件」存成 PDF。</p>
+        <p className="hint">{quoted('单独打开以后，可以在打印预览里「存储到文件」存成 PDF。')}</p>
       </>
     );
   }
@@ -548,7 +548,7 @@ export function SettingsPage(props: { practiceSlot: string; paperLocation: strin
           <div className="choices-inline">
             {places.map(([value, label]) => <label key={value} className="choice"><input type="radio" name="paperLocation" value={value} defaultChecked={props.paperLocation === value} /><span>{label}</span></label>)}
           </div>
-          <p className="hint">决定答案页写「对照原卷第几题」还是「回家后对照原卷」</p>
+          <p className="hint">{quoted('决定答案页写「对照原卷第几题」还是「回家后对照原卷」')}</p>
         </fieldset>
       </form>
       <section className="card">

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { actionHref, type PhotoView, type TodayState } from '../state.js';
 import { actionKey, header, type Choice, type ConnectReason, type NextStepModel, type Step } from '../weekPlan.js';
-import { Page, Phrased, Problem, type BarButton, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, quoted, type BarButton, type BarModel } from './layout.js';
 
 /** 与练习纸封面三条规则同一说法（printService.ts 55 行）。 */
 export const PAPER_RULES = '做的时候：不看答案，独立做；卡住先看一级提示，再看二级；做完打勾，写上做题日期。';
@@ -72,7 +72,7 @@ function InstallHint(): ReactNode {
   return (
     <section className="card a2hs" data-testid="install-hint">
       <h2 className="card-title">放到主屏幕，像 App 一样打开</h2>
-      <p className="small">在 Safari 里点下方的「分享」（方框里一个向上的箭头）→「添加到主屏幕」→「添加」。以后从主屏幕上的「错题本」打开。</p>
+      <p className="small">{quoted('在 Safari 里点下方的「分享」（方框里一个向上的箭头）→「添加到主屏幕」→「添加」。以后从主屏幕上的「错题本」打开。')}</p>
       <div className="actions">
         <form method="post" action="/s/install/seen" className="inline-form"><button className="link-btn" type="submit" data-key="install-seen">知道了</button></form>
         <a href="/s/install" className="more-inline" data-key="install-how">看看怎么做</a>
@@ -204,9 +204,9 @@ export function PairPage(props: { code: string; clientId: string; inAppBrowser: 
     <Page title="连接这台手机" back={null} showSettings={false} bar={bar}>
       <h1>连接这台手机</h1>
       <section className="card">
-        <p>点下面的「连接这台手机」，这台手机就能用错题本了。照片、错题和练习都存在服务器上，换手机也不会丢。</p>
+        <p>{quoted('点下面的「连接这台手机」，这台手机就能用错题本了。照片、错题和练习都存在服务器上，换手机也不会丢。')}</p>
         {props.inAppBrowser
-          ? <p className="tone-orange" data-testid="in-app-warning"><b>现在是在聊天软件里打开的。</b>请点右上角「…」，选「在 Safari 中打开」，再点连接——连在这里，以后从 Safari 和主屏幕都打不开。</p>
+          ? <p className="tone-orange" data-testid="in-app-warning"><b>现在是在聊天软件里打开的。</b>{quoted('请点右上角「…」，选「在 Safari 中打开」，再点连接——连在这里，以后从 Safari 和主屏幕都打不开。')}</p>
           : <p className="muted small">连好以后，按提示把错题本放到主屏幕上。这个链接只能用一次。</p>}
         <form method="post" action="/s/pair" id="pair-form">
           <input type="hidden" name="code" value={props.code} />

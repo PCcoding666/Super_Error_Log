@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { V2WeekItem } from '../../v2/weekService.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
-import { Page, Problem, type BarModel } from './layout.js';
+import { Page, Problem, quoted, type BarModel } from './layout.js';
 
 /** 卡片只显示对他有意义的状态（§4.5）。 */
 export function cardStatus(status: string): string | null {
@@ -49,7 +49,7 @@ export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; a
       ) : props.anyPhoto && props.finding ? (
         <section className="card"><p>AI 还在找题，找好了会出现在这里</p></section>
       ) : props.anyPhoto ? (
-        <section className="card"><p>这几张卷子里没找到做错的题。没批改的页可以去「勾出做错的题」自己勾。</p><a className="btn" href="/s/photos" data-key="empty-pick">去勾</a></section>
+        <section className="card"><p>{quoted('这几张卷子里没找到做错的题。没批改的页可以去「勾出做错的题」自己勾。')}</p><a className="btn" href="/s/photos" data-key="empty-pick">去勾</a></section>
       ) : (
         <section className="card"><p>这周还没拍卷子</p><a className="btn" href="/s/capture" data-key="empty-capture">去拍</a></section>
       )}

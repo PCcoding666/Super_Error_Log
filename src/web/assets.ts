@@ -49,6 +49,10 @@ h1{font-size:var(--fs-5);line-height:var(--lh-tight);margin:var(--s-1) 0 var(--s
 h2{font-size:var(--fs-4);line-height:var(--lh-tight);margin:var(--s-5) 0 var(--s-2);text-wrap:balance}
 p{margin:var(--s-2) 0}
 p,li{text-wrap:pretty}
+/* 短句（列表项、选项、标签、说明行、标题）按词组断行：字与字之间不断，只在标点、空格处换行，「「相 / 机」」这类拆词不再出现；
+   一句太长、没有断点时才在任意处断。长段落照常按字换行（中文排版的惯例），其中的「」引语由 .q 保持在同一行。 */
+main h1,main h2,legend,.field-label,.caption,.choice span,.steps-text li,.meta-line,.row-text,.step-detail{word-break:keep-all;overflow-wrap:anywhere}
+.q{white-space:nowrap}
 main p,main li{max-width:32em}
 .muted{color:var(--muted)}.small{font-size:var(--fs-2)}
 .lead{margin-top:0}
@@ -191,7 +195,7 @@ body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-
 .sheet-wrap{overflow:hidden;margin:12px 0}
 .sheet{color:#111;background:#fff;font:12pt/1.55 "PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Songti SC",serif}
 /* 练习纸版式不在本轮范围：把页面上通用的段落规则（间距、行长、换行策略）挡在纸外面，纸上保持原来的 6px 段距。 */
-.sheet p{margin:6px 0;max-width:none;text-wrap:wrap}
+.sheet p{margin:6px 0;max-width:none;text-wrap:wrap;word-break:normal;overflow-wrap:normal}
 .sheet .page{background:#fff;width:210mm;min-height:297mm;padding:16mm 16mm 18mm;margin:0 0 12px;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .sheet h3{font-size:20pt;margin:0 0 6mm}
 .sheet .item{break-inside:avoid;page-break-inside:avoid;border-top:1px solid #bbb;padding:5mm 0 4mm}
