@@ -958,6 +958,7 @@ test('perf：冷加载 11 个路由', async ({ browser }) => {
   // 先造一份数据：周末 A 做完（练习 1 打好），过一周录结果，再选一份新的（练习 2 打好）。
   const ctx = await browser.newContext(DEVICE);
   const page = await ctx.newPage();
+  page.setDefaultTimeout(60_000);
   await page.goto(await pairingLink());
   await clickNav(page, primary(page));
   const state0 = await ctx.storageState();
@@ -984,8 +985,10 @@ test('perf：冷加载 11 个路由', async ({ browser }) => {
   const hrefs = await page.locator('[data-testid=practice-row]').evaluateAll(as => as.map(a => a.getAttribute('href') ?? ''));
   const resultsHref = hrefs.find(h => h.startsWith('/s/results/'));
   const pids = [...new Set(hrefs.map(h => /pkt_[0-9a-f]+/.exec(h)?.[0]).filter((x): x is string => Boolean(x)))];
-  await page.goto(`${WEB}/s/items`);
-  const itemHref = await page.getByTestId('item-card').first().getAttribute('href');
+  // 题目详情：取练习 2 打印页上的第一道题（这周的错题列表此时可能还在找题）。
+  await page.goto(`${WEB}/s/print/${pids[0]}`);
+  const itemId = /\/s\/img\/item\/(itm_[0-9a-f]+)/.exec(await page.content())?.[1];
+  const itemHref = itemId ? `/s/items/${itemId}` : null;
   const state = await ctx.storageState();
   await ctx.close();
   void state0;
