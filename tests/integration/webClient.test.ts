@@ -661,3 +661,79 @@ describe('稀疏的屏用现有数据填满；服务器忙页不替没连上的�
     expect(paired).toContain('已经传上去的照片和错题都在服务器上');
   });
 });
+
+describe('等 AI 的页面：局部轮询代替整页刷新（quality round 2）', () => {
+  it('找题中：页面带 data-poll 与可换的区域、等了多久；关掉脚本时退回 meta refresh；轮询请求不记「打开了一页」，状态变了只记一次 update', async () => {
+    const env = await setup();
+    let release!: () => void;
+    env.vision.gate = new Promise<void>(resolve => { release = resolve; });
+    const browser = await pairBrowser(env);
+    const [device] = await env.manager.listDevices();
+    await browser.post('/s/consent');
+    const { jobId } = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
+
+    const waiting = await browser.text('/s/photos');
+    expect(waiting).toMatch(/<body[^>]* data-poll="3"/);
+    expect(waiting).toContain('<noscript><meta http-equiv="refresh" content="3"/></noscript>');
+    for (const region of ['photos', 'more', 'bar']) expect(waiting).toContain(`data-live="${region}"`);
+    expect(waiting).toMatch(/data-testid="wait-line"[^>]*><span data-elapsed="\d+">已经等了 \d+ 秒<\/span>/);
+    expect(waiting).toContain('AI 找题一般 1–2 分钟，可以先离开');
+    expect(waiting).toContain('data-announcer=""');
+    const today = await browser.text('/s/');
+    expect(today).toMatch(/<body[^>]* data-poll="4"/);
+    expect(today).toContain('data-live="today"');
+    expect(today).toContain('AI 找好以后，这一步会自己打勾');
+    expect(await browser.text('/s/capture')).toMatch(/<body[^>]* data-poll="4"/);
+
+    // 脚本的轮询：同一页带 x-sel-poll: 1，取三次也不记「打开了一页」。
+    for (let i = 0; i < 3; i += 1) expect((await browser.request('/s/photos', { headers: { 'x-sel-poll': '1' } })).status).toBe(200);
+    // 状态变了：脚本换掉区域后报一次 update（随 HEAD 带来）。
+    release();
+    await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
+    const done = await browser.text('/s/photos');
+    expect(done).not.toContain('data-poll=');
+    expect(done).not.toContain('http-equiv="refresh"');
+    expect(done).not.toContain('data-testid="wait-line"');
+    browser.cookies.set('sel_tap', encodeURIComponent('u1.auto.update@/s/photos'));
+    expect((await browser.request('/s/photos', { method: 'HEAD' })).status).toBe(204);
+
+    const lines = readTrail(device!.deviceId).map(row => `${row.kind} ${row.route}#${row.action}`);
+    expect(lines.filter(line => line === 'view /s/photos#open')).toHaveLength(2);
+    expect(lines.filter(line => line === 'view /s/photos#update')).toHaveLength(1);
+    expect(lines.filter(line => line.includes('#refresh'))).toHaveLength(0);
+  });
+
+  it('练习纸准备中：进度、已经等了多久（从开始准备算，只读现有的一列）、按进度推算还要多久；准备好了就不再轮询', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const job = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
+    const choose = await browser.text('/s/choose');
+    const itemIds = [...choose.matchAll(/name="itemIds"(?: checked="")? value="(itm_[0-9a-f]+)"/g)].map(match => match[1]!);
+    const packetId = (await browser.post('/s/choose', { itemIds })).headers.get('location')!.split('/').pop()!;
+    await browser.post('/s/skip', { step: 'why', practice: packetId });
+    await waitFor(async () => (await browser.text(`/s/print/${packetId}`)).includes('data-testid="sheet"'));
+    const ready = await browser.text(`/s/print/${packetId}`);
+    expect(ready).not.toContain('data-poll=');
+    expect(ready).toContain('data-live="print" data-announce="练习纸准备好了"');
+
+    // 把这一行改回「准备中」（等于正在准备：第 1 道做完，开始于 40 秒前）。
+    const started = new Date(Date.now() - 40_000).toISOString();
+    getDb().prepare("UPDATE v2_print_snapshot SET status = 'preparing', progress_done = 1, progress_total = 3, created_at = ? WHERE packet_id = ?").run(started, packetId);
+    getDb().prepare('UPDATE review_packet SET generated_at = NULL WHERE id = ?').run(packetId);
+    const preparing = await browser.text(`/s/print/${packetId}`);
+    expect(preparing).toMatch(/<body[^>]* data-poll="2"/);
+    expect(preparing).toContain('<noscript><meta http-equiv="refresh" content="2"/></noscript>');
+    expect(preparing.replace(/<[^>]+>/g, '')).toContain('正在准备练习纸… 第 1/3 道');
+    const elapsed = Number(/data-elapsed="(\d+)"/.exec(preparing)![1]);
+    expect(elapsed).toBeGreaterThanOrEqual(40);
+    expect(elapsed).toBeLessThan(60);
+    // 40 秒做了 1 道，还剩 2 道 → 大约 80 秒 → 「还要大约 2 分钟」。
+    expect(preparing).toContain('照现在的速度，还要大约 2 分钟');
+    expect(preparing).toContain('style="transform:scaleX(0.33)"');
+    const today = await browser.text('/s/');
+    expect(today).toMatch(/<body[^>]* data-poll="4"/);
+    expect(today).toContain('照现在的速度，还要大约 2 分钟');
+  });
+});

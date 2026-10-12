@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { actionHref, type PhotoView, type TodayState } from '../state.js';
 import { actionKey, header, type Choice, type ConnectReason, type NextStepModel, type Step } from '../weekPlan.js';
-import { Page, Phrased, Problem, quoted, type BarButton, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
 /** 与练习纸封面三条规则同一说法（printService.ts 55 行）。 */
 export const PAPER_RULES = '做的时候：不看答案，独立做；卡住先看一级提示，再看二级；做完打勾，写上做题日期。';
@@ -96,7 +96,10 @@ function NewPhotosNote(props: { photos: PhotoView[] }): ReactNode {
   );
 }
 
-export function TodayPage(props: { state: TodayState; practiceSlot: string; flash?: { ok?: string | null; err?: string | null }; showInstallHint: boolean }): ReactNode {
+/** 「今天」在等什么（AI 找题 / 准备练习纸）：等的时候局部轮询，清单下面写已经等了多久。 */
+export interface TodayWait { since: string | null; expect: string }
+
+export function TodayPage(props: { state: TodayState; practiceSlot: string; flash?: { ok?: string | null; err?: string | null }; showInstallHint: boolean; wait?: TodayWait | null; now?: Date }): ReactNode {
   const { plan, week } = props.state;
   const slot = plan.practice?.practiceSlot ?? props.practiceSlot;
   const active = plan.stage === 'midweek' ? 1 : plan.stage === 'weekendB' ? 2 : 0;
@@ -133,18 +136,19 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
           {plan.steps.map((step, index) => <StepRow key={step.kind} step={step} index={index} current={index === plan.currentIndex} />)}
         </ul>
         {plan.currentIndex === null ? <p className="muted small">这周的步骤都做完了。</p> : null}
+        {props.wait ? <WaitLine since={props.wait.since} now={props.now ?? new Date()} expect={props.wait.expect} /> : null}
       </section>
     );
   }
   return (
-    <Page title="今天" back={null} bar={barFromPlan(plan.next)} flash={props.flash}>
+    <Page title="今天" back={null} bar={barFromPlan(plan.next)} flash={props.flash} pollSeconds={props.wait ? 4 : undefined}>
       <h1>今天</h1>
       <Rhythm active={active} />
-      {content}
+      <div data-live="today">{content}</div>
       {props.showInstallHint ? <InstallHint /> : null}
       <section className="card" aria-labelledby="anytime-title">
         <h2 className="section-label" id="anytime-title">随时可以看</h2>
-        <ul className="list">
+        <ul className="list" data-live="anytime">
           <li><a className="row" href="/s/items" data-testid="today-items"><span className="row-text">这周的错题（{week.items.length}）</span><span className="chev" aria-hidden="true">›</span></a></li>
           <li><a className="row" href="/s/practices" data-testid="today-practices"><span className="row-text">以前的练习</span><span className="chev" aria-hidden="true">›</span></a></li>
           {props.showInstallHint ? null : <li className="a2hs-row"><a className="row" href="/s/install" data-testid="today-install"><span className="row-text">放到主屏幕</span><span className="chev" aria-hidden="true">›</span></a></li>}

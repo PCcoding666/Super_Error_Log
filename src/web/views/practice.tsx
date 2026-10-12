@@ -5,7 +5,7 @@ import type { ReturnSummary } from '../../v2/returnService.js';
 import type { ReflectionSuggestionView, ReflectionTurnView, ReflectionView } from '../../v2/reflectionService.js';
 import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';
-import { Page, Phrased, Problem, quoted, type BarButton, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
 // ---------- 选这周要练的题（§4.6） ----------
 
@@ -327,7 +327,14 @@ export type PrintState =
   | { status: 'failed'; error: string | null }
   | { status: 'ready'; snapshot: PrintSnapshot };
 
-export function PrintPage(props: { practiceId: string; state: PrintState; caption: string }): ReactNode {
+/** 准备练习纸还要多久：服务器给了进度（第几道 / 共几道），按已经用掉的时间平均推算；还没做完一道时按「大约 1 分钟」。 */
+export function printExpect(done: number, total: number, elapsedSeconds: number | null): string {
+  if (!elapsedSeconds || done <= 0 || total <= done) return 'AI 给每道题写提示和答案，一般 1 分钟左右';
+  const remaining = (elapsedSeconds / done) * (total - done);
+  return remaining < 60 ? `照现在的速度，还要大约 ${Math.max(10, Math.ceil(remaining / 10) * 10)} 秒` : `照现在的速度，还要大约 ${Math.ceil(remaining / 60)} 分钟`;
+}
+
+export function PrintPage(props: { practiceId: string; state: PrintState; caption: string; since?: string | null; now?: Date }): ReactNode {
   const { state, practiceId } = props;
   let bar: BarModel;
   let body: ReactNode;
@@ -337,11 +344,14 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
   } else if (state.status === 'preparing') {
     bar = { caption: '大约 1 分钟。可以先离开，回来接着准备。', primary: { title: '正在准备…', key: 'waiting', disabled: true, waiting: true }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
     const percent = state.total ? Math.round(state.done * 100 / state.total) : 0;
+    const now = props.now ?? new Date();
+    const elapsed = props.since ? Math.max(0, Math.floor((now.getTime() - Date.parse(props.since)) / 1000)) : null;
     body = (
       <section className="card" data-testid="print-preparing">
-        <p role="status">正在准备练习纸… 第 {state.done}/{state.total} 道</p>
-        <div className="progress" role="progressbar" aria-label="准备进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></div>
-        <p className="hint">AI 在给每道题写提示和答案。可以先离开，回来接着准备。</p>
+        <p data-row="print-progress">正在准备练习纸… 第 {state.done}/{state.total} 道</p>
+        <div className="progress" role="progressbar" aria-label="准备进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ transform: `scaleX(${percent / 100})` }} /></div>
+        <WaitLine since={props.since ?? null} now={now} expect={printExpect(state.done, state.total, elapsed)} />
+        <p className="hint">可以先离开，回来接着准备。</p>
       </section>
     );
   } else if (state.status === 'failed') {
@@ -403,9 +413,9 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
     </div>
   ) : null;
   return (
-    <Page title="打印练习纸" bar={bar} barExtra={afterPrint} refreshSeconds={state.status === 'preparing' ? 3 : undefined} bodyClass={state.status === 'ready' ? 'print-page' : undefined}>
+    <Page title="打印练习纸" bar={bar} barExtra={afterPrint} pollSeconds={state.status === 'preparing' ? 2 : undefined}>
       <h1>打印练习纸</h1>
-      {body}
+      <div data-live="print" data-announce={state.status === 'ready' ? '练习纸准备好了' : state.status === 'failed' ? '练习纸没准备好' : undefined}>{body}</div>
     </Page>
   );
 }

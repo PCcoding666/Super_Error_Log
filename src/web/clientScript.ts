@@ -67,7 +67,7 @@ within(scope,'form[data-upload]').forEach(function(form){if(!once(form,'upload')
 function send(file){pending=file;var data=new FormData();data.append('key',file.__key||(file.__key=uuid()));data.append('photo',file,'photo.jpg');
 var xhr=new XMLHttpRequest();xhr.open('POST',form.getAttribute('action'));xhr.setRequestHeader('accept','application/json');
 if(bar)bar.classList.remove('hidden');if(retry)retry.classList.add('hidden');if(msg)msg.textContent='正在上传…';
-xhr.upload.onprogress=function(e){if(e.lengthComputable&&bar){var p=Math.round(e.loaded*100/e.total);$('i',bar).style.width=p+'%';msg.textContent='正在上传 '+p+'%'}};
+xhr.upload.onprogress=function(e){if(e.lengthComputable&&bar){var p=Math.round(e.loaded*100/e.total);$('i',bar).style.transform='scaleX('+(p/100)+')';msg.textContent='正在上传 '+p+'%'}};
 xhr.onload=function(){var body={};try{body=JSON.parse(xhr.responseText)}catch(e){}
 if(xhr.status>=200&&xhr.status<300){if(msg)msg.textContent='传上去了';location.replace(body.next||location.pathname);return}
 if(msg)msg.textContent=(body.error&&body.error.message)||'没传上去。照片还在这个页面里。';if(retry&&xhr.status!==400)retry.classList.remove('hidden')};
@@ -120,10 +120,57 @@ rec.start();btn.classList.add('on');btn.textContent='正在听…再点一下结
 within(scope,'[data-offline-title]').forEach(function(off){if(navigator.onLine===false){off.textContent='没联网';var d=$('[data-offline-detail]');if(d)d.textContent='连上 Wi-Fi 或流量后点「再试一次」。拍过的照片和错题都在服务器上，不会丢。'}});
 }
 
-document.addEventListener('DOMContentLoaded',function(){enhance(document.body);
-/* 等 AI 的页面自己刷新：只在页面看得见、他没在输入的时候刷新（关掉脚本时由 <noscript> 里的 meta refresh 接手） */
-var every=Number(document.body.getAttribute('data-refresh')||0);
-if(every>0){var due=Date.now()+every*1000;setInterval(function(){if(Date.now()<due||document.visibilityState!=='visible')return;var a=document.activeElement;if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))return;due=Infinity;trailAdd('auto','refresh');location.reload()},500)}
-});
+/* ---------- 等多久：「已经等了 40 秒」，每秒往上数（服务器出页时写了已经等了几秒） ---------- */
+function elapsedText(s){s=Math.max(0,Math.floor(s));return s<60?'已经等了 '+s+' 秒':'已经等了 '+Math.floor(s/60)+' 分 '+(s%60)+' 秒'}
+var ticking=null;
+function tickElapsed(){var els=$$('[data-elapsed]');if(!els.length){clearInterval(ticking);ticking=null;return}
+els.forEach(function(el){if(el.__t0===undefined)el.__t0=Date.now()-Number(el.getAttribute('data-elapsed')||0)*1000;var t=elapsedText((Date.now()-el.__t0)/1000);if(el.textContent!==t)el.textContent=t})}
+function startElapsed(){if(!ticking&&$('[data-elapsed]')){tickElapsed();ticking=setInterval(tickElapsed,1000)}}
+
+/* ---------- 等 AI 的页面：局部更新（代替整页刷新） ----------
+   每隔 data-poll 秒取一次同一页（带 x-sel-poll: 1，服务器不把它记成「打开了一页」），只比较标了 data-live 的区域：
+   没变就什么都不动（只有「已经等了多久」在走）；变了才把那几块换掉，别的地方（标题、滚动位置、他正在看的内容）一概不动。
+   换上来的：变了的那几行浮上来、进度条往前走、主按钮换字滑进来、读屏念一句；然后报一次 update（一次状态变化记一次）。
+   页面不再需要等（新的一页没有 data-poll）就停。看不见的时候不取；断网时退后再试，并在等待行后面说一声。 */
+function sig(el){var c=el.cloneNode(true);$$('[data-elapsed]',c).forEach(function(e){e.textContent=''});
+within(c,'*').forEach(function(e){e.removeAttribute('style');if(e.classList)Array.prototype.slice.call(e.classList).forEach(function(k){if(/^m-/.test(k))e.classList.remove(k)})});
+$$('[data-wait-net]',c).forEach(function(e){e.classList.add('hidden')});return c.innerHTML}
+function swapRegion(old,nu){var keepImgs={};$$('img',old).forEach(function(i){keepImgs[i.getAttribute('src')]=i});
+var node=document.importNode(nu,true);
+/* 同一张图不重新下载：把原来那张（已经加载好的）挪过来 */
+$$('img',node).forEach(function(i){var o=keepImgs[i.getAttribute('src')];if(o){i.replaceWith(o);delete keepImgs[i.getAttribute('src')]}});
+var said=[];
+$$('[data-row]',node).forEach(function(r){var key=r.getAttribute('data-row');var before=$('[data-row="'+key+'"]',old);if(!before||before.textContent!==r.textContent){said.push(r.textContent.replace(/\s+/g,' ').trim());r.__rise=true}});
+var oi=$('.progress i',old),ni=$('.progress i',node),to=ni&&ni.style.transform;if(oi&&ni)ni.style.transform=oi.style.transform;
+var oldPrimary=old.matches('.next-bar')?primaryState(old):null;
+old.replaceWith(node);
+$$('[data-row]',node).forEach(function(r){if(r.__rise)play(r,'m-rise')});
+if(oi&&ni)requestAnimationFrame(function(){requestAnimationFrame(function(){ni.style.transform=to})});
+if(node.getAttribute('data-announce')){said.unshift(node.getAttribute('data-announce'));play(node,'m-rise')}
+if(oldPrimary!==null&&primaryState(node)!==oldPrimary){var p=primaryOf(node);play(p,'m-swap');if(p&&!p.disabled)said.push(p.textContent)}
+enhance(node);return said}
+function startPolling(){var body=document.body;var every=Number(body.getAttribute('data-poll')||0);if(!every||!window.fetch||!window.DOMParser)return;
+var timer=null,busy=false,misses=0;
+function later(ms){clearTimeout(timer);timer=setTimeout(pollOnce,ms)}
+function net(down){$$('[data-wait-net]').forEach(function(e){e.classList.toggle('hidden',!down)})}
+function apply(doc){var olds=$$('[data-live]'),pairs=[],a=document.activeElement;
+for(var i=0;i<olds.length;i++){var name=olds[i].getAttribute('data-live');var nu=doc.querySelector('[data-live="'+name+'"]');if(!nu)return 'reload';if(sig(olds[i])!==sig(nu))pairs.push([olds[i],nu])}
+if(doc.querySelectorAll('[data-live]').length!==olds.length)return 'reload';
+if(!pairs.length)return 'same';
+/* 他正在输入的那块先不换，下次再看 */
+for(var j=0;j<pairs.length;j++){if(a&&a!==document.body&&pairs[j][0].contains(a)&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))return 'later'}
+var said=[];pairs.forEach(function(p){said=said.concat(swapRegion(p[0],p[1]))});
+document.title=doc.title;var ann=$('[data-announcer]');if(ann&&said.length)ann.textContent=said.slice(0,3).join('。');
+startElapsed();trailAdd('auto','update');trailSend();return 'swapped'}
+function pollOnce(){if(document.visibilityState!=='visible'||busy)return;busy=true;
+fetch(location.pathname+location.search,{headers:{'x-sel-poll':'1'},credentials:'same-origin',cache:'no-store'}).then(function(r){
+if(!r.ok||r.redirected||new URL(r.url).pathname!==location.pathname){location.reload();throw 'gone'}return r.text()}).then(function(html){busy=false;misses=0;net(false);
+var doc=new DOMParser().parseFromString(html,'text/html');var result=apply(doc);if(result==='reload'){location.reload();return}
+var next=Number(doc.body.getAttribute('data-poll')||0);if(result==='later'){later(every*1000);return}
+if(next>0){every=next;later(every*1000)}else{body.removeAttribute('data-poll');clearTimeout(timer)}}).catch(function(e){busy=false;if(e==='gone')return;misses+=1;net(true);later(Math.min(every*1000*Math.pow(2,misses),30000))})}
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&body.getAttribute('data-poll'))later(0)});
+later(every*1000)}
+
+document.addEventListener('DOMContentLoaded',function(){enhance(document.body);startElapsed();startPolling()});
 })();
 `;

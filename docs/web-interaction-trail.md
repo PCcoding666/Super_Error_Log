@@ -32,7 +32,7 @@
 
 | 类型 | 什么时候记 | 由谁判定 | 动作（`#` 后面） | 例子 |
 |---|---|---|---|---|
-| `web_view` | 打开了一页（200） | 服务器 | `open`；页面脚本的自动刷新记 `refresh`；没配对时打开的是连接页，记 `connect` | `/s/photos#open`、`/s/photos#refresh`、`/s/#connect` |
+| `web_view` | 打开了一页（200） | 服务器 | `open`；没配对时打开的是连接页，记 `connect`；等 AI 的页面局部更新、换上了新状态时记 `update`（页面脚本报，一次状态变化一条，见下）；R1 的整页自动刷新记 `refresh`（旧页面还可能发） | `/s/photos#open`、`/s/photos#update`、`/s/#connect` |
 | `web_tap` | 点了一个按钮或链接 | 页面脚本 → 服务器 | `角色.按钮标识`。角色：`primary`（底部主按钮）、`secondary`（底部次要按钮）、`content`（页面里的链接、清单行）、`top`（顶部返回、设置）。按钮标识是固定的英文键（`data-key` / `data-testid`），不是按钮上的字 | `/s/#primary.capture`、`/s/capture#secondary.skipShoot`、`/s/#content.today-step-pick`、`/s/items/:itemId#top.back` |
 | `web_submit` | 提交了一个表单（服务器收下了） | 服务器 | `submit`；录结果分 `submit:date` / `submit:next` / `submit:prev` / `submit:final` | `/s/choose#submit`、`/s/record/:pid#submit:prev` |
 | `web_skip` | 跳过 | 服务器 | 跳过的是哪一步：`shoot` / `why` / `record`；说说为什么错里「这道跳过」记 `item` | `/s/skip#why`、`/s/why/:pid/:itemId/pass#item` |
@@ -53,6 +53,20 @@
 不跳页的点按（拍照、从相册选、打印、录音）脚本会立刻对当前页发一个 `HEAD`，服务器记完回 204。
 同一条点按可能随两个并发请求一起到，服务器按「设备 + 短 ID」去重。
 
+## 等 AI 的页面：局部轮询（quality round 2）
+
+找题中（`/s/photos`、`/s/capture`、`/s/`）和练习纸准备中（`/s/print/:pid`、`/s/`）的页面不再整页刷新。页面脚本每隔几秒带
+`x-sel-poll: 1` 取同一页，只比较标了 `data-live` 的区域：
+
+- 轮询请求本身**不记** `web_view`（服务器看到这个头就跳过「打开了一页」）。所以等了 2 分钟不会留下 40 条看页记录。
+- 区域真的变了、脚本把它换上去以后，记一次 `web_view <路由>#update`（随一个 HEAD 带来，和不跳页的点按一样）。
+  一次状态变化一条；状态没变的轮询什么都不记。
+- 轮询出错（429、401、500）照常记 `web_error`；脚本随后整页重新载入，让他看到服务器给的那一页（忙、要重新连接）。
+- 关掉脚本时退回 `<meta refresh>`：每次刷新都是一次真正的打开，记 `web_view …#open`（和 R1 一样）。
+
+新的按钮标识（点按照常由页面脚本记成 `web_tap`，只有固定的英文键）：`content.voice-retry`（录音转写失败后「再转一次」，用的是同一段录音）、
+`content.sheet-open`（打印页、练习纸单独页上展开 / 收起整张 A4）。
+
 ## 不记的东西
 
 - 图片、样式、脚本、manifest、Service Worker、离线页（只有 worker 预缓存时才从服务器取）。
@@ -65,4 +79,4 @@
 - 周末 A 从配对到「打印好了」用了多久，每一步多久：相邻 `web_view` / `web_submit` 的时间差。
 - 在哪里停下、有没有回头：最后一条事件、`top.back` 的次数。
 - 「跳过」用在哪：`web_skip`。
-- 有没有卡住：`web_error`，以及同一页上反复的 `web_view#refresh`（等 AI 等了多久）。
+- 有没有卡住：`web_error`；等 AI 等了多久：同一页 `#open`（或上一条 `#update`）到下一条 `#update` 的时间差（R1 的旧页面是反复的 `#refresh`）。

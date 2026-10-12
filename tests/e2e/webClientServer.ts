@@ -20,7 +20,7 @@
  *   POST /fault?print=restore               恢复成注入之前的样子
  *   POST /fault?reset=1                     全部恢复正常
  *   GET  /fault                             现在注入了什么
- *   打印快照的注入直接改数据库里的那一行：网页只读这一行，所以页面和真的准备中 / 失败时一样。
+ *   打印快照的注入直接改数据库里的那一行（并把这份练习的 generated_at 暂时清空，和真的还没生成时一样），restore 时放回原样。
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -119,13 +119,19 @@ function injectPrint(state: string, done: number): string {
     const { packetId, row } = faults.print;
     db.prepare('UPDATE v2_print_snapshot SET status = ?, progress_done = ?, progress_total = ?, snapshot_json = ?, error = ?, created_at = ?, ready_at = ? WHERE packet_id = ?')
       .run(row.status as string, row.progress_done as number, row.progress_total as number, row.snapshot_json as string | null, row.error as string | null, row.created_at as string, row.ready_at as string | null, packetId);
+    db.prepare('UPDATE review_packet SET generated_at = ? WHERE id = ?').run(row.generated_at as string | null, packetId);
     faults.print = null;
     return 'restored';
   }
   const latest = db.prepare('SELECT s.* FROM v2_print_snapshot s JOIN review_packet p ON p.id = s.packet_id ORDER BY p.created_at DESC LIMIT 1').get() as Record<string, unknown> | undefined;
   if (!latest) throw new Error('还没有打印快照：先建一份练习并开始准备练习纸');
   const packetId = latest.packet_id as string;
-  if (!faults.print || faults.print.packetId !== packetId) faults.print = { packetId, row: { ...latest } };
+  if (!faults.print || faults.print.packetId !== packetId) {
+    const generated = db.prepare('SELECT generated_at FROM review_packet WHERE id = ?').get(packetId) as { generated_at: string | null };
+    faults.print = { packetId, row: { ...latest, generated_at: generated.generated_at } };
+  }
+  // 真的在准备 / 准备失败时练习纸还没生成：练习的 generated_at 也是空的。
+  db.prepare('UPDATE review_packet SET generated_at = NULL WHERE id = ?').run(packetId);
   const total = Number(faults.print.row.progress_total) || 3;
   if (state === 'preparing') {
     const started = new Date(Date.now() - 40_000).toISOString();

@@ -140,7 +140,8 @@ textarea.autogrow{min-height:52px;resize:none;field-sizing:content;overflow:hidd
 .voice button{font:inherit;font-weight:600;border-radius:var(--r-pill);border:1.5px solid var(--teal);background:var(--card);color:var(--teal);padding:var(--s-2) var(--s-4);min-height:var(--tap)}
 .voice button.on{background:var(--teal);color:var(--on-teal)}
 .progress{height:8px;border-radius:var(--r-pill);background:var(--line);overflow:hidden;margin:var(--s-2) 0}
-.progress i{display:block;height:100%;background:var(--teal);width:0}
+.progress i{display:block;height:100%;background:var(--teal);transform-origin:left center;transform:scaleX(0);transition:transform var(--dur-3) var(--ease)}
+.wait-line{color:var(--muted);margin:var(--s-2) 0 0;font-variant-numeric:tabular-nums}
 details{margin:var(--s-3) 0}
 summary{cursor:pointer;font-weight:600;min-height:var(--tap);padding:10px 0;line-height:24px}
 .compare{display:grid;grid-template-columns:1fr;gap:var(--s-2)}

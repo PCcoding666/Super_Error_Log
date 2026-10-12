@@ -60,7 +60,7 @@ export function NextBar(props: { model: BarModel; extra?: ReactNode }): ReactNod
   const { model } = props;
   const hasPrimary = model.primary !== null;
   return (
-    <nav className="next-bar" data-testid="next-step-bar" aria-label="下一步">
+    <nav className="next-bar" data-testid="next-step-bar" aria-label="下一步" data-live="bar">
       <div className="inner">
         {model.caption || model.captionAfterPrint ? (
           <p className="caption" data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
@@ -86,7 +86,8 @@ export interface PageProps {
   showSettings?: boolean;
   bar?: BarModel | null;
   barExtra?: ReactNode;
-  refreshSeconds?: number;
+  /** 等 AI 的页面：开着脚本时每隔几秒取一次这一页，只换掉标了 data-live 的区域（状态、底栏）；关掉脚本时退回 meta refresh。 */
+  pollSeconds?: number;
   flash?: { ok?: string | null; err?: string | null };
   bodyClass?: string;
   children: ReactNode;
@@ -112,12 +113,12 @@ export function Page(props: PageProps): ReactNode {
         <link rel="manifest" href="/s/manifest.webmanifest" />
         <link rel="apple-touch-icon" href="/s/assets/apple-touch-icon.png" />
         <link rel="icon" type="image/png" href="/s/assets/icon-192.png" />
-        {/* 等 AI 的页面：开着脚本时由脚本按 data-refresh 刷新（看不见、正在输入时不刷）；关掉脚本时退回 meta refresh。 */}
-        {props.refreshSeconds ? <noscript><meta httpEquiv="refresh" content={String(props.refreshSeconds)} /></noscript> : null}
+        {/* 等 AI 的页面：开着脚本时由脚本按 data-poll 局部更新（看不见、正在输入时不换）；关掉脚本时退回 meta refresh。 */}
+        {props.pollSeconds ? <noscript><meta httpEquiv="refresh" content={String(props.pollSeconds)} /></noscript> : null}
         <link rel="stylesheet" href={`/s/assets/app.css?v=${ASSET_VERSION}`} />
         <script src={`/s/assets/app.js?v=${ASSET_VERSION}`}></script>
       </head>
-      <body className={props.bodyClass} data-refresh={props.refreshSeconds ? String(props.refreshSeconds) : undefined}>
+      <body className={props.bodyClass} data-poll={props.pollSeconds ? String(props.pollSeconds) : undefined}>
         <header className="top">
           {back ? <a href={back.href} data-testid="back-link" data-key="back"><span className="chev-left" aria-hidden="true">‹</span>{back.label}</a> : <span />}
           {props.showSettings === false ? <span /> : <a href="/s/settings" data-testid="settings-link" data-key="settings">设置</a>}
@@ -126,6 +127,8 @@ export function Page(props: PageProps): ReactNode {
           {props.flash?.ok ? <div className="flash" role="status" data-testid="flash-ok">{props.flash.ok}</div> : null}
           {props.flash?.err ? <div className="flash err" role="alert" data-testid="flash-err">{props.flash.err}</div> : null}
           {props.children}
+          {/* 局部更新换上来的状态由这一行读给读屏软件（换掉的区域本身是新节点，读屏不一定会念） */}
+          {props.pollSeconds ? <p className="visually-hidden" aria-live="polite" data-announcer="" /> : null}
         </main>
         {props.bar ? <NextBar model={props.bar} extra={props.barExtra} /> : null}
       </body>
@@ -141,6 +144,27 @@ export function Problem(props: { title: string; detail?: string; reason?: string
       {props.detail ? <p className="muted">{props.detail}</p> : null}
       {props.reason ? <details><summary data-key="problem-reason">具体原因</summary><p className="muted small">{props.reason}</p></details> : null}
     </div>
+  );
+}
+
+/** 等了多久：「已经等了 40 秒」「已经等了 1 分 5 秒」（页面脚本每秒按同一个写法更新）。 */
+export function elapsedText(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  return s < 60 ? `已经等了 ${s} 秒` : `已经等了 ${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+}
+
+/**
+ * 等 AI 时的一行：等了多久（data-elapsed = 服务器出这一页时已经等了几秒，脚本接着往上数）+ 大概还要多久。
+ * 网络断了的时候脚本在后面补一句（data-wait-net）。
+ */
+export function WaitLine(props: { since: string | null; now: Date; expect: string }): ReactNode {
+  const seconds = props.since ? Math.max(0, Math.floor((props.now.getTime() - Date.parse(props.since)) / 1000)) : null;
+  return (
+    <p className="wait-line small" data-testid="wait-line">
+      {seconds !== null && Number.isFinite(seconds) ? <><span data-elapsed={String(seconds)}>{elapsedText(seconds)}</span>{' · '}</> : null}
+      <span>{props.expect}</span>
+      <span className="wait-net hidden" data-wait-net="">{' · 网络断了，连上后接着等'}</span>
+    </p>
   );
 }
 

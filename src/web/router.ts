@@ -34,14 +34,14 @@ import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection 
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
 import { CLIENT_SCRIPT, SERVICE_WORKER, STYLES, iconPng, manifest } from './assets.js';
 import { COOKIE, clearCookie, giveConsent, hasConsent, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
-import { actionHref, loadPhotos, loadToday, type TodayState, type WebContext } from './state.js';
+import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
 import { trailRecorder, trailTaps } from './trail.js';
 import { DEFAULT_TIME_ZONE, localDayOrdinal, localDayText, stepCaption, type StepKind } from './weekPlan.js';
-import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, OfflinePage, PairPage, TodayPage } from './views/today.js';
-import { CapturePage, ConsentPage, PhotosPage, PickPage } from './views/photos.js';
+import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, OfflinePage, PairPage, TodayPage, type TodayWait } from './views/today.js';
+import { CapturePage, ConsentPage, PhotosPage, PickPage, findingSince } from './views/photos.js';
 import { EditPage, FixPage, ItemDetailPage, ItemsPage } from './views/items.js';
 import {
-  ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage,
+  ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage, printExpect,
   WhyAskPage, WhyConfirmPage, WhyDonePage, WhyIntroPage, COMPLETIONS, type DayOption, type PrintState, type RecordAnswer,
 } from './views/practice.js';
 import type { BarButton, BarModel } from './views/layout.js';
@@ -290,10 +290,23 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.get('/', page(async (request, response) => {
     const state = await loadToday(ctx, request);
     const flash = request.query.paired === '1' ? { ok: '连上了 ✓' } : undefined;
-    render(response, TodayPage({ state, practiceSlot: getV2Settings().practiceSlot, flash, showInstallHint: !sawInstallHint(request) }));
+    render(response, TodayPage({ state, practiceSlot: getV2Settings().practiceSlot, flash, showInstallHint: !sawInstallHint(request), wait: todayWait(state), now: ctx.now() }));
   }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
   r.get('/install', page((_request, response) => render(response, InstallPage())));
+
+  /** 「今天」在等 AI 吗：找题中的照片（从最早那张算）或正在准备的练习纸（从开始准备算）。都不在等时 null。 */
+  const todayWait = (state: TodayState): TodayWait | null => {
+    if (state.photos.some(photo => photo.state === 'finding')) return { since: findingSince(state.photos), expect: 'AI 找好以后，这一步会自己打勾' };
+    if (state.preparingPrintID) {
+      const since = printStartedAt(state.preparingPrintID);
+      const status = getPrintStatus(state.preparingPrintID);
+      const progress = status.httpStatus === 200 ? (status.body as { progress?: { done: number; total: number } }).progress : undefined;
+      const elapsed = since ? Math.max(0, Math.floor((ctx.now().getTime() - Date.parse(since)) / 1000)) : null;
+      return { since, expect: printExpect(progress?.done ?? 0, progress?.total ?? 0, elapsed) };
+    }
+    return null;
+  };
 
   // 「跳过」只记在本次打开里（会话 cookie）；「跳过，直接打印」顺手开始准备练习纸。
   r.post('/skip', form, page((request, response) => {
@@ -394,11 +407,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       const bar: BarModel = needsPick
         ? { caption: '', primary: { title: `勾第 ${needsPick.number} 张`, key: 'openPick', href: `/s/photos/${needsPick.jobId}` }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] }
         : { caption: refresh ? 'AI 在后台找题，可以先回去' : '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
-      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.createdAt ?? null, added, flash: { err } }));
+      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.createdAt ?? null, added, now: ctx.now(), flash: { err } }));
       return;
     }
     const bar = nextStepBar(state, 'pick');
-    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, added, flash: { err } }));
+    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, added, now: ctx.now(), flash: { err } }));
   }));
 
   const weekPhoto = async (request: Request, jobId: string) => {
@@ -697,7 +710,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.get('/print/:pid', page(async (request, response) => {
     const practice = practiceOf(String(request.params.pid));
     const state = await loadToday(ctx, request);
-    render(response, PrintPage({ practiceId: practice.id, state: printState(practice.id), caption: captionFor(state, 'print') }));
+    const print = printState(practice.id);
+    render(response, PrintPage({ practiceId: practice.id, state: print, caption: captionFor(state, 'print'), since: print.status === 'preparing' ? printStartedAt(practice.id) : null, now: ctx.now() }));
   }));
 
   r.get('/print/:pid/sheet', page((request, response) => {
