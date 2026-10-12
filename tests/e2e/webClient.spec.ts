@@ -113,6 +113,13 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
   await waitForPrimary(page, '打印');
   await expect(page.getByTestId('print-preview')).toBeVisible();
   await expect(page.getByTestId('sheet')).toContainText('做完再看');
+  // 整张 A4 先是缩略图：点「展开看整张」在原地展开，再点收起。
+  await expect(page.getByTestId('sheet-box')).toHaveAttribute('data-open', 'false');
+  await page.getByTestId('sheet-toggle').click();
+  await expect(page.getByTestId('sheet-box')).toHaveAttribute('data-open', 'true');
+  await expect(page.getByTestId('sheet-toggle')).toHaveAttribute('aria-expanded', 'true');
+  await page.getByTestId('sheet-toggle').click();
+  await expect(page.getByTestId('sheet-box')).toHaveAttribute('data-open', 'false');
   const sheetUrl = await page.getByTestId('sheet-link').getAttribute('href');
   await primary(page).click();
   await next(page, '打印好了，回到今天');
@@ -167,6 +174,7 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
     'tap /s/capture#primary.capture',
     'tap /s/why/:pid#secondary.skipWhy',
     'tap /s/print/:pid#primary.print',
+    'tap /s/print/:pid#content.sheet-open',
     'view /s/#open',
     'view /s/photos#open',
     'submit /s/consent#submit',
@@ -535,6 +543,9 @@ test.describe('说说为什么错：录音时的反馈，选项断行', () => {
     await expect(page.locator('#answer-text')).toHaveValue('我以为移项不用变号，就直接抄过去了。 我以为移项不用变号，就直接抄过去了。', { timeout: 15_000 });
     expect(posts).toBe(1);
     await expect(page.getByTestId('voice-retry')).toBeHidden();
+    // 互动记录：转写失败（client:voice_502）和「再转一次」的点按都记下了，只有路由模板和固定的键。
+    await expect.poll(async () => (await allTrail()).includes('tap /s/why/:pid/:itemId#content.voice-retry')).toBe(true);
+    expect(await allTrail()).toContain('error /s/why/:pid/:itemId#client:voice_502');
 
     // 确认屏的选项（两列）：360 / 375 / 390 px 都没有单字孤行（「推理中间断 / 了」这类）。
     await page.getByTestId('next-step-secondary-skipQuestion').click();
