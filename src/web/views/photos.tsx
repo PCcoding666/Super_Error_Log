@@ -100,7 +100,7 @@ function PhotoRow(props: { photo: PhotoView; isNew?: boolean; justAdded?: boolea
     return (
       <li className="row row-block" data-testid={`photo-row-${photo.number}`} data-row={`photo-${photo.number}`}>
         <span className="tone-blue">{prefix}AI 正在找题…</span>{tag}
-        {more ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more">还有 {more} 道没勾 · 漏了题可以补<span aria-hidden="true">›</span></a> : null}
+        {more ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more"><Phrased text={`还有 ${more} 道没勾 · 漏了题可以补`} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a> : null}
       </li>
     );
   }
@@ -136,7 +136,7 @@ function PhotoRow(props: { photo: PhotoView; isNew?: boolean; justAdded?: boolea
   return (
     <li className={`row row-block${props.justAdded ? ' m-rise' : ''}`} data-testid={`photo-row-${photo.number}`} data-row={`photo-${photo.number}`}>
       <span className="tone-green"><Phrased text={`${prefix}${text}`} /></span>{tag}
-      {left > 0 && !photo.pickDone ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more">还有 {left} 道没勾 · 漏了题可以补<span aria-hidden="true">›</span></a> : null}
+      {left > 0 && !photo.pickDone ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more"><Phrased text={`还有 ${left} 道没勾 · 漏了题可以补`} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a> : null}
     </li>
   );
 }
@@ -163,7 +163,7 @@ export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh:
       <p className="lead">有红叉、订正的题，AI 会自己找出来。没批改过的页（比如答题卡另交的），要你自己勾。</p>
       {props.afterWeek ? (
         <section className="card callout" data-testid="photos-after-week" data-live="after">
-          <h2 className="card-title">新拍的题下个周末再选</h2>
+          <h2 className="card-title"><Phrased text="新拍的题下个周末再选" /></h2>
           <p data-testid="photos-new-note">{newCount > 0 ? quoted(`这周的练习纸已经生成了，下面标着「新拍的」那 ${newCount} 张不会加进去。`) : '这周的练习纸已经生成了，新拍的卷子不会加进去。'}</p>
           <p>{props.refresh ? 'AI 找好以后，' : ''}新找到的题会进<b>错题本</b>{quoted('，「这周的错题」里能看到；下个周末选题时，它们会出现在里面。')}</p>
         </section>
@@ -180,7 +180,7 @@ export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh:
         )}
       </div>
       <div data-live="more">
-        {props.itemCount > 0 ? <a className="more" href="/s/items" data-testid="photos-items">看看找到的错题（{props.itemCount} 道）<span aria-hidden="true">›</span></a> : null}
+        {props.itemCount > 0 ? <a className="more" href="/s/items" data-testid="photos-items"><Phrased text={`看看找到的错题（${props.itemCount} 道）`} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a> : null}
       </div>
     </Page>
   );
@@ -199,7 +199,7 @@ export function PickPage(props: { photo: PhotoView; error?: string | null }): Re
   return (
     <Page title={`第 ${photo.number} 张：勾出做错的题`} back={{ href: '/s/photos', label: '勾出做错的题' }} bar={bar}>
       <h1>第 {photo.number} 张：勾出做错的题</h1>
-      <a className="more" href={`/s/img/photo/${photo.jobId}?full=1`} target="_blank" rel="noreferrer" data-key="pick-full-photo">看这一页的原图<span aria-hidden="true">›</span></a>
+      <a className="more" href={`/s/img/photo/${photo.jobId}?full=1`} target="_blank" rel="noreferrer" data-key="pick-full-photo"><Phrased text="看这一页的原图" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
       {props.error ? <Problem title="没加进去" detail={props.error} /> : null}
       {selectable.length === 0 ? <p className="muted">这张照片上的题都处理过了。</p> : null}
       <form method="post" action={`/s/photos/${photo.jobId}/select`} id="pick-form" data-pick-count="" data-max="30" data-min="1" data-wait="正在加入…">

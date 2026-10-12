@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { APP_NAME, APP_SHORT_NAME, CSS_PATH, EARLY_PATH, JS_PATH, THEME_COLOR, THEME_COLOR_DARK } from '../assets.js';
+import { phrasePieces } from '../phrases.js';
 
 /** 底部下一步按钮里的一个按钮：链接、表单提交、页面里表单的提交按钮、拍照的 label、或不可点。 */
 export type BarButton = { title: string; key: string } & (
@@ -25,14 +26,14 @@ export function ButtonView(props: { button: BarButton; primary: boolean; look?: 
   const testId = primary ? 'next-step-primary' : `next-step-secondary-${button.key}`;
   const cls = `btn${look === 'primary' ? ' primary' : look === 'alt' ? ' alt' : ''}`;
   if ('href' in button) {
-    return <a className={cls} href={button.href} data-testid={testId} data-key={button.key} data-print={button.print ? '' : undefined}>{button.title}</a>;
+    return <a className={cls} href={button.href} data-testid={testId} data-key={button.key} data-print={button.print ? '' : undefined}><Phrased text={button.title} /></a>;
   }
   if ('post' in button) {
     const formId = `bar-${button.key}`;
     return (
       <form method="post" action={button.post} id={formId} data-wait={button.wait}>
         {Object.entries(button.fields ?? {}).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
-        <button className={cls} type="submit" data-testid={testId} data-key={button.key}>{button.title}</button>
+        <button className={cls} type="submit" data-testid={testId} data-key={button.key}><Phrased text={button.title} /></button>
       </form>
     );
   }
@@ -40,15 +41,15 @@ export function ButtonView(props: { button: BarButton; primary: boolean; look?: 
     return (
       <button className={`${cls}${button.disabled ? ' disabled' : ''}`} type="submit" form={button.form} name={button.name} value={button.value} data-testid={testId} data-key={button.key}
         disabled={button.disabled} data-main="" data-count-label={button.countTemplate ? '' : undefined} data-template={button.countTemplate} data-empty={button.emptyTitle}>
-        {button.title}
+        <Phrased text={button.title} />
       </button>
     );
   }
   if ('labelFor' in button) {
     // 拍照 / 从相册选：label 直接打开系统相机或相册（不靠脚本）。键盘焦点落在被它指向的文件输入上，焦点环画在这个 label 上（见样式）。
-    return <label className={cls} htmlFor={button.labelFor} data-testid={testId} data-key={button.key}>{button.title}</label>;
+    return <label className={cls} htmlFor={button.labelFor} data-testid={testId} data-key={button.key}><Phrased text={button.title} /></label>;
   }
-  return <button className={`${cls}${button.waiting ? ' waiting' : ''}`} type="button" disabled data-testid={testId} data-key={button.key}>{button.title}</button>;
+  return <button className={`${cls}${button.waiting ? ' waiting' : ''}`} type="button" disabled data-testid={testId} data-key={button.key}><Phrased text={button.title} /></button>;
 }
 
 /**
@@ -63,7 +64,7 @@ export function NextBar(props: { model: BarModel; extra?: ReactNode }): ReactNod
     <nav className="next-bar" data-testid="next-step-bar" aria-label="下一步" data-live="bar">
       <div className="inner">
         {model.caption || model.captionAfterPrint ? (
-          <p className="caption" data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
+          <p className="caption bar-caption" data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
         ) : null}
         {hasPrimary && model.secondary.length > 0 ? (
           <div className="bar-alt">{model.secondary.map(button => <ButtonView key={button.key} button={button} primary={false} look="alt" />)}</div>
@@ -132,6 +133,8 @@ export function Page(props: PageProps): ReactNode {
           {props.flash?.ok ? <div className="flash" role="status" data-testid="flash-ok">{props.flash.ok}</div> : null}
           {props.flash?.err ? <div className="flash err" role="alert" data-testid="flash-err">{props.flash.err}</div> : null}
           {props.children}
+          {/* 视口很矮时（例如页面缩放到 200%）底栏只留按钮，底栏上那行说明挪到内容最后（两处同一句话，任何时候只显示一处）。 */}
+          {props.bar ? <p className="caption-flow small muted" data-caption-flow="" data-live="caption" data-after={props.bar.captionAfterPrint}>{props.bar.caption}</p> : null}
           {/* 局部更新换上来的状态由这一行读给读屏软件（换掉的区域本身是新节点，读屏不一定会念） */}
           {props.pollSeconds ? <p className="visually-hidden" aria-live="polite" data-announcer="" /> : null}
         </main>
@@ -203,12 +206,23 @@ export function quoted(text: string): ReactNode {
 }
 
 /**
- * 中文短句的断行：在标点（，；。：、！？）后面分成不可拆的小段（inline-block），换行只落在小段之间，
- * 不会把一个词拆到两行（例如「没 / 批改」「正 / 好」）。小段比一行还长时照常在段内换行。
- * 只用于一两行的短句（清单说明行、照片状态行、小字提示）；长段落照常按字换行（中文排版的惯例）。文字内容不变。
+ * 中文短句的断行：分成不可拆的小段（inline-block），换行只落在小段之间，不会把一个词拆到两行（「没 / 批改」），
+ * 也不会剩一个字单独一行（「第 1 / 道印出来是这 / 样」）、标点落到行首。小段比一行还长时照常在段内换行（样式里 line-break: strict）。
+ * - 18 个字以内的短句（标题、按钮、清单行、说明行）：按词组分段（phrasePieces，ICU 分词，见 phrases.ts）；
+ * - 更长的句子：在标点（，；。：、！？）后面分段（长段落照常按字换行，中文排版的惯例）；
+ * - 4 个字以内：原样（一行总放得下）。
+ * max：词组的最大字数（节奏条那种很窄的格子用 2）。suffix：贴在最后一段里的尾巴（例如链接后面的「›」，不单独换到下一行）。文字内容不变。
  */
-export function Phrased(props: { text: string }): ReactNode {
-  const pieces = props.text.split(/(?<=[，；。：、！？])(?=\S)/u);
-  if (pieces.length < 2) return quoted(props.text);
-  return <>{pieces.map((piece, index) => <span key={index} className="ph">{quoted(piece)}</span>)}</>;
+export function Phrased(props: { text: string; max?: number; prefix?: ReactNode; suffix?: ReactNode }): ReactNode {
+  const count = (props.text.match(/[\p{L}\p{N}]/gu) ?? []).length;
+  if (count <= 4 && !props.suffix && !props.prefix && props.max === undefined) return quoted(props.text);
+  const pieces = count <= 18 ? phrasePieces(props.text, props.max ?? 4) : props.text.split(/(?<=[，；。：、！？])(?=\S)/u);
+  const last = pieces.length - 1;
+  return (
+    <span className="phr">
+      {pieces.map((piece, index) => (piece.trim() === ''
+        ? piece
+        : <span key={index} className="ph">{index === 0 ? props.prefix : null}{quoted(piece)}{index === last ? props.suffix : null}</span>))}
+    </span>
+  );
 }

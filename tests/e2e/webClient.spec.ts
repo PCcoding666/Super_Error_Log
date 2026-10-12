@@ -600,6 +600,72 @@ test.describe('说说为什么错：录音时的反馈，选项断行', () => {
   });
 });
 
+/** 页面上的短句按字分行：单字孤行（多行时某一行只有一个字）、标点落在行首（，。、；：！？）」等）或行尾（（「等）。 */
+async function lineReport(page: Page): Promise<{ orphans: string[]; punctuation: string[] }> {
+  return page.evaluate(() => {
+    const orphans: string[] = []; const punctuation: string[] = [];
+    const sel = '.btn, .choice > span, h1, h2, legend, .step-title, .step-detail, .caption, .caption-flow, summary, .more, .more-inline, .link-btn, .field-label, .card-title, .rhythm li, .flash, .chip, .tag, .wait-line, .meta-line';
+    for (const el of document.querySelectorAll(sel)) {
+      const box = el.getBoundingClientRect(); const cs = getComputedStyle(el);
+      if (box.width < 2 || cs.display === 'none' || cs.visibility === 'hidden' || el.closest('.hidden') || el.closest('.sheet') || el.closest('.visually-hidden')) continue;
+      const lines: Array<{ mid: number; text: string }> = [];
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text;
+        for (let i = 0; i < node.data.length; i += 1) {
+          if (/\s/.test(node.data[i]!)) continue;
+          const range = document.createRange(); range.setStart(node, i); range.setEnd(node, i + 1);
+          const rect = range.getClientRects()[0]; if (!rect || rect.width === 0) continue;
+          const mid = rect.top + rect.height / 2;
+          const line = lines.find(entry => Math.abs(entry.mid - mid) < 6);
+          if (line) line.text += node.data[i]; else lines.push({ mid, text: node.data[i]! });
+        }
+      }
+      lines.sort((a, b) => a.mid - b.mid);
+      const shown = lines.map(line => line.text).join(' / ');
+      if (lines.length > 1 && lines.some(line => [...line.text].length === 1)) orphans.push(shown);
+      lines.forEach((line, i) => {
+        if (i > 0 && /^[，。、；：！？）」』】]/.test(line.text)) punctuation.push(`行首 ${shown}`);
+        if (i < lines.length - 1 && /[（「『【]$/.test(line.text)) punctuation.push(`行尾 ${shown}`);
+      });
+    }
+    return { orphans, punctuation };
+  });
+}
+
+test('页面缩放 200%（Safari「aA」放大：390 宽的屏幕只剩 195×422 CSS px）：没有单字孤行、标点不落行首，底栏不超过视口一半，主按钮整个看得见', async ({ browser }) => {
+  const page = await pairedPage(browser, { viewport: { width: 195, height: 422 }, deviceScaleFactor: 6 });
+  await page.goto(`${WEB}/s/practices`);
+  const hrefs = await page.getByTestId('practice-row').evaluateAll(rows => rows.map(row => row.getAttribute('href') ?? ''));
+  const printed = hrefs.map(href => /\/s\/(?:record|results)\/(pkt_[0-9a-f]+)/.exec(href)?.[1]).find(Boolean);
+  expect(printed).toBeTruthy();
+  for (const path of ['/s/', '/s/settings', '/s/choose', `/s/print/${printed}`, `/s/print/${printed}/sheet`, '/s/practices']) {
+    await page.goto(`${WEB}${path}`);
+    const report = await lineReport(page);
+    expect(report.orphans, `${path} 单字孤行`).toEqual([]);
+    expect(report.punctuation, `${path} 标点落在行首 / 行尾`).toEqual([]);
+    const layout = await page.evaluate(() => {
+      const bar = document.querySelector('.next-bar')!.getBoundingClientRect();
+      const primary = document.querySelector('[data-testid=next-step-primary]');
+      const p = primary ? primary.getBoundingClientRect() : null;
+      return { barShare: bar.height / innerHeight, overflow: document.documentElement.scrollWidth - innerWidth, primaryVisible: p ? p.top >= 0 && p.bottom <= innerHeight + 1 : null };
+    });
+    expect(layout.barShare, `${path} 底栏占视口`).toBeLessThanOrEqual(0.5);
+    expect(layout.overflow, `${path} 横向溢出`).toBeLessThanOrEqual(0);
+    expect(layout.primaryVisible, `${path} 主按钮`).not.toBe(false);
+  }
+  // 打印回来以后（底栏最高的时候）：说明挪到内容最后，底栏只留「再打印」和主按钮。
+  await page.goto(`${WEB}/s/print/${printed}`);
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+  await expect(page.getByTestId('next-step-primary')).toHaveText('打印好了，回到今天');
+  await expect(page.getByTestId('next-step-caption')).toBeHidden();
+  await expect(page.locator('[data-caption-flow]')).toContainText('打印机没反应');
+  const share = await page.evaluate(() => document.querySelector('.next-bar')!.getBoundingClientRect().height / innerHeight);
+  expect(share).toBeLessThanOrEqual(0.5);
+  expect((await lineReport(page)).orphans).toEqual([]);
+  await page.context().close();
+});
+
 test('服务器忙：还没连上的人看到「等一会儿再试；还是不行，请大人给一个新的二维码或链接」，连接过期的人不被说成「还没连上」', async ({ browser }) => {
   // 还没连上：连接失败太多次（每个 IP 每分钟 10 次）。
   const stranger = await browser.newContext(DEVICE);

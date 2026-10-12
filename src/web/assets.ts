@@ -37,7 +37,7 @@ export const STYLES = `
 --bar:rgba(23,25,28,.96);--disabled-bg:#2C3335;--disabled-ink:#A3ADAD;--focus:#6BB8AD;--surround:#2A2F31;--photo-dim:brightness(.88)}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--paper);color:var(--ink);
+body{margin:0;background:var(--paper);color:var(--ink);line-break:strict;
 font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
 font-size:var(--fs-3);line-height:var(--lh-text);font-variant-numeric:tabular-nums;font-kerning:normal;
 padding:env(safe-area-inset-top) 0 calc(var(--bar-h,200px) + var(--s-5))}
@@ -53,7 +53,13 @@ p{margin:var(--s-2) 0}
 p,li{text-wrap:pretty}
 /* 短句（列表项、选项、标签、说明行、标题）按词组断行：字与字之间不断，只在标点、空格处换行，「「相 / 机」」这类拆词不再出现；
    一句太长、没有断点时才在任意处断。长段落照常按字换行（中文排版的惯例），其中的「」引语由 .q 保持在同一行。 */
-main h2,legend,.field-label,.caption,.steps-text li,.meta-line,.row-text,.step-detail{word-break:keep-all;overflow-wrap:anywhere}
+legend,.field-label,.steps-text li,.row-text{word-break:keep-all;overflow-wrap:anywhere}
+/* 小字说明行（科目 · 知识点、状态）：按字断行再平衡成两行，长词（「一元一次方程」）在窄的地方不会被硬拆出一个字 */
+.meta-line{word-break:normal;overflow-wrap:anywhere;text-wrap:balance}
+/* 题干摘录、底栏说明：正常按字断行（keep-all 放不下时会硬拆，把「：」「，」拆到行首），标点规则由 line-break: strict 管 */
+.meta-line.excerpt,.caption,.caption-flow{word-break:normal;overflow-wrap:normal}
+.meta-line.excerpt{text-wrap:wrap}
+/* 卡片标题、清单行的步骤名和说明、按钮、链接：用 Phrased 按词组分段（phrases.ts），段内正常断行，标点不落行首（line-break: strict） */
 /* 大标题只有一行放不下时才换行（页面缩放 200% 时）：按字断再平衡成两行，不会剩一个字（「说说为什么 / 错」→「说说为 / 什么错」） */
 /* 选项文字不用 keep-all（一个词组放不下时会被硬拆出单字）：由 ChoiceText 按词组分成不可拆的小块，再平衡成一到两行 */
 .choice-text{text-wrap:balance;overflow-wrap:anywhere}
@@ -85,7 +91,13 @@ main p,main li{max-width:32em}
 .step-detail{display:block;font-size:var(--fs-2);margin-top:var(--s-1)}
 .step-min{color:var(--muted);white-space:nowrap}
 .step-detail{text-wrap:balance}
-.ph{display:inline-block}
+.ph{display:inline-block;word-break:normal}
+/* 链接后面的「›」贴在最后一个词组里，不单独换到下一行 */
+.chev-i{margin-left:var(--s-1)}
+.sheet-toggle .when-open,.sheet-toggle[aria-expanded=true] .when-closed{display:none}
+.sheet-toggle[aria-expanded=true] .when-open{display:inline}
+/* 底栏那行说明的第二份，平时不显示（视口很矮时才显示，见底栏那一段） */
+.caption-flow{display:none}
 .steps .chev{align-self:center;flex:0 0 auto}
 .chip{display:inline-block;font-size:var(--fs-1);font-weight:600;line-height:var(--lh-tight);padding:1px var(--s-2);border-radius:var(--r-pill);margin-left:var(--s-2);vertical-align:1px;background:var(--mint);color:var(--muted);white-space:nowrap}
 .chip.now{background:color-mix(in srgb,var(--teal) 14%,var(--card));color:var(--teal)}
@@ -247,6 +259,26 @@ border-radius:var(--r-2);min-height:52px;padding:var(--s-3) var(--s-4);cursor:po
 /* 只在开着脚本时启用（Chromium 在关掉脚本的页面上，跨文档过渡会一直挡着点按） */
 @media (scripting:enabled){@view-transition{navigation:auto}}
 .next-bar{view-transition-name:next-bar}
+/* 很窄的视口（页面缩放 200% 时只剩约 195 CSS px）：内边距收一点，节奏条三格竖着排，A4 缩略图放到说明下面——
+   给文字留出一行四五个字的宽度，标题、清单行按词组断行时不会剩一个字 */
+@media (max-width:300px){
+  main{padding:0 var(--s-2)}
+  .card{padding:var(--s-3)}
+  .steps a,.steps .row{gap:var(--s-2);padding:var(--s-2) var(--s-1)}
+  .rhythm{flex-direction:column}
+  .rhythm li{display:flex;justify-content:center;gap:var(--s-2)}
+  .sheet-box[data-open=false]>.sheet-frame{grid-column:1/-1;grid-row:auto;margin-top:var(--s-2)}
+  .choices-inline .choice{flex-basis:100%}
+}
+/* 视口很矮（页面缩放 200%、横着拿手机）：底栏只留按钮，说明挪到内容最后；按钮紧凑一点。底栏不超过视口的一半，主按钮一直在 */
+@media (max-height:560px){
+  .next-bar{padding-top:var(--s-1)}
+  .next-bar .inner{gap:var(--s-1)}
+  .next-bar .bar-caption{display:none}
+  .caption-flow{display:block;margin:var(--s-4) 0 0}
+  .caption-flow:empty{display:none}
+  .next-bar .btn{min-height:var(--tap);padding:var(--s-2) var(--s-3)}
+}
 ::view-transition-old(root){animation:vt-out 150ms cubic-bezier(.2,.8,.2,1) both}
 ::view-transition-new(root){animation:vt-in 300ms cubic-bezier(.2,.8,.2,1) both}
 ::view-transition-group(next-bar){animation-duration:220ms;animation-timing-function:cubic-bezier(.2,.8,.2,1)}

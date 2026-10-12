@@ -162,7 +162,7 @@ export function WhyIntroPage(props: { practice: PracticeDetail; index: number; t
         <p className="muted">不想说可以跳过，不影响打印。</p>
       </section>
       <section className="card">
-        <h2 className="card-title">这次的 {props.total} 道</h2>
+        <h2 className="card-title"><Phrased text={`这次的 ${props.total} 道`} /></h2>
         <PracticeItemRows items={props.practice.items} testId="why-items" status={(item, index) => (
           item.reflected ? { text: '说过了 ✓', tone: 'green' }
             : !props.pending.includes(item.id) ? { text: '跳过了' }
@@ -270,7 +270,7 @@ export function WhyDonePage(props: { practice: PracticeDetail }): ReactNode {
         <p>{props.practice.generatedAt ? '下一步：把练习纸打出来，带回学校。' : '下一步：准备练习纸。AI 给每道题写好提示和答案，大约 1 分钟。'}</p>
       </section>
       <section className="card">
-        <h2 className="card-title">这次的 {props.practice.items.length} 道</h2>
+        <h2 className="card-title"><Phrased text={`这次的 ${props.practice.items.length} 道`} /></h2>
         <PracticeItemRows items={props.practice.items} testId="why-done-items" status={item => (item.reflected ? { text: '说过了 ✓', tone: 'green' } : { text: '这次没说' })} />
         <p className="small muted">这几道都会印在练习纸上，说没说都一样要做。</p>
       </section>
@@ -366,13 +366,13 @@ export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
     <>
       {first ? (
         <section className="card peek" data-testid="print-peek" aria-labelledby="peek-title">
-          <h2 className="card-title" id="peek-title">第 1 道印出来是这样</h2>
+          <h2 className="card-title" id="peek-title"><Phrased text="第 1 道印出来是这样" /></h2>
           <p className="small muted"><Phrased text={`和纸上一样大，作答的空白也一样。整张纸上一共 ${snapshot.items.length} 道题，答案在最后一页。`} /></p>
           <div className="sheet sheet-peek"><div className="peek-page"><SheetItem item={first} media={media} /></div></div>
         </section>
       ) : null}
       <section className="card" data-testid="print-summary">
-        <h2 className="card-title">这张练习纸上有 {snapshot.items.length} 道题</h2>
+        <h2 className="card-title"><Phrased text={`这张练习纸上有 ${snapshot.items.length} 道题`} /></h2>
         <ul className="list">
           {snapshot.items.map(item => (
             <li key={item.itemId} className="row qrow">
@@ -392,7 +392,9 @@ export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
           <b id="sheet-box-title">整张练习纸（A4）</b>
           <span className="meta-line muted">封面、题目页，最后一页是答案</span>
         </p>
-        <button type="button" className="link-btn sheet-toggle js-only" aria-expanded="false" aria-controls="sheet-frame" data-key="sheet-open" data-testid="sheet-toggle">展开看整张</button>
+        <button type="button" className="link-btn sheet-toggle js-only" aria-expanded="false" aria-controls="sheet-frame" data-key="sheet-open" data-testid="sheet-toggle">
+          <span className="when-closed"><Phrased text="展开看整张" max={3} /></span><span className="when-open">收起整张</span>
+        </button>
         <div className="sheet-frame" id="sheet-frame"><div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={snapshot} /></div></div></div>
       </section>
     </>
@@ -442,7 +444,7 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
       <>
         {glance.length > 0 ? (
           <section className="card" data-testid="glance">
-            <h2 className="card-title">打印前看一眼这 {glance.length} 道</h2>
+            <h2 className="card-title"><Phrased text={`打印前看一眼这 ${glance.length} 道`} /></h2>
             {glance.map(item => (
               <details key={item.itemId}>
                 <summary data-key="print-glance">{item.shortId ?? `第 ${item.position + 1} 题`}：{plainGlance(item.glanceReason)}</summary>
@@ -452,7 +454,7 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
           </section>
         ) : null}
         <PrintOverview snapshot={state.snapshot} />
-        <a className="more" href={`/s/print/${practiceId}/sheet`} data-testid="sheet-link" data-key="sheet-link">单独打开练习纸<span aria-hidden="true">›</span></a>
+        <a className="more" href={`/s/print/${practiceId}/sheet`} data-testid="sheet-link" data-key="sheet-link"><Phrased text="单独打开练习纸" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
         <p className="hint">{quoted('单独打开以后，可以在打印预览里「存储到文件」存成 PDF。')}</p>
       </>
     );
@@ -482,7 +484,7 @@ export function SheetPage(props: { snapshot: PrintSnapshot }): ReactNode {
   const bar = (
     <nav className="next-bar" data-testid="next-step-bar" aria-label="下一步" data-live="bar">
       <div className="inner">
-        <p className="caption" data-testid="next-step-caption" data-after={after}>打出来，带回学校；打印预览里也能「存储到文件」</p>
+        <p className="caption bar-caption" data-testid="next-step-caption" data-after={after}>打出来，带回学校；打印预览里也能「存储到文件」</p>
         <div className="bar-after hidden" data-after-print="">
           <div className="bar-alt"><a className="btn alt" href="#" data-print="" data-testid="reprint" data-key="reprint">再打印</a></div>
           <div className="bar-main"><a className="btn primary" href="/s/?printed=1" data-print-done="" data-testid="print-done" data-key="printed">打印好了，回到今天</a></div>
@@ -499,6 +501,7 @@ export function SheetPage(props: { snapshot: PrintSnapshot }): ReactNode {
     <Page title="练习纸" back={{ href: `/s/print/${props.snapshot.packetId}`, label: '打印练习纸' }} bar={null} barExtra={null} after={bar}>
       <h1>练习纸</h1>
       <PrintOverview snapshot={props.snapshot} />
+      <p className="caption-flow small muted" data-caption-flow="" data-after={after}>打出来，带回学校；打印预览里也能「存储到文件」</p>
     </Page>
   );
 }
@@ -609,21 +612,21 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
       <p className="lead card-title" data-testid="results-head">{head}</p>
       {summary.masteredNow.length > 0 ? (
         <section className="card">
-          <h2 className="card-title tone-green">真会了 ✓（{summary.masteredNow.length} 道）</h2>
+          <h2 className="card-title tone-green"><Phrased text={`真会了 ✓（${summary.masteredNow.length} 道）`} /></h2>
           <p className="small muted">隔了几天还能独立做对。{confirm ? `${confirm} 前后会再考你一次，再对就算稳了。` : ''}</p>
           <ul className="list">{summary.masteredNow.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
       ) : null}
       {summary.pending.length > 0 ? (
         <section className="card">
-          <h2 className="card-title">做对了，过几天再确认（{summary.pending.length} 道）</h2>
+          <h2 className="card-title"><Phrased text={`做对了，过几天再确认（${summary.pending.length} 道）`} /></h2>
           <p className="small muted">做题那天离练习纸生成太近，过几天再做对才算数。</p>
           <ul className="list">{summary.pending.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
       ) : null}
       {summary.again.length > 0 ? (
         <section className="card">
-          <h2 className="card-title tone-orange">下次再练（{summary.again.length} 道）</h2>
+          <h2 className="card-title tone-orange"><Phrased text={`下次再练（${summary.again.length} 道）`} /></h2>
           <p className="small muted">这几道会自动放进下次的练习。</p>
           <ul className="list">{summary.again.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
@@ -724,7 +727,7 @@ export function SettingsPage(props: { practiceSlot: string; paperLocation: strin
       <section className="card">
         <h2 className="card-title">连接</h2>
         <p className="tone-green" data-testid="connection-ok">已连上服务器 ✓</p>
-        <a className="more" href="/s/install" data-key="settings-install">怎么放到主屏幕<span aria-hidden="true">›</span></a>
+        <a className="more" href="/s/install" data-key="settings-install"><Phrased text="怎么放到主屏幕" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
       </section>
     </Page>
   );

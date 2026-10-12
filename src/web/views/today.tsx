@@ -37,7 +37,7 @@ function StepRow(props: { step: Step; index: number; current: boolean }): ReactN
     <>
       <span className="dot" aria-hidden="true">{step.isDone ? '✓' : index + 1}</span>
       <span className="step-body">
-        <span className="step-title">{step.title}</span>
+        <span className="step-title"><Phrased text={step.title} /></span>
         {step.isOptional && !step.isDone ? <span className="chip">可跳过</span> : null}
         {current ? <span className="chip now">现在做这个</span> : null}
         <span className="step-detail"><span className={`tone-${step.tone}`}><Phrased text={step.detail} /></span> <span className="step-min">· 约 {step.minutes} 分钟</span></span>
@@ -63,7 +63,7 @@ function Rhythm(props: { active: number }): ReactNode {
   return (
     <ol className="rhythm" aria-label="一周的节奏">
       {parts.map(([when, what], index) => (
-        <li key={when} className={index === props.active ? 'on' : ''} aria-current={index === props.active ? 'step' : undefined}><b>{when}</b>{what}</li>
+        <li key={when} className={index === props.active ? 'on' : ''} aria-current={index === props.active ? 'step' : undefined}><b><Phrased text={when} max={2} /></b><Phrased text={what} max={2} /></li>
       ))}
     </ol>
   );
@@ -73,7 +73,7 @@ function Rhythm(props: { active: number }): ReactNode {
 function InstallHint(): ReactNode {
   return (
     <section className="card a2hs" data-testid="install-hint">
-      <h2 className="card-title">放到主屏幕，像 App 一样打开</h2>
+      <h2 className="card-title"><Phrased text="放到主屏幕，像 App 一样打开" /></h2>
       <p className="small">{quoted('在 Safari 里点下方的「分享」（方框里一个向上的箭头）→「添加到主屏幕」→「添加」。以后从主屏幕上的「错题本」打开。')}</p>
       <div className="actions">
         <form method="post" action="/s/install/seen" className="inline-form"><button className="link-btn" type="submit" data-key="install-seen">知道了</button></form>
@@ -91,7 +91,7 @@ function NewPhotosNote(props: { photos: PhotoView[] }): ReactNode {
   return (
     <div data-testid="today-new-photos">
       <p className="small"><Phrased text={`${needsPick ? `新拍的第 ${needsPick.number} 张要你勾出做错的题。` : '新拍的卷子：AI 正在找题。'}找到的题会进错题本，下个周末再选进练习。`} /></p>
-      <a className="more" href={needsPick ? `/s/photos/${needsPick.jobId}` : '/s/photos'} data-key="today-new-photos">{needsPick ? `勾第 ${needsPick.number} 张` : '看看新拍的卷子'}<span aria-hidden="true">›</span></a>
+      <a className="more" href={needsPick ? `/s/photos/${needsPick.jobId}` : '/s/photos'} data-key="today-new-photos"><Phrased text={needsPick ? `勾第 ${needsPick.number} 张` : '看看新拍的卷子'} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
     </div>
   );
 }
@@ -107,7 +107,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
   if (plan.stage === 'done') {
     content = (
       <section className="card" data-testid="today-done" data-steps="" data-stage="done">
-        <h2 className="card-title" data-testid="today-done-title"><span className="tone-green tick" aria-hidden="true" data-done-tick="">✓</span> 这周的事做完了</h2>
+        <h2 className="card-title" data-testid="today-done-title"><Phrased text="这周的事做完了" prefix={<><span className="tone-green tick" aria-hidden="true" data-done-tick="">✓</span> </>} /></h2>
         <p>把练习纸带回学校，<b>{slot}</b>在纸上做。</p>
         <p><Phrased text={PAPER_RULES} /></p>
         <p className="muted">下个周末打开错题本，录一下做的结果。</p>
@@ -117,7 +117,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
   } else if (plan.stage === 'midweek') {
     content = (
       <section className="card" data-testid="today-midweek" data-steps="" data-stage="midweek">
-        <h2 className="card-title" data-testid="today-midweek-title">现在是在纸上做练习的时候</h2>
+        <h2 className="card-title" data-testid="today-midweek-title"><Phrased text="现在是在纸上做练习的时候" /></h2>
         {plan.practice ? <p>{[`练习纸：${plan.practice.itemCount} 道`, slot].join(' · ')}</p> : null}
         <p><Phrased text={PAPER_RULES} /></p>
         <p className="muted"><Phrased text="没做完也没关系，周末回来再录。当天做对不算真会，隔几天再做对才算，所以别急着对答案。" /></p>

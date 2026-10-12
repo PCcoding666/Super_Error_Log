@@ -74,7 +74,7 @@ try{sessionStorage.setItem('sel-today',JSON.stringify(now))}catch(e){}}
 /* ---------- 打印（委托：局部更新换上来的按钮也能用） ---------- */
 function afterPrint(){var first=$('[data-testid=next-step-primary][data-print]');if(first&&$('[data-after-print]')){(first.closest('.bar-main')||first).classList.add('hidden');first.setAttribute('data-testid','print-used')}
 $$('[data-after-print]').forEach(function(el){el.classList.remove('hidden')});var done=$('[data-print-done]');if(done)done.setAttribute('data-testid','next-step-primary');
-var cap=$('[data-testid=next-step-caption]');if(cap&&cap.getAttribute('data-after'))cap.textContent=cap.getAttribute('data-after')}
+$$('[data-testid=next-step-caption],[data-caption-flow]').forEach(function(cap){if(cap.getAttribute('data-after'))cap.textContent=cap.getAttribute('data-after')})}
 window.addEventListener('afterprint',function(){if($('[data-print]'))afterPrint()});
 document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&e.target.closest('[data-print]');if(!b)return;e.preventDefault();try{window.print()}catch(x){}setTimeout(afterPrint,600)});
 
@@ -166,7 +166,7 @@ t0=Date.now();if(clock)clock.textContent='0:00';ticker=setInterval(function(){if
 startMeter(s);timer=setTimeout(stop,60000)}).catch(function(){starting=false;reset();if(note)note.textContent='用不了麦克风，可以直接打字。';btn.classList.add('hidden');trailAdd('error','mic_denied');trailSend()})})});
 /* 整张练习纸：先是缩略图，点「展开看整张」或点缩略图展开；再点收起 */
 within(scope,'.sheet-box').forEach(function(box){if(!once(box,'sheetbox'))return;var t=$('.sheet-toggle',box),f=$('.sheet-frame',box);
-function set(open){box.setAttribute('data-open',open?'true':'false');if(t){t.setAttribute('aria-expanded',String(open));t.textContent=open?'收起整张':'展开看整张'}if(open)play(f,'m-rise')}
+function set(open){box.setAttribute('data-open',open?'true':'false');if(t)t.setAttribute('aria-expanded',String(open));if(open)play(f,'m-rise')}
 if(t)t.addEventListener('click',function(){set(box.getAttribute('data-open')!=='true')});
 if(f)f.addEventListener('click',function(){if(box.getAttribute('data-open')!=='true'){trailAdd('content','sheet-open');trailSend();set(true)}})});
 /* 离线页：真没联网时换标题 */

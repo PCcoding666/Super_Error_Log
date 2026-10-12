@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { V2WeekItem } from '../../v2/weekService.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
-import { Page, Problem, VoiceBox, quoted, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, VoiceBox, quoted, type BarModel } from './layout.js';
 
 /** 卡片只显示对他有意义的状态（§4.5）。 */
 export function cardStatus(status: string): string | null {
@@ -138,7 +138,7 @@ export function FixPage(props: { item: V2WeekItem; revision: number; clientReque
         <textarea id="fix-instruction" name="instruction" maxLength={200} required defaultValue={props.instruction ?? ''} placeholder="说一句或写一句哪里不对，比如：第二行的 16 应该是 13" />
         <VoiceBox target="fix-instruction" />
       </form>
-      <a className="more" href={`/s/items/${item.id}/edit`} data-key="fix-manual">自己动手改<span aria-hidden="true">›</span></a>
+      <a className="more" href={`/s/items/${item.id}/edit`} data-key="fix-manual"><Phrased text="自己动手改" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
     </Page>
   );
 }

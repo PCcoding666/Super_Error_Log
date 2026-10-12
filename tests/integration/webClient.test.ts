@@ -123,6 +123,8 @@ class Browser {
     return this.request(pathname, { method: 'POST', body, headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers } });
   }
   async text(pathname: string): Promise<string> { return (await this.get(pathname)).text(); }
+  /** 页面上看得见的字（去掉标签）：标题、按钮按词组分成了小段（<span class="ph">），文字断言看这个。 */
+  async visibleText(pathname: string): Promise<string> { return (await this.text(pathname)).replace(/<[^>]+>/g, ''); }
 }
 
 async function pairBrowser(env: Setup): Promise<Browser> {
@@ -316,7 +318,7 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
     const stored = await env.service.getMedia(jobId, job.sourceMediaId);
     expect((await sharp(stored).metadata()).exif).toBeUndefined();
     expect(stored.includes(Buffer.from('SYNTHETIC-EXIF-MARKER'))).toBe(false);
-    const capture = await browser.text('/s/capture');
+    const capture = await browser.visibleText('/s/capture');
     expect(capture).toContain('已拍 1 张');
     expect(capture).toContain('拍完了，下一步');
   });
@@ -352,7 +354,7 @@ describe('勾出做错的题：没批改的页由学生勾，勾了才精读', (
     await browser.post('/s/consent');
     const { jobId } = await (await uploadPhoto(browser, await photo('#c8d0f0'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
-    const today = await browser.text('/s/');
+    const today = await browser.visibleText('/s/');
     expect(today).toContain('第 1 张要你勾');
     expect(today).toContain('勾第 1 张');
     expect((await browser.text('/s/photos')).replace(/<[^>]+>/g, '')).toContain('这页没有批改痕迹，点这里勾出错题');
@@ -368,11 +370,11 @@ describe('勾出做错的题：没批改的页由学生勾，勾了才精读', (
     expect(added).toContain('第 1 张：2 道加进错题本了 ✓');
     expect(await browser.text('/s/photos?added=x&n=1')).not.toContain('data-testid="photos-added"');
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed' && (await env.service.getJob(jobId)).questions.filter(q => q.status === 'ready').length === 2);
-    expect(await browser.text('/s/photos')).toContain('还有 1 道没勾');
+    expect(await browser.visibleText('/s/photos')).toContain('还有 1 道没勾');
     expect(await browser.text('/s/items')).toContain('2 道');
     await browser.post(`/s/photos/${jobId}/none`);
     expect(browser.cookies.get('sel_photos')).toContain(`p-${jobId}`);
-    expect(await browser.text('/s/photos')).not.toContain('还有 1 道没勾');
+    expect(await browser.visibleText('/s/photos')).not.toContain('还有 1 道没勾');
   });
 });
 
@@ -436,7 +438,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(sheet.status).toBe(200);
     const css = await (await browser.get('/s/assets/app.css')).text();
     expect(css).toContain('@page{size:A4');
-    const today = await browser.text('/s/?printed=1');
+    const today = await browser.visibleText('/s/?printed=1');
     expect(today).toContain('这周的事做完了');
     expect(today).toContain('下次打开：下个周末，录结果');
     expect(today).toContain('没打出来？现在打印');
@@ -460,7 +462,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
       if (index === itemIds.length - 1) { expect(decodeURIComponent(response.headers.get("location") ?? "")).toBe(`/s/results/${packetId}`); break; }
       html = await response.text();
     }
-    const results = await browser.text(`/s/results/${packetId}`);
+    const results = await browser.visibleText(`/s/results/${packetId}`);
     expect(results).toContain('3 道里，独立做对 3 道');
     expect(results).toContain('做对了，过几天再确认');
     expect(results).not.toContain('真会了 ✓');
@@ -580,13 +582,13 @@ describe('互动记录：每个动作只记时间、路由模板、动作标识�
     const packetId = (await browser.post('/s/choose', { itemIds })).headers.get('location')!.split('/').pop()!;
     await browser.post('/s/skip', { step: 'why', practice: packetId });
     await waitFor(async () => (await browser.text(`/s/print/${packetId}`)).includes('data-testid="sheet"'));
-    expect(await browser.text('/s/?printed=1')).toContain('这周的事做完了');
+    expect(await browser.visibleText('/s/?printed=1')).toContain('这周的事做完了');
     // 做完以后又拍了一张（周中入口「又发了卷子？现在拍」也走到这里）。
     const again = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(again.jobId)).status === 'completed');
     const photos = await browser.text('/s/photos');
     expect(photos).toContain('data-testid="photos-after-week"');
-    expect(photos).toContain('新拍的题下个周末再选');
+    expect(photos.replace(/<[^>]+>/g, '')).toContain('新拍的题下个周末再选');
     // 哪张是新拍的：练习纸生成以后才拍的第 2 张标「新拍的」，第 1 张（已经进了这周的练习）不标。
     expect(photos).toContain('data-testid="photo-new-2"');
     expect(photos).not.toContain('data-testid="photo-new-1"');
@@ -594,7 +596,7 @@ describe('互动记录：每个动作只记时间、路由模板、动作标识�
     expect(photosText).toContain('下面标着「新拍的」那 1 张不会加进去');
     expect(photosText).toContain('下个周末选题时，它们会出现在里面');
     expect(photos).toMatch(/<a class="btn primary" href="\/s\/" data-testid="next-step-primary"[^>]*>回到今天<\/a>/);
-    expect(photos).not.toContain('下一步：选这周要练的题');
+    expect(photosText).not.toContain('下一步：选这周要练的题');
   });
 });
 
@@ -793,7 +795,11 @@ describe('打印页与练习纸单独页的首屏（quality round 2；纸面本�
       expect(sheet.indexOf(firstItem)).toBeGreaterThan(-1);
       // 整张 A4：缩略图（data-open="false"），按钮「展开看整张」只在有脚本时出现；打印时只印纸。
       expect(html).toContain('class="print-root sheet-box" data-open="false"');
-      expect(html).toMatch(/<button type="button" class="link-btn sheet-toggle js-only" aria-expanded="false" aria-controls="sheet-frame"[^>]*>展开看整张<\/button>/);
+      const toggle = /<button type="button" class="link-btn sheet-toggle js-only" aria-expanded="false" aria-controls="sheet-frame"[^>]*>([\s\S]*?)<\/button>/.exec(html);
+      expect(toggle).not.toBeNull();
+      // 按钮里两种说法都在，按 aria-expanded 只显示一种（展开前「展开看整张」，展开后「收起整张」）。
+      expect(toggle![1]!).toMatch(/<span class="when-closed">[\s\S]*<\/span><span class="when-open">收起整张<\/span>/);
+      expect(toggle![1]!.replace(/<span class="when-open">[^<]*<\/span>/, '').replace(/<[^>]+>/g, '')).toBe('展开看整张');
       expect(html).not.toContain('已打印');
     }
     const sheetPage = await browser.text(`/s/print/${packetId}/sheet`);
