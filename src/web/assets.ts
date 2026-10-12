@@ -241,7 +241,8 @@ border-radius:var(--r-2);min-height:52px;padding:var(--s-3) var(--s-4);cursor:po
 @keyframes spin{to{transform:rotate(360deg)}}
 /* ---------- 动效（只动 transform / opacity；时长与缓动只从上面的 token 取） ----------
    页与页之间：跨文档 View Transitions（浏览器不支持时就是普通跳转）。底栏单独成一层，留在原位，只换按钮上的字；内容淡出、新的一页从下往上浮现。 */
-@view-transition{navigation:auto}
+/* 只在开着脚本时启用（Chromium 在关掉脚本的页面上，跨文档过渡会一直挡着点按） */
+@media (scripting:enabled){@view-transition{navigation:auto}}
 .next-bar{view-transition-name:next-bar}
 ::view-transition-old(root){animation:vt-out 150ms cubic-bezier(.2,.8,.2,1) both}
 ::view-transition-new(root){animation:vt-in 300ms cubic-bezier(.2,.8,.2,1) both}
