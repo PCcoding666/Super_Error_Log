@@ -15,6 +15,7 @@
  *   POST /fault?vision=fail&count=1        之后 count 张照片找题失败（可以重试：「这张没识别成功」）
  *   POST /fault?vision=unreadable&count=1  之后 count 张照片读不出来（不能重试：「这张识别不了」）
  *   POST /fault?asr=fail | asr=ok           语音转写失败（/s/voice 回 502）/ 恢复
+ *   POST /fault?asr=hold | asr=release      转写停在「正在转成文字」，直到 release
  *   POST /fault?print=preparing&done=1      把最近一份练习的打印快照改成「准备中」（第 done 道；开始时间改成 40 秒前）
  *   POST /fault?print=failed                改成「准备失败」（服务器原文是合成的）
  *   POST /fault?print=restore               恢复成注入之前的样子
@@ -63,6 +64,7 @@ const faults = {
   visionFail: 0,
   visionUnreadable: 0,
   asrFail: false,
+  asrHold: null as null | { promise: Promise<void>; release: () => void },
   print: null as null | { packetId: string; row: Record<string, unknown> },
 };
 
@@ -106,6 +108,7 @@ class SwitchableTranscriber {
   readonly source = 'mock' as const;
   private readonly inner = new MockTranscriber();
   async transcribe(audio: Buffer, _mimeType: string): Promise<string> {
+    if (faults.asrHold) await faults.asrHold.promise;
     if (faults.asrFail) throw new TranscribeError('provider_error', '合成故障：转写服务没响应');
     return this.inner.transcribe(audio);
   }
@@ -210,7 +213,7 @@ http.createServer((request, response) => {
         const done: string[] = [];
         if (request.method === 'POST') {
           const q = url.searchParams;
-          if (q.get('reset') === '1') { releaseVision(); faults.visionFail = 0; faults.visionUnreadable = 0; faults.asrFail = false; if (faults.print) injectPrint('restore', 0); done.push('reset'); }
+          if (q.get('reset') === '1') { releaseVision(); faults.visionFail = 0; faults.visionUnreadable = 0; faults.asrFail = false; faults.asrHold?.release(); faults.asrHold = null; if (faults.print) injectPrint('restore', 0); done.push('reset'); }
           const vision = q.get('vision');
           const count = Math.max(1, Math.min(20, Number(q.get('count') ?? 1)));
           if (vision === 'hold' && !faults.visionHold) { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve; }); faults.visionHold = { promise, release }; done.push('vision hold'); }
@@ -220,6 +223,8 @@ http.createServer((request, response) => {
           if (vision === 'ok') { releaseVision(); faults.visionFail = 0; faults.visionUnreadable = 0; done.push('vision ok'); }
           const asr = q.get('asr');
           if (asr === 'fail' || asr === 'ok') { faults.asrFail = asr === 'fail'; done.push(`asr ${asr}`); }
+          if (asr === 'hold' && !faults.asrHold) { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve; }); faults.asrHold = { promise, release }; done.push('asr hold'); }
+          if ((asr === 'release' || asr === 'ok') && faults.asrHold) { const hold = faults.asrHold; faults.asrHold = null; hold.release(); done.push('asr release'); }
           const print = q.get('print');
           if (print) done.push(injectPrint(print, Math.max(0, Number(q.get('done') ?? 1))));
         }
