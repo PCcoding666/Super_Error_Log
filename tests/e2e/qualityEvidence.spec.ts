@@ -734,8 +734,12 @@ test('webkit：200% 放大走主流程（页面缩放 200% 与只放大文字 20
     // 只放大文字（WCAG 1.4.4 的 200%）：根字号 200%，字阶都是 rem，跟着放大；布局宽度不变。
     { mode: 'text', desc: '只放大文字 200%（根字号 200%，视口 390×844）', options: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: IPHONE_SAFARI, locale: 'zh-CN' }, textOnly: true },
   ];
-  const results: unknown[] = [];
-  for (const { mode, desc, options, textOnly } of modes) {
+  // 每种模式要一台干净的服务器（各自从周末 A 开始）：SEL_EVIDENCE_WEBKIT_MODE=zoom|text 分两次跑，结果并进同一个文件。
+  const only = process.env.SEL_EVIDENCE_WEBKIT_MODE;
+  const file = path.join(OUT, 'webkit-200.json');
+  const previous = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as { results: Array<{ mode: string }> }).results : [];
+  const results: Array<{ mode: string }> = previous.filter(r => only && r.mode !== only);
+  for (const { mode, desc, options, textOnly } of modes.filter(m => !only || m.mode === only)) {
     const context = await wk.newContext({ ...options, bypassCSP: true });
     if (textOnly) await context.addInitScript(() => { document.addEventListener('DOMContentLoaded', () => { const s = document.createElement('style'); s.textContent = 'html{font-size:200%!important}'; document.head.appendChild(s); }); });
     await context.addInitScript(() => { window.print = () => { window.dispatchEvent(new Event('afterprint')); }; });
@@ -752,9 +756,11 @@ test('webkit：200% 放大走主流程（页面缩放 200% 与只放大文字 20
         // 文字被截断：元素内容比框宽 / 高，而且溢出被藏起来（练习纸预览的画框本来就是缩略，不算）。
         const clipped = [...document.querySelectorAll('main *, .next-bar *')].filter(el => {
           if (!vis(el) || el.closest('.sheet') || el.closest('.sheet-frame') || el.matches('img, input, textarea, select, .visually-hidden') || el.closest('.visually-hidden')) return false;
-          const cs = getComputedStyle(el); const hidden = cs.overflowX === 'hidden' || cs.overflowY === 'hidden' || cs.overflow === 'hidden' || cs.textOverflow === 'ellipsis' || cs.webkitLineClamp !== 'none';
-          return hidden && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) && (el.textContent ?? '').trim() !== '';
+          const cs = getComputedStyle(el); const hidden = cs.overflowX === 'hidden' || cs.overflowY === 'hidden' || cs.overflow === 'hidden' || cs.textOverflow === 'ellipsis';
+          return hidden && cs.webkitLineClamp === 'none' && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) && (el.textContent ?? '').trim() !== '';
         }).map(el => `${el.tagName.toLowerCase()}.${String(el.className).split(' ')[0]}「${(el.textContent ?? '').trim().slice(0, 16)}」`);
+        // 有意截成两行的题干摘录（-webkit-line-clamp: 2，点开能看全）单独数，不算「被截断」。
+        const lineClamped = [...document.querySelectorAll('main .excerpt')].filter(el => vis(el) && el.scrollHeight > el.clientHeight + 1).length;
         const bar = document.querySelector('.next-bar');
         const p = document.querySelector('[data-testid=next-step-primary]');
         const pr = p && vis(p) ? p.getBoundingClientRect() : null;
@@ -762,12 +768,14 @@ test('webkit：200% 放大走主流程（页面缩放 200% 与只放大文字 20
           url: location.pathname.replace(/pkt_[0-9a-f]+/, 'pkt_…').replace(/itm_[0-9a-f]+/, 'itm_…'),
           viewport: `${innerWidth}×${innerHeight}`, rootFontPx: parseFloat(getComputedStyle(document.documentElement).fontSize),
           horizontalOverflowPx: Math.max(0, document.documentElement.scrollWidth - innerWidth),
-          clipped, barHeightPx: bar ? Math.round(bar.getBoundingClientRect().height) : 0, barShareOfViewport: bar ? Math.round(bar.getBoundingClientRect().height / innerHeight * 100) / 100 : 0,
+          clipped, lineClamped, barHeightPx: bar ? Math.round(bar.getBoundingClientRect().height) : 0, barShareOfViewport: bar ? Math.round(bar.getBoundingClientRect().height / innerHeight * 100) / 100 : 0,
           primary: p ? (p as HTMLElement).innerText.trim() : null, primaryFullyVisible: pr ? pr.top >= 0 && pr.bottom <= innerHeight + 1 : null,
+          mainVisibleAboveBarPx: bar ? Math.max(0, Math.round(bar.getBoundingClientRect().top)) : innerHeight,
           bodyPadBottom: parseFloat(getComputedStyle(document.body).paddingBottom),
         };
       });
-      screens.push({ n, name, file, ...m });
+      const extra = await page.evaluate(`(${COLLECT_EXTRA})()`) as { orphans: Array<{ text: string; lines: string[] }> };
+      screens.push({ n, name, file, ...m, orphans: extra.orphans.map(o => `${o.text}（${o.lines.join(' / ')}）`) });
       log('webkit', mode, n, name, JSON.stringify(m).slice(0, 220));
     };
     const link = await pairingLink();
@@ -793,7 +801,12 @@ test('webkit：200% 放大走主流程（页面缩放 200% 与只放大文字 20
     await check('why-ask');
     await clickNav(page, secondary(page, 'skipQuestion'));
     await check('why-confirm');
+    // 没回答 AI 的问题时 AI 不猜，三组都要他自己选（「有没有把握」从来不预选）。
+    for (const name of ['attemptState', 'cause']) {
+      if (!(await page.locator(`input[name=${name}]:checked`).count())) await page.locator(`label.choice:has(input[name=${name}])`).first().click();
+    }
     await page.getByText('现在做应该会').first().click();
+    await check('why-confirm-filled');
     await clickNav(page, primary(page));
     await skipRemainingWhy(page);
     await check('why-done');
@@ -805,11 +818,10 @@ test('webkit：200% 放大走主流程（页面缩放 200% 与只放大文字 20
     await check('print-after');
     await clickNav(page, primary(page));
     await check('today-done');
-    results.push({ mode, desc, browser: `WebKit ${wk.version()}`, screens });
+    results.push({ mode, desc, browser: `WebKit ${wk.version()}`, screens } as { mode: string });
     await context.close();
-    // 第二种模式要一份新的「这周」：往后挪一周再走（同一台服务器，数据接着用）。
-    await timeTravel(7);
   }
+  results.sort((a, b) => (a.mode === 'zoom' ? -1 : 1) - (b.mode === 'zoom' ? -1 : 1));
   writeJson('webkit-200.json', { generatedAt: new Date().toISOString(), note: 'Playwright 自带的 WebKit（不是真机 Safari）；读屏（VoiceOver）没有在这里测，要真机', results });
   await wk.close();
 });
