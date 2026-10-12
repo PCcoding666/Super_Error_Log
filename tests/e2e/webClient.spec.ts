@@ -56,6 +56,12 @@ async function shoot(page: Page, bytes: Buffer, name: string): Promise<void> {
 }
 
 /** 打印：拦下系统打印对话框（headless 没有打印机），照样触发 afterprint。 */
+/** 网页版互动记录（服务器审计日志里 web_* 的行），按「类型 路由#动作」列出。 */
+async function trailLines(request: import('@playwright/test').APIRequestContext): Promise<string[]> {
+  const rows = await (await request.get(`${CONTROL}/trail`)).json() as Array<{ kind: string; route: string; action: string }>;
+  return rows.map(row => `${row.kind} ${row.route}#${row.action}`);
+}
+
 async function stubPrint(page: Page): Promise<void> {
   await page.addInitScript(() => {
     window.print = () => { window.dispatchEvent(new Event('afterprint')); };
@@ -145,6 +151,24 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
   });
   expect(cached).toEqual(['/s/assets/app.css', '/s/assets/app.js', '/s/assets/icon-192.png', '/s/offline']);
   await page.context().setOffline(false);
+
+  // 互动记录：页面脚本记下的点按（跳页的随下一个请求带来，拍照 / 打印这类不跳页的立刻发 HEAD）和服务器上判定的看页、提交、跳过。
+  await expect.poll(async () => (await trailLines(request)).filter(line => line.startsWith('tap ')).length).toBeGreaterThan(5);
+  const lines = await trailLines(request);
+  expect(lines).toEqual(expect.arrayContaining([
+    'tap /s/pair#primary.pair',
+    'tap /s/#primary.capture',
+    'tap /s/capture#primary.consent',
+    'tap /s/capture#primary.capture',
+    'tap /s/why/:pid#secondary.skipWhy',
+    'tap /s/print/:pid#primary.print',
+    'view /s/#open',
+    'view /s/photos#open',
+    'submit /s/consent#submit',
+    'submit /s/choose#submit',
+    'skip /s/skip#why',
+  ]));
+  expect(lines.join('\n')).not.toMatch(/pkt_|itm_[0-9a-f]|code=/);
 
   await page.context().storageState({ path: STATE });
 });
@@ -239,6 +263,21 @@ test.describe('下个周末', () => {
     await next(page, '打印好了，回到今天');
     await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
     await expect(primary(page)).toHaveCount(0);
+
+    // 做完以后又拍了一张（门槛 G3）：「勾出做错的题」说明新题去了哪里，下一步是回到今天，不再带去选题。
+    await page.goto(`${WEB}/s/capture`);
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('add-page').click()]);
+    await chooser.setFiles({ name: 'page-3.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f0c8c0', 760) });
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张', { timeout: 20_000 });
+    await next(page, '拍完了，下一步');
+    await expect(page).toHaveURL(/\/s\/photos$/);
+    await expect(page.getByTestId('photos-after-week')).toContainText('新拍的题下个周末再选');
+    await expect(page.getByTestId('photo-new-2')).toHaveText('新拍的');
+    await expect(page.getByTestId('photo-new-1')).toHaveCount(0);
+    await expect(page.getByTestId('photos-after-week')).toContainText('下个周末选题时，它们会出现在里面');
+    await expect(primary(page)).toHaveText('回到今天');
+    await next(page, '回到今天');
+    await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
     fs.rmSync(STATE, { force: true });
   });
 });
