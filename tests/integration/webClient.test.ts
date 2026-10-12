@@ -824,7 +824,13 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
     expect(crypto.createHash('sha256').update(cssText).digest('hex').slice(0, 10)).toBe(css![2]);
     const jsResponse = await fetch(`${env.base}${js![1]}`);
     expect(jsResponse.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
-    expect(crypto.createHash('sha256').update(await jsResponse.text()).digest('hex').slice(0, 10)).toBe(js![2]);
+    const jsText = await jsResponse.text();
+    expect(crypto.createHash('sha256').update(jsText).digest('hex').slice(0, 10)).toBe(js![2]);
+    // 下发的版本去掉了注释，仍然是能解析的脚本、能用的样式。
+    expect(jsText).not.toContain('/*');
+    expect(cssText).not.toContain('/*');
+    expect(() => new Function(jsText)).not.toThrow();
+    expect(cssText).toContain('@media (prefers-reduced-motion:reduce){');
     // 旧页面拿着别的指纹：照样给现在的内容，但不缓存；不带指纹的旧地址也一样。
     expect((await fetch(`${env.base}/s/assets/app.0000000000.css`)).headers.get('cache-control')).toBe('no-cache');
     expect((await fetch(`${env.base}/s/assets/app.css`)).headers.get('cache-control')).toBe('no-cache');

@@ -343,8 +343,15 @@ export { CLIENT_SCRIPT };
  * 页面、Service Worker 的外壳清单都引用带指纹的名字。ASSET_VERSION 由两个指纹算出，Service Worker 的缓存名跟着换。
  */
 const fingerprint = (text: string): string => crypto.createHash('sha256').update(text).digest('hex').slice(0, 10);
-export const STYLES_HASH = fingerprint(STYLES);
-export const SCRIPT_HASH = fingerprint(CLIENT_SCRIPT);
+/**
+ * 下发的版本去掉注释、行首空白和空行（源码里的说明留给人看，不用每次传给手机）。样式和脚本里都没有含「/*」的字符串或正则，
+ * 所以按 /* … *\/ 去注释是安全的；脚本保留换行（不依赖自动补分号的规则变化）。tests/integration/webClient.test.ts 校验脚本仍能解析。
+ */
+const compact = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]+/gm, '').replace(/\n{2,}/g, '\n').trim() + '\n';
+export const STYLES_SERVED = compact(STYLES);
+export const SCRIPT_SERVED = compact(CLIENT_SCRIPT);
+export const STYLES_HASH = fingerprint(STYLES_SERVED);
+export const SCRIPT_HASH = fingerprint(SCRIPT_SERVED);
 export const ASSET_VERSION = fingerprint(`${STYLES_HASH}:${SCRIPT_HASH}`);
 export const CSS_PATH = `/s/assets/app.${STYLES_HASH}.css`;
 export const JS_PATH = `/s/assets/app.${SCRIPT_HASH}.js`;

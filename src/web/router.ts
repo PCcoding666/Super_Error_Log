@@ -32,7 +32,7 @@ import { getReturnSummary, submitReturns } from '../v2/returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from '../v2/reflectionService.js';
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
-import { CLIENT_SCRIPT, IMMUTABLE, SCRIPT_HASH, SERVICE_WORKER, STYLES, STYLES_HASH, iconPng, manifest } from './assets.js';
+import { IMMUTABLE, SCRIPT_HASH, SCRIPT_SERVED, SERVICE_WORKER, STYLES_HASH, STYLES_SERVED, iconPng, manifest } from './assets.js';
 import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, giveConsent, hasConsent, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
@@ -206,15 +206,15 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // 带内容指纹的样式与脚本：指纹对得上就缓存一年（immutable）；对不上（旧页面拿着旧指纹）照样给现在的内容，但不缓存。
   r.get(/^\/assets\/app\.([0-9a-f]{10})\.css$/, (request, response) => {
     cacheFor(response, (request.params as Record<string, string>)[0] === STYLES_HASH ? IMMUTABLE : 'no-cache');
-    response.type('text/css').send(STYLES);
+    response.type('text/css').send(STYLES_SERVED);
   });
   r.get(/^\/assets\/app\.([0-9a-f]{10})\.js$/, (request, response) => {
     cacheFor(response, (request.params as Record<string, string>)[0] === SCRIPT_HASH ? IMMUTABLE : 'no-cache');
-    response.type('text/javascript').send(CLIENT_SCRIPT);
+    response.type('text/javascript').send(SCRIPT_SERVED);
   });
   // 不带指纹的旧地址（R1 的页面、Service Worker 里还可能有）：照样给，每次都要重新验证。
-  r.get('/assets/app.css', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/css').send(STYLES); });
-  r.get('/assets/app.js', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/javascript').send(CLIENT_SCRIPT); });
+  r.get('/assets/app.css', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/css').send(STYLES_SERVED); });
+  r.get('/assets/app.js', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/javascript').send(SCRIPT_SERVED); });
   const icon = (size: number, maskable = false) => async (_request: Request, response: Response): Promise<void> => {
     cacheFor(response, 'public, max-age=604800');
     response.type('image/png').send(await iconPng(size, maskable));
