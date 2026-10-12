@@ -53,7 +53,8 @@ p{margin:var(--s-2) 0}
 p,li{text-wrap:pretty}
 /* 短句（列表项、选项、标签、说明行、标题）按词组断行：字与字之间不断，只在标点、空格处换行，「「相 / 机」」这类拆词不再出现；
    一句太长、没有断点时才在任意处断。长段落照常按字换行（中文排版的惯例），其中的「」引语由 .q 保持在同一行。 */
-main h1,main h2,legend,.field-label,.caption,.steps-text li,.meta-line,.row-text,.step-detail{word-break:keep-all;overflow-wrap:anywhere}
+main h2,legend,.field-label,.caption,.steps-text li,.meta-line,.row-text,.step-detail{word-break:keep-all;overflow-wrap:anywhere}
+/* 大标题只有一行放不下时才换行（页面缩放 200% 时）：按字断再平衡成两行，不会剩一个字（「说说为什么 / 错」→「说说为 / 什么错」） */
 /* 选项文字不用 keep-all（一个词组放不下时会被硬拆出单字）：由 ChoiceText 按词组分成不可拆的小块，再平衡成一到两行 */
 .choice-text{text-wrap:balance;overflow-wrap:anywhere}
 .q{white-space:nowrap}
@@ -289,13 +290,13 @@ body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-
 .sheet-peek .peek-page{background:#fff;border-radius:var(--r-1);padding:0 4mm;box-shadow:0 1px 4px rgba(0,0,0,.18);overflow:hidden}
 @media screen{.sheet-peek .peek-page{filter:var(--photo-dim)}}
 @media screen{
-  .sheet-box{background:var(--card);border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-4);margin:var(--s-3) 0;display:grid;grid-template-columns:1fr auto;column-gap:var(--s-3);align-items:center}
+  .sheet-box{background:var(--card);border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-4);margin:var(--s-3) 0;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:var(--s-3);align-items:center}
   .sheet-box>.sheet-box-text{grid-column:1;margin:0}
   .sheet-box>.sheet-toggle{grid-column:1;justify-self:start;margin:0}
   .sheet-box>.sheet-frame{grid-column:1/-1;margin:var(--s-3) 0 0}
 }
 @media screen and (scripting:enabled){
-  .sheet-box[data-open=false]>.sheet-frame{grid-column:2;grid-row:1/span 2;width:96px;margin:0;padding:4px;cursor:zoom-in}
+  .sheet-box[data-open=false]>.sheet-frame{grid-column:2;grid-row:1/span 2;width:clamp(56px,25vw,96px);margin:0;padding:4px;cursor:zoom-in}
   .sheet-box[data-open=false] .sheet-wrap{height:auto!important;aspect-ratio:210/297}
 }
 /* 练习纸预览的画框（只在屏幕上；打印时去掉，纸面版式不变） */
