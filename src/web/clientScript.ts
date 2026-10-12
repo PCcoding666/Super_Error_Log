@@ -163,7 +163,7 @@ function startElapsed(){if(!ticking&&$('[data-elapsed]')){tickElapsed();ticking=
    没变就什么都不动（只有「已经等了多久」在走）；变了才把那几块换掉，别的地方（标题、滚动位置、他正在看的内容）一概不动。
    换上来的：变了的那几行浮上来、进度条往前走、主按钮换字滑进来、读屏念一句；然后报一次 update（一次状态变化记一次）。
    页面不再需要等（新的一页没有 data-poll）就停。看不见的时候不取；断网时退后再试，并在等待行后面说一声。 */
-function sig(el){var c=el.cloneNode(true);$$('[data-elapsed]',c).forEach(function(e){e.textContent=''});
+function sig(el){var c=el.cloneNode(true);$$('[data-elapsed]',c).forEach(function(e){e.textContent='';e.setAttribute('data-elapsed','')});
 within(c,'*').forEach(function(e){e.removeAttribute('style');if(e.classList)Array.prototype.slice.call(e.classList).forEach(function(k){if(/^m-/.test(k))e.classList.remove(k)})});
 $$('[data-wait-net]',c).forEach(function(e){e.classList.add('hidden')});return c.innerHTML}
 function swapRegion(old,nu){var keepImgs={};$$('img',old).forEach(function(i){keepImgs[i.getAttribute('src')]=i});
