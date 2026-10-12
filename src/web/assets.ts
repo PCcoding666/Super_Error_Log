@@ -5,7 +5,7 @@
  */
 import crypto from 'node:crypto';
 import sharp from 'sharp';
-import { CLIENT_SCRIPT } from './clientScript.js';
+import { CLIENT_SCRIPT, EARLY_SCRIPT } from './clientScript.js';
 
 export const APP_NAME = '超级错题本';
 export const APP_SHORT_NAME = '错题本';
@@ -350,17 +350,20 @@ const fingerprint = (text: string): string => crypto.createHash('sha256').update
 const compact = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]+/gm, '').replace(/\n{2,}/g, '\n').trim() + '\n';
 export const STYLES_SERVED = compact(STYLES);
 export const SCRIPT_SERVED = compact(CLIENT_SCRIPT);
+export const EARLY_SERVED = compact(EARLY_SCRIPT);
 export const STYLES_HASH = fingerprint(STYLES_SERVED);
 export const SCRIPT_HASH = fingerprint(SCRIPT_SERVED);
-export const ASSET_VERSION = fingerprint(`${STYLES_HASH}:${SCRIPT_HASH}`);
+export const EARLY_HASH = fingerprint(EARLY_SERVED);
+export const ASSET_VERSION = fingerprint(`${STYLES_HASH}:${SCRIPT_HASH}:${EARLY_HASH}`);
 export const CSS_PATH = `/s/assets/app.${STYLES_HASH}.css`;
 export const JS_PATH = `/s/assets/app.${SCRIPT_HASH}.js`;
+export const EARLY_PATH = `/s/assets/early.${EARLY_HASH}.js`;
 /** 带指纹的资源：一年、不变。 */
 export const IMMUTABLE = 'public, max-age=31536000, immutable';
 
 /** Service Worker：只缓存外壳（离线页、样式、脚本、图标），学生数据一律不缓存（只在导航失败时换成离线页）。 */
 export const SERVICE_WORKER = `const CACHE='sel-shell-${ASSET_VERSION}';
-const SHELL=['/s/offline','${CSS_PATH}','${JS_PATH}','/s/assets/icon-192.png'];
+const SHELL=['/s/offline','${CSS_PATH}','${EARLY_PATH}','${JS_PATH}','/s/assets/icon-192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const r=e.request;

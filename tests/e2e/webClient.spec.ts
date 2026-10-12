@@ -63,6 +63,18 @@ async function trailLines(request: import('@playwright/test').APIRequestContext)
   return rows.map(row => `${row.kind} ${row.route}#${row.action}`);
 }
 
+/**
+ * 整段流程里的页面报错与控制台 error（含未处理的 promise 拒绝，例如跨文档过渡被跳过时的 AbortError）。
+ * 返回一个数组，流程走完断言它是空的；每条带上当时的路由模板，方便定位。
+ */
+function collectErrors(page: Page): string[] {
+  const errors: string[] = [];
+  const where = (): string => new URL(page.url()).pathname.replace(/pkt_[0-9a-f]+/, ':pid').replace(/itm_[0-9a-f]+/, ':itemId');
+  page.on('pageerror', error => errors.push(`pageerror @${where()} ${String(error).slice(0, 160)}`));
+  page.on('console', message => { if (message.type() === 'error') errors.push(`console @${where()} ${message.text().slice(0, 160)}`); });
+  return errors;
+}
+
 async function stubPrint(page: Page): Promise<void> {
   await page.addInitScript(() => {
     window.print = () => { window.dispatchEvent(new Event('afterprint')); };
@@ -72,6 +84,7 @@ async function stubPrint(page: Page): Promise<void> {
 test('周末 A：只按底部下一步按钮，从配对走到「这周的事做完了」（J7 网页版）', async ({ page, request }) => {
   const { link } = await (await request.get(`${CONTROL}/pairing-link`)).json() as { link: string };
   await stubPrint(page);
+  const errors = collectErrors(page);
 
   // 连接：打开配对链接 → 确认页 → 点一下连接。
   await page.goto(link.replace('https://study.pccoding666.com', WEB));
@@ -141,6 +154,9 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
   expect(Math.abs(height - 841.9)).toBeLessThan(2);
   await page.emulateMedia({ media: 'screen' });
 
+  // 从配对到「这周的事做完了」、再到练习纸 A4：页面报错与控制台 error 一条都没有（跨文档过渡被跳过也不报）。
+  expect(errors).toEqual([]);
+
   // 没联网 / 服务器连不上：Service Worker 只缓存了外壳，导航失败时给离线页（不含任何学生数据）。
   await page.goto(`${WEB}/s/`);
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
@@ -158,10 +174,11 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
     return urls.sort();
   });
   // 外壳只有离线页、带内容指纹的样式与脚本（和页面引用的是同一个名字）、图标。
-  const shell = await page.evaluate(() => [document.querySelector('link[rel=stylesheet]')?.getAttribute('href') ?? '', document.querySelector('script[src]')?.getAttribute('src') ?? '']);
+  const shell = await page.evaluate(() => [document.querySelector('link[rel=stylesheet]')?.getAttribute('href') ?? '', document.querySelector('script[src]:not([defer])')?.getAttribute('src') ?? '', document.querySelector('script[src][defer]')?.getAttribute('src') ?? '']);
   expect(shell[0]).toMatch(/^\/s\/assets\/app\.[0-9a-f]{10}\.css$/);
-  expect(shell[1]).toMatch(/^\/s\/assets\/app\.[0-9a-f]{10}\.js$/);
-  expect(cached).toEqual([shell[0], shell[1], '/s/assets/icon-192.png', '/s/offline'].sort());
+  expect(shell[1]).toMatch(/^\/s\/assets\/early\.[0-9a-f]{10}\.js$/);
+  expect(shell[2]).toMatch(/^\/s\/assets\/app\.[0-9a-f]{10}\.js$/);
+  expect(cached).toEqual([shell[0], shell[1], shell[2], '/s/assets/icon-192.png', '/s/offline'].sort());
   await page.context().setOffline(false);
 
   // 互动记录：页面脚本记下的点按（跳页的随下一个请求带来，拍照 / 打印这类不跳页的立刻发 HEAD）和服务器上判定的看页、提交、跳过。
@@ -192,6 +209,7 @@ test.describe('下个周末', () => {
   test('周末 B：先拍新卷子，趁 AI 找题录上周的结果，再勾、选、用语音说一道、打印', async ({ page, request }) => {
     expect((await request.post(`${CONTROL}/time-travel?days=7`)).ok()).toBe(true);
     await stubPrint(page);
+    const errors = collectErrors(page);
     await page.goto(`${WEB}/s/`);
 
     await expect(page.getByTestId('today-header')).toHaveText('今天大约 16 分钟，一共 6 步');
@@ -295,6 +313,8 @@ test.describe('下个周末', () => {
     await expect(primary(page)).toHaveText('回到今天');
     await next(page, '回到今天');
     await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
+    // 整个周末 B（拍、录结果、勾、选、语音、打印、做完后又拍）：页面报错与控制台 error 一条都没有。
+    expect(errors).toEqual([]);
     fs.rmSync(STATE, { force: true });
   });
 });

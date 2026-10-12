@@ -5,6 +5,27 @@
  * 结构：页面级的事件用委托（点按记录、打印、选项按下），每块内容的小功能放在 enhance(scope) 里——
  * 页面加载时对整页跑一次，局部更新换上来的区域再对那一块跑一次（每个元素只挂一次）。
  */
+/**
+ * 头部的一小段同步脚本（在第一次渲染之前就挂好，主脚本 defer 加载来不及）：接住 Chromium 自己跳过的跨文档过渡。
+ *
+ * 根因（quality round 2 iteration 2 实测）：跳页时，Chromium 有时在新的一页第一次渲染之前就把这次跨文档过渡跳过了——
+ * 这时 pagereveal 事件里 viewTransition 是 null（这个过渡对象根本没交给页面），但浏览器内部还是把它的 ready 承诺
+ * 以 AbortError「Transition was skipped」拒绝掉；页面手里没有这个对象，没人能接，于是控制台多一条「Uncaught (in promise)」。
+ * 关掉过渡就没有；页面脚本换成空的也照样出现；交到页面手里的过渡（pagereveal 里不是 null 的）一个都没有被拒绝。
+ * 所以这里只认这一种情况：这一页揭开时浏览器没有给过渡（viewTransition 为 null），随后来的拒绝原因是
+ * AbortError「Transition was skipped」——这是浏览器替页面跳过的过渡，页面确认收到。别的任何拒绝照常报出来。
+ * 交到页面手里的过渡，如果在播放中被打断（又跳页、返回），ready 的 AbortError 由页面接住；其他错误照样抛出。
+ */
+export const EARLY_SCRIPT = String.raw`(function(){
+var skippedByBrowser=false;
+addEventListener('pagereveal',function(e){var vt=e.viewTransition;
+if(!vt){skippedByBrowser=true;return}
+vt.ready.catch(function(err){if(!err||err.name!=='AbortError')throw err})});
+addEventListener('unhandledrejection',function(e){var r=e.reason;
+if(skippedByBrowser&&r&&r.name==='AbortError'&&String(r.message).indexOf('Transition was skipped')>=0)e.preventDefault()});
+})();
+`;
+
 export const CLIENT_SCRIPT = String.raw`(function(){
 var root=document.documentElement;root.classList.add('js');
 var standalone=window.navigator.standalone===true||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches);

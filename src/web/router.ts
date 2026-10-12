@@ -32,7 +32,7 @@ import { getReturnSummary, submitReturns } from '../v2/returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from '../v2/reflectionService.js';
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
-import { IMMUTABLE, SCRIPT_HASH, SCRIPT_SERVED, SERVICE_WORKER, STYLES_HASH, STYLES_SERVED, iconPng, manifest } from './assets.js';
+import { EARLY_HASH, EARLY_SERVED, IMMUTABLE, SCRIPT_HASH, SCRIPT_SERVED, SERVICE_WORKER, STYLES_HASH, STYLES_SERVED, iconPng, manifest } from './assets.js';
 import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, giveConsent, hasConsent, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
@@ -211,6 +211,10 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.get(/^\/assets\/app\.([0-9a-f]{10})\.js$/, (request, response) => {
     cacheFor(response, (request.params as Record<string, string>)[0] === SCRIPT_HASH ? IMMUTABLE : 'no-cache');
     response.type('text/javascript').send(SCRIPT_SERVED);
+  });
+  r.get(/^\/assets\/early\.([0-9a-f]{10})\.js$/, (request, response) => {
+    cacheFor(response, (request.params as Record<string, string>)[0] === EARLY_HASH ? IMMUTABLE : 'no-cache');
+    response.type('text/javascript').send(EARLY_SERVED);
   });
   // 不带指纹的旧地址（R1 的页面、Service Worker 里还可能有）：照样给，每次都要重新验证。
   r.get('/assets/app.css', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/css').send(STYLES_SERVED); });

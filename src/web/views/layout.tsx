@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { APP_NAME, APP_SHORT_NAME, CSS_PATH, JS_PATH, THEME_COLOR, THEME_COLOR_DARK } from '../assets.js';
+import { APP_NAME, APP_SHORT_NAME, CSS_PATH, EARLY_PATH, JS_PATH, THEME_COLOR, THEME_COLOR_DARK } from '../assets.js';
 
 /** 底部下一步按钮里的一个按钮：链接、表单提交、页面里表单的提交按钮、拍照的 label、或不可点。 */
 export type BarButton = { title: string; key: string } & (
@@ -118,6 +118,8 @@ export function Page(props: PageProps): ReactNode {
         {/* 等 AI 的页面：开着脚本时由脚本按 data-poll 局部更新（看不见、正在输入时不换）；关掉脚本时退回 meta refresh。 */}
         {props.pollSeconds ? <noscript><meta httpEquiv="refresh" content={String(props.pollSeconds)} /></noscript> : null}
         <link rel="stylesheet" href={CSS_PATH} />
+        {/* 很小的同步脚本：第一次渲染之前挂好跨文档过渡的处理（见 clientScript.ts 的 EARLY_SCRIPT） */}
+        <script src={EARLY_PATH}></script>
         {/* defer：不挡首屏；只在有 / 没有脚本时出现的东西由样式的 scripting 媒体特性决定，不等脚本 */}
         <script src={JS_PATH} defer></script>
       </head>

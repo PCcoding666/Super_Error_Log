@@ -831,6 +831,16 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
     expect(cssText).not.toContain('/*');
     expect(() => new Function(jsText)).not.toThrow();
     expect(cssText).toContain('@media (prefers-reduced-motion:reduce){');
+    // 头部的小脚本（第一次渲染前挂好跨文档过渡的处理）：同样带指纹、一年缓存、能解析；外壳清单里也有它。
+    const early = /<script src="(\/s\/assets\/early\.([0-9a-f]{10})\.js)"><\/script>/.exec(html);
+    expect(early).not.toBeNull();
+    expect(html.indexOf(early![0])).toBeLessThan(html.indexOf('<body'));
+    const earlyResponse = await fetch(`${env.base}${early![1]}`);
+    expect(earlyResponse.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    const earlyText = await earlyResponse.text();
+    expect(crypto.createHash('sha256').update(earlyText).digest('hex').slice(0, 10)).toBe(early![2]);
+    expect(() => new Function(earlyText)).not.toThrow();
+    expect(earlyText.length).toBeLessThan(1024);
     // 旧页面拿着别的指纹：照样给现在的内容，但不缓存；不带指纹的旧地址也一样。
     expect((await fetch(`${env.base}/s/assets/app.0000000000.css`)).headers.get('cache-control')).toBe('no-cache');
     expect((await fetch(`${env.base}/s/assets/app.css`)).headers.get('cache-control')).toBe('no-cache');
@@ -839,6 +849,7 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
     const sw = await (await fetch(`${env.base}/s/sw.js`)).text();
     expect(sw).toContain(`'${css![1]}'`);
     expect(sw).toContain(`'${js![1]}'`);
+    expect(sw).toContain(`'${early![1]}'`);
     // 页面本身仍然不缓存（学生数据）。
     expect((await fetch(`${env.base}/s/`)).headers.get('cache-control')).toBe('private, no-store');
   });
