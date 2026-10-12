@@ -245,7 +245,7 @@ export function WhyDonePage(props: { practice: PracticeDetail }): ReactNode {
   };
   return (
     <Page title="说完了" bar={bar}>
-      <h1>说完了 ✓</h1>
+      <h1>说完了 <span className="tick m-pop">✓</span></h1>
       <section className="card">
         <p className="card-title" data-testid="why-done">{props.practice.items.length} 道里说了 {reflected} 道</p>
         <p className="muted">{reflected > 0 ? '你说的会记下来。下周录完结果，能看看当时的感觉准不准。' : '这次没说也没关系，下次可以再说。'}</p>
@@ -527,6 +527,8 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
   return (
     <Page title="这次的结果" bar={bar}>
       <h1>这次的结果</h1>
+      {/* 结果出来：头一句和下面几组依次浮上来（减少动态效果时直接显示） */}
+      <div className="m-stagger">
       <p className="lead card-title" data-testid="results-head">{head}</p>
       {summary.masteredNow.length > 0 ? (
         <section className="card">
@@ -556,6 +558,7 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
         </section>
       ) : null}
       {nothing ? <section className="card"><p>这次的结果记下了</p></section> : null}
+      </div>
     </Page>
   );
 }

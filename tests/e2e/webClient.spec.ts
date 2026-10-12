@@ -221,7 +221,8 @@ test.describe('下个周末', () => {
     await page.getByTestId('pick-candidate').nth(0).click();
     await page.getByTestId('pick-candidate').nth(2).click();
     await next(page, '把这 2 道加入错题本');
-    await expect(page).toHaveURL(/\/s\/photos$/);
+    await expect(page).toHaveURL(/\/s\/photos\?added=2&n=1$/);
+    await expect(page.getByTestId('photos-added')).toHaveText('第 1 张：2 道加进错题本了 ✓');
     await waitForPrimary(page, '下一步：选这周要练的题');
     await primary(page).click();
 

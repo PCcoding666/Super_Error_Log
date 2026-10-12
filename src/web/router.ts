@@ -384,6 +384,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const state = await loadToday(ctx, request);
     const refresh = state.photos.some(photo => photo.state === 'finding');
     const err = request.query.err === 'retry' ? '这次没重试成功，过一会儿再试。' : null;
+    // 刚从勾选面板加了题回来：说一声加了几道，那一张的那一行浮上来（只是两个小数字，不带任何 ID）。
+    const added = /^[1-9]\d?$/.test(str(request.query.added)) && /^[1-9]\d?$/.test(str(request.query.n)) ? { count: Number(str(request.query.added)), number: Number(str(request.query.n)) } : null;
     const photos = state.photos.filter(photo => !(photo.dismissed && photo.failure));
     // 这周的练习纸已经生成（做完了 / 周中）以后又拍了卷子：这周的练习已经定了，不再带他去选题；
     // 说清楚新找到的题去了哪（进错题本，下个周末再选），下一步是「回到今天」（门槛 G3）。
@@ -392,11 +394,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       const bar: BarModel = needsPick
         ? { caption: '', primary: { title: `勾第 ${needsPick.number} 张`, key: 'openPick', href: `/s/photos/${needsPick.jobId}` }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] }
         : { caption: refresh ? 'AI 在后台找题，可以先回去' : '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
-      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.createdAt ?? null, flash: { err } }));
+      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.createdAt ?? null, added, flash: { err } }));
       return;
     }
     const bar = nextStepBar(state, 'pick');
-    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, flash: { err } }));
+    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, added, flash: { err } }));
   }));
 
   const weekPhoto = async (request: Request, jobId: string) => {
@@ -416,12 +418,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const { photo } = await weekPhoto(request, jobId);
     const ids = list(request.body?.questionIds).filter(id => UUID.test(id));
     if (ids.length === 0) { failed(response, 'none_picked'); render(response, PickPage({ photo, error: '先勾出做错的题。' }), 400); return; }
-    try { await options.service.select(jobId, [...new Set(ids)].slice(0, 30)); }
+    const chosen = [...new Set(ids)].slice(0, 30);
+    try { await options.service.select(jobId, chosen); }
     catch (error) {
       if (error instanceof MobileRequestError) { failed(response, 'select_failed'); render(response, PickPage({ photo, error: error.message }), error.status); return; }
       throw error;
     }
-    response.redirect(303, '/s/photos');
+    response.redirect(303, `/s/photos?added=${chosen.length}&n=${photo.number}`);
   }));
 
   const markPhoto = (kind: 'pickDone' | 'dismissed') => page(async (request, response) => {

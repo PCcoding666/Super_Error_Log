@@ -47,11 +47,13 @@ function StepRow(props: { step: Step; index: number; current: boolean }): ReactN
     </>
   );
   const label = `第 ${index + 1} 步，${step.title}${current ? '，现在做这个' : ''}${step.isDone ? '，做完了' : ''}`;
+  // data-step / data-done / data-current：页面脚本拿来和上一次看到的清单比，放「打勾」「挪到下一步」的动效（不影响内容）。
+  const marks = { 'data-step': step.kind, 'data-done': step.isDone ? '1' : '0', 'data-current': current ? '1' : '0' };
   return (
     <li>
       {step.action
-        ? <a className={cls} href={actionHref(step.action)} data-testid={`today-step-${step.kind}`} aria-label={label}>{inner}</a>
-        : <div className={`row ${cls}`} data-testid={`today-step-${step.kind}`} aria-label={label} role="group">{inner}</div>}
+        ? <a className={cls} href={actionHref(step.action)} data-testid={`today-step-${step.kind}`} aria-label={label} {...marks}>{inner}</a>
+        : <div className={`row ${cls}`} data-testid={`today-step-${step.kind}`} aria-label={label} role="group" {...marks}>{inner}</div>}
     </li>
   );
 }
@@ -101,8 +103,8 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
   let content: ReactNode;
   if (plan.stage === 'done') {
     content = (
-      <section className="card" data-testid="today-done">
-        <h2 className="card-title" data-testid="today-done-title"><span className="tone-green" aria-hidden="true">✓</span> 这周的事做完了</h2>
+      <section className="card" data-testid="today-done" data-steps="" data-stage="done">
+        <h2 className="card-title" data-testid="today-done-title"><span className="tone-green tick" aria-hidden="true" data-done-tick="">✓</span> 这周的事做完了</h2>
         <p>把练习纸带回学校，<b>{slot}</b>在纸上做。</p>
         <p><Phrased text={PAPER_RULES} /></p>
         <p className="muted">下个周末打开错题本，录一下做的结果。</p>
@@ -111,7 +113,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
     );
   } else if (plan.stage === 'midweek') {
     content = (
-      <section className="card" data-testid="today-midweek">
+      <section className="card" data-testid="today-midweek" data-steps="" data-stage="midweek">
         <h2 className="card-title" data-testid="today-midweek-title">现在是在纸上做练习的时候</h2>
         {plan.practice ? <p>{[`练习纸：${plan.practice.itemCount} 道`, slot].join(' · ')}</p> : null}
         <p><Phrased text={PAPER_RULES} /></p>
@@ -122,7 +124,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
   } else {
     const doneCount = plan.steps.filter(step => step.isDone).length;
     content = (
-      <section className="card" data-testid="today-card">
+      <section className="card" data-testid="today-card" data-steps="" data-stage={plan.stage}>
         <p className="steps-head">
           <b data-testid="today-header">{header(plan)}</b>
           <span className="small muted" aria-label={`做完 ${doneCount} 步，共 ${plan.steps.length} 步`}>{doneCount}/{plan.steps.length}</span>
