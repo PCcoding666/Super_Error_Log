@@ -3,7 +3,9 @@
  * Service Worker、manifest 与图标都以 TypeScript 字符串形式随 tsc 编译进 dist，不放 public/。
  * 脚本只做浏览器必须做的事（上传进度、录音、选题计数、打印、按需显隐）；关掉脚本时每屏照样能用（语音除外）。
  */
+import crypto from 'node:crypto';
 import sharp from 'sharp';
+import { CLIENT_SCRIPT } from './clientScript.js';
 
 export const APP_NAME = '超级错题本';
 export const APP_SHORT_NAME = '错题本';
@@ -11,8 +13,6 @@ export const THEME_COLOR = '#1F615C';
 /** 深色模式下状态栏的颜色（= 深色纸色），不让青绿压在深色界面上面。 */
 export const THEME_COLOR_DARK = '#17191C';
 export const BACKGROUND_COLOR = '#F7F5ED';
-/** 资源版本：改了样式或脚本就改这个，让浏览器与 Service Worker 换新。 */
-export const ASSET_VERSION = '2';
 
 export const STYLES = `
 /* ---------- 设计 token（浅色 / 深色两套；所有颜色只从这里取） ----------
@@ -332,11 +332,24 @@ body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-
 `;
 
 /** 浏览器脚本见 clientScript.ts（结构与各个小功能的说明都在那里）。 */
-export { CLIENT_SCRIPT } from './clientScript.js';
+export { CLIENT_SCRIPT };
+
+/**
+ * 带内容指纹的静态资源（/s/assets/app.<10 位 sha256>.css|js）：内容变了文件名就变，所以可以让浏览器缓存一年（immutable）；
+ * 页面、Service Worker 的外壳清单都引用带指纹的名字。ASSET_VERSION 由两个指纹算出，Service Worker 的缓存名跟着换。
+ */
+const fingerprint = (text: string): string => crypto.createHash('sha256').update(text).digest('hex').slice(0, 10);
+export const STYLES_HASH = fingerprint(STYLES);
+export const SCRIPT_HASH = fingerprint(CLIENT_SCRIPT);
+export const ASSET_VERSION = fingerprint(`${STYLES_HASH}:${SCRIPT_HASH}`);
+export const CSS_PATH = `/s/assets/app.${STYLES_HASH}.css`;
+export const JS_PATH = `/s/assets/app.${SCRIPT_HASH}.js`;
+/** 带指纹的资源：一年、不变。 */
+export const IMMUTABLE = 'public, max-age=31536000, immutable';
 
 /** Service Worker：只缓存外壳（离线页、样式、脚本、图标），学生数据一律不缓存（只在导航失败时换成离线页）。 */
 export const SERVICE_WORKER = `const CACHE='sel-shell-${ASSET_VERSION}';
-const SHELL=['/s/offline','/s/assets/app.css?v=${ASSET_VERSION}','/s/assets/app.js?v=${ASSET_VERSION}','/s/assets/icon-192.png'];
+const SHELL=['/s/offline','${CSS_PATH}','${JS_PATH}','/s/assets/icon-192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const r=e.request;

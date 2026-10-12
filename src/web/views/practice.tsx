@@ -53,7 +53,7 @@ function ChooseRow(props: { card: PracticeCard; checked: boolean }): ReactNode {
     <label className="choice pick" data-testid="choose-row">
       <input type="checkbox" name="itemIds" value={card.id} defaultChecked={props.checked} />
       <span className="grow">
-        <img className="crop" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} loading="lazy" />
+        <img className="crop" src={`/s/img/item/${card.id}?s=list`} alt={card.shortId ?? '题目裁图'} loading="lazy" />
         <span className="excerpt">{card.questionExcerpt ?? ''}</span>
         <span className="meta-line muted">为什么选它：{card.reason}</span>
         {card.badge === 'low' ? <span className="meta-line tone-orange">字可能认错了 · 点开看看</span> : null}
@@ -134,7 +134,7 @@ function PracticeItemRows(props: { items: PracticeDetail['items']; status: (item
         const status = props.status(item, index);
         return (
           <li key={item.id} className="row qrow">
-            <img className="thumb" src={`/s/img/item/${item.id}`} alt="" loading="lazy" />
+            <img className="thumb" src={`/s/img/item/${item.id}?s=thumb`} alt="" loading="lazy" />
             <span className="row-text">
               <b>{item.shortId ?? `第 ${index + 1} 道`}</b>
               <span className="meta-line muted">{[item.subject, ...item.knowledgeTags].filter(Boolean).join(' · ') || '错题'}</span>
@@ -191,7 +191,7 @@ export function WhyAskPage(props: { practiceId: string; card: PracticeCard; inde
   return (
     <Page title="说说为什么错" bar={bar}>
       <h1>说说为什么错</h1>
-      <img className="crop big" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
+      <img className="crop big" src={`/s/img/item/${card.id}?s=big`} alt={card.shortId ?? '题目裁图'} />
       {props.error ? <Problem title="没提交上" detail={props.error} /> : null}
       {answered.map(turn => (
         <div key={turn.turn}>
@@ -239,7 +239,7 @@ export function WhyConfirmPage(props: { practiceId: string; card: PracticeCard; 
   return (
     <Page title="说说为什么错" bar={bar} barExtra={<p className="caption tone-orange" data-missing="" data-testid="missing" />}>
       <h1>说说为什么错</h1>
-      <img className="crop" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
+      <img className="crop" src={`/s/img/item/${card.id}?s=list`} alt={card.shortId ?? '题目裁图'} />
       {props.error ? <Problem title={props.error} /> : null}
       <form method="post" action={`/s/why/${props.practiceId}/${card.id}/submit`} id="reflection-form" data-reflection="">
         <label htmlFor="reflection-summary" className="field-label">一句话总结（AI 先写了，可以改）{summary ? <span className="tag">{previous ? '你上次选的' : 'AI 写的'}</span> : null}</label>
@@ -360,7 +360,8 @@ export type PrintState =
 export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
   const { snapshot } = props;
   const first = snapshot.items[0];
-  const media = (name: string): string => `/s/img/print/${snapshot.packetId}/${name}`;
+  // 手机上看的那一道用按显示宽度缩小的图（纸面上的图仍是原图，打印清晰度不变）。
+  const media = (name: string): string => `/s/img/print/${snapshot.packetId}/${name}?s=big`;
   return (
     <>
       {first ? (
@@ -375,7 +376,7 @@ export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
         <ul className="list">
           {snapshot.items.map(item => (
             <li key={item.itemId} className="row qrow">
-              <img className="thumb" src={`/s/img/item/${item.itemId}`} alt="" loading="lazy" />
+              <img className="thumb" src={`/s/img/item/${item.itemId}?s=thumb`} alt="" loading="lazy" />
               <span className="row-text">
                 <b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>
                 <span className="meta-line muted">{[item.subject, ...item.knowledgeTags].filter(Boolean).join(' · ') || '错题'}</span>
@@ -445,7 +446,7 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
             {glance.map(item => (
               <details key={item.itemId}>
                 <summary data-key="print-glance">{item.shortId ?? `第 ${item.position + 1} 题`}：{plainGlance(item.glanceReason)}</summary>
-                {item.cropMedia ? <img className="crop big" src={`/s/img/print/${practiceId}/${item.cropMedia}`} alt="截图" /> : null}
+                {item.cropMedia ? <img className="crop big" src={`/s/img/print/${practiceId}/${item.cropMedia}?s=big`} alt="截图" /> : null}
               </details>
             ))}
           </section>
@@ -557,7 +558,7 @@ export function RecordItemPage(props: { practiceId: string; card: PracticeCard; 
     <Page title="录练习纸的结果" bar={bar}>
       <h1>这道你是怎么做的？</h1>
       {props.error ? <Problem title={props.error} /> : null}
-      <img className="crop big" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
+      <img className="crop big" src={`/s/img/item/${card.id}?s=big`} alt={card.shortId ?? '题目裁图'} />
       <p className="excerpt">{card.questionExcerpt ?? ''}</p>
       <form method="post" action={`/s/record/${props.practiceId}`} id="record-form" data-record-item="">
         <Hidden state={keep} />

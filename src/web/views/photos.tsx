@@ -210,7 +210,7 @@ export function PickPage(props: { photo: PhotoView; error?: string | null }): Re
               <input type="checkbox" name="questionIds" value={question.id} disabled={disabled} />
               <span className="grow">
                 <b>第 {question.number} 题</b>{disabled ? <span className="tag">已在错题本</span> : null}
-                <img className="crop" src={`/s/img/cand/${photo.jobId}/${question.id}`} alt={`第 ${question.number} 题`} loading="lazy" />
+                <img className="crop" src={`/s/img/cand/${photo.jobId}/${question.id}?s=list`} alt={`第 ${question.number} 题`} loading="lazy" />
               </span>
             </label>
           );

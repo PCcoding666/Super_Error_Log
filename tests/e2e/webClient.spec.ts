@@ -149,7 +149,11 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
     const urls = (await Promise.all(keys.map(async key => (await (await caches.open(key)).keys()).map(r => new URL(r.url).pathname)))).flat();
     return urls.sort();
   });
-  expect(cached).toEqual(['/s/assets/app.css', '/s/assets/app.js', '/s/assets/icon-192.png', '/s/offline']);
+  // 外壳只有离线页、带内容指纹的样式与脚本（和页面引用的是同一个名字）、图标。
+  const shell = await page.evaluate(() => [document.querySelector('link[rel=stylesheet]')?.getAttribute('href') ?? '', document.querySelector('script[src]')?.getAttribute('src') ?? '']);
+  expect(shell[0]).toMatch(/^\/s\/assets\/app\.[0-9a-f]{10}\.css$/);
+  expect(shell[1]).toMatch(/^\/s\/assets\/app\.[0-9a-f]{10}\.js$/);
+  expect(cached).toEqual([shell[0], shell[1], '/s/assets/icon-192.png', '/s/offline'].sort());
   await page.context().setOffline(false);
 
   // 互动记录：页面脚本记下的点按（跳页的随下一个请求带来，拍照 / 打印这类不跳页的立刻发 HEAD）和服务器上判定的看页、提交、跳过。

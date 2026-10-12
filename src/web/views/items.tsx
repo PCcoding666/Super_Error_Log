@@ -17,7 +17,7 @@ export function ItemCard(props: { item: V2WeekItem; href?: string; extra?: React
   const status = cardStatus(item.status);
   const body = (
     <span className="row-text">
-      <img className="crop" src={`/s/img/item/${item.id}`} alt={item.shortId ?? '题目裁图'} loading="lazy" />
+      <img className="crop" src={`/s/img/item/${item.id}?s=list`} alt={item.shortId ?? '题目裁图'} loading="lazy" />
       <span className="excerpt">{item.questionExcerpt ?? ''}</span>
       <span className="meta-line muted">{[meta, item.shortId ? `练习纸编号 ${item.shortId}` : ''].filter(Boolean).join(' · ')}</span>
       {item.badge === 'low' ? <span className="meta-line tone-orange">字可能认错了 · 点开看看</span> : null}
@@ -80,7 +80,7 @@ export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView
       <p className="eyebrow">练习纸编号</p>
       <h1>{item.shortId ?? '题目'}</h1>
       {props.error ? <Problem title="没成功" detail={props.error} /> : null}
-      <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full`} alt="整题照片" /></a>
+      <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /></a>
       <p className="hint">整题照片 · 点开可以两指放大</p>
       {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">{quoted('字可能认错了：对照上面的照片看一眼，不对就点「改一下」。')}</p> : null}
       <section className="card">

@@ -807,3 +807,67 @@ describe('打印页与练习纸单独页的首屏（quality round 2；纸面本�
     expect(css).toContain('.print-root>:not(.sheet-frame){display:none!important}');
   });
 });
+
+describe('性能卫生（quality round 2，代码这一侧）：带指纹的静态资源长缓存、脚本 defer、裁图按显示尺寸下发', () => {
+  it('页面引用带内容指纹的样式与脚本（脚本 defer）；指纹对得上缓存一年，对不上不缓存；Service Worker 的外壳清单用同样的名字', async () => {
+    const env = await setup();
+    const html = await (await fetch(`${env.base}/s/`)).text();
+    const css = /<link rel="stylesheet" href="(\/s\/assets\/app\.([0-9a-f]{10})\.css)"\/>/.exec(html);
+    const js = /<script src="(\/s\/assets\/app\.([0-9a-f]{10})\.js)" defer=""><\/script>/.exec(html);
+    expect(css).not.toBeNull();
+    expect(js).not.toBeNull();
+    const cssResponse = await fetch(`${env.base}${css![1]}`);
+    expect(cssResponse.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    expect(cssResponse.headers.get('pragma')).toBeNull();
+    expect(cssResponse.headers.get('content-type')).toContain('text/css');
+    const cssText = await cssResponse.text();
+    expect(crypto.createHash('sha256').update(cssText).digest('hex').slice(0, 10)).toBe(css![2]);
+    const jsResponse = await fetch(`${env.base}${js![1]}`);
+    expect(jsResponse.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    expect(crypto.createHash('sha256').update(await jsResponse.text()).digest('hex').slice(0, 10)).toBe(js![2]);
+    // 旧页面拿着别的指纹：照样给现在的内容，但不缓存；不带指纹的旧地址也一样。
+    expect((await fetch(`${env.base}/s/assets/app.0000000000.css`)).headers.get('cache-control')).toBe('no-cache');
+    expect((await fetch(`${env.base}/s/assets/app.css`)).headers.get('cache-control')).toBe('no-cache');
+    expect((await fetch(`${env.base}/s/sw.js`)).headers.get('cache-control')).toBe('no-cache');
+    expect((await fetch(`${env.base}/s/assets/icon-192.png`)).headers.get('cache-control')).toBe('public, max-age=604800');
+    const sw = await (await fetch(`${env.base}/s/sw.js`)).text();
+    expect(sw).toContain(`'${css![1]}'`);
+    expect(sw).toContain(`'${js![1]}'`);
+    // 页面本身仍然不缓存（学生数据）。
+    expect((await fetch(`${env.base}/s/`)).headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  it('题目裁图：thumb / list / big 按显示尺寸的 2 倍以内缩小，从不放大；不带尺寸的是原图；图片仍然不缓存', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const job = await (await uploadPhoto(browser, await photo('#f0d0c8', 2400))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
+    const items = await browser.text('/s/items');
+    const itemId = /\/s\/img\/item\/(itm_[0-9a-f]+)\?s=list/.exec(items)![1]!;
+    const size = async (path: string): Promise<{ width: number; height: number; bytes: number; cache: string | null }> => {
+      const response = await browser.get(path);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const meta = await sharp(buffer).metadata();
+      return { width: meta.width!, height: meta.height!, bytes: buffer.length, cache: response.headers.get('cache-control') };
+    };
+    const original = await size(`/s/img/item/${itemId}`);
+    const thumb = await size(`/s/img/item/${itemId}?s=thumb`);
+    const list = await size(`/s/img/item/${itemId}?s=list`);
+    const big = await size(`/s/img/item/${itemId}?s=big`);
+    expect(original.width).toBeGreaterThan(1088);
+    expect(Math.max(thumb.width, thumb.height)).toBeLessThanOrEqual(168);
+    expect(list.height).toBeLessThanOrEqual(192);
+    expect(list.width).toBeLessThanOrEqual(1088);
+    expect(big.width).toBeLessThanOrEqual(1088);
+    expect(thumb.bytes).toBeLessThan(original.bytes);
+    expect(big.bytes).toBeLessThan(original.bytes);
+    expect(thumb.cache).toBe('private, no-store');
+    // 原图再取一次还是原样（磁盘上的原图不动）。
+    expect(await size(`/s/img/item/${itemId}`)).toEqual(original);
+    // 已经比目标小的图原样返回（不放大）。
+    const tiny = await photo('#f0d0c8', 120);
+    const { displayImage } = await import('../../src/web/images.js');
+    expect(await displayImage(tiny, 'big')).toBe(tiny);
+  });
+});

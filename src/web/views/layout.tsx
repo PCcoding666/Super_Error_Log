@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { APP_NAME, APP_SHORT_NAME, ASSET_VERSION, THEME_COLOR, THEME_COLOR_DARK } from '../assets.js';
+import { APP_NAME, APP_SHORT_NAME, CSS_PATH, JS_PATH, THEME_COLOR, THEME_COLOR_DARK } from '../assets.js';
 
 /** 底部下一步按钮里的一个按钮：链接、表单提交、页面里表单的提交按钮、拍照的 label、或不可点。 */
 export type BarButton = { title: string; key: string } & (
@@ -117,8 +117,9 @@ export function Page(props: PageProps): ReactNode {
         <link rel="icon" type="image/png" href="/s/assets/icon-192.png" />
         {/* 等 AI 的页面：开着脚本时由脚本按 data-poll 局部更新（看不见、正在输入时不换）；关掉脚本时退回 meta refresh。 */}
         {props.pollSeconds ? <noscript><meta httpEquiv="refresh" content={String(props.pollSeconds)} /></noscript> : null}
-        <link rel="stylesheet" href={`/s/assets/app.css?v=${ASSET_VERSION}`} />
-        <script src={`/s/assets/app.js?v=${ASSET_VERSION}`}></script>
+        <link rel="stylesheet" href={CSS_PATH} />
+        {/* defer：不挡首屏；只在有 / 没有脚本时出现的东西由样式的 scripting 媒体特性决定，不等脚本 */}
+        <script src={JS_PATH} defer></script>
       </head>
       <body className={props.bodyClass} data-poll={props.pollSeconds ? String(props.pollSeconds) : undefined}>
         <header className="top">

@@ -32,7 +32,8 @@ import { getReturnSummary, submitReturns } from '../v2/returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from '../v2/reflectionService.js';
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
-import { CLIENT_SCRIPT, SERVICE_WORKER, STYLES, iconPng, manifest } from './assets.js';
+import { CLIENT_SCRIPT, IMMUTABLE, SCRIPT_HASH, SERVICE_WORKER, STYLES, STYLES_HASH, iconPng, manifest } from './assets.js';
+import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, giveConsent, hasConsent, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
 import { trailRecorder, trailTaps } from './trail.js';
@@ -198,11 +199,24 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const failed = (response: Response, code: string): void => { response.locals.trailError = code; };
 
   // ---------- 公开资源（无学生数据） ----------
-  r.get('/manifest.webmanifest', (_request, response) => { response.type('application/manifest+json').send(JSON.stringify(manifest())); });
-  r.get('/sw.js', (_request, response) => { response.type('text/javascript').send(SERVICE_WORKER); });
-  r.get('/assets/app.css', (_request, response) => { response.type('text/css').send(STYLES); });
-  r.get('/assets/app.js', (_request, response) => { response.type('text/javascript').send(CLIENT_SCRIPT); });
+  // 缓存：页面与学生数据（含图片）一律 private, no-store（移动服务的全局头）；这里只给不带学生数据的静态资源换成可缓存的。
+  const cacheFor = (response: Response, value: string): void => { response.setHeader('cache-control', value); response.removeHeader('pragma'); };
+  r.get('/manifest.webmanifest', (_request, response) => { cacheFor(response, 'no-cache'); response.type('application/manifest+json').send(JSON.stringify(manifest())); });
+  r.get('/sw.js', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/javascript').send(SERVICE_WORKER); });
+  // 带内容指纹的样式与脚本：指纹对得上就缓存一年（immutable）；对不上（旧页面拿着旧指纹）照样给现在的内容，但不缓存。
+  r.get(/^\/assets\/app\.([0-9a-f]{10})\.css$/, (request, response) => {
+    cacheFor(response, (request.params as Record<string, string>)[0] === STYLES_HASH ? IMMUTABLE : 'no-cache');
+    response.type('text/css').send(STYLES);
+  });
+  r.get(/^\/assets\/app\.([0-9a-f]{10})\.js$/, (request, response) => {
+    cacheFor(response, (request.params as Record<string, string>)[0] === SCRIPT_HASH ? IMMUTABLE : 'no-cache');
+    response.type('text/javascript').send(CLIENT_SCRIPT);
+  });
+  // 不带指纹的旧地址（R1 的页面、Service Worker 里还可能有）：照样给，每次都要重新验证。
+  r.get('/assets/app.css', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/css').send(STYLES); });
+  r.get('/assets/app.js', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/javascript').send(CLIENT_SCRIPT); });
   const icon = (size: number, maskable = false) => async (_request: Request, response: Response): Promise<void> => {
+    cacheFor(response, 'public, max-age=604800');
     response.type('image/png').send(await iconPng(size, maskable));
   };
   r.get('/assets/icon-192.png', icon(192));
@@ -887,23 +901,26 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const job = await options.service.getJob(jobId);
     const source = await options.service.getMedia(jobId, job.sourceMediaId);
     const full = request.query.full === '1';
-    const bytes = await sharp(source, { limitInputPixels: 40_000_000 }).rotate().resize({ width: full ? 1600 : 360, withoutEnlargement: true }).jpeg({ quality: full ? 85 : 70 }).toBuffer();
+    // 网格里的缩略图：一格约 114 CSS px 宽，按 2 倍下发（228 px）；「看原图」1600 px。
+    const bytes = await sharp(source, { limitInputPixels: 40_000_000 }).rotate().resize({ width: full ? 1600 : 228, withoutEnlargement: true }).jpeg({ quality: full ? 85 : 70 }).toBuffer();
     response.type('image/jpeg').send(bytes);
   }));
+  // 题目裁图：?s=thumb|list|big 按显示尺寸的 2 倍以内缩小后下发（从不放大）；不带 s 的是原图（「看原图」、打印用）。磁盘上的原图不动。
   r.get('/img/cand/:jobId/:questionId', page(async (request, response) => {
     const jobId = requireMatch(String(request.params.jobId), UUID);
     if (!registered(jobId)) throw new NotFound();
-    response.type('image/jpeg').send(await options.service.getCandidateCrop(jobId, requireMatch(String(request.params.questionId), UUID)));
+    response.type('image/jpeg').send(await displayImage(await options.service.getCandidateCrop(jobId, requireMatch(String(request.params.questionId), UUID)), displaySize(request.query.s)));
   }));
   r.get('/img/item/:id', page(async (request, response) => {
     const itemId = requireMatch(String(request.params.id), ITEM_ID);
     if (!isV2Item(itemId)) throw new NotFound();
-    response.type('image/jpeg').send(request.query.scope === 'full' ? await getItemFullCrop(itemId) : await getQuestionCrop(itemId));
+    response.type('image/jpeg').send(await displayImage(request.query.scope === 'full' ? await getItemFullCrop(itemId) : await getQuestionCrop(itemId), displaySize(request.query.s)));
   }));
-  r.get('/img/print/:pid/:name', page((request, response) => {
+  r.get('/img/print/:pid/:name', page(async (request, response) => {
     const media = readPrintMedia(requireMatch(String(request.params.pid), PACKET_ID), String(request.params.name));
     if (!media) throw new NotFound();
-    response.type('image/jpeg').send(media);
+    // 练习纸上（打印）用原图；手机上看的那一道、打印前看一眼的截图用缩小的。
+    response.type('image/jpeg').send(await displayImage(media, displaySize(request.query.s)));
   }));
 
   r.use((_request, response) => render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整。回到今天接着做。' }), 404));
