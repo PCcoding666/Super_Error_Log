@@ -809,10 +809,12 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
 
   r.get('/practices', page((_request, response) => {
-    const practices = listPractices().map(p => {
+    const practices = listPractices().map((p, index) => {
       const summary = p.generatedAt ? getReturnSummary(p.id) : null;
-      const shortIds = (getPractice(p.id)?.items ?? []).map(item => item.shortId).filter((id): id is string => Boolean(id));
-      return { ...p, answered: summary?.answered ?? null, independentCorrect: summary && summary.answered > 0 ? summary.independentCorrect : null, shortIds };
+      const items = getPractice(p.id)?.items ?? [];
+      const shortIds = items.map(item => item.shortId).filter((id): id is string => Boolean(id));
+      // 最近一份把它的题列出来（小裁图、编号、科目）；更早的只写题号。
+      return { ...p, answered: summary?.answered ?? null, independentCorrect: summary && summary.answered > 0 ? summary.independentCorrect : null, shortIds, ...(index === 0 ? { items } : {}) };
     });
     render(response, PracticesPage({ practices }));
   }));

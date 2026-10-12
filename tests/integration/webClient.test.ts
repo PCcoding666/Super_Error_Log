@@ -628,10 +628,11 @@ describe('稀疏的屏用现有数据填满；服务器忙页不替没连上的�
     expect(print.indexOf('data-testid="print-summary"')).toBeLessThan(print.indexOf('data-testid="print-preview"'));
     expect(await text(`/s/print/${packetId}`)).toContain(`这张练习纸上有 ${itemIds.length} 道题`);
 
-    // 以前的练习：每份写出题号。
-    const practices = await text('/s/practices');
-    expect(practices).toContain('每个周末一份练习纸');
-    expect(practices).toMatch(/M-0\d、M-0\d/);
+    // 以前的练习：最近一份单独一张卡，下面列出它的每道题。
+    const practicesHtml = await browser.text('/s/practices');
+    expect(practicesHtml).toContain('data-testid="practice-latest-items"');
+    expect((practicesHtml.match(/class="row qrow"/g) ?? []).length).toBe(itemIds.length);
+    expect(await text('/s/practices')).toContain('每个周末一份练习纸');
   });
 
   it('服务器忙：连着的手机说「照片和错题都在」，还没连上的不说', async () => {

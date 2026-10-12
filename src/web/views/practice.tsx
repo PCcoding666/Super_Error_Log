@@ -568,34 +568,50 @@ export interface PracticeRow extends PracticeSummary {
   independentCorrect: number | null;
   /** 这份练习里的题号（练习纸编号），按纸上的顺序。 */
   shortIds: string[];
+  /** 只有最近一份带：这份练习里的题（小裁图、编号、科目），列在它下面。 */
+  items?: PracticeDetail['items'];
 }
 
+function PracticeLink(props: { practice: PracticeRow; showIds: boolean }): ReactNode {
+  const p = props.practice;
+  const recorded = p.answered !== null && p.answered >= p.itemCount;
+  const status = p.generatedAt === null ? '还没生成练习纸'
+    : recorded ? `录完了${p.independentCorrect !== null ? ` · 独立做对 ${p.independentCorrect} 道` : ''}`
+      : p.answered ? `录了 ${p.answered}/${p.itemCount} 道` : '练习纸已生成 · 做完回来录结果';
+  const href = p.generatedAt === null ? `/s/why/${p.id}` : p.answered ? `/s/results/${p.id}` : `/s/record/${p.id}`;
+  return (
+    <a className="row" href={href} data-testid="practice-row">
+      <span className="row-text">
+        <b>{weekRangeText(p.week, 'short')}</b> · {p.itemCount} 道{p.practiceSlot ? ` · ${p.practiceSlot}` : ''}
+        {props.showIds && p.shortIds.length > 0 ? <span className="meta-line muted">{p.shortIds.join('、')}</span> : null}
+        <span className={`meta-line${recorded ? ' tone-green' : ' muted'}`}>{status}</span>
+      </span>
+      <span className="chev" aria-hidden="true">›</span>
+    </a>
+  );
+}
+
+/** 以前的练习：最近一份单独一张卡，下面列出它的题；更早的每份一行（题号写在行里）。只用现有数据。 */
 export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
   const bar: BarModel = { caption: '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
+  const [latest, ...older] = props.practices;
   return (
     <Page title="以前的练习" bar={bar}>
       <h1>以前的练习</h1>
-      {props.practices.length === 0 ? <section className="card"><p>还没有练习。选了题就会出现在这里。</p></section> : (
+      {!latest ? <section className="card"><p>还没有练习。选了题就会出现在这里。</p></section> : (
         <>
           <p className="lead">每个周末一份练习纸。没录的点开可以录结果，录过的点开能看这次的结果。</p>
-          <section className="card"><ul className="list">
-            {props.practices.map(p => {
-              const status = p.generatedAt === null ? '还没生成练习纸'
-                : p.answered !== null && p.answered >= p.itemCount ? `录完了${p.independentCorrect !== null ? ` · 独立做对 ${p.independentCorrect} 道` : ''}`
-                  : p.answered ? `录了 ${p.answered}/${p.itemCount} 道` : '练习纸已生成 · 做完回来录结果';
-              const href = p.generatedAt === null ? `/s/why/${p.id}` : p.answered ? `/s/results/${p.id}` : `/s/record/${p.id}`;
-              return (
-                <li key={p.id}><a className="row" href={href} data-testid="practice-row">
-                  <span className="row-text">
-                    <b>{weekRangeText(p.week, 'short')}</b> · {p.itemCount} 道{p.practiceSlot ? ` · ${p.practiceSlot}` : ''}
-                    {p.shortIds.length > 0 ? <span className="meta-line muted">{p.shortIds.join('、')}</span> : null}
-                    <span className={`meta-line${p.answered !== null && p.answered >= p.itemCount ? ' tone-green' : ' muted'}`}>{status}</span>
-                  </span>
-                  <span className="chev" aria-hidden="true">›</span>
-                </a></li>
-              );
-            })}
-          </ul></section>
+          <section className="card" data-testid="practice-latest">
+            <h2 className="section-label">最近一份</h2>
+            <ul className="list"><li><PracticeLink practice={latest} showIds={!latest.items?.length} /></li></ul>
+            {latest.items?.length ? <PracticeItemRows items={latest.items} status={() => null} testId="practice-latest-items" /> : null}
+          </section>
+          {older.length > 0 ? (
+            <section className="card">
+              <h2 className="section-label">更早的</h2>
+              <ul className="list">{older.map(p => <li key={p.id}><PracticeLink practice={p} showIds /></li>)}</ul>
+            </section>
+          ) : null}
           <p className="hint">当天做对不算真会，隔 3 天以上独立做对才算。</p>
         </>
       )}
