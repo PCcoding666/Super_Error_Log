@@ -257,15 +257,27 @@ export function OfflinePage(): ReactNode {
   );
 }
 
-/** 服务器忙（429）。还没连上（或连接失效）的人看不到也没传过东西，不说「照片和错题都在」。 */
-export function BusyPage(props: { retryAfterSeconds: number; connected: boolean }): ReactNode {
+/**
+ * 服务器忙（429）。按这台手机现在的连接情况分三种说法：
+ * - connected：已经连着（请求太频繁）——照片和错题都在。
+ * - unpaired：还没连上（连接失败太多次才会到这里，手里的链接多半已经用过或过期）——等一会儿再试，还是不行就要一个新的。
+ * - expired：以前连上过、连接失效了（cookie 无效）——不说「还没连上」；要一个新的二维码或链接重新连，照片和错题都还在。
+ */
+export type BusyReason = 'connected' | 'unpaired' | 'expired';
+const BUSY_NOTES: Record<BusyReason, string> = {
+  connected: '已经传上去的照片和错题都在服务器上，不会丢。',
+  unpaired: '还没连上服务器。等一会儿再试；还是不行，请大人给一个新的二维码或链接。',
+  expired: '这台手机的连接过期了，要用一个新的二维码或链接重新连。等一会儿再点下面的按钮，按提示做；照片和错题都还在服务器上。',
+};
+
+export function BusyPage(props: { retryAfterSeconds: number; reason: BusyReason }): ReactNode {
   const bar: BarModel = { caption: `大约 ${Math.max(1, Math.ceil(props.retryAfterSeconds / 60))} 分钟后再试`, primary: { title: '过一会儿再试', key: 'retry', href: '/s/' }, secondary: [] };
   return (
-    <Page title="服务器有点忙" back={null} showSettings={props.connected} bar={bar}>
+    <Page title="服务器有点忙" back={null} showSettings={props.reason === 'connected'} bar={bar}>
       <h1>服务器有点忙</h1>
       <section className="card">
         <p>现在来的请求太多了，过一会儿再点下面的按钮。</p>
-        <p className="muted small" data-testid="busy-note">{props.connected ? '已经传上去的照片和错题都在服务器上，不会丢。' : '还没连上服务器。等一会儿，再用同一个二维码或链接试一次。'}</p>
+        <p className="muted small" data-testid="busy-note"><Phrased text={BUSY_NOTES[props.reason]} /></p>
       </section>
     </Page>
   );

@@ -37,7 +37,7 @@ import { COOKIE, clearCookie, giveConsent, hasConsent, markInstallHint, readCook
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
 import { trailRecorder, trailTaps } from './trail.js';
 import { DEFAULT_TIME_ZONE, localDayOrdinal, localDayText, stepCaption, type StepKind } from './weekPlan.js';
-import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, OfflinePage, PairPage, TodayPage, type TodayWait } from './views/today.js';
+import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, OfflinePage, PairPage, TodayPage, type BusyReason, type TodayWait } from './views/today.js';
 import { CapturePage, ConsentPage, PhotosPage, PickPage, findingSince } from './views/photos.js';
 import { EditPage, FixPage, ItemDetailPage, ItemsPage } from './views/items.js';
 import {
@@ -211,6 +211,14 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.get('/assets/apple-touch-icon.png', icon(180));
   r.get('/offline', (_request, response) => render(response, OfflinePage()));
 
+  /** 连接页上「服务器忙」时这台手机的连接情况：没有 cookie = 还没连上；cookie 有效 = 连着；cookie 失效 = 连接过期（只读，不计入失败次数）。 */
+  const connectionOf = async (request: Request): Promise<BusyReason> => {
+    const token = readCookies(request)[COOKIE.device];
+    if (!token) return 'unpaired';
+    try { await options.pairing.authenticate(`Bearer ${token}`); return 'connected'; }
+    catch (error) { if (error instanceof PairingError) return 'expired'; throw error; }
+  };
+
   // ---------- 配对：打开链接 → 确认页 → 点一下兑换 → httpOnly cookie ----------
   r.get('/pair', (request, response) => {
     const code = str(request.query.code);
@@ -236,7 +244,12 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         if (!(error instanceof PairingError)) throw error;
         failed(response, error.code);
         const gate = options.limiter.pairingFailure(options.ipOf(request));
-        if (!gate.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(gate.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds, connected: false }), 429); return; }
+        if (!gate.allowed) {
+          failed(response, 'busy');
+          response.setHeader('retry-after', String(gate.retryAfterSeconds));
+          render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds, reason: await connectionOf(request) }), 429);
+          return;
+        }
         const status = error.code === 'pairing_expired' ? 410 : error.code === 'pairing_used' ? 409 : error.code === 'pairing_not_found' ? 404 : error.code === 'pairing_unavailable' ? 503 : 400;
         render(response, ConnectPage({ reason: 'unpaired', error: PAIRING_REASONS[error.code] ?? '这个二维码用不了。' }), status);
       }
@@ -261,7 +274,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       catch (error) {
         if (!(error instanceof PairingError)) throw error;
         const fail = options.limiter.authFailure(options.ipOf(request));
-        if (!fail.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(fail.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: fail.retryAfterSeconds, connected: false }), 429); return; }
+        // 带着 cookie 却鉴权失败：以前连上过、连接失效了（不是「还没连上」）。
+        if (!fail.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(fail.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: fail.retryAfterSeconds, reason: 'expired' }), 429); return; }
         reject('unauthorized');
         return;
       }
@@ -271,7 +285,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         failed(response, 'busy');
         response.setHeader('retry-after', String(query.retryAfterSeconds));
         if (request.path === '/voice' || wantsJson(request)) { response.status(429).json({ error: { code: 'rate_limited', message: '请求过于频繁，请稍后再试。' } }); return; }
-        render(response, BusyPage({ retryAfterSeconds: query.retryAfterSeconds, connected: true }), 429);
+        render(response, BusyPage({ retryAfterSeconds: query.retryAfterSeconds, reason: 'connected' }), 429);
         return;
       }
       if (request.method === 'POST' && crossSite(request)) { failed(response, 'cross_site'); response.status(403).send('forbidden'); return; }

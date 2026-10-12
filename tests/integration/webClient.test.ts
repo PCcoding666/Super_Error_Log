@@ -648,9 +648,26 @@ describe('稀疏的屏用现有数据填满；服务器忙页不替没连上的�
       if (response.status === 429) unpaired = await response.text();
     }
     expect(unpaired).toContain('服务器有点忙');
-    expect(unpaired).toContain('还没连上服务器');
+    const unpairedText = unpaired.replace(/<[^>]+>/g, '');
+    expect(unpairedText).toContain('还没连上服务器。等一会儿再试；还是不行，请大人给一个新的二维码或链接。');
+    // 会走到这一页的，是连接失败太多次：手里的链接多半已经用过或过期，不再叫他「再用同一个」。
+    expect(unpairedText).not.toContain('同一个');
     expect(unpaired).not.toContain('照片和错题都在');
     expect(unpaired).not.toContain('data-testid="settings-link"');
+
+    // 连接失效（cookie 无效）的人：以前连上过，不说「还没连上」。
+    const expiredBrowser = new Browser(env.base);
+    expiredBrowser.cookies.set('sel_device', 'not-a-valid-token');
+    let expired = '';
+    for (let attempt = 0; attempt < 40 && !expired; attempt += 1) {
+      const response = await expiredBrowser.get('/s/');
+      if (response.status === 429) expired = await response.text(); else expiredBrowser.cookies.set('sel_device', 'not-a-valid-token');
+    }
+    const expiredText = expired.replace(/<[^>]+>/g, '');
+    expect(expiredText).toContain('服务器有点忙');
+    expect(expiredText).toContain('这台手机的连接过期了，要用一个新的二维码或链接重新连。');
+    expect(expiredText).toContain('照片和错题都还在服务器上');
+    expect(expiredText).not.toContain('还没连上');
 
     const browser = await pairBrowser(env);
     let paired = '';
@@ -659,6 +676,18 @@ describe('稀疏的屏用现有数据填满；服务器忙页不替没连上的�
       if (response.status === 429) paired = await response.text();
     }
     expect(paired).toContain('已经传上去的照片和错题都在服务器上');
+  });
+
+  it('已经连着的手机又点了一个坏链接、连接失败太多次：服务器忙页按「连着」说（照片和错题都在）', async () => {
+    const env = await setup({ limiter: new RateLimiter({ pairingFailPerIp: 1 }) });
+    const browser = await pairBrowser(env);
+    let busy = '';
+    for (let attempt = 0; attempt < 4 && !busy; attempt += 1) {
+      const response = await browser.post('/s/pair', { link: 'https://example.invalid/s/pair?code=nope' });
+      if (response.status === 429) busy = await response.text();
+    }
+    expect(busy).toContain('已经传上去的照片和错题都在服务器上');
+    expect(busy).not.toContain('还没连上');
   });
 });
 
