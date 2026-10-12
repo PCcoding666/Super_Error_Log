@@ -104,7 +104,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
       <section className="card" data-testid="today-done">
         <h2 className="card-title" data-testid="today-done-title"><span className="tone-green" aria-hidden="true">✓</span> 这周的事做完了</h2>
         <p>把练习纸带回学校，<b>{slot}</b>在纸上做。</p>
-        <p>{PAPER_RULES}</p>
+        <p><Phrased text={PAPER_RULES} /></p>
         <p className="muted">下个周末打开错题本，录一下做的结果。</p>
         <NewPhotosNote photos={props.state.photos} />
       </section>
@@ -114,8 +114,8 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
       <section className="card" data-testid="today-midweek">
         <h2 className="card-title" data-testid="today-midweek-title">现在是在纸上做练习的时候</h2>
         {plan.practice ? <p>{[`练习纸：${plan.practice.itemCount} 道`, slot].join(' · ')}</p> : null}
-        <p>{PAPER_RULES}</p>
-        <p className="muted">没做完也没关系，周末回来再录。当天做对不算真会，隔几天再做对才算，所以别急着对答案。</p>
+        <p><Phrased text={PAPER_RULES} /></p>
+        <p className="muted"><Phrased text="没做完也没关系，周末回来再录。当天做对不算真会，隔几天再做对才算，所以别急着对答案。" /></p>
         <NewPhotosNote photos={props.state.photos} />
       </section>
     );
