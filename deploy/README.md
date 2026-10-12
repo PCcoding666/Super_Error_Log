@@ -432,7 +432,7 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 ### 10.1 部署上不需要新东西
 
 - 由同一个 `super-error-log` 单元（`dist/main.js`，127.0.0.1:3101）在云端模式下直接提供 `/s/`；**没有新进程、新端口、新依赖、新目录**。样式、脚本、图标都编译在 `dist/` 里（发布白名单不变）。
-- Caddy 不用改：`/s/` 经现有的 `study.pccoding666.com` 站点反代过去（请求体上限 15 MB 不变，照片和录音都在其内）。Caddyfile 没开访问日志，配对链接里的一次性码不会落进日志。
+- Caddy 不用改：`/s/` 经现有的 `study.pccoding666.com` 站点反代过去（请求体上限 15 MB 不变，照片和录音都在其内）。Caddyfile 没开访问日志，配对链接里的一次性码不会落进日志。（例外：§10.5 的响应压缩是一处可选的 Caddy 改动，待批准。）
 - 环境变量：只多一个可选的 `SEL_AI_MODEL_ASR`（§2，缺省 `qwen-audio-3.1-asr-flash`，用同一个百炼密钥）。**生产这把密钥是否有该模型的调用权限还没核实过**（语音转写走百炼原生接口，出站主机仍是 `dashscope.aliyuncs.com`，不需要新的出站放行）。百炼配置不全时 `dist/main.js` 启动即失败（与 /v2 其他模型调用同一个守卫），不会悄悄退回 mock。
 - 时区：网页上的「今天」「距练习纸生成几天」、录结果可选的日期，和服务器的回传日期校验、ISO 周一样，都按**服务器进程的时区**算。上线前确认 `timedatectl | grep 'Time zone'` 是 `Asia/Shanghai`；如果是 UTC，北京时间 0–8 点之间网页和 App 的「今天」会差一天（本次不改单元文件，需要时另行批准加 `Environment=TZ=Asia/Shanghai`）。
 
@@ -463,3 +463,15 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 5. 点「拍第一页」→「同意，上传」→ 拍一页（用合成或无个人信息的纸）→ 出现「已拍 1 张」→「拍完了，下一步」→ 一两分钟内变成「找到 N 道…」。
 6. 可选：在「说说为什么错」里点「点一下开始说」，允许麦克风，说一句话，文字出现在文本框里（这是第一次在生产上真实调用 `qwen-audio-3.1-asr-flash`，同时验证生产密钥有这个模型的权限；出现「这次没转成文字」多半是密钥没有该模型权限或额度，先查这个）。
 
+### 10.5 响应压缩（Caddy `encode`；生产配置变更，**待 Peng 批准**，2026-10-12 提出）
+
+- 改了什么：`deploy/caddy/Caddyfile` 的两个站点（域名、IP 直连）在 `request_body` 与 `reverse_proxy` 之间各加一行 `encode zstd gzip`，两边逐行一致（`tests/integration/caddyIpEntry.test.ts` 校验）。Caddy 只压文本类响应（HTML、CSS、JS、JSON、manifest 等，≥ 512 字节），按客户端的 `Accept-Encoding` 选 zstd 或 gzip，并自动加 `Vary: Accept-Encoding`；JPEG / PNG 不压。请求体（照片、录音上传）不受影响。
+- 为什么：学生网页版的样式、脚本、页面都是文本，压缩后约为原来的三分之一（quality round 2 的 `perf.json` 里有本机量的原始字节与 gzip 字节）。应用自己已经给带内容指纹的样式与脚本加了一年的 `Cache-Control: public, max-age=31536000, immutable`（不需要 Caddy 改头），页面和学生的图片仍是 `private, no-store`。
+- 什么时候生效：只有在 Peng 说「同意部署」、并且明确同意这一处生产配置变更时，才随下一个发布版本按 §4 安装新的 Caddyfile（`caddy validate` 通过后 `systemctl reload caddy`）。在那之前生产照旧不压缩，应用本身照常工作。
+- 验收（服务器上）：
+  ```bash
+  curl -s -o /dev/null -H 'Accept-Encoding: gzip' -w '%{http_code} %{size_download}\n' https://study.pccoding666.com/s/offline
+  curl -sI -H 'Accept-Encoding: gzip' https://study.pccoding666.com/s/offline | grep -i '^content-encoding'   # 期望 gzip
+  curl -sI -H 'Accept-Encoding: gzip' https://study.pccoding666.com/s/manifest.webmanifest | grep -i '^vary'   # 期望含 Accept-Encoding
+  ```
+- 回滚：去掉两行 `encode zstd gzip`，`caddy validate` 后 reload；应用不需要任何改动。
