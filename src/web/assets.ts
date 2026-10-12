@@ -268,15 +268,31 @@ border-radius:var(--r-2);min-height:52px;padding:var(--s-3) var(--s-4);cursor:po
   ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}
 }
 body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-input:focus-visible) label[for=library-input]{outline:3px solid var(--focus);outline-offset:3px}
+/* 只在有 / 没有脚本时出现的东西：按浏览器的 scripting 媒体特性判断（脚本 defer 加载，不等它加 .js 类，首屏不跳）；老浏览器退回 .js 类 */
 .js .no-js-only{display:none!important}
 .js-only{display:none!important}
 .js .js-only{display:revert!important}
 .js .js-only.btn{display:flex!important}
+@media (scripting:enabled){.no-js-only{display:none!important}.js-only{display:revert!important}.js-only.btn{display:flex!important}}
 .hidden{display:none!important}
 .visually-hidden{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .status{display:inline-block;font-size:var(--fs-1);font-weight:600}
 .a2hs{border:1.5px dashed var(--teal)}
 .standalone .a2hs{display:none!important}
+/* 打印页的首屏（纸面本身不变）：第 1 道按纸上的原样、原大小排出来；整张 A4 先是缩略图，点开看整张 */
+.sheet-peek{background:transparent;margin-top:var(--s-3)}
+.sheet-peek .peek-page{background:#fff;border-radius:var(--r-1);padding:0 4mm;box-shadow:0 1px 4px rgba(0,0,0,.18);overflow:hidden}
+@media screen{.sheet-peek .peek-page{filter:var(--photo-dim)}}
+@media screen{
+  .sheet-box{background:var(--card);border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-4);margin:var(--s-3) 0;display:grid;grid-template-columns:1fr auto;column-gap:var(--s-3);align-items:center}
+  .sheet-box>.sheet-box-text{grid-column:1;margin:0}
+  .sheet-box>.sheet-toggle{grid-column:1;justify-self:start;margin:0}
+  .sheet-box>.sheet-frame{grid-column:1/-1;margin:var(--s-3) 0 0}
+}
+@media screen and (scripting:enabled){
+  .sheet-box[data-open=false]>.sheet-frame{grid-column:2;grid-row:1/span 2;width:96px;margin:0;padding:4px;cursor:zoom-in}
+  .sheet-box[data-open=false] .sheet-wrap{height:auto!important;aspect-ratio:210/297}
+}
 /* 练习纸预览的画框（只在屏幕上；打印时去掉，纸面版式不变） */
 .sheet-frame{background:var(--surround);border-radius:var(--r-2);padding:var(--s-3);margin:var(--s-3) 0}
 .sheet-frame .sheet-wrap{margin:0}
@@ -309,6 +325,7 @@ body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-
   .sheet-scale{transform:none!important;width:auto!important}
   .sheet .page{box-shadow:none;margin:0;break-after:page;page-break-after:always}
   .sheet .page:last-child{break-after:auto;page-break-after:auto}
+  .print-root>:not(.sheet-frame){display:none!important}
 }
 `;
 

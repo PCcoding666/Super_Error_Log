@@ -272,6 +272,23 @@ function hintLine(prefix: string, text: string | null): string {
   return text.startsWith(prefix) ? text : prefix + text;
 }
 
+/** 练习纸上的一道题（纸面原样；打印页的「第 1 道印出来是这样」也用它，所以两处一模一样）。 */
+export function SheetItem(props: { item: PrintSnapshot['items'][number]; media: (name: string) => string }): ReactNode {
+  const { item, media } = props;
+  return (
+    <div className="item">
+      <p className="item-head"><b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>{[item.subject, ...item.knowledgeTags].filter(Boolean).join('、')}</p>
+      {item.stemText ? <p className="stem">{item.stemText}</p> : null}
+      {item.mode === 'crop' ? <p className="note">AI 对这题没把握，文字和截图不一致时以截图为准</p> : null}
+      {item.mode === 'crop' && item.cropMedia ? <img src={media(item.cropMedia)} alt="题目截图" /> : null}
+      {item.diagramMedia.map(name => <img key={name} src={media(name)} alt="图示" />)}
+      <p>{item.keyStepPrompt}</p>
+      <div className="blank" />
+      <p className="boxes">{item.checkboxes.map(box => <span key={box}>□ {box}</span>)}<span>做题日期：________</span></p>
+    </div>
+  );
+}
+
 /** A4 练习纸：封面 + 题目页 + 可撕的答案页（与 iOS PracticeLayout 同样的内容与说法）。浏览器打印成纸或 PDF。 */
 export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
   const { snapshot } = props;
@@ -289,18 +306,7 @@ export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
         <p style={{ marginTop: '8mm' }}>做题日期：________</p>
       </section>
       <section className="page">
-        {snapshot.items.map(item => (
-          <div className="item" key={item.itemId}>
-            <p className="item-head"><b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>{[item.subject, ...item.knowledgeTags].filter(Boolean).join('、')}</p>
-            {item.stemText ? <p className="stem">{item.stemText}</p> : null}
-            {item.mode === 'crop' ? <p className="note">AI 对这题没把握，文字和截图不一致时以截图为准</p> : null}
-            {item.mode === 'crop' && item.cropMedia ? <img src={media(item.cropMedia)} alt="题目截图" /> : null}
-            {item.diagramMedia.map(name => <img key={name} src={media(name)} alt="图示" />)}
-            <p>{item.keyStepPrompt}</p>
-            <div className="blank" />
-            <p className="boxes">{item.checkboxes.map(box => <span key={box}>□ {box}</span>)}<span>做题日期：________</span></p>
-          </div>
-        ))}
+        {snapshot.items.map(item => <SheetItem key={item.itemId} item={item} media={media} />)}
       </section>
       <section className="page answers">
         <h3>做完再看</h3>
@@ -324,6 +330,53 @@ export type PrintState =
   | { status: 'preparing'; done: number; total: number }
   | { status: 'failed'; error: string | null }
   | { status: 'ready'; snapshot: PrintSnapshot };
+
+/**
+ * 打印页与练习纸单独页的首屏（纸面本身不变，只改它周围的网页）：
+ * ① 第 1 道题按纸上的原样、原大小排出来（字号、作答空白都和打出来一样），看得清；
+ * ② 这张纸上的几道题，手机字号的清单；
+ * ③ 整张 A4 先是一张缩略图，点开看整张（关掉脚本时直接整张显示）。打印时只印 ③ 里的纸。
+ */
+export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
+  const { snapshot } = props;
+  const first = snapshot.items[0];
+  const media = (name: string): string => `/s/img/print/${snapshot.packetId}/${name}`;
+  return (
+    <>
+      {first ? (
+        <section className="card peek" data-testid="print-peek" aria-labelledby="peek-title">
+          <h2 className="card-title" id="peek-title">第 1 道印出来是这样</h2>
+          <p className="small muted"><Phrased text={`和纸上一样大，作答的空白也一样。整张纸上一共 ${snapshot.items.length} 道题，答案在最后一页。`} /></p>
+          <div className="sheet sheet-peek"><div className="peek-page"><SheetItem item={first} media={media} /></div></div>
+        </section>
+      ) : null}
+      <section className="card" data-testid="print-summary">
+        <h2 className="card-title">这张练习纸上有 {snapshot.items.length} 道题</h2>
+        <ul className="list">
+          {snapshot.items.map(item => (
+            <li key={item.itemId} className="row qrow">
+              <img className="thumb" src={`/s/img/item/${item.itemId}`} alt="" loading="lazy" />
+              <span className="row-text">
+                <b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>
+                <span className="meta-line muted">{[item.subject, ...item.knowledgeTags].filter(Boolean).join(' · ') || '错题'}</span>
+                {item.stemText ? <span className="meta-line excerpt">{item.stemText}</span> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="small muted"><Phrased text={`什么时候做：${snapshot.cover.practiceSlot}。答案在最后一页，做完再看。`} /></p>
+      </section>
+      <section className="print-root sheet-box" data-open="false" data-testid="sheet-box" aria-labelledby="sheet-box-title">
+        <p className="sheet-box-text">
+          <b id="sheet-box-title">整张练习纸（A4）</b>
+          <span className="meta-line muted">封面、题目页，最后一页是答案</span>
+        </p>
+        <button type="button" className="link-btn sheet-toggle js-only" aria-expanded="false" aria-controls="sheet-frame" data-key="sheet-open" data-testid="sheet-toggle">展开看整张</button>
+        <div className="sheet-frame" id="sheet-frame"><div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={snapshot} /></div></div></div>
+      </section>
+    </>
+  );
+}
 
 /** 准备练习纸还要多久：服务器给了进度（第几道 / 共几道），按已经用掉的时间平均推算；还没做完一道时按「大约 1 分钟」。 */
 export function printExpect(done: number, total: number, elapsedSeconds: number | null): string {
@@ -377,28 +430,8 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
             ))}
           </section>
         ) : null}
-        {/* 首屏先用手机字号列出这张纸上的题（A4 预览缩小后看不清）；预览和纸面本身不变。 */}
-        <section className="card" data-testid="print-summary">
-          <h2 className="card-title">这张练习纸上有 {state.snapshot.items.length} 道题</h2>
-          <ul className="list">
-            {state.snapshot.items.map(item => (
-              <li key={item.itemId} className="row qrow">
-                <img className="thumb" src={`/s/img/item/${item.itemId}`} alt="" loading="lazy" />
-                <span className="row-text">
-                  <b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>
-                  <span className="meta-line muted">{[item.subject, ...item.knowledgeTags].filter(Boolean).join(' · ') || '错题'}</span>
-                  {item.stemText ? <span className="meta-line excerpt">{item.stemText}</span> : null}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="small muted"><Phrased text={`什么时候做：${state.snapshot.cover.practiceSlot}。答案在最后一页，做完再看。`} /></p>
-        </section>
-        <h2 className="section-label out">整张练习纸（A4 预览）</h2>
-        <div className="print-root">
-          <div className="sheet-frame"><div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={state.snapshot} /></div></div></div>
-        </div>
-        <a className="more" href={`/s/print/${practiceId}/sheet`} data-testid="sheet-link">单独打开练习纸<span aria-hidden="true">›</span></a>
+        <PrintOverview snapshot={state.snapshot} />
+        <a className="more" href={`/s/print/${practiceId}/sheet`} data-testid="sheet-link" data-key="sheet-link">单独打开练习纸<span aria-hidden="true">›</span></a>
         <p className="hint">{quoted('单独打开以后，可以在打印预览里「存储到文件」存成 PDF。')}</p>
       </>
     );
@@ -418,18 +451,33 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
   );
 }
 
-/** 单独的练习纸页：没开脚本时用 Safari 的「分享 → 打印」；打印预览里可以「存储到文件」存成 PDF。 */
+/**
+ * 单独的练习纸页：首屏和打印页一样（第 1 道原大小、题目清单、整张 A4 的缩略图）。
+ * 开着脚本：主按钮是「打印」，打印回来以后才换成「打印好了，回到今天」（他自己说打好了，手机不替他说）。
+ * 关掉脚本：网页没法替他打开打印，说明用 Safari 的「分享」→「打印」，主按钮是「打印好了，回到今天」（在 <noscript> 里，开着脚本时不存在）。
+ */
 export function SheetPage(props: { snapshot: PrintSnapshot }): ReactNode {
-  const bar: BarModel = {
-    caption: '用 Safari 的「分享」→「打印」打出来；打印预览里也能「存储到文件」',
-    primary: { title: '打印好了，回到今天', key: 'printed', href: '/s/?printed=1' },
-    secondary: [{ title: '打印', key: 'print', href: '#', print: true }],
-  };
+  const after = '打印机没反应？可以再点一次「再打印」，或者在打印预览里用「存储到文件」发给家里人打印。';
+  const bar = (
+    <nav className="next-bar" data-testid="next-step-bar" aria-label="下一步" data-live="bar">
+      <div className="inner">
+        <p className="caption" data-testid="next-step-caption" data-after={after}>打出来，带回学校；打印预览里也能「存储到文件」</p>
+        <div className="bar-after hidden" data-after-print="">
+          <div className="bar-alt"><a className="btn alt" href="#" data-print="" data-testid="reprint" data-key="reprint">再打印</a></div>
+          <div className="bar-main"><a className="btn primary" href="/s/?printed=1" data-print-done="" data-testid="print-done" data-key="printed">打印好了，回到今天</a></div>
+        </div>
+        <div className="js-only"><div className="bar-main"><a className="btn primary" href="#" data-print="" data-js-primary="" data-testid="sheet-print" data-key="print">打印</a></div></div>
+        <noscript>
+          <p className="caption">{quoted('用 Safari 的「分享」→「打印」打出来，再点下面的按钮')}</p>
+          <div className="bar-main"><a className="btn primary" href="/s/?printed=1" data-testid="next-step-primary" data-key="printed">打印好了，回到今天</a></div>
+        </noscript>
+      </div>
+    </nav>
+  );
   return (
-    <Page title="练习纸" back={{ href: `/s/print/${props.snapshot.packetId}`, label: '打印练习纸' }} bar={bar}>
+    <Page title="练习纸" back={{ href: `/s/print/${props.snapshot.packetId}`, label: '打印练习纸' }} bar={null} barExtra={null} after={bar}>
       <h1>练习纸</h1>
-      <h2 className="visually-hidden">练习纸预览</h2>
-      <div className="print-root"><div className="sheet-frame"><div className="sheet-wrap"><div className="sheet-scale"><PracticeSheet snapshot={props.snapshot} /></div></div></div></div>
+      <PrintOverview snapshot={props.snapshot} />
     </Page>
   );
 }

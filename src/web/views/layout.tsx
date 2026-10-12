@@ -86,6 +86,8 @@ export interface PageProps {
   showSettings?: boolean;
   bar?: BarModel | null;
   barExtra?: ReactNode;
+  /** 自己写的底栏（练习纸单独页：开着 / 关掉脚本时主按钮不同），代替 bar。 */
+  after?: ReactNode;
   /** 等 AI 的页面：开着脚本时每隔几秒取一次这一页，只换掉标了 data-live 的区域（状态、底栏）；关掉脚本时退回 meta refresh。 */
   pollSeconds?: number;
   flash?: { ok?: string | null; err?: string | null };
@@ -130,7 +132,7 @@ export function Page(props: PageProps): ReactNode {
           {/* 局部更新换上来的状态由这一行读给读屏软件（换掉的区域本身是新节点，读屏不一定会念） */}
           {props.pollSeconds ? <p className="visually-hidden" aria-live="polite" data-announcer="" /> : null}
         </main>
-        {props.bar ? <NextBar model={props.bar} extra={props.barExtra} /> : null}
+        {props.bar ? <NextBar model={props.bar} extra={props.barExtra} /> : props.after ?? null}
       </body>
     </html>
   );

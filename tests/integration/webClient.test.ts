@@ -737,3 +737,44 @@ describe('等 AI 的页面：局部轮询代替整页刷新（quality round 2）
     expect(today).toContain('照现在的速度，还要大约 2 分钟');
   });
 });
+
+describe('打印页与练习纸单独页的首屏（quality round 2；纸面本身不变）', () => {
+  it('先是第 1 道题原样原大小，再是题目清单，整张 A4 是可展开的缩略图；单独页打印之前主按钮是「打印」；哪里都不替他说「已打印」', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const job = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
+    const choose = await browser.text('/s/choose');
+    const itemIds = [...choose.matchAll(/name="itemIds"(?: checked="")? value="(itm_[0-9a-f]+)"/g)].map(match => match[1]!);
+    const packetId = (await browser.post('/s/choose', { itemIds })).headers.get('location')!.split('/').pop()!;
+    await browser.post('/s/skip', { step: 'why', practice: packetId });
+    await waitFor(async () => (await browser.text(`/s/print/${packetId}`)).includes('data-testid="sheet"'));
+
+    for (const path of [`/s/print/${packetId}`, `/s/print/${packetId}/sheet`]) {
+      const html = await browser.text(path);
+      const at = (needle: string): number => html.indexOf(needle);
+      expect(at('data-testid="print-peek"')).toBeGreaterThan(-1);
+      expect(at('data-testid="print-peek"')).toBeLessThan(at('data-testid="print-summary"'));
+      expect(at('data-testid="print-summary"')).toBeLessThan(at('data-testid="sheet-box"'));
+      // 第 1 道：和纸上那一道是同一段 HTML（同一个组件），放在 .sheet 里，用纸上的字号。
+      const peek = html.slice(at('class="peek-page"'), at('data-testid="print-summary"'));
+      const firstItem = /<div class="item">[\s\S]*?<\/p><\/div>/.exec(peek)![0];
+      const sheet = html.slice(at('data-testid="sheet"'));
+      expect(sheet.indexOf(firstItem)).toBeGreaterThan(-1);
+      // 整张 A4：缩略图（data-open="false"），按钮「展开看整张」只在有脚本时出现；打印时只印纸。
+      expect(html).toContain('class="print-root sheet-box" data-open="false"');
+      expect(html).toMatch(/<button type="button" class="link-btn sheet-toggle js-only" aria-expanded="false" aria-controls="sheet-frame"[^>]*>展开看整张<\/button>/);
+      expect(html).not.toContain('已打印');
+    }
+    const sheetPage = await browser.text(`/s/print/${packetId}/sheet`);
+    // 开着脚本：主按钮是「打印」（脚本把它标成主按钮）；「打印好了，回到今天」在打印回来以后才出现。
+    expect(sheetPage).toMatch(/<a class="btn primary" href="#" data-print="" data-js-primary="" data-testid="sheet-print" data-key="print">打印<\/a>/);
+    expect(sheetPage).toMatch(/<div class="bar-after hidden" data-after-print="">[\s\S]*?打印好了，回到今天[\s\S]*?<\/div><\/div>/);
+    // 关掉脚本：说明用 Safari 的「分享」→「打印」，主按钮在 <noscript> 里（开着脚本时它不存在）。
+    expect(sheetPage).toMatch(/<noscript>[\s\S]*「分享」[\s\S]*data-testid="next-step-primary"[^>]*>打印好了，回到今天<\/a>[\s\S]*<\/noscript>/);
+    expect((sheetPage.match(/data-testid="next-step-primary"/g) ?? []).length).toBe(1);
+    const css = await (await browser.get('/s/assets/app.css')).text();
+    expect(css).toContain('.print-root>:not(.sheet-frame){display:none!important}');
+  });
+});

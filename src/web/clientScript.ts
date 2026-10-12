@@ -60,6 +60,8 @@ document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&
 /* ---------- 每块内容的小功能 ---------- */
 function enhance(scope){
 /* 底栏多高，内容下面就留多高（最后一行能滚到底栏上面）；主按钮换字时放动效 */
+/* 只有开着脚本才能用的主按钮（练习纸单独页的「打印」）：脚本在的时候它才是主按钮 */
+within(scope,'[data-js-primary]').forEach(function(el){el.setAttribute('data-testid','next-step-primary')});
 within(scope,'.next-bar').forEach(function(nbar){if(!once(nbar,'bar'))return;function barH(){root.style.setProperty('--bar-h',nbar.offsetHeight+'px')}barH();if(window.ResizeObserver)new ResizeObserver(barH).observe(nbar);watchPrimary(nbar)});
 trackSteps(scope);
 /* 拍照上传：选好照片立刻上传并显示进度；失败时照片还在这个页面里，可以再试一次 */
@@ -140,6 +142,11 @@ rec.start();btn.classList.add('on');btn.textContent='说完了';holdPrimary('正
 if(live){live.classList.remove('hidden');play(live,'m-rise')}if(note)note.textContent='';if(heard)heard.textContent='';
 t0=Date.now();if(clock)clock.textContent='0:00';ticker=setInterval(function(){if(clock)clock.textContent=clockText(Math.floor((Date.now()-t0)/1000))},250);
 startMeter(s);timer=setTimeout(stop,60000)}).catch(function(){starting=false;reset();if(note)note.textContent='用不了麦克风，可以直接打字。';btn.classList.add('hidden');trailAdd('error','mic_denied');trailSend()})})});
+/* 整张练习纸：先是缩略图，点「展开看整张」或点缩略图展开；再点收起 */
+within(scope,'.sheet-box').forEach(function(box){if(!once(box,'sheetbox'))return;var t=$('.sheet-toggle',box),f=$('.sheet-frame',box);
+function set(open){box.setAttribute('data-open',open?'true':'false');if(t){t.setAttribute('aria-expanded',String(open));t.textContent=open?'收起整张':'展开看整张'}if(open)play(f,'m-rise')}
+if(t)t.addEventListener('click',function(){set(box.getAttribute('data-open')!=='true')});
+if(f)f.addEventListener('click',function(){if(box.getAttribute('data-open')!=='true'){trailAdd('content','sheet-open');trailSend();set(true)}})});
 /* 离线页：真没联网时换标题 */
 within(scope,'[data-offline-title]').forEach(function(off){if(navigator.onLine===false){off.textContent='没联网';var d=$('[data-offline-detail]');if(d)d.textContent='连上 Wi-Fi 或流量后点「再试一次」。拍过的照片和错题都在服务器上，不会丢。'}});
 }
