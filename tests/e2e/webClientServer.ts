@@ -8,6 +8,7 @@
  * 控制口（只监听 127.0.0.1，测试专用，不在生产代码里）：
  *   GET  /pairing-link        经管理 socket 生成一次性配对码，返回网页版配对链接
  *   POST /time-travel?days=7  把已有记录整体往前挪 N 天（等于过了 N 天），用来走「下个周末」
+ *   GET  /trail               网页版互动记录（audit_event 里 web_* 的行：时间、类型、路由模板#动作、设备 ID），给 E2E 断言用
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -31,6 +32,7 @@ const { webPairingLink } = await import('../../src/mobile/pairing.js');
 const { cropPhoto } = await import('../../src/media/images.js');
 const { getDb } = await import('../../src/db/connection.js');
 const { isoWeekKey } = await import('../../src/domain/scheduling.js');
+const { readTrail } = await import('../../src/web/trail.js');
 type Vision = import('../../src/mobile/vision.js').MobileVisionBoundary;
 type Candidate = import('../../src/mobile/vision.js').InventoryCandidate;
 type Evidence = import('../../src/ai/evidence.js').Evidence;
@@ -121,6 +123,11 @@ http.createServer((request, response) => {
         const { payload } = await pairingCode();
         response.setHeader('content-type', 'application/json');
         response.end(JSON.stringify({ link: webPairingLink(payload, base) }));
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/trail') {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify(readTrail()));
         return;
       }
       if (request.method === 'POST' && url.pathname === '/time-travel') {

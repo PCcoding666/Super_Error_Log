@@ -239,17 +239,32 @@ describe('mobile recognition HTTP contract', () => {
   });
 
   it('does not finalize a job while another retried question is still queued or processing', async () => {
-    const vision = new FixtureVision(); vision.fail = new Set(['1', '2']); const { request } = await setup(vision); const accepted = await json(await submit(request, await jpeg())); const failed = await waitFor(request, accepted.job.id, 'failed');
-    vision.fail.clear(); let releaseFirst!: () => void; const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const vision = new FixtureVision(); vision.fail = new Set(['1', '2']); const { app, request } = await setup(vision);
+    // 本测试聚焦并发人工重试下的收尾守卫：关闭自动重试，免去首轮失败前 2s+8s 的退避等待（自动重试由 mobileRecovery.test.ts 覆盖）。
+    (app.locals.mobileRecognitionService as MobileRecognitionService).autoRetryDelaysMs = [];
+    const accepted = await json(await submit(request, await jpeg())); const failed = await waitFor(request, accepted.job.id, 'failed');
+    vision.fail.clear();
+    // 两道题各自挂在门闸上，让「第 1 题已完成、第 2 题仍在进行」成为可以稳定保持的状态，而不是靠轮询去撞的瞬时窗口：
+    // 该窗口只横跨几次落盘（快速文件系统上仅数毫秒，小于 10ms 轮询周期），轮询可能整段错过，任务直接走到 completed。
+    let releaseFirst!: () => void; const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+    let releaseSecond!: () => void; const secondGate = new Promise<void>(resolve => { releaseSecond = resolve; });
     const original = vision.recognizeQuestion.bind(vision);
-    vision.recognizeQuestion = async (source, candidate, context) => { if (candidate.number === '1') await firstGate; return original(source, candidate, context); };
-    await request(`/v1/recognitions/${failed.id}/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: failed.questions[0].id }) });
-    await waitForJob(request, failed.id, job => job.questions[0].status === 'processing');
-    await request(`/v1/recognitions/${failed.id}/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: failed.questions[1].id }) });
-    releaseFirst();
-    const inFlight = await waitForJob(request, failed.id, job => job.questions[0].status === 'ready' && ['queued', 'processing'].includes(job.questions[1].status));
-    expect(inFlight).toMatchObject({ status: 'processing', phase: 'questions' });
-    await waitFor(request, failed.id, 'completed');
+    vision.recognizeQuestion = async (source, candidate, context) => {
+      if (candidate.number === '1') await firstGate;
+      if (candidate.number === '2') await secondGate;
+      return original(source, candidate, context);
+    };
+    try {
+      await request(`/v1/recognitions/${failed.id}/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: failed.questions[0].id }) });
+      await waitForJob(request, failed.id, job => job.questions[0].status === 'processing');
+      await request(`/v1/recognitions/${failed.id}/retry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionId: failed.questions[1].id }) });
+      releaseFirst();
+      // worker 串行：第 2 题进入 processing 即说明第 1 题的 finalize 已经跑完；此刻第 2 题卡在门闸上，状态不会再变，断言无竞态。
+      const inFlight = await waitForJob(request, failed.id, job => job.questions[0].status === 'ready' && job.questions[1].status === 'processing');
+      expect(inFlight).toMatchObject({ status: 'processing', phase: 'questions' });
+      releaseSecond();
+      await waitFor(request, failed.id, 'completed');
+    } finally { releaseFirst(); releaseSecond(); }
   });
 
   it('rejects skip while a question is actively processing so completion cannot overwrite the user action', async () => {
