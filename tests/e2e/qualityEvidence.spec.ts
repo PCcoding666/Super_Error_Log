@@ -838,14 +838,26 @@ test('video：周末 A / B 录屏，减少动态效果的录屏与截图对照',
   const TMP = `${OUT}/_video_tmp`;
   fs.mkdirSync(TMP, { recursive: true });
   const videoDevice: BrowserContextOptions = { ...DEVICE, deviceScaleFactor: 2, bypassCSP: false };
+  // 每段录屏都收控制台：页面报错、控制台 error，和每次跳页（路由模板），写进 video-console.json（video 与 video-reduced 分开跑，并进同一个文件）。
+  const consoleFile = path.join(OUT, 'video-console.json');
+  const videoConsole: Record<string, { errors: string[]; navigations: string[] }> = fs.existsSync(consoleFile) ? (JSON.parse(fs.readFileSync(consoleFile, 'utf8')) as { videos: Record<string, { errors: string[]; navigations: string[] }> }).videos : {};
+  const route = (url: string): string => new URL(url).pathname.replace(/pkt_[0-9a-f]+/, ':pid').replace(/itm_[0-9a-f]+/, ':itemId').replace(/[0-9a-f]{8}-[0-9a-f-]{27}/, ':jobId');
   async function record(name: string, options: BrowserContextOptions, run: (page: Page, ctx: BrowserContext) => Promise<void>): Promise<void> {
     const ctx = await browser.newContext({ ...videoDevice, ...options, recordVideo: { dir: TMP, size: { width: 390, height: 844 } } });
     await ctx.addInitScript(() => { window.print = () => { window.dispatchEvent(new Event('afterprint')); }; });
     const page = await ctx.newPage();
+    const entry = { errors: [] as string[], navigations: [] as string[] };
+    videoConsole[name] = entry;
+    const stamp = (): string => new Date().toISOString().slice(11, 19);
+    page.on('pageerror', e => entry.errors.push(`${stamp()} pageerror @${route(page.url())} ${String(e).slice(0, 160)}`));
+    page.on('console', m => { if (m.type() === 'error') entry.errors.push(`${stamp()} console @${route(page.url())} ${m.text().slice(0, 160)}`); });
+    page.on('framenavigated', f => { if (f === page.mainFrame()) entry.navigations.push(`${stamp()} ${route(f.url())}`); });
     try { await run(page, ctx); } finally {
       const video = page.video();
       await ctx.close();
       if (video) fs.renameSync(await video.path(), `${OUT}/${name}.webm`);
+      writeJson('video-console.json', { note: '每段录屏里的页面报错（pageerror）与控制台 error；navigations 是每次跳页的路由模板', videos: videoConsole });
+      log('video', name, 'errors', entry.errors.length, 'navigations', entry.navigations.length);
     }
   }
   const tap = async (page: Page, locator: ReturnType<Page['locator']>, pause = 900): Promise<void> => { await sleep(pause); await locator.click({ timeout: 20_000 }); await page.waitForLoadState('load').catch(() => {}); };
