@@ -216,6 +216,27 @@ const COLLECT_EXTRA = String.raw`function collectExtra() {
   };
 }`;
 
+/**
+ * 标点落在行首 / 行尾（round 2 iteration 2 新加的量测，不改上面孤字的判定）：同一组元素，按字的位置分行，
+ * 第二行起以收尾标点（，。、；：！？）」』】）开头，或者不是最后一行却以开头标点（（「『【）结尾，都记一条。
+ */
+const PUNCT_AT_LINE_EDGE = String.raw`function punctAtLineEdge() {
+  const out = [];
+  const sel = '.btn, .choice > span, h1, h2, legend, .step-title, .step-detail, .caption, summary, .more, .more-inline, .link-btn, .field-label, .card-title, .rhythm li, .flash, .chip, .tag, .wait-line, .meta-line';
+  for (const el of document.querySelectorAll(sel)) {
+    const r0 = el.getBoundingClientRect(); const cs = getComputedStyle(el);
+    if (r0.width < 2 || cs.display === 'none' || cs.visibility === 'hidden' || el.closest('.hidden') || el.closest('.sheet') || el.closest('.visually-hidden')) continue;
+    const lines = []; const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    while (tw.nextNode()) { const n = tw.currentNode; for (let i = 0; i < n.data.length; i++) { if (/\s/.test(n.data[i])) continue; const rg = document.createRange(); rg.setStart(n, i); rg.setEnd(n, i + 1); const rc = rg.getClientRects()[0]; if (!rc || !rc.width) continue; const mid = rc.top + rc.height / 2; const l = lines.find(x => Math.abs(x.mid - mid) < 6); if (l) l.t += n.data[i]; else lines.push({ mid, t: n.data[i] }); } }
+    lines.sort((a, b) => a.mid - b.mid);
+    lines.forEach((l, i) => {
+      if (i > 0 && /^[，。、；：！？）」』】]/.test(l.t)) out.push(el.innerText.trim().replace(/\s+/g, ' ').slice(0, 30) + '（行首：' + l.t.slice(0, 6) + '）');
+      if (i < lines.length - 1 && /[（「『【]$/.test(l.t)) out.push(el.innerText.trim().replace(/\s+/g, ' ').slice(0, 30) + '（行尾：' + l.t.slice(-6) + '）');
+    });
+  }
+  return out;
+}`;
+
 async function runAxe(page: Page, onlyContrast: boolean): Promise<unknown> {
   if (!AXE) return { error: 'SEL_AXE_PATH 没设' };
   const has = await page.evaluate(() => Boolean((window as unknown as { axe?: unknown }).axe)).catch(() => false);
@@ -777,7 +798,8 @@ test('webkit：200% 放大走主流程（页面缩放 200% 与只放大文字 20
         };
       });
       const extra = await page.evaluate(`(${COLLECT_EXTRA})()`) as { orphans: Array<{ text: string; lines: string[] }> };
-      screens.push({ n, name, file, ...m, orphans: extra.orphans.map(o => `${o.text}（${o.lines.join(' / ')}）`) });
+      const punctuation = await page.evaluate(`(${PUNCT_AT_LINE_EDGE})()`) as string[];
+      screens.push({ n, name, file, ...m, orphans: extra.orphans.map(o => `${o.text}（${o.lines.join(' / ')}）`), punctuationAtLineEdge: punctuation });
       log('webkit', mode, n, name, JSON.stringify(m).slice(0, 220));
     };
     const link = await pairingLink();
@@ -824,7 +846,26 @@ test('webkit：200% 放大走主流程（页面缩放 200% 与只放大文字 20
     await context.close();
   }
   results.sort((a, b) => (a.mode === 'zoom' ? -1 : 1) - (b.mode === 'zoom' ? -1 : 1));
-  writeJson('webkit-200.json', { generatedAt: new Date().toISOString(), note: 'Playwright 自带的 WebKit（不是真机 Safari）；读屏（VoiceOver）没有在这里测，要真机', results });
+  // 汇总（每种放大方式一行）：单字孤行、标点落在行首 / 行尾、底栏占视口的比例、横向溢出、主按钮是否一直整个看得见。
+  type Screen = { orphans: string[]; punctuationAtLineEdge?: string[]; barShareOfViewport: number; horizontalOverflowPx: number; primaryFullyVisible: boolean | null; clipped: string[] };
+  const summary = Object.fromEntries((results as Array<{ mode: string; screens: Screen[] }>).map(r => [r.mode, {
+    screens: r.screens.length,
+    orphans: r.screens.reduce((n, x) => n + x.orphans.length, 0),
+    screensWithOrphans: r.screens.filter(x => x.orphans.length > 0).length,
+    punctuationAtLineEdge: r.screens.reduce((n, x) => n + (x.punctuationAtLineEdge?.length ?? 0), 0),
+    maxBarShareOfViewport: Math.max(...r.screens.map(x => x.barShareOfViewport)),
+    screensWithHorizontalOverflow: r.screens.filter(x => x.horizontalOverflowPx > 0).length,
+    clipped: r.screens.reduce((n, x) => n + x.clipped.length, 0),
+    primaryAlwaysFullyVisible: r.screens.every(x => x.primaryFullyVisible !== false),
+  }]));
+  writeJson('webkit-200.json', { generatedAt: new Date().toISOString(), note: 'Playwright 自带的 WebKit（不是真机 Safari）；读屏（VoiceOver）没有在这里测，要真机', summary, results });
+  // 同样的汇总也并进 metrics.json（有的话），评审看一个文件就够。
+  const metricsFile = path.join(OUT, 'metrics.json');
+  if (fs.existsSync(metricsFile)) {
+    const metrics = JSON.parse(fs.readFileSync(metricsFile, 'utf8')) as Record<string, unknown>;
+    metrics.webkit200 = summary;
+    fs.writeFileSync(metricsFile, JSON.stringify(metrics, null, 2));
+  }
   await wk.close();
 });
 
