@@ -411,6 +411,8 @@ test('capture：每一屏、每个状态（含故障注入的状态矩阵）', a
   await waitPrimary(page, '下一步：选这周要练的题', 60_000);
   await snap(page, 'photos-found', '勾出做错的题：找好了——这一行和底栏是局部换上来的（同一个页面，没刷新；CLS 记的是这一页从打开到现在）', { flow });
 
+  await page.goto(`${WEB}/s/capture`);
+  await snap(page, 'capture-one', '拍这周的卷子：已拍 1 张、找好了（缩略图 +「＋ 再拍一页」，主按钮「拍完了，下一步」）', { flow });
   await page.goto(`${WEB}/s/items`);
   await snap(page, 'items', '这周的错题：卡片列表（裁图按显示尺寸下发）', { flow: '随时可以看' });
   const itemHref = (await page.getByTestId('item-card').first().getAttribute('href'))!;
