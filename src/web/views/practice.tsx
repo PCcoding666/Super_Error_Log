@@ -7,6 +7,26 @@ import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';
 import { Page, Phrased, Problem, VoiceBox, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
+// ---------- 选项的断行 ----------
+
+/**
+ * 选项文字按词组断开（每段一个不可拆的小块，换行只落在段与段之间）：两列的选项在 360 / 375 / 390 px 下
+ * 要么一行放下，要么平衡成两行，不会出现「推理中间断 / 了」这种单字孤行。没列出的选项按标点断（Phrased）。只改断行，文字不变。
+ */
+const CHOICE_PHRASES: Record<string, string[]> = {
+  '知道考啥，没想到方法': ['知道考啥，', '没想到', '方法'], '方法对，步骤错了': ['方法对，', '步骤错了'], '本来会，粗心了': ['本来会，', '粗心了'],
+  '概念没弄懂': ['概念', '没弄懂'], '方法选错了': ['方法', '选错了'], '推理中间断了': ['推理', '中间断了'], '题目没看全': ['题目', '没看全'],
+  '写法不规范': ['写法', '不规范'], '时间不够或走神': ['时间不够', '或走神'],
+  '看提示可能会': ['看提示', '可能会'], '现在做应该会': ['现在做', '应该会'], '过几天也会': ['过几天', '也会'],
+  '看了一级提示': ['看了', '一级提示'], '看了二级提示': ['看了', '二级提示'], '周三晚自习': ['周三', '晚自习'],
+};
+
+export function ChoiceText(props: { text: string }): ReactNode {
+  const pieces = CHOICE_PHRASES[props.text];
+  if (!pieces) return <span className="choice-text"><Phrased text={props.text} /></span>;
+  return <span className="choice-text">{pieces.map((piece, index) => <span key={index} className="ph">{piece}</span>)}</span>;
+}
+
 // ---------- 选这周要练的题（§4.6） ----------
 
 export const SLOT_PRESETS = ['周三晚自习', '周末', '本周内'] as const;
@@ -17,7 +37,7 @@ export function SlotChoice(props: { current: string; name?: string }): ReactNode
   return (
     <div className="choices-inline">
       {SLOT_PRESETS.map(slot => (
-        <label key={slot} className="choice"><input type="radio" name={name} value={slot} defaultChecked={props.current === slot} /><span>{slot}</span></label>
+        <label key={slot} className="choice"><input type="radio" name={name} value={slot} defaultChecked={props.current === slot} /><ChoiceText text={slot} /></label>
       ))}
       <label className="choice" data-slot-other=""><input type="radio" name={name} value="__other" defaultChecked={!preset} /><span>其他…</span></label>
       <label className="choice choice-full">
@@ -199,7 +219,7 @@ function Group<T extends string | number>(props: { legend: string; name: string;
       {props.hint ? <p className="hint">{props.hint}</p> : null}
       <div className="choices-inline">
         {props.choices.map(([label, value]) => (
-          <label key={String(value)} className="choice"><input type="radio" name={props.name} value={String(value)} defaultChecked={props.selected === value} /><span>{label}</span></label>
+          <label key={String(value)} className="choice"><input type="radio" name={props.name} value={String(value)} defaultChecked={props.selected === value} /><ChoiceText text={label} /></label>
         ))}
       </div>
     </fieldset>
@@ -544,7 +564,7 @@ export function RecordItemPage(props: { practiceId: string; card: PracticeCard; 
         <input type="hidden" name="at" value={String(props.index + 1)} />
         <input type="hidden" name="item" value={card.id} />
         {COMPLETIONS.map(([value, label]) => (
-          <label key={value} className="choice" data-testid={`completion-${value}`}><input type="radio" name="completion" value={value} defaultChecked={props.answer.completion === value} /><span>{label}</span></label>
+          <label key={value} className="choice" data-testid={`completion-${value}`}><input type="radio" name="completion" value={value} defaultChecked={props.answer.completion === value} /><ChoiceText text={label} /></label>
         ))}
         <fieldset data-correct="">
           <legend>做对了吗？对照练习纸最后一页的答案</legend>

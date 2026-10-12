@@ -53,7 +53,9 @@ p{margin:var(--s-2) 0}
 p,li{text-wrap:pretty}
 /* 短句（列表项、选项、标签、说明行、标题）按词组断行：字与字之间不断，只在标点、空格处换行，「「相 / 机」」这类拆词不再出现；
    一句太长、没有断点时才在任意处断。长段落照常按字换行（中文排版的惯例），其中的「」引语由 .q 保持在同一行。 */
-main h1,main h2,legend,.field-label,.caption,.choice span,.steps-text li,.meta-line,.row-text,.step-detail{word-break:keep-all;overflow-wrap:anywhere}
+main h1,main h2,legend,.field-label,.caption,.steps-text li,.meta-line,.row-text,.step-detail{word-break:keep-all;overflow-wrap:anywhere}
+/* 选项文字不用 keep-all（一个词组放不下时会被硬拆出单字）：由 ChoiceText 按词组分成不可拆的小块，再平衡成一到两行 */
+.choice-text{text-wrap:balance;overflow-wrap:anywhere}
 .q{white-space:nowrap}
 main p,main li{max-width:32em}
 .muted{color:var(--muted)}.small{font-size:var(--fs-2)}
