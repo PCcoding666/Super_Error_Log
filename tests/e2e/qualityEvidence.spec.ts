@@ -1061,8 +1061,39 @@ test('perf：冷加载 11 个路由', async ({ browser }) => {
     await c.close();
     return { text, gzip };
   }
+  /**
+   * 同一次打开里点到下一页（缓存开着，连接已建好，同样的 4G 节流和 CPU 4×）：先打开「今天」，再去目标页。
+   * 带指纹、一年缓存的样式和脚本这时不再下载；R1 的 no-store 每一页都要重新下。transferBytes 是这一页实际从网络上传了多少。
+   */
+  async function measureWarm(url: string): Promise<Record<string, any>> {
+    const c = await browser.newContext({ ...DEVICE, storageState: state, serviceWorkers: 'block' });
+    const p = await c.newPage();
+    await p.addInitScript(() => {
+      const w = window as unknown as { __lcp: number };
+      w.__lcp = 0;
+      try { new PerformanceObserver(l => { for (const e of l.getEntries()) w.__lcp = e.startTime; }).observe({ type: 'largest-contentful-paint', buffered: true }); } catch { /* */ }
+    });
+    const cdp = await c.newCDPSession(p);
+    await cdp.send('Network.enable');
+    await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 150, downloadThroughput: 1.6 * 1024 * 1024 / 8, uploadThroughput: 750 * 1024 / 8 });
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    await p.goto(`${WEB}/s/`, { waitUntil: 'load', timeout: 60_000 });
+    await sleep(800);
+    await p.goto(`${WEB}${url}`, { waitUntil: 'load', timeout: 60_000 });
+    await sleep(1200);
+    const r = await p.evaluate(() => {
+      const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
+      const fcp = performance.getEntriesByName('first-contentful-paint')[0];
+      const res = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+      const cssJs = res.filter(e => /\.(css|js)(\?|$)/.test(e.name));
+      return { fcp: fcp ? Math.round(fcp.startTime) : null, lcp: Math.round((window as unknown as { __lcp: number }).__lcp), transferBytes: nav.transferSize + res.reduce((n, e) => n + (e.transferSize || 0), 0), cssJsTransferBytes: cssJs.reduce((n, e) => n + (e.transferSize || 0), 0) };
+    });
+    await c.close();
+    return r;
+  }
   const median = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]!; };
   const perf: unknown[] = [];
+  const warm: unknown[] = [];
   for (const [label, url, authed] of targets) {
     if (!url) continue;
     for (const throttle of [true, false]) {
@@ -1074,8 +1105,16 @@ test('perf：冷加载 11 个路由', async ({ browser }) => {
       perf.push(row);
       log(label, throttle ? 'slow4G+4xCPU' : 'local', 'FCP', row.fcp, 'LCP', row.lcp, 'CLS', row.cls, 'TBT', row.tbt, 'bytes', row.totalBytes, 'gzip text', row.textGzipBytes);
     }
+    if (authed) {
+      const runs: Array<Record<string, any>> = [];
+      for (let i = 0; i < 3; i += 1) runs.push(await measureWarm(url));
+      const pick = (k: string): number => median(runs.map(r => r[k] ?? 0));
+      const row = { label, fcp: pick('fcp'), lcp: pick('lcp'), transferBytes: pick('transferBytes'), cssJsTransferBytes: pick('cssJsTransferBytes') };
+      warm.push(row);
+      log(label, 'warm', JSON.stringify(row));
+    }
   }
-  writeJson(process.env.SEL_EVIDENCE_PERF_FILE ?? 'perf-after.json', { generatedAt: new Date().toISOString(), web: WEB, method: 'round 0 / R1 同一方法（Playwright + Chromium headless；冷加载 serviceWorkers=block、禁用缓存；CDP 150ms RTT、1.6Mbps/750kbps、CPU 4x；每项 3 次取中位数；本机合成服务器，无 TLS；应用本身不压缩），导航请求在发出前再延迟 600 ms（建连 3 RTT + 请求 1 RTT）。textGzipBytes = 页面、样式、脚本按 gzip -6 压缩后的字节（生产开了 Caddy 压缩以后的大小；没开时按 totalBytes）', perf });
+  writeJson(process.env.SEL_EVIDENCE_PERF_FILE ?? 'perf-after.json', { generatedAt: new Date().toISOString(), web: WEB, method: 'round 0 / R1 同一方法（Playwright + Chromium headless；冷加载 serviceWorkers=block、禁用缓存；CDP 150ms RTT、1.6Mbps/750kbps、CPU 4x；每项 3 次取中位数；本机合成服务器，无 TLS；应用本身不压缩），导航请求在发出前再延迟 600 ms（建连 3 RTT + 请求 1 RTT）。textGzipBytes = 页面、样式、脚本按 gzip -6 压缩后的字节（生产开了 Caddy 压缩以后的大小；没开时按 totalBytes）。warm = 同一次打开里先到「今天」再点到这一页（缓存开着、连接已建好、同样的节流），transferBytes 是这一页实际从网络传了多少', perf, warm });
 });
 
 // =====================================================================================================
