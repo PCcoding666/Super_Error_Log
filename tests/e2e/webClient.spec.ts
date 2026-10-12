@@ -236,7 +236,10 @@ test.describe('下个周末', () => {
     await expect(page.getByTestId('ai-question')).toBeVisible();
     await expect(page.getByTestId('voice')).toBeVisible();
     await page.getByTestId('voice-button').click();
-    await expect(page.getByTestId('voice-button')).toHaveText('正在听…再点一下结束');
+    // 开着麦克风：按钮变成「说完了」，有计时；底部主按钮先不能点（先说完再提交）。
+    await expect(page.getByTestId('voice-button')).toHaveText('说完了');
+    await expect(page.getByTestId('voice-timer')).toBeVisible();
+    await expect(primary(page)).toBeDisabled();
     await page.waitForTimeout(1200);
     await page.getByTestId('voice-button').click();
     await expect(page.locator('#answer-text')).toHaveValue('我以为移项不用变号，就直接抄过去了。', { timeout: 15_000 });

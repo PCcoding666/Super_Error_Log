@@ -5,7 +5,7 @@ import type { ReturnSummary } from '../../v2/returnService.js';
 import type { ReflectionSuggestionView, ReflectionTurnView, ReflectionView } from '../../v2/reflectionService.js';
 import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';
-import { Page, Phrased, Problem, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, VoiceBox, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
 // ---------- 选这周要练的题（§4.6） ----------
 
@@ -185,9 +185,7 @@ export function WhyAskPage(props: { practiceId: string; card: PracticeCard; inde
           <label htmlFor="answer-text" className="field-label">你的回答</label>
           <textarea id="answer-text" name="answer" maxLength={300} required defaultValue={props.answer ?? ''} placeholder="点「点一下开始说」说话，或者直接打字" data-count="#answer-count" aria-describedby="answer-count" />
           <p className="hint" id="answer-count">还能写 300 字</p>
-          <div className="voice hidden" data-voice-for="answer-text" data-endpoint="/s/voice" data-testid="voice">
-            <button type="button" data-testid="voice-button">点一下开始说</button> <span className="small muted" data-voice-note="" data-testid="voice-note" aria-live="polite" />
-          </div>
+          <VoiceBox target="answer-text" testIds />
         </form>
       ) : null}
     </Page>

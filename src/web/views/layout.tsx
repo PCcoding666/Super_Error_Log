@@ -168,6 +168,27 @@ export function WaitLine(props: { since: string | null; now: Date; expect: strin
   );
 }
 
+/**
+ * 「点一下开始说」（说说为什么错的回答、改一下的说明共用）：开着麦克风时有音量条和计时，按钮变成「说完了」；
+ * 转写时说已经转了几秒；转写失败时刚才那段录音留在页面里，可以「再转一次」，也可以直接打字。没有麦克风时整块不出现。
+ */
+export function VoiceBox(props: { target: string; testIds?: boolean }): ReactNode {
+  const t = (id: string): string | undefined => (props.testIds ? id : undefined);
+  return (
+    <div className="voice hidden" data-voice-for={props.target} data-endpoint="/s/voice" data-testid={t('voice')}>
+      <button type="button" data-voice-btn="" data-testid={t('voice-button')} data-key={props.testIds ? undefined : 'voice'}>点一下开始说</button>
+      <button type="button" className="voice-retry hidden" data-voice-retry="" data-key="voice-retry" data-testid={t('voice-retry')}>再转一次</button>
+      <span className="voice-live hidden" data-voice-live="" data-testid={t('voice-live')}>
+        <span className="meter" data-voice-meter="" data-level="0" data-testid={t('voice-meter')} aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></span>
+        <span className="voice-time" data-voice-time="" data-testid={t('voice-timer')} role="timer" aria-label="录了多久">0:00</span>
+        <span className="heard small" data-voice-heard="" aria-hidden="true" />
+        <span className="small muted">最多 60 秒</span>
+      </span>
+      <span className="small muted voice-note" data-voice-note="" data-testid={t('voice-note')} aria-live="polite" />
+    </div>
+  );
+}
+
 /** 「」里的短引语（≤ 12 个字，按钮名、菜单名）保持在同一行，不被拆成「「相 / 机」」。其余文字原样。 */
 export function quoted(text: string): ReactNode {
   const parts = text.split(/(「[^「」]{1,12}」)/u);

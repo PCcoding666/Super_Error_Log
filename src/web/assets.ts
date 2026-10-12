@@ -139,6 +139,60 @@ textarea.autogrow{min-height:52px;resize:none;field-sizing:content;overflow:hidd
 .voice.hidden{display:none}
 .voice button{font:inherit;font-weight:600;border-radius:var(--r-pill);border:1.5px solid var(--teal);background:var(--card);color:var(--teal);padding:var(--s-2) var(--s-4);min-height:var(--tap)}
 .voice button.on{background:var(--teal);color:var(--on-teal)}
+.voice .voice-note{flex-basis:100%}
+.voice .voice-note:empty{display:none}
+.voice button.hidden{display:none}
+/* 开着麦克风：音量条（7 根，按音量分 6 档，只动 transform）+ 计时 */
+.voice-live{display:inline-flex;align-items:center;gap:var(--s-2) var(--s-3);flex-wrap:wrap}
+.voice-live.hidden{display:none}
+.meter{display:inline-flex;align-items:center;gap:3px;height:28px}
+.meter i{display:block;width:4px;height:28px;border-radius:2px;background:var(--teal);transform:scaleY(.12);transition:transform var(--dur-1) var(--ease)}
+.meter[data-level="0"] i{opacity:.45}
+.meter[data-level="0"] i:nth-child(1){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(2){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(3){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(4){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(5){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(6){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(7){transform:scaleY(0.12)}
+.meter[data-level="1"] i:nth-child(1){transform:scaleY(0.15)}
+.meter[data-level="1"] i:nth-child(2){transform:scaleY(0.24)}
+.meter[data-level="1"] i:nth-child(3){transform:scaleY(0.3)}
+.meter[data-level="1"] i:nth-child(4){transform:scaleY(0.21)}
+.meter[data-level="1"] i:nth-child(5){transform:scaleY(0.27)}
+.meter[data-level="1"] i:nth-child(6){transform:scaleY(0.18)}
+.meter[data-level="1"] i:nth-child(7){transform:scaleY(0.12)}
+.meter[data-level="2"] i:nth-child(1){transform:scaleY(0.25)}
+.meter[data-level="2"] i:nth-child(2){transform:scaleY(0.4)}
+.meter[data-level="2"] i:nth-child(3){transform:scaleY(0.5)}
+.meter[data-level="2"] i:nth-child(4){transform:scaleY(0.35)}
+.meter[data-level="2"] i:nth-child(5){transform:scaleY(0.45)}
+.meter[data-level="2"] i:nth-child(6){transform:scaleY(0.3)}
+.meter[data-level="2"] i:nth-child(7){transform:scaleY(0.2)}
+.meter[data-level="3"] i:nth-child(1){transform:scaleY(0.35)}
+.meter[data-level="3"] i:nth-child(2){transform:scaleY(0.56)}
+.meter[data-level="3"] i:nth-child(3){transform:scaleY(0.7)}
+.meter[data-level="3"] i:nth-child(4){transform:scaleY(0.49)}
+.meter[data-level="3"] i:nth-child(5){transform:scaleY(0.63)}
+.meter[data-level="3"] i:nth-child(6){transform:scaleY(0.42)}
+.meter[data-level="3"] i:nth-child(7){transform:scaleY(0.28)}
+.meter[data-level="4"] i:nth-child(1){transform:scaleY(0.42)}
+.meter[data-level="4"] i:nth-child(2){transform:scaleY(0.68)}
+.meter[data-level="4"] i:nth-child(3){transform:scaleY(0.85)}
+.meter[data-level="4"] i:nth-child(4){transform:scaleY(0.59)}
+.meter[data-level="4"] i:nth-child(5){transform:scaleY(0.77)}
+.meter[data-level="4"] i:nth-child(6){transform:scaleY(0.51)}
+.meter[data-level="4"] i:nth-child(7){transform:scaleY(0.34)}
+.meter[data-level="5"] i:nth-child(1){transform:scaleY(0.5)}
+.meter[data-level="5"] i:nth-child(2){transform:scaleY(0.8)}
+.meter[data-level="5"] i:nth-child(3){transform:scaleY(1)}
+.meter[data-level="5"] i:nth-child(4){transform:scaleY(0.7)}
+.meter[data-level="5"] i:nth-child(5){transform:scaleY(0.9)}
+.meter[data-level="5"] i:nth-child(6){transform:scaleY(0.6)}
+.meter[data-level="5"] i:nth-child(7){transform:scaleY(0.4)}
+.voice-time{font-weight:600;font-variant-numeric:tabular-nums;min-width:2.6em}
+.heard{display:none}
+@media (prefers-reduced-motion:reduce){.meter{display:none}.heard{display:inline}}
 .progress{height:8px;border-radius:var(--r-pill);background:var(--line);overflow:hidden;margin:var(--s-2) 0}
 .progress i{display:block;height:100%;background:var(--teal);transform-origin:left center;transform:scaleX(0);transition:transform var(--dur-3) var(--ease)}
 .wait-line{color:var(--muted);margin:var(--s-2) 0 0;font-variant-numeric:tabular-nums}
