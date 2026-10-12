@@ -558,7 +558,13 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
 - 上限：≤ 5 MB；MP4 容器声明了时长（`mvhd` / 分片录音的 `mehd`）时还要 ≤ 60 秒。网页端录到 60 秒自动停。
 - 成功 `200 {"text":"我以为移项不用变号，就直接抄过去了。"}`。没听出字时 `text` 为空串。文字不在服务器保存，由学生改完后作为 3.18 的 `answer` 自己提交。
 - 错误：`415 unsupported_media_type` `只接受 audio/mp4 或 audio/webm 录音。` / `400 invalid_audio` `录音是空的，再说一次。` / `400 audio_too_long` `录音超过 60 秒，说短一点再试。` / `413 payload_too_large` `录音超过 5 MB 限制。` / `429 rate_limited` `说得太频繁了，过一会儿再试，或者直接打字。`（云端每设备每分钟 10 次，另计入 300 次的已鉴权查询）/ `502 bad_gateway` `这次没转成文字，再说一次，或者直接打字。`
-- 模型：百炼 OpenAI 兼容接口 `chat/completions`，模型 `SEL_AI_MODEL_ASR`（缺省 `qwen3-asr-flash`），`messages[0].content = [{"type":"input_audio","input_audio":{"data":"data:audio/mp4;base64,…"}}]`，`asr_options: {"language":"zh","enable_itn":false}`。**录音不落盘、不写日志**。mock 模式固定返回上面那句合成文字，不发网络请求。
+- 模型：`SEL_AI_MODEL_ASR`（缺省 `qwen-audio-3.1-asr-flash`，2026-10-11 起；此前是 `qwen3-asr-flash`）。该模型只在百炼（DashScope）**原生**接口上提供——`POST https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation`（北京地域，写死在代码里，没有对应环境变量；OpenAI 兼容的 `chat/completions` 对它返回 404）。请求头 `Authorization: Bearer <SEL_AI_API_KEY>`，请求体：
+  ```json
+  {"model":"qwen-audio-3.1-asr-flash",
+   "input":{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"data:audio/mp4;base64,…"}}]}]},
+   "parameters":{"format":"m4a"}}
+  ```
+  `parameters.format` 必填（缺了返回 400 `UNSUPPORTED_FORMAT`），按收到的 `Content-Type` 取：`audio/mp4`、`audio/x-m4a`、`audio/m4a` → `m4a`（Data URL 统一写 `audio/mp4`），`audio/aac` → `aac`，`audio/webm` → `webm`。不传 `sample_rate`（真实调用核实过：省略后 16 k/44.1 k/48 k 的 AAC 和 48 k Opus-WebM 都能正确转写）。响应取 `output.text`，缺失时退到 `output.sentence.text`；两者都没有按转写失败处理（上面的 `502`）。`SEL_AI_BASE_URL` 仍须是百炼北京兼容地址（守卫不变，它同时管着其他文本模型）。**录音不落盘、不写日志**。mock 模式固定返回上面那句合成文字，不发网络请求。
 - 学生网页版用同源镜像 `POST /s/voice`（同一校验、同一转写器、同一限流档；鉴权是网页版的设备令牌 cookie，不是 `Authorization` 头）。
 
 ## 4. 枚举值全集

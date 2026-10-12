@@ -68,9 +68,12 @@ SEL_DATA_DIR=/var/lib/super-error-log
 SEL_AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 SEL_AI_API_KEY=<百炼密钥，与 SEL_MOBILE_AI_API_KEY 相同>
 SEL_AI_MODEL=<模型名>
-# 可选（2026-10-09 起）：学生网页版「说说为什么错」的语音转写模型，缺省 qwen3-asr-flash；
-# 用上面同一个 SEL_AI_API_KEY（该密钥要有这个模型的调用权限）。SEL_AI_BASE_URL 必须是百炼北京接口，否则启动即失败。
-# SEL_AI_MODEL_ASR=qwen3-asr-flash
+# 可选（2026-10-09 起）：学生网页版「说说为什么错」的语音转写模型，缺省 qwen-audio-3.1-asr-flash（2026-10-11 起，此前是 qwen3-asr-flash）；
+# 用上面同一个 SEL_AI_API_KEY——**生产用的这把百炼密钥必须有 qwen-audio-3.1-asr-flash 的调用权限，这一点还没有从这里核实过**，
+# 部署前用 10.4 第 6 步实测；没有权限时语音转写会返回 502，网页会提示「这次没转成文字…直接打字」，其余功能不受影响。
+# 该模型只在百炼原生接口 https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation 上提供（代码里写死，不用另配环境变量，出站主机仍是 dashscope.aliyuncs.com）。
+# SEL_AI_BASE_URL 仍须是上面的百炼北京兼容地址，否则启动即失败。
+# SEL_AI_MODEL_ASR=qwen-audio-3.1-asr-flash
 # 可选（2026-10-03 起）：配对二维码里发给手机的入口。缺省发 IP 直连 https://8.163.96.197；
 # 只允许这两个值之一，其他值启动即失败。兑换时两个入口都接受。见 §9。
 # SEL_MOBILE_PAIRING_URL=https://study.pccoding666.com
@@ -430,7 +433,7 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 
 - 由同一个 `super-error-log` 单元（`dist/main.js`，127.0.0.1:3101）在云端模式下直接提供 `/s/`；**没有新进程、新端口、新依赖、新目录**。样式、脚本、图标都编译在 `dist/` 里（发布白名单不变）。
 - Caddy 不用改：`/s/` 经现有的 `study.pccoding666.com` 站点反代过去（请求体上限 15 MB 不变，照片和录音都在其内）。Caddyfile 没开访问日志，配对链接里的一次性码不会落进日志。
-- 环境变量：只多一个可选的 `SEL_AI_MODEL_ASR`（§2，缺省 `qwen3-asr-flash`，用同一个百炼密钥）。百炼配置不全时 `dist/main.js` 启动即失败（与 /v2 其他模型调用同一个守卫），不会悄悄退回 mock。
+- 环境变量：只多一个可选的 `SEL_AI_MODEL_ASR`（§2，缺省 `qwen-audio-3.1-asr-flash`，用同一个百炼密钥）。**生产这把密钥是否有该模型的调用权限还没核实过**（语音转写走百炼原生接口，出站主机仍是 `dashscope.aliyuncs.com`，不需要新的出站放行）。百炼配置不全时 `dist/main.js` 启动即失败（与 /v2 其他模型调用同一个守卫），不会悄悄退回 mock。
 - 时区：网页上的「今天」「距练习纸生成几天」、录结果可选的日期，和服务器的回传日期校验、ISO 周一样，都按**服务器进程的时区**算。上线前确认 `timedatectl | grep 'Time zone'` 是 `Asia/Shanghai`；如果是 UTC，北京时间 0–8 点之间网页和 App 的「今天」会差一天（本次不改单元文件，需要时另行批准加 `Environment=TZ=Asia/Shanghai`）。
 
 ### 10.2 前提：学生手机上必须是**受信任的 HTTPS 主机名**
@@ -458,5 +461,5 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 3. 生成配对链接（10.3），在手机 Safari 打开 → 点「连接这台手机」→ 看到「连上了 ✓」和「今天大约 13 分钟，一共 5 步」。
 4. 分享 →「添加到主屏幕」→ 从主屏幕图标打开：全屏、没有地址栏，仍是「今天」（如果是连接页，按 10.3 最后一条粘贴新链接）。
 5. 点「拍第一页」→「同意，上传」→ 拍一页（用合成或无个人信息的纸）→ 出现「已拍 1 张」→「拍完了，下一步」→ 一两分钟内变成「找到 N 道…」。
-6. 可选：在「说说为什么错」里点「点一下开始说」，允许麦克风，说一句话，文字出现在文本框里（这是第一次真实调用百炼语音识别）。
+6. 可选：在「说说为什么错」里点「点一下开始说」，允许麦克风，说一句话，文字出现在文本框里（这是第一次在生产上真实调用 `qwen-audio-3.1-asr-flash`，同时验证生产密钥有这个模型的权限；出现「这次没转成文字」多半是密钥没有该模型权限或额度，先查这个）。
 
