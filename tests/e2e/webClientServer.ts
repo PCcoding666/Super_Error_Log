@@ -9,6 +9,18 @@
  *   GET  /pairing-link        经管理 socket 生成一次性配对码，返回网页版配对链接
  *   POST /time-travel?days=7  把已有记录整体往前挪 N 天（等于过了 N 天），用来走「下个周末」
  *   GET  /trail               网页版互动记录（audit_event 里 web_* 的行：时间、类型、路由模板#动作、设备 ID），给 E2E 断言用
+ *   故障注入（quality round 2：截错误 / 等待状态、测局部轮询）：
+ *   POST /fault?vision=hold      之后上传的照片停在「AI 正在找题」，直到 vision=release
+ *   POST /fault?vision=release   放行（停住的照片接着找题）
+ *   POST /fault?vision=fail&count=1        之后 count 张照片找题失败（可以重试：「这张没识别成功」）
+ *   POST /fault?vision=unreadable&count=1  之后 count 张照片读不出来（不能重试：「这张识别不了」）
+ *   POST /fault?asr=fail | asr=ok           语音转写失败（/s/voice 回 502）/ 恢复
+ *   POST /fault?print=preparing&done=1      把最近一份练习的打印快照改成「准备中」（第 done 道；开始时间改成 40 秒前）
+ *   POST /fault?print=failed                改成「准备失败」（服务器原文是合成的）
+ *   POST /fault?print=restore               恢复成注入之前的样子
+ *   POST /fault?reset=1                     全部恢复正常
+ *   GET  /fault                             现在注入了什么
+ *   打印快照的注入直接改数据库里的那一行：网页只读这一行，所以页面和真的准备中 / 失败时一样。
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -33,6 +45,8 @@ const { cropPhoto } = await import('../../src/media/images.js');
 const { getDb } = await import('../../src/db/connection.js');
 const { isoWeekKey } = await import('../../src/domain/scheduling.js');
 const { readTrail } = await import('../../src/web/trail.js');
+const { MobileVisionError } = await import('../../src/mobile/vision.js');
+const { TranscribeError } = await import('../../src/ai/asr.js');
 type Vision = import('../../src/mobile/vision.js').MobileVisionBoundary;
 type Candidate = import('../../src/mobile/vision.js').InventoryCandidate;
 type Evidence = import('../../src/ai/evidence.js').Evidence;
@@ -43,11 +57,23 @@ const TOPICS = [
   { tag: '相似三角形', text: (n: number) => `△ABC ∽ △DEF，AB = ${n}，DE = ${n * 2}，求相似比。` },
 ];
 
+/** 故障注入的开关（只在这个合成服务器里）。 */
+const faults = {
+  visionHold: null as null | { promise: Promise<void>; release: () => void },
+  visionFail: 0,
+  visionUnreadable: 0,
+  asrFail: false,
+  print: null as null | { packetId: string; row: Record<string, unknown> },
+};
+
 /** 合成识别：按照片颜色决定这一页有没有批改痕迹；题目、作答全部是编的。 */
 class SyntheticVision implements Vision {
   readonly configured = true;
   readonly supportsCancellation = false;
   async inventory(source: Buffer): Promise<{ candidates: Candidate[]; warnings: string[] }> {
+    if (faults.visionHold) await faults.visionHold.promise;
+    if (faults.visionUnreadable > 0) { faults.visionUnreadable -= 1; throw new MobileVisionError('invalid_image', '照片太模糊，看不清题目', 'inventory', false); }
+    if (faults.visionFail > 0) { faults.visionFail -= 1; throw new MobileVisionError('invalid_output', '模型输出字段不合法：candidates', 'inventory', false); }
     const stats = await sharp(source).stats();
     const marked = (stats.channels[0]?.mean ?? 0) >= (stats.channels[2]?.mean ?? 0);
     const offset = marked ? 1 : 4;
@@ -75,11 +101,55 @@ class SyntheticVision implements Vision {
   }
 }
 
+/** mock 转写；asr=fail 时像真实转写服务出错一样抛 TranscribeError（/s/voice 回 502）。 */
+class SwitchableTranscriber {
+  readonly source = 'mock' as const;
+  private readonly inner = new MockTranscriber();
+  async transcribe(audio: Buffer, _mimeType: string): Promise<string> {
+    if (faults.asrFail) throw new TranscribeError('provider_error', '合成故障：转写服务没响应');
+    return this.inner.transcribe(audio);
+  }
+}
+
+/** 打印快照注入：改最近一份练习的 v2_print_snapshot 那一行；restore 时放回原样。 */
+function injectPrint(state: string, done: number): string {
+  const db = getDb();
+  if (state === 'restore') {
+    if (!faults.print) return 'nothing to restore';
+    const { packetId, row } = faults.print;
+    db.prepare('UPDATE v2_print_snapshot SET status = ?, progress_done = ?, progress_total = ?, snapshot_json = ?, error = ?, created_at = ?, ready_at = ? WHERE packet_id = ?')
+      .run(row.status as string, row.progress_done as number, row.progress_total as number, row.snapshot_json as string | null, row.error as string | null, row.created_at as string, row.ready_at as string | null, packetId);
+    faults.print = null;
+    return 'restored';
+  }
+  const latest = db.prepare('SELECT s.* FROM v2_print_snapshot s JOIN review_packet p ON p.id = s.packet_id ORDER BY p.created_at DESC LIMIT 1').get() as Record<string, unknown> | undefined;
+  if (!latest) throw new Error('还没有打印快照：先建一份练习并开始准备练习纸');
+  const packetId = latest.packet_id as string;
+  if (!faults.print || faults.print.packetId !== packetId) faults.print = { packetId, row: { ...latest } };
+  const total = Number(faults.print.row.progress_total) || 3;
+  if (state === 'preparing') {
+    const started = new Date(Date.now() - 40_000).toISOString();
+    db.prepare("UPDATE v2_print_snapshot SET status = 'preparing', progress_done = ?, progress_total = ?, error = NULL, created_at = ? WHERE packet_id = ?").run(Math.min(done, total), total, started, packetId);
+    return `preparing ${Math.min(done, total)}/${total}`;
+  }
+  if (state === 'failed') {
+    db.prepare("UPDATE v2_print_snapshot SET status = 'failed', error = ? WHERE packet_id = ?").run('辅导服务暂时没响应（合成故障）', packetId);
+    return 'failed';
+  }
+  throw new Error(`unknown print state ${state}`);
+}
+
+function releaseVision(): void {
+  const hold = faults.visionHold;
+  faults.visionHold = null;
+  hold?.release();
+}
+
 const dataDir = path.join(root, 'mobile');
 const service = await assembleCloudService({
   host: '127.0.0.1', port, dataDir, mode: 'cloud', pairingToken: '', pairingUrl: 'https://study.pccoding666.com',
   vision: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', timeoutMs: 1000, bailianOnly: true, models: { inventory: '-', transcribe: '-', verify: '-', ground: '-' } },
-}, { vision: new SyntheticVision(), transcriber: new MockTranscriber() });
+}, { vision: new SyntheticVision(), transcriber: new SwitchableTranscriber() });
 await service.listen();
 
 function pairingCode(): Promise<{ payload: Parameters<typeof webPairingLink>[0] }> {
@@ -128,6 +198,27 @@ http.createServer((request, response) => {
       if (request.method === 'GET' && url.pathname === '/trail') {
         response.setHeader('content-type', 'application/json');
         response.end(JSON.stringify(readTrail()));
+        return;
+      }
+      if (url.pathname === '/fault') {
+        const done: string[] = [];
+        if (request.method === 'POST') {
+          const q = url.searchParams;
+          if (q.get('reset') === '1') { releaseVision(); faults.visionFail = 0; faults.visionUnreadable = 0; faults.asrFail = false; if (faults.print) injectPrint('restore', 0); done.push('reset'); }
+          const vision = q.get('vision');
+          const count = Math.max(1, Math.min(20, Number(q.get('count') ?? 1)));
+          if (vision === 'hold' && !faults.visionHold) { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve; }); faults.visionHold = { promise, release }; done.push('vision hold'); }
+          if (vision === 'release') { releaseVision(); done.push('vision release'); }
+          if (vision === 'fail') { faults.visionFail = count; done.push(`vision fail ×${count}`); }
+          if (vision === 'unreadable') { faults.visionUnreadable = count; done.push(`vision unreadable ×${count}`); }
+          if (vision === 'ok') { releaseVision(); faults.visionFail = 0; faults.visionUnreadable = 0; done.push('vision ok'); }
+          const asr = q.get('asr');
+          if (asr === 'fail' || asr === 'ok') { faults.asrFail = asr === 'fail'; done.push(`asr ${asr}`); }
+          const print = q.get('print');
+          if (print) done.push(injectPrint(print, Math.max(0, Number(q.get('done') ?? 1))));
+        }
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ done, visionHold: faults.visionHold !== null, visionFail: faults.visionFail, visionUnreadable: faults.visionUnreadable, asrFail: faults.asrFail, print: faults.print ? 'injected' : null }));
         return;
       }
       if (request.method === 'POST' && url.pathname === '/time-travel') {
