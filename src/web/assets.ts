@@ -141,7 +141,9 @@ textarea.autogrow{min-height:52px;resize:none;field-sizing:content;overflow:hidd
 .voice.hidden{display:none}
 .voice button{font:inherit;font-weight:600;border-radius:var(--r-pill);border:1.5px solid var(--teal);background:var(--card);color:var(--teal);padding:var(--s-2) var(--s-4);min-height:var(--tap)}
 .voice button.on{background:var(--teal);color:var(--on-teal)}
-.voice .voice-note{flex-basis:100%}
+.voice .voice-note,.voice .voice-wait{flex-basis:100%}
+.voice .voice-wait:empty{display:none}
+.voice .voice-note+.voice-wait{margin-top:calc(var(--s-2) * -1)}
 .voice .voice-note:empty{display:none}
 .voice button.hidden{display:none}
 /* 开着麦克风：音量条（7 根，按音量分 6 档，只动 transform）+ 计时 */

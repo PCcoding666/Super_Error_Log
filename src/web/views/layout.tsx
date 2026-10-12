@@ -164,8 +164,8 @@ export function WaitLine(props: { since: string | null; now: Date; expect: strin
   const seconds = props.since ? Math.max(0, Math.floor((props.now.getTime() - Date.parse(props.since)) / 1000)) : null;
   return (
     <p className="wait-line small" data-testid="wait-line">
-      {seconds !== null && Number.isFinite(seconds) ? <><span data-elapsed={String(seconds)}>{elapsedText(seconds)}</span>{' · '}</> : null}
-      <span>{props.expect}</span>
+      {seconds !== null && Number.isFinite(seconds) ? <><span className="ph" data-elapsed={String(seconds)}>{elapsedText(seconds)}</span>{' · '}</> : null}
+      <Phrased text={props.expect} />
       <span className="wait-net hidden" data-wait-net="">{' · 网络断了，连上后接着等'}</span>
     </p>
   );
@@ -188,6 +188,7 @@ export function VoiceBox(props: { target: string; testIds?: boolean }): ReactNod
         <span className="small muted">最多 60 秒</span>
       </span>
       <span className="small muted voice-note" data-voice-note="" data-testid={t('voice-note')} aria-live="polite" />
+      <span className="small muted voice-wait" data-voice-wait="" data-testid={t('voice-wait')} />
     </div>
   );
 }

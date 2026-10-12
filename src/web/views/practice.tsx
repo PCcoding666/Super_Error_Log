@@ -414,7 +414,8 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
     bar = { caption: props.caption, primary: { title: '准备练习纸', key: 'prepare', post: `/s/print/${practiceId}`, wait: '正在准备练习纸…' }, secondary: [] };
     body = <section className="card"><p>先把练习纸准备好：AI 给每道题写好提示和答案，大约 1 分钟。</p></section>;
   } else if (state.status === 'preparing') {
-    bar = { caption: '大约 1 分钟。可以先离开，回来接着准备。', primary: { title: '正在准备…', key: 'waiting', disabled: true, waiting: true }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
+    // 要多久写在等待行里（按进度推算），底栏只说可以先离开。
+    bar = { caption: '可以先离开，回来接着准备', primary: { title: '正在准备…', key: 'waiting', disabled: true, waiting: true }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
     const percent = state.total ? Math.round(state.done * 100 / state.total) : 0;
     const now = props.now ?? new Date();
     const elapsed = props.since ? Math.max(0, Math.floor((now.getTime() - Date.parse(props.since)) / 1000)) : null;
@@ -423,7 +424,6 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
         <p data-row="print-progress">正在准备练习纸… 第 {state.done}/{state.total} 道</p>
         <div className="progress" role="progressbar" aria-label="准备进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ transform: `scaleX(${percent / 100})` }} /></div>
         <WaitLine since={props.since ?? null} now={now} expect={printExpect(state.done, state.total, elapsed)} />
-        <p className="hint">可以先离开，回来接着准备。</p>
       </section>
     );
   } else if (state.status === 'failed') {

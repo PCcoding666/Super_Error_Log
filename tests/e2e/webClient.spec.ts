@@ -388,7 +388,7 @@ test('等 AI 时局部轮询：只换状态区域（不整页刷新、标题和�
   await page.goto(`${WEB}/s/photos`);
   await expect(row).toContainText('AI 正在找题…');
   await expect(page.locator('body')).toHaveAttribute('data-poll', '3');
-  await expect(page.getByTestId('wait-line')).toContainText(/已经等了 \d+ 秒 · AI 找题一般 1–2 分钟/);
+  await expect(page.getByTestId('wait-line')).toContainText(/已经等了 \d+ 秒 · 找好了这一页会自己更新/);
   // 打上记号：整页刷新的话，这些记号都会没了。
   await page.evaluate(() => { (window as unknown as { __mark: number }).__mark = 1; (document.querySelector('h1') as unknown as { __mark: number }).__mark = 1; });
   const loadedAt = navigations.length;
@@ -594,7 +594,7 @@ test('服务器忙：还没连上的人看到「等一会儿再试；还是不�
     status = (await expiredPage.goto(`${WEB}/s/`))!.status();
   }
   expect(status).toBe(429);
-  await expect(expiredPage.getByTestId('busy-note')).toHaveText('这台手机的连接过期了，要用一个新的二维码或链接重新连。等一会儿再点下面的按钮，按提示做；照片和错题都还在服务器上。');
+  await expect(expiredPage.getByTestId('busy-note')).toHaveText('连接过期了，要请大人给一个新的二维码或链接。照片和错题都还在服务器上。');
   await expect(expiredPage.locator('main')).not.toContainText('还没连上');
   await expired.close();
 });

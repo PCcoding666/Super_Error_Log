@@ -104,7 +104,7 @@ within(scope,'.sheet-wrap').forEach(function(w){if(!once(w,'fit'))return;var s=$
    开着麦克风时：音量条（Web Audio AnalyserNode，只动 transform）+ 计时；底部主按钮暂时不能点（先说完再提交）。
    转写时：说已经转了几秒。转写失败：刚才那段录音还留在页面里，可以「再转一次」，也可以直接打字。打开麦克风期间再点不会开第二个录音。 */
 within(scope,'[data-voice-for]').forEach(function(box){if(!once(box,'voice'))return;var target=document.getElementById(box.getAttribute('data-voice-for'));
-var btn=$('[data-voice-btn]',box),note=$('[data-voice-note]',box),live=$('[data-voice-live]',box),meter=$('[data-voice-meter]',box),clock=$('[data-voice-time]',box),heard=$('[data-voice-heard]',box),retry=$('[data-voice-retry]',box);
+var btn=$('[data-voice-btn]',box),note=$('[data-voice-note]',box),waitEl=$('[data-voice-wait]',box),live=$('[data-voice-live]',box),meter=$('[data-voice-meter]',box),clock=$('[data-voice-time]',box),heard=$('[data-voice-heard]',box),retry=$('[data-voice-retry]',box);
 var form=box.closest('form');var method=$('input[name=method]',form||document);var primary=form&&form.id?document.querySelector('button[form="'+form.id+'"]'):null;
 var ok=target&&btn&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder;
 if(!ok){if(note)note.textContent='可以直接打字';return}
@@ -114,7 +114,7 @@ function clockText(s){return Math.floor(s/60)+':'+('0'+(s%60)).slice(-2)}
 /* 底部主按钮：录音、转写时暂时换字、不能点；结束后换回来 */
 function holdPrimary(text){if(!primary)return;if(!saved)saved={t:primary.textContent,d:primary.disabled};primary.textContent=text;primary.disabled=true;primary.classList.add('disabled')}
 function releasePrimary(){if(!primary||!saved)return;primary.textContent=saved.t;primary.disabled=saved.d;primary.classList.toggle('disabled',saved.d);saved=null;primary.dispatchEvent(new Event('voice-done'))}
-function reset(){btn.classList.remove('on');btn.textContent='点一下开始说';btn.disabled=false}
+function reset(){btn.classList.remove('on','hidden');btn.textContent='点一下开始说';btn.disabled=false;if(waitEl)waitEl.textContent=''}
 function stopMeter(){if(raf)cancelAnimationFrame(raf);raf=0;if(src){try{src.disconnect()}catch(e){}src=null}if(meter)meter.setAttribute('data-level','0')}
 function startMeter(s){if(!ac||!meter)return;try{if(ac.resume)ac.resume();src=ac.createMediaStreamSource(s);analyser=ac.createAnalyser();analyser.fftSize=512;src.connect(analyser)}catch(e){return}
 var buf=new Uint8Array(analyser.fftSize),last=0,lastHeard=0;function loop(ts){raf=requestAnimationFrame(loop);if(ts-last<80)return;last=ts;analyser.getByteTimeDomainData(buf);var sum=0;for(var i=0;i<buf.length;i++){var v=(buf[i]-128)/128;sum+=v*v}
@@ -122,13 +122,14 @@ var rms=Math.sqrt(sum/buf.length);var level=Math.max(0,Math.min(5,Math.round(rms
 if(heard&&ts-lastHeard>500){lastHeard=ts;heard.textContent=level>=1?'听到声音了':'没听到声音，靠近一点说'}}raf=requestAnimationFrame(loop)}
 function stopClock(){if(ticker){clearInterval(ticker);ticker=null}}
 function stop(){if(rec&&rec.state!=='inactive')rec.stop();if(timer){clearTimeout(timer);timer=null}}
-function send(blob){lastBlob=blob;if(retry)retry.classList.add('hidden');btn.textContent='正在转成文字…';btn.classList.remove('on');btn.disabled=true;holdPrimary('正在转成文字…');
-var sent=Date.now();function wait(){if(note)note.textContent='正在转成文字… 已经 '+Math.floor((Date.now()-sent)/1000)+' 秒'}wait();stopClock();ticker=setInterval(wait,1000);
-fetch(box.getAttribute('data-endpoint'),{method:'POST',headers:{'content-type':blob.type.split(';')[0]||'audio/mp4'},body:blob,credentials:'same-origin'}).then(function(r){return r.json().then(function(b){return{ok:r.ok,status:r.status,b:b}})}).then(function(x){stopClock();
+/* 转写中：按钮先收起来（不会再点出第二次）；「正在转成文字…」读一次，「已经 N 秒」每秒更新但不读（不在 aria-live 里） */
+function send(blob){lastBlob=blob;if(retry)retry.classList.add('hidden');btn.classList.remove('on');btn.classList.add('hidden');holdPrimary('正在转成文字…');
+if(note)note.textContent='正在转成文字…';var sent=Date.now();function wait(){if(waitEl)waitEl.textContent='已经 '+Math.floor((Date.now()-sent)/1000)+' 秒，一般几秒就好'}wait();stopClock();ticker=setInterval(wait,1000);
+fetch(box.getAttribute('data-endpoint'),{method:'POST',headers:{'content-type':blob.type.split(';')[0]||'audio/mp4'},body:blob,credentials:'same-origin'}).then(function(r){return r.json().then(function(b){return{ok:r.ok,status:r.status,b:b}})}).then(function(x){stopClock();if(waitEl)waitEl.textContent='';
 if(x.ok&&x.b.text){target.value=(target.value?target.value+' ':'')+x.b.text;target.dispatchEvent(new Event('input'));play(target,'m-rise');if(method)method.value='voice';if(note)note.textContent='转好了，看一眼，不对就改';lastBlob=null}
 else if(x.ok){if(note)note.textContent='没听清，再说一次';lastBlob=null;trailAdd('error','voice_empty');trailSend()}
 else{var again=x.status===429||x.status>=500;if(note)note.textContent=again?'这次没转成文字。刚才的录音还在：点「再转一次」，或者直接打字。':((x.b.error&&x.b.error.message)||'这次没转成文字，再说一次，或者直接打字。');
-if(again&&retry){retry.classList.remove('hidden');play(retry,'m-rise');box.scrollIntoView({block:'nearest'})}else lastBlob=null;trailAdd('error','voice_'+x.status);trailSend()}reset();releasePrimary()}).catch(function(){stopClock();if(note)note.textContent='没传上去。刚才的录音还在：点「再转一次」，或者直接打字。';if(retry){retry.classList.remove('hidden');play(retry,'m-rise');box.scrollIntoView({block:'nearest'})}trailAdd('error','voice_network');reset();releasePrimary()})}
+if(again&&retry){retry.classList.remove('hidden');play(retry,'m-rise');box.scrollIntoView({block:'nearest'})}else lastBlob=null;trailAdd('error','voice_'+x.status);trailSend()}reset();releasePrimary()}).catch(function(){stopClock();if(waitEl)waitEl.textContent='';if(note)note.textContent='没传上去。刚才的录音还在：点「再转一次」，或者直接打字。';if(retry){retry.classList.remove('hidden');play(retry,'m-rise');box.scrollIntoView({block:'nearest'})}trailAdd('error','voice_network');reset();releasePrimary()})}
 if(retry)retry.addEventListener('click',function(){if(lastBlob)send(lastBlob)});
 btn.addEventListener('click',function(){if(rec&&rec.state==='recording'){stop();return}
 /* 打开麦克风要一会儿（第一次还会问权限）：马上给反馈，这期间再点不会开第二个录音 */

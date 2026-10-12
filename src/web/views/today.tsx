@@ -267,7 +267,7 @@ export type BusyReason = 'connected' | 'unpaired' | 'expired';
 const BUSY_NOTES: Record<BusyReason, string> = {
   connected: '已经传上去的照片和错题都在服务器上，不会丢。',
   unpaired: '还没连上服务器。等一会儿再试；还是不行，请大人给一个新的二维码或链接。',
-  expired: '这台手机的连接过期了，要用一个新的二维码或链接重新连。等一会儿再点下面的按钮，按提示做；照片和错题都还在服务器上。',
+  expired: '连接过期了，要请大人给一个新的二维码或链接。照片和错题都还在服务器上。',
 };
 
 export function BusyPage(props: { retryAfterSeconds: number; reason: BusyReason }): ReactNode {

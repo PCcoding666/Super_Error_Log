@@ -175,7 +175,7 @@ export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh:
         ) : (
           <section className="card">
             <ul className="list">{props.photos.map(photo => <PhotoRow key={photo.jobId} photo={photo} isNew={isNew(photo)} justAdded={props.added?.number === photo.number} />)}</ul>
-            {props.refresh ? <WaitLine since={findingSince(props.photos)} now={props.now ?? new Date()} expect="AI 找题一般 1–2 分钟，可以先离开" /> : null}
+            {props.refresh ? <WaitLine since={findingSince(props.photos)} now={props.now ?? new Date()} expect="找好了这一页会自己更新，可以先离开" /> : null}
           </section>
         )}
       </div>

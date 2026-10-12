@@ -665,7 +665,7 @@ describe('稀疏的屏用现有数据填满；服务器忙页不替没连上的�
     }
     const expiredText = expired.replace(/<[^>]+>/g, '');
     expect(expiredText).toContain('服务器有点忙');
-    expect(expiredText).toContain('这台手机的连接过期了，要用一个新的二维码或链接重新连。');
+    expect(expiredText).toContain('连接过期了，要请大人给一个新的二维码或链接。');
     expect(expiredText).toContain('照片和错题都还在服务器上');
     expect(expiredText).not.toContain('还没连上');
 
@@ -705,13 +705,13 @@ describe('等 AI 的页面：局部轮询代替整页刷新（quality round 2）
     expect(waiting).toMatch(/<body[^>]* data-poll="3"/);
     expect(waiting).toContain('<noscript><meta http-equiv="refresh" content="3"/></noscript>');
     for (const region of ['photos', 'more', 'bar']) expect(waiting).toContain(`data-live="${region}"`);
-    expect(waiting).toMatch(/data-testid="wait-line"[^>]*><span data-elapsed="\d+">已经等了 \d+ 秒<\/span>/);
-    expect(waiting).toContain('AI 找题一般 1–2 分钟，可以先离开');
+    expect(waiting).toMatch(/data-testid="wait-line"[^>]*><span class="ph" data-elapsed="\d+">已经等了 \d+ 秒<\/span>/);
+    expect(waiting.replace(/<[^>]+>/g, '')).toContain('找好了这一页会自己更新，可以先离开');
     expect(waiting).toContain('data-announcer=""');
     const today = await browser.text('/s/');
     expect(today).toMatch(/<body[^>]* data-poll="4"/);
     expect(today).toContain('data-live="today"');
-    expect(today).toContain('AI 找好以后，这一步会自己打勾');
+    expect(today.replace(/<[^>]+>/g, '')).toContain('AI 找好以后，这一步会自己打勾');
     expect(await browser.text('/s/capture')).toMatch(/<body[^>]* data-poll="4"/);
 
     // 脚本的轮询：同一页带 x-sel-poll: 1，取三次也不记「打开了一页」。
@@ -759,11 +759,11 @@ describe('等 AI 的页面：局部轮询代替整页刷新（quality round 2）
     expect(elapsed).toBeGreaterThanOrEqual(40);
     expect(elapsed).toBeLessThan(60);
     // 40 秒做了 1 道，还剩 2 道 → 大约 80 秒 → 「还要大约 2 分钟」。
-    expect(preparing).toContain('照现在的速度，还要大约 2 分钟');
+    expect(preparing.replace(/<[^>]+>/g, '')).toContain('照现在的速度，还要大约 2 分钟');
     expect(preparing).toContain('style="transform:scaleX(0.33)"');
     const today = await browser.text('/s/');
     expect(today).toMatch(/<body[^>]* data-poll="4"/);
-    expect(today).toContain('照现在的速度，还要大约 2 分钟');
+    expect(today.replace(/<[^>]+>/g, '')).toContain('照现在的速度，还要大约 2 分钟');
   });
 });
 
