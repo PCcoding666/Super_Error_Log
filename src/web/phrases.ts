@@ -28,8 +28,8 @@ function atomsOf(text: string): Atom[] {
       if (/^\s+$/u.test(segment)) { atoms.push({ text: segment, space: true }); continue; }
       if (!isWordLike && CLOSING.test(segment)) {
         const last = atoms[atoms.length - 1];
-        // 前面是空格（「一张 · 约 2 分钟」的「·」）：跟着后一个词，不单独落在行首。
-        if (last && !last.space) { last.text += segment; last.closer = true; } else pendingOpen += segment;
+        // 前面是空格（「勾 · 漏了题」的「·」）：当成普通的一块，和后面的空格、词粘在一起（「· 漏了」），不改动原文的顺序。
+        if (last && !last.space) { last.text += segment; last.closer = true; } else { atoms.push({ text: pendingOpen + segment }); pendingOpen = ''; }
         continue;
       }
       if (!isWordLike && OPENING.test(segment)) { pendingOpen += segment; continue; }
