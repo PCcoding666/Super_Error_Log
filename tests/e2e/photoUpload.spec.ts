@@ -4,18 +4,18 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { expect, test as baseTest, webkit, type Page } from '@playwright/test';
 
-const test = baseTest.extend<{ gateway: { base: string; codes: string[] } }>({
+const test = baseTest.extend<{ gateway: { base: string; codes: string[]; reloginCodes: string[] } }>({
   gateway: async ({}, use) => {
     const child = fork(path.resolve('tests/e2e/studentHostServer.ts'), [], {
       execArgv: ['--import', 'tsx'], env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock' },
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
     });
     try {
-      const ready = await new Promise<{ base: string; codes: string[] }>((resolve, reject) => {
+      const ready = await new Promise<{ base: string; codes: string[]; reloginCodes: string[] }>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('fixture startup timeout')), 20000);
         child.once('error', e => { clearTimeout(timer); reject(e); });
         child.once('exit', () => { clearTimeout(timer); reject(new Error('fixture exited')); });
-        child.once('message', m => { clearTimeout(timer); resolve(m as { base: string; codes: string[] }); });
+        child.once('message', m => { clearTimeout(timer); resolve(m as { base: string; codes: string[]; reloginCodes: string[] }); });
       });
       await use(ready);
     } finally {
@@ -44,6 +44,89 @@ async function uploaded(page: Page) {
   await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
   await expect(page.getByTestId('photo-tile')).toHaveCount(1);
 }
+
+test('5-question paper stays intact after adding 2 questions from home, refresh and invitation relogin', async ({ page, gateway }, info) => {
+  test.setTimeout(120000);
+  await page.addInitScript(() => { window.print = () => window.dispatchEvent(new Event('afterprint')); });
+  await enter(page, gateway);
+  // Each synthetic worker photo has one unmarked candidate. All data enters through the real gateway.
+  const addOne = async (number: number) => {
+    await page.locator('#library-input').setInputFiles(await jpeg(820 + number, 1100));
+    await expect(page.getByTestId('photo-count')).toHaveText(`已拍 ${number} 张`);
+    await expect(page.getByTestId('next-step-primary')).toHaveText('拍完了，下一步');
+    await page.getByTestId('next-step-primary').click();
+    await expect(page).toHaveURL(/\/s\/photos(?:\?|$)/);
+    const row = page.getByTestId(`photo-row-${number}`);
+    await expect(row).toContainText('这页没有批改痕迹', { timeout: 15000 });
+    await row.click();
+    await page.getByTestId('pick-candidate').click();
+    await page.getByTestId('next-step-primary').click();
+    await expect(page.getByTestId(`photo-row-${number}`)).toContainText('已新增 1 道错题', { timeout: 15000 });
+  };
+  for (let number = 1; number <= 5; number++) {
+    if (number > 1) await page.goto(gateway.base + '/s/capture');
+    await addOne(number);
+  }
+  await page.getByTestId('next-step-primary').click();
+  await expect(page.getByTestId('choose-row')).toHaveCount(5);
+  await page.getByTestId('next-step-primary').click();
+  await page.getByTestId('next-step-secondary-skipWhy').click();
+  await expect(page.getByTestId('next-step-primary')).toHaveText('打印', { timeout: 15000 });
+  const printPath = new URL(page.url()).pathname;
+  const sheetPath = await page.getByTestId('sheet-link').getAttribute('href');
+  expect(sheetPath).toBeTruthy();
+  // Relogin rotates the voice-context session marker; compare all paper markup unchanged.
+  const paperMarkup = (html: string) => html.replace(/<meta name="sel-voice-context" content="[^"]*"\s*\/>/g, '');
+  const beforeSheet = paperMarkup(await (await page.request.get(gateway.base + sheetPath)).text());
+  await page.getByTestId('next-step-primary').click();
+  await page.getByTestId('next-step-primary').click();
+  await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
+  const add = page.getByRole('link', { name: '＋补充错题', exact: true });
+  await expect(add).toBeVisible();
+  await page.screenshot({ path: info.outputPath('home-paper-ready.png'), fullPage: true });
+  for (let number = 6; number <= 7; number++) {
+    await add.click();
+    await expect(page).toHaveURL(/\/s\/capture$/);
+    await addOne(number);
+    if (number === 6) await page.getByRole('link', { name: '回到今天', exact: true }).first().click();
+  }
+  await expect(page.getByTestId('photos-added-status')).toHaveText('已新增 2 道错题');
+  await expect(page.getByTestId('photos-after-week')).toContainText('已保存到错题本，这次补充不会改变之前的练习纸。');
+  await page.screenshot({ path: info.outputPath('supplement-saved.png'), fullPage: true });
+  await page.getByTestId('photos-items').click();
+  await expect(page.getByTestId('item-card')).toHaveCount(7);
+  const numbers = await page.getByTestId('item-card').locator('.meta-line.muted').allTextContents();
+  for (let n = 1; n <= 7; n++) expect(numbers.join('\n')).toContain(`M-${String(n).padStart(2, '0')}`);
+  await page.getByTestId('item-card').last().click();
+  await expect(page.getByTestId('question-text')).toHaveText('求 x 的值。');
+  await page.goto(gateway.base + '/s/');
+  await page.reload();
+  await expect(add).toBeVisible();
+  await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
+  await page.goto(gateway.base + '/s/settings');
+  await page.getByRole('button', { name: '退出登录', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '输入邀请码' })).toBeVisible();
+  await page.getByLabel('12 位邀请码').fill(gateway.reloginCodes[0]!);
+  await page.getByRole('button', { name: '进入我的错题本' }).click();
+  await expect(add).toBeVisible();
+  await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
+  await page.goto(gateway.base + printPath);
+  await expect(page.getByTestId('print-summary')).toContainText('这张练习纸上有 5 道题');
+  expect(paperMarkup(await (await page.request.get(gateway.base + sheetPath)).text())).toBe(beforeSheet);
+  await page.getByTestId('next-step-primary').click();
+  await expect(page.getByTestId('next-step-primary')).toHaveText('打印好了，回到今天');
+  // Existing result entry still contains exactly the original five questions.
+  await page.goto(gateway.base + printPath.replace('/print/', '/record/'));
+  await page.getByTestId('record-day').first().click();
+  await page.getByTestId('next-step-primary').click();
+  for (let i = 1; i <= 5; i++) {
+    await expect(page.getByTestId('next-step-caption')).toHaveText(`第 ${i} 道，共 5 道`);
+    await page.getByTestId('completion-independent').click();
+    await page.getByTestId('correct-yes').click();
+    await page.getByTestId('next-step-primary').click();
+  }
+  await expect(page.getByTestId('results-head')).toHaveText('5 道里，独立做对 5 道');
+});
 // Capture only synthetic upload metadata. No multipart parser assumptions or private fixtures.
 async function observeUploads(page: Page) {
   const calls: { key: string; type: string; hash: string; width: number; height: number }[] = [];

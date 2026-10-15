@@ -47,13 +47,14 @@ beforeEach(() => {
 class SyntheticVision implements MobileVisionBoundary {
   readonly configured = true;
   gate: Promise<void> | null = null;
+  questionCount = 3;
   async inventory(source: Buffer): Promise<VisionInventoryResult> {
     if (this.gate) await this.gate;
     const stats = await sharp(source).stats();
     const marked = (stats.channels[0]?.mean ?? 0) >= (stats.channels[2]?.mean ?? 0);
     return {
-      candidates: [0, 1, 2].map(index => ({
-        number: String(index + 1), box: { x: 0.1, y: 0.05 + index * 0.3, width: 0.8, height: 0.25 },
+      candidates: Array.from({ length: this.questionCount }, (_, index) => ({
+        number: String(index + 1), box: { x: 0.1, y: 0.05 + index * 0.9 / this.questionCount, width: 0.8, height: 0.75 / this.questionCount },
         selectionEvidence: marked ? 'marked_wrong' as const : 'unmarked' as const, partial: false,
       })),
       warnings: [],
@@ -416,7 +417,8 @@ describe('勾出做错的题：没批改的页由学生勾，勾了才精读', (
     expect((await browser.post(`/s/photos/${jobId}/select`, { questionIds: [] })).status).toBe(400);
     // 加完回到勾出做错的题：带两个小数字（加了几道、第几张），页面上说一声「第 1 张：2 道加进错题本了」。
     expect((await browser.post(`/s/photos/${jobId}/select`, { questionIds: ids.slice(0, 2) })).headers.get('location')).toBe('/s/photos?added=2&n=1');
-    const added = (await browser.text('/s/photos?added=2&n=1')).replace(/<[^>]+>/g, '');
+    await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed' && (await env.service.getJob(jobId)).questions.filter(q => q.status === 'ready').length === 2);
+    const added = (await browser.text('/s/photos?added=99&n=1')).replace(/<[^>]+>/g, '');
     expect(added).toContain('第 1 张：2 道加进错题本了 ✓');
     expect(await browser.text('/s/photos?added=x&n=1')).not.toContain('data-testid="photos-added"');
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed' && (await env.service.getJob(jobId)).questions.filter(q => q.status === 'ready').length === 2);
@@ -429,6 +431,85 @@ describe('勾出做错的题：没批改的页由学生勾，勾了才精读', (
 });
 
 describe('一周的闭环：选题 → 说说为什么错（学生自己提交）→ 打印 → 录结果', () => {
+  for (const marked of [true, false]) it(`5 道练习生成后补充 2 道（${marked ? '自动识别' : '学生勾选'}），快照、题号、进度及已有做题记录不变`, async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    env.vision.questionCount = 5;
+    const first = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(first.jobId)).status === 'completed');
+    const choose = await browser.text('/s/choose');
+    const ids = [...choose.matchAll(/name="itemIds"(?: checked="")? value="(itm_[0-9a-f]+)"/g)].map(m => m[1]!);
+    expect(ids).toHaveLength(5);
+    const packetId = (await browser.post('/s/choose', { itemIds: ids })).headers.get('location')!.split('/').pop()!;
+    await browser.post('/s/skip', { step: 'why', practice: packetId });
+    await waitFor(async () => (await browser.text(`/s/print/${packetId}`)).includes('data-testid="sheet"'));
+    const db = getDb();
+    const frozen = () => ({
+      packet: db.prepare('SELECT * FROM review_packet WHERE id = ?').get(packetId),
+      items: db.prepare('SELECT * FROM review_packet_item WHERE packet_id = ? ORDER BY position').all(packetId),
+      numbers: db.prepare('SELECT ei.id, ei.short_id, ei.status FROM error_item ei JOIN review_packet_item rpi ON rpi.item_id = ei.id WHERE rpi.packet_id = ? ORDER BY rpi.position').all(packetId),
+      print: db.prepare('SELECT * FROM v2_print_snapshot WHERE packet_id = ?').get(packetId),
+      attempts: db.prepare('SELECT * FROM review_attempt').all(),
+    });
+    const before = frozen();
+    const sheet = await browser.text(`/s/print/${packetId}/sheet`);
+    const home = await browser.text('/s/');
+    expect(home).toContain('data-testid="today-add-mistakes"');
+    expect(home.replace(/<[^>]+>/g, '')).toContain('这一份练习纸已准备好');
+    let release!: () => void;
+    env.vision.gate = new Promise<void>(resolve => { release = resolve; });
+    env.vision.questionCount = 2;
+    const added = await (await uploadPhoto(browser, await photo(marked ? '#f1c9bc' : '#c8d0f0'))).json() as { jobId: string };
+    try {
+      for (const pathname of ['/s/capture', '/s/photos']) {
+        const html = await browser.text(pathname);
+        expect(html).toContain('照片已收到，正在找题。');
+        expect(html).not.toContain('已新增 2 道错题');
+      }
+      expect(frozen()).toEqual(before);
+    } finally { release(); env.vision.gate = null; }
+    await waitFor(async () => (await env.service.getJob(added.jobId)).status === 'completed');
+    if (!marked) {
+      expect(await browser.text('/s/photos')).not.toContain('已新增 2 道错题');
+      const questions = (await env.service.getJob(added.jobId)).questions.map(q => q.id);
+      expect((await browser.post(`/s/photos/${added.jobId}/select`, { questionIds: questions })).status).toBe(303);
+      await waitFor(async () => (await env.service.getJob(added.jobId)).questions.every(q => q.status === 'ready'));
+    }
+    const photos = await browser.text('/s/photos');
+    expect(photos).toContain('已新增 2 道错题');
+    expect(photos).toContain('已保存到错题本，这次补充不会改变之前的练习纸。');
+    expect(photos.replace(/<[^>]+>/g, '')).toContain('查看这周的错题');
+    expect(photos).toContain('回到今天');
+    const newItems = db.prepare('SELECT item_id FROM mobile_item_link WHERE job_id = ?').all(added.jobId) as { item_id: string }[];
+    expect(newItems).toHaveLength(2);
+    const itemsPage = await browser.text('/s/items');
+    for (const item of newItems) {
+      expect(itemsPage).toContain(`/s/items/${item.item_id}`);
+      expect((await browser.get(`/s/items/${item.item_id}`)).status).toBe(200);
+    }
+    expect(frozen()).toEqual(before);
+    expect(await browser.text(`/s/print/${packetId}/sheet`)).toBe(sheet);
+    // 真正走五道录结果表单，补充的两道不能混入原练习。
+    const dateHtml = await browser.text(`/s/record/${packetId}`);
+    const date = /name="date" value="(\d{4}-\d{2}-\d{2})"/.exec(dateHtml)![1]!;
+    let html = await (await browser.post(`/s/record/${packetId}`, { date, at: '0', go: 'next' })).text();
+    for (let i = 0; i < 5; i++) {
+      expect(html).toContain(`第 ${i + 1} 道，共 5 道`);
+      const fields = Object.fromEntries([...html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)"\/>/g)].map(m => [m[1]!, m[2]!]));
+      const result = await browser.post(`/s/record/${packetId}`, { ...fields, completion: 'independent', correct: 'yes', go: i === 4 ? 'submit' : 'next' });
+      if (i === 4) expect(result.headers.get('location')).toBe(`/s/results/${packetId}`);
+      else html = await result.text();
+    }
+    expect(db.prepare('SELECT COUNT(*) AS n FROM review_attempt WHERE packet_id = ?').get(packetId)).toEqual({ n: 5 });
+    const recorded = frozen();
+    // 再补一张，已有做题记录和打印快照也保持原样。
+    const last = await (await uploadPhoto(browser, await photo('#c1caf2'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(last.jobId)).status === 'completed');
+    await browser.text('/s/photos');
+    expect(frozen()).toEqual(recorded);
+  });
+
   async function chosen(env: Setup): Promise<{ browser: Browser; packetId: string; itemIds: string[] }> {
     const browser = await pairBrowser(env);
     await browser.post('/s/consent');
@@ -474,7 +555,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(await browser.text(`/s/why/${packetId}`)).toContain('3 道里说了 1 道');
   });
 
-  it('跳过直接打印 → 准备好后出现 A4 练习纸；今天变成「这周的事做完了」；当天录的做对不算真会', async () => {
+  it('跳过直接打印 → 准备好后出现 A4 练习纸；今天变成「这一份练习纸已准备好」；当天录的做对不算真会', async () => {
     const env = await setup();
     const { browser, packetId, itemIds } = await chosen(env);
     const skip = await browser.post('/s/skip', { step: 'why', practice: packetId });
@@ -489,7 +570,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const css = await (await browser.get('/s/assets/app.css')).text();
     expect(css).toContain('@page{size:A4');
     const today = await browser.visibleText('/s/?printed=1');
-    expect(today).toContain('这周的事做完了');
+    expect(today).toContain('这一份练习纸已准备好');
     expect(today).toContain('下次打开：下个周末，录结果');
     expect(today).toContain('没打出来？现在打印');
     // 录结果：日期不预选；一题一屏；最后一次提交。
@@ -632,19 +713,19 @@ describe('互动记录：每个动作只记时间、路由模板、动作标识�
     const packetId = (await browser.post('/s/choose', { itemIds })).headers.get('location')!.split('/').pop()!;
     await browser.post('/s/skip', { step: 'why', practice: packetId });
     await waitFor(async () => (await browser.text(`/s/print/${packetId}`)).includes('data-testid="sheet"'));
-    expect(await browser.visibleText('/s/?printed=1')).toContain('这周的事做完了');
+    expect(await browser.visibleText('/s/?printed=1')).toContain('这一份练习纸已准备好');
     // 做完以后又拍了一张（周中入口「又发了卷子？现在拍」也走到这里）。
     const again = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(again.jobId)).status === 'completed');
     const photos = await browser.text('/s/photos');
     expect(photos).toContain('data-testid="photos-after-week"');
-    expect(photos.replace(/<[^>]+>/g, '')).toContain('新拍的题下个周末再选');
+    expect(photos.replace(/<[^>]+>/g, '')).toContain('补充错题');
     // 哪张是新拍的：练习纸生成以后才拍的第 2 张标「新拍的」，第 1 张（已经进了这周的练习）不标。
     expect(photos).toContain('data-testid="photo-new-2"');
     expect(photos).not.toContain('data-testid="photo-new-1"');
     const photosText = photos.replace(/<[^>]+>/g, '');
-    expect(photosText).toContain('下面标着「新拍的」那 1 张不会加进去');
-    expect(photosText).toContain('下个周末选题时，它们会出现在里面');
+    expect(photosText).toContain('这次补充不会改变之前的练习纸');
+    expect(photosText).toContain('查看这周的错题');
     expect(photos).toMatch(/<a class="btn primary" href="\/s\/"[^>]* data-testid="next-step-primary"[^>]*>回到今天<\/a>/);
     expect(photosText).not.toContain('下一步：选这周要练的题');
   });

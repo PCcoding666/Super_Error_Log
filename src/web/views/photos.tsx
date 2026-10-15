@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import type { RecognitionJob } from '../../mobile/contracts.js';
 import type { PhotoView } from '../state.js';
 import { pickMoreCount, unselectedQuestions } from '../photoPlan.js';
 import { Page, Phrased, Problem, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
@@ -72,6 +71,7 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
         <ul className="upload-list" data-upload-list="" aria-label="照片上传列表" />
       </form>
       <p data-testid="photo-count" className={has ? undefined : 'hidden'}><b>已拍 {props.photos.length} 张</b></p>
+      <div data-live="capture-status">{props.photos.some(photo => photo.state === 'finding') ? <p role="status">照片已收到，正在找题。</p> : null}</div>
       <div className="grid" data-live="grid" data-photo-grid="">
         {visible.map(photo => {
           const status = photoStatus(photo);
@@ -88,12 +88,6 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
   );
 }
 
-function autoCount(job: RecognitionJob | null): { auto: number; picked: number } {
-  const questions = (job?.questions ?? []).filter(q => q.status !== 'unselected' && q.status !== 'skipped');
-  const picked = questions.filter(q => q.selectedByStudent).length;
-  return { auto: questions.length - picked, picked };
-}
-
 function PhotoRow(props: { photo: PhotoView; isNew?: boolean; justAdded?: boolean }): ReactNode {
   const { photo } = props;
   const prefix = `第 ${photo.number} 张 · `;
@@ -103,7 +97,7 @@ function PhotoRow(props: { photo: PhotoView; isNew?: boolean; justAdded?: boolea
     const more = pickMoreCount(photo.job);
     return (
       <li className="row row-block" data-testid={`photo-row-${photo.number}`} data-row={`photo-${photo.number}`}>
-        <span className="tone-blue">{prefix}AI 正在找题…</span>{tag}
+        <span className="tone-blue">{prefix}照片已收到，正在找题。</span>{tag}
         {more ? <a href={`/s/photos/${photo.jobId}`} className="more" data-key="photo-pick-more"><Phrased text={`还有 ${more} 道没勾 · 漏了题可以补`} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a> : null}
       </li>
     );
@@ -134,9 +128,9 @@ function PhotoRow(props: { photo: PhotoView; isNew?: boolean; justAdded?: boolea
     );
   }
   if (photo.dismissed && photo.failure) return null;
-  const { auto, picked } = autoCount(photo.job);
   const left = unselectedQuestions(photo.job).length;
-  const text = picked === 0 ? `找到 ${auto} 道有红叉的题` : `${auto + picked} 道已进错题本`;
+  // 识别完成不等于入库成功（例如重复照片或桥接失败）；只报实际保存的题数。
+  const text = photo.itemCount > 0 ? `已新增 ${photo.itemCount} 道错题` : '暂未新增错题';
   return (
     <li className={`row row-block${props.justAdded ? ' m-rise' : ''}`} data-testid={`photo-row-${photo.number}`} data-row={`photo-${photo.number}`}>
       <span className="tone-green"><Phrased text={`${prefix}${text}`} /></span>{tag}
@@ -157,21 +151,28 @@ export function findingSince(photos: PhotoView[]): string | null {
 
 export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh: boolean; itemCount: number; afterWeek?: boolean; newSince?: string | null;
   added?: { count: number; number: number } | null; now?: Date; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
-  const since = props.afterWeek && props.newSince ? Date.parse(props.newSince) : NaN;
+  const since = props.newSince ? Date.parse(props.newSince) : NaN;
   const isNew = (photo: PhotoView): boolean => Number.isFinite(since) && Date.parse(photo.registeredAt) > since;
-  const newCount = props.photos.filter(isNew).length;
+  const newPhotos = props.photos.filter(isNew);
+  const newCount = newPhotos.length;
+  const newItemCount = newPhotos.reduce((count, photo) => count + photo.itemCount, 0);
+  const finding = newPhotos.some(photo => photo.state === 'finding');
   return (
     <Page title="勾出做错的题" bar={props.bar} pollSeconds={props.refresh ? 3 : undefined} flash={props.flash}>
       <h1>勾出做错的题</h1>
-      {props.added ? <div className="flash m-rise" role="status" data-testid="photos-added">第 {props.added.number} 张：{props.added.count} 道加进错题本了 ✓</div> : null}
+      <div data-live="added">{props.added ? <div className="flash m-rise" role="status" data-testid="photos-added">第 {props.added.number} 张：{props.added.count} 道加进错题本了 ✓</div> : null}</div>
       <p className="lead">有红叉、订正的题，AI 会自己找出来。没批改过的页（比如答题卡另交的），要你自己勾。</p>
-      {props.afterWeek ? (
-        <section className="card callout" data-testid="photos-after-week" data-live="after">
-          <h2 className="card-title"><Phrased text="新拍的题下个周末再选" /></h2>
-          <p data-testid="photos-new-note">{newCount > 0 ? quoted(`这周的练习纸已经生成了，下面标着「新拍的」那 ${newCount} 张不会加进去。`) : '这周的练习纸已经生成了，新拍的卷子不会加进去。'}</p>
-          <p>{props.refresh ? 'AI 找好以后，' : ''}新找到的题会进<b>错题本</b>{quoted('，「这周的错题」里能看到；下个周末选题时，它们会出现在里面。')}</p>
+      <div data-live="after">
+      {props.afterWeek || newCount > 0 ? (
+        <section className="card callout" data-testid="photos-after-week">
+          <h2 className="card-title">补充错题</h2>
+          {newCount > 0 ? <p role="status" data-testid="photos-added-status">{finding ? '照片已收到，正在找题。' : newItemCount > 0 ? `已新增 ${newItemCount} 道错题` : newPhotos.some(photo => photo.state === 'needsPick') ? '照片已收到，请勾出做错的题。' : '暂未新增错题，请查看下方照片状态。'}</p> : null}
+          {newItemCount > 0 && !finding
+            ? <p>已保存到错题本，这次补充不会改变之前的练习纸。</p>
+            : <p data-testid="photos-new-note">这次补充不会改变之前的练习纸，找到的错题会在保存后出现在错题本。</p>}
         </section>
       ) : null}
+      </div>
       {/* 找题的进度：开着脚本时这一块和底栏按需换掉（局部更新），页面别的地方不动。 */}
       <div data-live="photos">
         {props.photos.length === 0 ? (
@@ -184,7 +185,8 @@ export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh:
         )}
       </div>
       <div data-live="more">
-        {props.itemCount > 0 ? <a className="more" href="/s/items" data-testid="photos-items"><Phrased text={`看看找到的错题（${props.itemCount} 道）`} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a> : null}
+        {props.itemCount > 0 ? <a className="more" href="/s/items" data-testid="photos-items"><Phrased text={`查看这周的错题（${props.itemCount} 道）`} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a> : null}
+        <a className="more" href="/s/" data-key="photos-home">回到今天<span aria-hidden="true">›</span></a>
       </div>
     </Page>
   );

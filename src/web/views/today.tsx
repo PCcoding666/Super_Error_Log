@@ -109,7 +109,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
   if (plan.stage === 'done') {
     content = (
       <section className="card" data-testid="today-done" data-steps="" data-stage="done">
-        <h2 className="card-title" data-testid="today-done-title"><Phrased text="这周的事做完了" prefix={<><span className="tone-green tick" aria-hidden="true" data-done-tick="">✓</span> </>} /></h2>
+        <h2 className="card-title" data-testid="today-done-title"><Phrased text="这一份练习纸已准备好" prefix={<><span className="tone-green tick" aria-hidden="true" data-done-tick="">✓</span> </>} /></h2>
         <p>把练习纸带回学校，<b>{slot}</b>在纸上做。</p>
         <p><Phrased text={PAPER_RULES} /></p>
         <p className="muted">下个周末打开错题本，录一下做的结果。</p>
@@ -149,6 +149,10 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
       <div data-live="today">{content}
         {finding ? <p className="small muted" data-testid="today-processing">照片已保存，正在处理。你可以先离开，回来会接着显示进度。<a href="/s/photos" data-key="today-progress">查看处理进度</a></p> : null}
       </div>
+      <section className="card">
+        <a className="btn primary" href="/s/capture" data-testid="today-add-mistakes" aria-describedby="add-mistakes-hint">＋补充错题</a>
+        <p className="small muted" id="add-mistakes-hint">拍照或从相册选图，随时添加。</p>
+      </section>
       {props.showInstallHint ? <InstallHint /> : null}
       <section className="card" aria-labelledby="anytime-title">
         <h2 className="section-label" id="anytime-title">随时可以看</h2>

@@ -445,7 +445,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const refresh = state.photos.some(photo => photo.state === 'finding');
     const err = request.query.err === 'retry' ? '这次没重试成功，过一会儿再试。' : null;
     // 刚从勾选面板加了题回来：说一声加了几道，那一张的那一行浮上来（只是两个小数字，不带任何 ID）。
-    const added = /^[1-9]\d?$/.test(str(request.query.added)) && /^[1-9]\d?$/.test(str(request.query.n)) ? { count: Number(str(request.query.added)), number: Number(str(request.query.n)) } : null;
+    const addedPhoto = state.photos.find(photo => photo.number === Number(str(request.query.n)));
+    const added = /^[1-9]\d?$/.test(str(request.query.added)) && addedPhoto && addedPhoto.itemCount > 0 ? { count: addedPhoto.itemCount, number: addedPhoto.number } : null;
     const photos = state.photos.filter(photo => !(photo.dismissed && photo.failure));
     // 这周的练习纸已经生成（做完了 / 周中）以后又拍了卷子：这周的练习已经定了，不再带他去选题；
     // 说清楚新找到的题去了哪（进错题本，下个周末再选），下一步是「回到今天」（门槛 G3）。
@@ -454,11 +455,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       const bar: BarModel = needsPick
         ? { caption: '', primary: { title: `勾第 ${needsPick.number} 张`, key: 'openPick', href: `/s/photos/${needsPick.jobId}` }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] }
         : { caption: refresh ? 'AI 在后台找题，可以先回去' : '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
-      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.createdAt ?? null, added, now: ctx.now(), flash: { err } }));
+      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.generatedAt ?? null, added, now: ctx.now(), flash: { err } }));
       return;
     }
     const bar = nextStepBar(state, 'pick');
-    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, added, now: ctx.now(), flash: { err } }));
+    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, newSince: state.latestDetail?.generatedAt ?? null, added, now: ctx.now(), flash: { err } }));
   }));
 
   const weekPhoto = async (request: Request, jobId: string) => {
