@@ -81,7 +81,7 @@ async function stubPrint(page: Page): Promise<void> {
   });
 }
 
-test('周末 A：只按底部下一步按钮，从配对走到「这周的事做完了」（J7 网页版）', async ({ page, request }) => {
+test('周末 A：只按底部下一步按钮，从配对走到「这一份练习纸已准备好」（J7 网页版）', async ({ page, request }) => {
   const { link } = await (await request.get(`${CONTROL}/pairing-link`)).json() as { link: string };
   await stubPrint(page);
   const errors = collectErrors(page);
@@ -108,7 +108,7 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
   await next(page, '拍完了，下一步');
   await expect(page).toHaveURL(/\/s\/photos$/);
   await waitForPrimary(page, '下一步：选这周要练的题');
-  await expect(page.getByTestId('photo-row-1')).toContainText('找到 3 道有红叉的题');
+  await expect(page.getByTestId('photo-row-1')).toContainText('已新增 3 道错题');
   await primary(page).click();
 
   // 第 3 步：选题（推荐默认全选）。
@@ -137,8 +137,8 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
   await primary(page).click();
   await next(page, '打印好了，回到今天');
 
-  // 回到今天：这周的事做完了；没有主按钮，只留「没打出来？现在打印」。
-  await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
+  // 回到今天：这一份练习纸已准备好；没有主按钮，只留「没打出来？现在打印」。
+  await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
   await expect(page.getByTestId('today-done')).toContainText('下个周末打开错题本，录一下做的结果。');
   await expect(page.getByTestId('next-step-caption')).toHaveText('下次打开：下个周末，录结果');
   await expect(secondary(page, 'print')).toHaveText('没打出来？现在打印');
@@ -154,7 +154,7 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
   expect(Math.abs(height - 841.9)).toBeLessThan(2);
   await page.emulateMedia({ media: 'screen' });
 
-  // 从配对到「这周的事做完了」、再到练习纸 A4：页面报错与控制台 error 一条都没有。
+  // 从配对到「这一份练习纸已准备好」、再到练习纸 A4：页面报错与控制台 error 一条都没有。
   expect(errors).toEqual([]);
 
   // 没联网 / 服务器连不上：Service Worker 只缓存了外壳，导航失败时给离线页（不含任何学生数据）。
@@ -296,23 +296,24 @@ test.describe('下个周末', () => {
     await waitForPrimary(page, '打印');
     await primary(page).click();
     await next(page, '打印好了，回到今天');
-    await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
+    await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
     await expect(primary(page)).toHaveCount(0);
 
     // 做完以后又拍了一张（门槛 G3）：「勾出做错的题」说明新题去了哪里，下一步是回到今天，不再带去选题。
-    await page.goto(`${WEB}/s/capture`);
+    await page.getByTestId('today-add-mistakes').click();
+    await expect(page).toHaveURL(/\/s\/capture$/);
     const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('add-page').click()]);
     await chooser.setFiles({ name: 'page-3.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f0c8c0', 760) });
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张', { timeout: 20_000 });
     await next(page, '拍完了，下一步');
     await expect(page).toHaveURL(/\/s\/photos$/);
-    await expect(page.getByTestId('photos-after-week')).toContainText('新拍的题下个周末再选');
+    await expect(page.getByTestId('photos-after-week')).toContainText('补充错题');
     await expect(page.getByTestId('photo-new-2')).toHaveText('新拍的');
     await expect(page.getByTestId('photo-new-1')).toHaveCount(0);
-    await expect(page.getByTestId('photos-after-week')).toContainText('下个周末选题时，它们会出现在里面');
+    await expect(page.getByTestId('photos-after-week')).toContainText('这次补充不会改变之前的练习纸');
     await expect(primary(page)).toHaveText('回到今天');
     await next(page, '回到今天');
-    await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
+    await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
     // 整个周末 B（拍、录结果、勾、选、语音、打印、做完后又拍）：页面报错与控制台 error 一条都没有。
     expect(errors).toEqual([]);
     fs.rmSync(STATE, { force: true });
@@ -356,7 +357,7 @@ test.describe('关掉脚本', () => {
     await expect(page).toHaveURL(/\/sheet$/);
     await expect(page.getByTestId('sheet')).toContainText('做完再看');
     await next(page, '打印好了，回到今天');
-    await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
+    await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
   });
 });
 
@@ -396,10 +397,26 @@ async function pairedPage(browser: Browser, options: BrowserContextOptions = {})
 async function upload(page: Page, color: string): Promise<number> {
   await page.goto(`${WEB}/s/capture`);
   const before = await page.getByTestId('photo-tile').count();
-  await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic(color, 900) });
+  await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic(color, 900 + before) });
   await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1, { timeout: 20_000 });
   return before + 1;
 }
+
+test('拍照页识别结束后自动移除正在找题提示', async ({ browser }) => {
+  const page = await pairedPage(browser);
+  await fault('vision=hold');
+  try {
+    const number = await upload(page, '#f0c1b8');
+    const status = page.locator('[data-live="capture-status"]');
+    await expect(status).toHaveText('照片已收到，正在找题。');
+    await fault('vision=release');
+    await expect(status).toBeEmpty({ timeout: 15000 });
+    await expect(page.getByTestId('photo-tile').nth(number - 1)).toContainText('找好了');
+  } finally {
+    await fault('vision=release');
+    await page.context().close();
+  }
+});
 
 test('等 AI 时局部轮询：只换状态区域（不整页刷新、标题和页面上的东西都还是原来那个），状态变了只记一次 update', async ({ browser }) => {
   const page = await pairedPage(browser);
@@ -413,7 +430,7 @@ test('等 AI 时局部轮询：只换状态区域（不整页刷新、标题和�
     if (request.headers()['x-sel-poll'] === '1') polls += 1;
   });
   await page.goto(`${WEB}/s/photos`);
-  await expect(row).toContainText('AI 正在找题…');
+  await expect(row).toContainText('照片已收到，正在找题。');
   await expect(page.locator('body')).toHaveAttribute('data-poll', '3');
   await expect(page.getByTestId('wait-line')).toContainText(/已经等了 \d+ 秒 · 找好了这一页会自己更新/);
   // Start after navigation has settled. Chromium/SW can issue more than one
@@ -428,7 +445,7 @@ test('等 AI 时局部轮询：只换状态区域（不整页刷新、标题和�
   await expect.poll(() => polls, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
   const waited = await page.getByTestId('wait-line').innerText();
   await fault('vision=release');
-  await expect(row).toContainText('找到 3 道有红叉的题', { timeout: 30_000 });
+  await expect(row).toContainText('已新增 3 道错题', { timeout: 30_000 });
   await expect(page.locator('body')).not.toHaveAttribute('data-poll', /.*/, { timeout: 15_000 });
   expect(await page.evaluate(() => [(window as unknown as { __mark?: number }).__mark, (document.querySelector('h1') as unknown as { __mark?: number }).__mark])).toEqual([1, 1]);
   expect(navigations.length - loadedAt).toBe(0);
@@ -490,10 +507,10 @@ test.describe('关掉脚本（等 AI 的页面）', () => {
     page.on('load', () => { loads += 1; });
     await page.goto(`${WEB}/s/photos`);
     await expect(page.locator('meta[http-equiv=refresh]')).toHaveAttribute('content', '3');
-    await expect(row).toContainText('AI 正在找题…');
+    await expect(row).toContainText('照片已收到，正在找题。');
     await expect.poll(() => loads, { timeout: 12_000 }).toBeGreaterThanOrEqual(2);
     await fault('vision=release');
-    await expect(row).toContainText('找到 3 道有红叉的题', { timeout: 30_000 });
+    await expect(row).toContainText('已新增 3 道错题', { timeout: 30_000 });
     await expect(page.locator('meta[http-equiv=refresh]')).toHaveCount(0);
     await page.context().close();
   });

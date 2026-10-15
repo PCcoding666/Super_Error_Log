@@ -10,7 +10,9 @@ import { RateLimiter } from '../../src/mobile/rateLimit.js';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-invite-browser-'));
 const registry = StudentRegistry.open(root);
-const codes = [0, 1].map(() => registry.issueInvitation(registry.createStudent().studentId).code);
+const students = [0, 1].map(() => registry.createStudent().studentId);
+const codes = students.map(id => registry.issueInvitation(id).code);
+const reloginCodes = students.map(id => registry.issueInvitation(id).code);
 const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_STUDENT_WORKER_FAKE: '1' } });
 const gateway = await createStudentHostGateway({ registry, pool });
 const app = express();
@@ -18,7 +20,7 @@ app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: req => req.sock
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-process.send?.({ base, codes });
+process.send?.({ base, codes, reloginCodes });
 let stopping = false;
 async function stop() {
   if (stopping) return;
