@@ -7,7 +7,8 @@
  * - 转发：其余 /s/* 按会话找到学生，流式代理到该学生的独立 worker 进程。
  *   - 禁止旧 /s/pair（绕过新登录的口子）与任何含编码/穿越字符的路径，绝不转发到 /v1 /v2。
  *   - 请求头白名单重建：过滤用户带来的 sel_device、authorization 与转发头；注入只有父进程知道的内部
- *     sel_device 令牌与真实 IP（父进程可信 Caddy 规则）。原始 Host 保留。
+ *     sel_device 令牌、真实 IP 与账号身份标签 x-sel-internal-account-role（只是元数据，来自注册表，
+ *     浏览器带来的同名头一律丢弃）。原始 Host 保留。
  *   - 响应 Set-Cookie 只放行业务 cookie（sel_consent/sel_photos/sel_skip/sel_a2hs），
  *     绝不把内部 sel_device 或 sel_student 发给浏览器；含学生数据的响应一律 no-store。
  *   - 请求体流式转发（不解析 multipart）；有限超时；客户端断连取消上游请求（POST 不自动重放）。
@@ -15,6 +16,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import express, { Router, type Request, type Response } from 'express';
+import { isAccountRole } from './accountRole.js';
 import { RegistryError, StudentRegistry, resolveStudentHostDir } from './registry.js';
 import { StudentWorkerPool, WorkerStartError } from './workers.js';
 import { registerStaticAssets } from '../web/staticAssets.js';
@@ -221,6 +223,9 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       response.locals.studentId = session.studentId;
       // Bind a page's recording to this browser session without exposing the bearer token.
       response.locals.voiceContext = crypto.createHash('sha256').update(token!).digest('hex');
+      // 账号身份标签：每请求从注册表现读，set-role 后下一个请求即生效，不用重新登录/重启。
+      // 只是元数据，不参与鉴权；浏览器/查询串/表单里的任何「role」都不会被采信。
+      response.locals.accountRole = registry.getAccountRole(session.studentId);
       next();
     });
 
@@ -274,6 +279,9 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     if ((request.method === 'GET' || request.method === 'POST') && !/^\/voice\/?$/i.test(request.path)) {
       headers['x-sel-internal-voice-context'] = String(response.locals.voiceContext);
     }
+    // 账号身份标签：只由父进程按注册表下发（上面头白名单重建时浏览器带来的同名头已被丢弃）。
+    const accountRole = response.locals.accountRole;
+    if (isAccountRole(accountRole)) headers['x-sel-internal-account-role'] = accountRole;
     const clientCookies = readCookies(request);
     const cookieParts = [...BUSINESS_COOKIES]
       .filter(name => clientCookies[name] !== undefined)
