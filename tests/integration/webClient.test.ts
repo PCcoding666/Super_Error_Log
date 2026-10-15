@@ -297,6 +297,28 @@ describe('连接：链接配对 → httpOnly cookie；没有 cookie 只看到连
 });
 
 describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 共用准入', () => {
+  it('今天页等待找题时自动刷新并提供查看进度；完成后停止刷新', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    let release!: () => void;
+    env.vision.gate = new Promise<void>(resolve => { release = resolve; });
+    try {
+      const response = await uploadPhoto(browser, await photo('#f0d0c8'));
+      const { jobId } = await response.json() as { jobId: string };
+      const waiting = await browser.text('/s/');
+      expect(waiting).toContain('data-refresh="4"');
+      expect(waiting).toContain('data-testid="today-processing"');
+      expect(waiting).not.toContain('大约 1–2 分钟');
+      release();
+      await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
+      const done = await browser.text('/s/');
+      expect(done).not.toContain('data-refresh=');
+      expect(done).not.toContain('data-testid="today-processing"');
+      expect(done).toContain('选这周要练的题');
+    } finally { release(); }
+  });
+
   it('没同意不收照片；同意后上传、登记进本周、原图去掉 EXIF', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
