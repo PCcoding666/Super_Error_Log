@@ -212,6 +212,11 @@ textarea.autogrow{min-height:52px;resize:none;field-sizing:content;overflow:hidd
 @media (prefers-reduced-motion:reduce){.meter{display:none}.heard{display:inline}}
 .progress{height:8px;border-radius:var(--r-pill);background:var(--line);overflow:hidden;margin:var(--s-2) 0}
 .progress i{display:block;height:100%;background:var(--teal);transform-origin:left center;transform:scaleX(0);transition:transform var(--dur-3) var(--ease)}
+.upload-list{list-style:none;padding:0;margin:var(--s-3) 0}
+.upload-item{padding:var(--s-2) 0;border-bottom:1px solid var(--line)}
+.upload-name{font-weight:600;overflow-wrap:anywhere}
+[data-photo-grid] figcaption{overflow-wrap:anywhere}
+label[aria-disabled=true]{opacity:.6;cursor:default}
 .wait-line{color:var(--muted);margin:var(--s-2) 0 0;font-variant-numeric:tabular-nums}
 details{margin:var(--s-3) 0}
 summary{cursor:pointer;font-weight:600;min-height:var(--tap);padding:10px 0;line-height:24px}

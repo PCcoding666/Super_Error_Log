@@ -258,6 +258,64 @@ describe('voice request and microphone lifecycle', () => {
 });
 
 describe('poll request lifecycle', () => {
+  it('uses the current grid and camera labels when a poll completed before album selection', async () => {
+    const html = `<!doctype html><body data-poll="3">
+      <form data-upload action="/s/capture" data-photo-count="1">
+        <input id="camera-input" type="file"><input id="library-input" type="file">
+        <div data-upload-progress><div role="progressbar"><i></i></div></div>
+        <p data-upload-message></p><ul data-upload-list></ul><button type="button" data-upload-retry>retry</button>
+      </form>
+      <p data-testid="photo-count">已拍 1 张</p>
+      <div data-live="grid" data-photo-grid><figure data-testid="photo-tile">waiting</figure></div>
+      <nav class="next-bar" data-live="bar"><label for="camera-input">camera</label><label for="library-input">album</label></nav>
+    </body>`;
+    const page = await boot(html);
+    await page.clock.fastForward(3_001);
+    await respond(page, 200, html.replace(' data-poll="3"', '').replace('waiting', 'found').replace('>camera<', '>take another<'));
+    await page.waitForFunction(() => !document.body.hasAttribute('data-poll'));
+    expect(await page.locator('[data-photo-grid]').textContent()).toBe('found');
+    const base64 = await page.evaluate(() => {
+      XMLHttpRequest.prototype.send = function() {
+        (window as unknown as { finishSyntheticUpload: () => void }).finishSyntheticUpload = () => {
+          Object.defineProperty(this, 'status', { value: 200 });
+          Object.defineProperty(this, 'responseText', { value: JSON.stringify({ ok: true, jobId: 'synthetic-job' }) });
+          this.onload?.call(this, new ProgressEvent('load'));
+        };
+      };
+      const canvas = document.createElement('canvas'); canvas.width = 4; canvas.height = 4;
+      return canvas.toDataURL('image/png').split(',')[1]!;
+    });
+    await page.locator('#library-input').setInputFiles([
+      { name: 'valid.png', mimeType: 'image/png', buffer: Buffer.from(base64, 'base64') },
+      { name: 'broken.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('broken') },
+    ]);
+    await page.waitForFunction(() => typeof (window as unknown as { finishSyntheticUpload?: () => void }).finishSyntheticUpload === 'function');
+    await expect.poll(() => page.locator('.next-bar label[for=camera-input]').getAttribute('aria-disabled')).toBe('true');
+    expect(await page.locator('.next-bar label[for=camera-input]').evaluate(label => label.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))).toBe(false);
+    await page.evaluate(() => (window as unknown as { finishSyntheticUpload: () => void }).finishSyntheticUpload());
+    await page.waitForFunction(() => document.querySelector('[data-upload-message]')?.textContent?.includes('1 张失败'));
+    expect(await page.locator('[data-photo-grid] [data-testid=photo-tile]').count()).toBe(2);
+    expect(await page.locator('[data-testid=photo-count]').textContent()).toBe('已拍 2 张');
+  });
+
+  it('retains local upload results when an earlier poll finishes during a pending batch', async () => {
+    const page = await boot(pollHtml.replace('<div data-live=', '<form data-upload></form><div data-live='));
+    await page.clock.fastForward(3_001);
+    await page.waitForFunction(() => (window as unknown as TestWindow).__lifecycle.requests.length === 1);
+    await page.evaluate(() => {
+      document.querySelector('form[data-upload]')!.setAttribute('data-upload-pending', '');
+      document.querySelector('[data-live=status]')!.textContent = 'local uploaded photos';
+    });
+    await respond(page, 200, '<body><div data-live="status">server status</div></body>');
+    await page.clock.runFor(50);
+    expect(await page.locator('[data-live=status]').textContent()).toBe('local uploaded photos');
+    await page.clock.fastForward(3_001);
+    expect(await stats(page)).toMatchObject({ requests: 2, errors: [] });
+    await respond(page, 200, '<body><div data-live="status">new server status</div></body>', false, 1);
+    await page.clock.runFor(50);
+    expect(await page.locator('[data-live=status]').textContent()).toBe('local uploaded photos');
+  });
+
   it.each([false, true])('recovers from a stalled poll body=%s without a reload or a permanent busy flag', async stallBody => {
     const page = await boot(pollHtml);
     await page.clock.fastForward(3_001);

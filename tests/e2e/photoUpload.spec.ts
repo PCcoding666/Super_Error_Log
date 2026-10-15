@@ -37,8 +37,8 @@ async function enter(page: Page, gateway: { base: string; codes: string[] }) {
   await page.getByRole('button', { name: '同意，上传', exact: true }).click();
   await expect(page.locator('#library-input')).toBeAttached();
 }
-async function jpeg(width = 820, height = 1100) {
-  return { name: 'page.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width, height, channels: 3, background: '#c6cff2' } }).jpeg().toBuffer() };
+async function jpeg(width = 820, height = 1100, background = '#c6cff2') {
+  return { name: 'page.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width, height, channels: 3, background } }).jpeg().toBuffer() };
 }
 async function uploaded(page: Page) {
   await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
@@ -66,6 +66,158 @@ async function observeUploads(page: Page) {
   });
   return calls;
 }
+
+test('album queue uploads five photos once, keeps four successes, and retries only the failed photo', async ({ page, gateway }) => {
+  await enter(page, gateway);
+  const calls = await observeUploads(page);
+  let releaseFirst!: () => void;
+  const held = new Promise<void>(resolve => { releaseFirst = resolve; });
+  let posts = 0, active = 0, maxActive = 0;
+  const accepted: string[] = [];
+  await page.route('**/s/capture', async route => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    const attempt = ++posts;
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    try {
+      if (attempt === 1) await held;
+      if (attempt === 3) { await route.abort(); return; }
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      accepted.push((await response.json() as { jobId: string }).jobId);
+      await route.fulfill({ response });
+    } finally { active -= 1; }
+  });
+  const files = await Promise.all(['#c6cff2', '#c7cff2', '#c8cff2', '#c9cff2', '#cAcff2'].map(async (color, i) => ({ ...await jpeg(820, 1100, color), name: `卷子-${i + 1}.jpg` })));
+  await expect(page.locator('#library-input')).toHaveAttribute('multiple');
+  await expect(page.locator('#camera-input')).toHaveAttribute('capture', 'environment');
+  await expect(page.locator('#camera-input')).not.toHaveAttribute('multiple');
+  await page.locator('#library-input').setInputFiles(files);
+  await expect(page.locator('#upload-form')).toHaveAttribute('data-upload-pending');
+  await expect.poll(() => posts).toBe(1);
+  const rows = page.locator('[data-upload-item]');
+  await expect(rows).toHaveCount(5);
+  await expect(rows.first()).toContainText('卷子-1.jpg');
+  await expect(rows.nth(1)).toContainText('等待上传');
+  await expect(page.locator('#library-input')).toBeDisabled();
+  await expect(page.locator('[data-upload-progress]')).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: '整批上传进度' })).not.toHaveAttribute('aria-valuenow', '100');
+  // Duplicate DOM events and form submits cannot enqueue another copy of the selected batch.
+  await page.evaluate(() => {
+    document.querySelector('#library-input')!.dispatchEvent(new Event('change'));
+    document.querySelector('#upload-form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+  });
+  releaseFirst();
+  await expect(page.getByTestId('upload-message')).toContainText('已上传 4/5 张');
+  await expect(page.getByTestId('upload-message')).toContainText('1 张失败');
+  await expect(rows.locator('[data-upload-state="succeeded"]')).toHaveCount(4);
+  await expect(rows.locator('[data-upload-state="failed"]')).toHaveCount(1);
+  await expect(page.getByRole('progressbar', { name: '整批上传进度' })).toHaveAttribute('aria-valuenow', '80');
+  await expect(page.locator('[data-upload-next]')).toBeVisible();
+  await expect(page.getByTestId('capture-tips')).toBeHidden();
+  await expect(page.getByTestId('next-step-primary')).toHaveText('再拍一页');
+  expect(await page.locator('[data-upload-retry]').evaluate(button => {
+    const bounds = button.getBoundingClientRect();
+    const footer = document.querySelector('[data-testid="next-step-bar"]')!.getBoundingClientRect();
+    return bounds.top >= 0 && bounds.bottom <= footer.top;
+  })).toBe(true);
+  await expect.poll(async () => {
+    const html = await (await page.request.get(gateway.base + '/s/photos')).text();
+    return (html.replace(/<[^>]+>/g, '').match(/这页没有批改痕迹/g) ?? []).length;
+  }).toBe(4);
+  expect(posts).toBe(5);
+  expect(maxActive).toBe(1);
+  expect(new Set(accepted).size).toBe(4);
+  await expect.poll(() => calls.length).toBe(5);
+  // All prepared bytes remain reusable, and rapid retry clicks must start only one request.
+  await page.evaluate(() => {
+    HTMLCanvasElement.prototype.toBlob = () => { throw new Error('successful preparation must be reused'); };
+    const retry = document.querySelector<HTMLButtonElement>('[data-upload-retry]')!;
+    retry.click(); retry.click(); retry.dispatchEvent(new Event('click'));
+  });
+  await expect(page.getByTestId('photo-count')).toHaveText('已拍 5 张');
+  await expect(page.getByTestId('photo-tile')).toHaveCount(5);
+  await expect.poll(() => calls.length).toBe(6);
+  expect(calls[5]).toEqual(calls[2]);
+  expect(new Set(calls.map(call => call.key)).size).toBe(5);
+  expect(new Set(accepted).size).toBe(5);
+  expect(posts).toBe(6);
+  expect(maxActive).toBe(1);
+});
+
+test('per-photo and batch progress wait for the final server acknowledgement', async ({ page, gateway }) => {
+  await enter(page, gateway);
+  await page.evaluate(() => {
+    const original = XMLHttpRequest.prototype.send;
+    let sent = 0;
+    XMLHttpRequest.prototype.send = function(data) {
+      if (data instanceof FormData && data.has('photo') && ++sent === 5) {
+        const xhr = this;
+        const controls = window as unknown as { finishSyntheticProgress: () => void; resumeSyntheticUpload: () => void };
+        xhr.upload.dispatchEvent(new ProgressEvent('progress', { lengthComputable: true, loaded: 50, total: 100 }));
+        controls.finishSyntheticProgress = () => { xhr.upload.dispatchEvent(new ProgressEvent('progress', { lengthComputable: true, loaded: 100, total: 100 })); };
+        controls.resumeSyntheticUpload = () => original.call(xhr, data);
+      } else original.call(this, data);
+    };
+  });
+  const files = await Promise.all(['#a1bbcc', '#a2bbcc', '#a3bbcc', '#a4bbcc', '#a5bbcc'].map(color => jpeg(820, 1100, color)));
+  await page.locator('#library-input').setInputFiles(files);
+  const progress = page.getByRole('progressbar', { name: '整批上传进度' });
+  await expect(page.getByRole('progressbar', { name: '第 5 张上传进度' })).toHaveAttribute('aria-valuenow', '50');
+  await expect(page.locator('[data-upload-item]').nth(4)).toContainText('正在上传 50%');
+  await expect(progress).toHaveAttribute('aria-valuenow', '90');
+  await page.evaluate(() => (window as unknown as { finishSyntheticProgress: () => void }).finishSyntheticProgress());
+  await expect(page.locator('[data-upload-item]').nth(4)).toContainText('上传完成，正在处理照片');
+  await expect(progress).toHaveAttribute('aria-valuenow', '99');
+  await expect(page.getByTestId('upload-message')).toContainText('已上传 4/5 张');
+  await page.evaluate(() => (window as unknown as { resumeSyntheticUpload: () => void }).resumeSyntheticUpload());
+  await expect(page.getByTestId('photo-count')).toHaveText('已拍 5 张');
+  // Success refreshes to the server's authoritative photo list.
+  await expect(page.locator('[data-upload-item]')).toHaveCount(0);
+  await expect(page.getByTestId('photo-tile')).toHaveCount(5);
+});
+
+test('a lost success response retries the existing recognition job instead of creating another', async ({ page, gateway }) => {
+  await enter(page, gateway);
+  const calls = await observeUploads(page);
+  const jobs: string[] = [];
+  await page.route('**/s/capture', async route => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    jobs.push((await response.json() as { jobId: string }).jobId);
+    if (jobs.length === 1) await route.abort();
+    else await route.fulfill({ response });
+  });
+  await page.locator('#library-input').setInputFiles(await jpeg());
+  await expect(page.getByTestId('upload-message')).toContainText('网络没连上');
+  await page.locator('[data-upload-retry]').click();
+  await uploaded(page);
+  await expect.poll(() => calls.length).toBe(2);
+  expect(calls[1]).toEqual(calls[0]);
+  expect(jobs).toHaveLength(2);
+  expect(jobs[1]).toBe(jobs[0]);
+});
+
+test('an unreadable photo does not stop later photos or discard earlier successes on a new selection', async ({ page, gateway }) => {
+  await enter(page, gateway);
+  const calls = await observeUploads(page);
+  await page.locator('#library-input').setInputFiles([
+    { ...await jpeg(), name: '第一页.jpg' },
+    { name: '<坏图>.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('broken') },
+    { ...await jpeg(820, 1100, '#aabbcc'), name: '第三页.jpg' },
+  ]);
+  await expect(page.getByTestId('upload-message')).toContainText('已上传 2/3 张');
+  await expect(page.locator('[data-upload-item]').nth(1)).toContainText('<坏图>.jpg');
+  await expect(page.locator('[data-upload-item]').nth(1)).toContainText('读不了');
+  await expect(page.locator('[data-upload-retry]')).toBeHidden();
+  await expect(page.locator('#camera-input')).toBeEnabled();
+  await page.locator('#library-input').setInputFiles({ ...await jpeg(820, 1100, '#ccbbaa'), name: '替换照片.jpg' });
+  await expect(page.getByTestId('upload-message')).toContainText('已上传 3/4 张');
+  await expect(page.locator('[data-upload-item]')).toHaveCount(4);
+  expect(calls).toHaveLength(3);
+  expect(new Set(calls.map(call => call.key)).size).toBe(3);
+});
 
 test('48MP camera image becomes a bounded JPEG and appears as a photo', async ({ page, gateway }) => {
   await enter(page, gateway);
