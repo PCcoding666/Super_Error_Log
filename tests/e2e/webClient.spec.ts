@@ -499,7 +499,7 @@ test.describe('关掉脚本（等 AI 的页面）', () => {
     await fault('vision=hold');
     await page.goto(`${WEB}/s/capture`);
     const before = await page.getByTestId('photo-tile').count();
-    await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f0c8c0', 760) });
+    await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f0c8c0', 760 + before) });
     await page.getByRole('button', { name: '上传这张' }).click();
     await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1);
     const row = page.getByTestId(`photo-row-${before + 1}`);
