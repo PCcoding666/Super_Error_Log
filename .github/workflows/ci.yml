@@ -1,6 +1,6 @@
 name: CI
 
-# 每个 PR 和每次推送到主线分支都自动验证。部署不在这里：部署仍是手动的，见 deploy/README.md。
+# PR 只验证；集成分支 push 全部验证通过后调用受限生产发布。
 # 说明文档：docs/ci.md
 
 on:
@@ -10,10 +10,10 @@ on:
       - codex/ai-error-review-mvp
       - main
 
-# 同一个 PR（或同一个分支）有新提交时，取消还在跑的旧运行。
+# PR 可以取消旧检查；生产分支不得取消已经开始的发布。
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # 只读仓库内容即可；不需要任何密钥，也不写回仓库。
 permissions:
@@ -86,6 +86,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check deployment script syntax
+        run: |
+          python3 -c "import ast; from pathlib import Path; ast.parse(Path('deploy/ci/sel-ci-deploy.py').read_text())"
+          bash -n deploy/ci/publish.sh
+          sh -n deploy/ci/ssh-entry.sh
+          python3 -m unittest discover -s tests/deploy -p 'test_*.py'
+
       - name: Install Playwright Chromium
         # 必须在 Vitest 之前：tests/globalSetup.ts 会调用 generateFixtures()（用 Chromium 渲染合成试卷），
         # src/services/pdfService.ts 生成 A4 PDF 也用 Chromium；干净的 checkout 里 fixtures/assets 不存在，所以第一次 `npm test` 就要用到浏览器。
@@ -141,3 +148,13 @@ jobs:
 
       - name: Swift package tests
         run: swift test --package-path iOS
+
+  deploy:
+    name: production
+    needs: [changes, server, ios-unit]
+    if: >-
+      ${{ always() && !cancelled() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/codex/ai-error-review-mvp' &&
+          needs.changes.result == 'success' && needs.server.result == 'success' &&
+          (needs.ios-unit.result == 'success' || needs.ios-unit.result == 'skipped') }}
+    uses: ./.github/workflows/deploy.yml

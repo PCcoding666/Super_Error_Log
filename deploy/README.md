@@ -1,3 +1,7 @@
+# 自动发布入口（2026-10-15）
+
+用户已批准集成分支合并后自动上线，见 [GitHub 自动发布](ci/README.md)。下面的手动步骤保留给首次装机和人工维护；日常修改通过 PR → CI → 自动发布。
+
 # 云端部署手册（广州 ECS 239 · cgroup v1 · study.pccoding666.com）
 
 发布包由 `npm run release:build` 产出（白名单打包，详见 `scripts/release-whitelist.txt`）。

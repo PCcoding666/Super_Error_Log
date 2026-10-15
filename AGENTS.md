@@ -31,7 +31,7 @@ Primary student surface: mobile browser `/s/`, per-student invitation login, ser
 - `data/`, `data-e2e/`, `dist/`, `test-results/` are local artifacts — don't commit. Never commit `.superpowers/`, real student photos/audio, invitation codes, session tokens, or `.env` secrets.
 - Upload compatibility: browser converts decodable images (including HEIC on supported Safari) to a real JPEG, longest edge 4096. Preserve timeout/retry/idempotency behavior in `src/web/photoUpload.ts`; server limits still apply.
 - Current v2 flow does not require students to verify every question. Low-confidence evidence is retained with original crops and print warnings; do not reinterpret older manual-verification docs as a request to add a compulsory confirmation gate.
-- GitHub CI uses synthetic data/mock providers and does not deploy. Future production writes/deployments require user authorization for that change.
+- GitHub CI uses synthetic data/mock providers. The user approved automatic deployment after a green push to `codex/ai-error-review-mvp`; see `deploy/ci/README.md`. PRs and old `main` never deploy. Production data cleanup, credential changes, and incompatible database migrations still require separate authorization. Review deployment/workflow changes carefully.
 
 ## Style & commits
 
