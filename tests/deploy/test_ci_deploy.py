@@ -160,6 +160,25 @@ class DeploymentChecks(unittest.TestCase):
             command.assert_not_called()
         self.assertEqual(deploy.read_status(self.job)['phase'], 'failed')
 
+    def test_recovery_retries_an_interrupted_rollback(self):
+        new = self.root / 'releases/ci-123-1'
+        new.mkdir()
+        deploy.point_to(new)
+        deploy.state(self.job, 'failed', rollback='failed', previous=self.old.name)
+        with patch.object(deploy, 'run') as command, patch.object(deploy, 'wait_healthy'):
+            deploy.recover(self.job)
+            self.assertIn(['/usr/bin/systemctl', 'restart', deploy.SERVICE], [c[0][0] for c in command.call_args_list])
+        self.assertEqual((self.root / 'current').resolve(), self.old)
+        self.assertEqual(deploy.read_status(self.job)['rollback'], 'succeeded')
+
+    def test_ssh_cannot_request_root_busy_probe(self):
+        with patch.object(deploy.sys, 'argv', ['sel-ci-deploy', '--busy']), \
+                patch.object(deploy.os, 'geteuid', return_value=0), \
+                patch.object(deploy, 'busy_count') as probe:
+            with self.assertRaises(SystemExit):
+                deploy.main()
+            probe.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

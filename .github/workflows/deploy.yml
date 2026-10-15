@@ -3,6 +3,11 @@ name: Deploy production
 # Called only after CI. Not workflow_run: default main is an old snapshot.
 on:
   workflow_call:
+    secrets:
+      SEL_DEPLOY_SSH_KEY:
+        required: true
+      SEL_DEPLOY_KNOWN_HOSTS:
+        required: true
 
 permissions:
   contents: read

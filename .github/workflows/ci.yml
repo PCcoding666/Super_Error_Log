@@ -158,3 +158,6 @@ jobs:
           needs.changes.result == 'success' && needs.server.result == 'success' &&
           (needs.ios-unit.result == 'success' || needs.ios-unit.result == 'skipped') }}
     uses: ./.github/workflows/deploy.yml
+    secrets:
+      SEL_DEPLOY_SSH_KEY: ${{ secrets.SEL_DEPLOY_SSH_KEY }}
+      SEL_DEPLOY_KNOWN_HOSTS: ${{ secrets.SEL_DEPLOY_KNOWN_HOSTS }}

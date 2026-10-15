@@ -9,6 +9,7 @@ import fcntl
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -299,10 +300,10 @@ def recover(job):
     with lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         status = read_status(job)
-        if status['phase'] in ('succeeded', 'failed'):
+        if status['phase'] == 'succeeded' or (status['phase'] == 'failed' and status.get('rollback') in ('succeeded', 'not_needed')):
             return
         rollback = 'not_needed'
-        if status['phase'] in ('backing_up', 'starting'):
+        if status['phase'] in ('backing_up', 'starting') or status.get('rollback') == 'failed':
             try:
                 previous = (ROOT / 'releases' / status['previous']).resolve(strict=True)
                 if previous.parent != (ROOT / 'releases').resolve():
@@ -319,6 +320,8 @@ def recover(job):
 def main():
     os.umask(0o077)
     if sys.argv[1:] == ['--busy']:
+        if os.geteuid() == 0 or os.geteuid() != pwd.getpwnam('supererrorlog').pw_uid:
+            raise SystemExit('Busy probe requires the application user')
         print(busy_count())
         return
     if os.geteuid() != 0:
