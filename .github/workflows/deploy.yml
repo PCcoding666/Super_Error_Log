@@ -1,6 +1,6 @@
 name: Deploy production
 
-# Called only after CI. Not workflow_run: default main is an old snapshot.
+# Called only after successful main CI. Pull requests never deploy.
 on:
   workflow_call:
     secrets:
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/ai-error-review-mvp'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment:

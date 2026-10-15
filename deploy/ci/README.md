@@ -2,16 +2,16 @@
 
 ## 日常使用
 
-1. Codex Cloud 从 `codex/ai-error-review-mvp` 新建分支，修改后提 PR 到同一个集成分支。
+1. Codex Cloud 从 `main` 新建分支，修改后提 PR 到同一个集成分支。
 2. PR 的 CI 通过后，检查修改并合并。
 3. 合并提交再跑一遍 CI。全部必需任务通过后，`production / release` 自动发布到 https://study.pccoding666.com/s/ 。通常检查约 4 分钟，发布约 1–3 分钟，以 Actions 实际记录为准。
 4. Actions 摘要显示上线提交和版本。失败时查看失败任务；启动检查失败会自动恢复旧版本。GitHub 的失败通知沿用你的账户通知设置。
 
-普通 PR 不使用生产密钥。`main` 是旧快照，不发布；不要让 Cloud 从旧 `main` 开发。默认分支不在本次改动中变更。
+普通 PR 不使用生产密钥。`main` 是唯一默认、开发汇总与发布分支；旧集成分支已退役。合并后删除任务分支，历史仍保留在 PR 和 Git 提交中。详见 [分支说明](../../docs/BRANCHES.md)。
 
 ## 仓库配置
 
-Environment：`production`，只允许 branch `codex/ai-error-review-mvp`。
+Environment：`production`，只允许 branch `main`。
 
 | 名称 | 类型 | 含义 |
 | --- | --- | --- |

@@ -5,9 +5,9 @@
 
 ## Codex Cloud 从这里接手
 
-**开发分支：`codex/student-invite-web`。** GitHub默认`main`仍是早期版本。请先读[当前交接说明](docs/CODEX_CLOUD_HANDOFF.md)，里面包含环境安装、代码地图、测试命令和待办。
+**唯一主分支：`main`。** 新任务从最新 `main` 开分支，PR 合并回 `main`；检查通过后自动上线。分支与未合并工作见[分支说明](docs/BRANCHES.md)。请先读[当前交接说明](docs/CODEX_CLOUD_HANDOFF.md)，里面包含环境安装、代码地图、测试命令和待办。
 
-当前线上为 **0.5.0-r2**；用户已确认手机上传成功，真实题目识别质量和完整一周使用仍待验收。[上传热修复记录](docs/quality/2026-10-15-photo-upload-hotfix.md)。
+最近人工发布基线为 **0.5.0-r2**；当前线上版本以 [GitHub Actions](https://github.com/PCcoding666/Super_Error_Log/actions) 的成功发布和服务器 `current/deploy/ci-release.json` 为准。用户已确认手机上传成功，真实题目识别质量和完整一周使用仍待验收。[上传热修复记录](docs/quality/2026-10-15-photo-upload-hotfix.md)。
 
 ## 当前手机入口（学生邀请码）
 
@@ -46,7 +46,7 @@ npm run demo        # 生成演示夹具并启动（mock 模式，无需 API Key
 | `npm test` | 单元 + 集成测试（Vitest） |
 | `npm run test:e2e` | E2E 旅程测试 J1–J8（Playwright，端口 3199） |
 | `npm run verify` | typecheck + 单测/集成 + 构建 + E2E 全量验证 |
-| `npm run build && npm start` | 生产构建与启动 |
+| `npm run build && npm start` | 构建并启动旧本机演示；当前生产入口为 `dist/main.js` |
 
 ## 历史本地演示配置（当前生产配置见交接说明和部署文档）
 
@@ -66,7 +66,8 @@ npm run demo        # 生成演示夹具并启动（mock 模式，无需 API Key
 - 隐私：`docs/privacy/PRIVACY_AND_MINOR_DATA.md`
 - 用户手册：`docs/MVP_USER_MANUAL.md`
 - 验证报告：`docs/PRODUCT_VALIDATION_REPORT.md`
-- 工程过程：`.ai/tasks/current/`（状态、决策、风险、测试日志）
+- 当前交接：[Codex Cloud 接手说明](docs/CODEX_CLOUD_HANDOFF.md)；分支规则：[分支说明](docs/BRANCHES.md)
+- 历史工程过程：`.ai/tasks/current/`（保留历史状态、决策、风险和测试日志，不代表当前上线状态）
 
 ## 技术栈
 

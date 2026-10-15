@@ -5,11 +5,12 @@
 ## 1. 从哪个版本继续
 
 - 仓库：`PCcoding666/Super_Error_Log`（私有）。
-- 接手分支：**`codex/student-invite-web`**。用户已明确授权把当前状态同步到GitHub，后续由Codex Cloud继续开发。
-- 现有集成分支：`codex/ai-error-review-mvp`；本轮基于`5436a44`。GitHub默认`main`仍是早期版本，不是当前产品。
+- 唯一主分支：**`main`**。从最新 `origin/main` 新建 `codex/<任务>`，PR 目标也选 `main`。
+- 2026-10-15 用户授权统一分支：此前发布分支 `codex/ai-error-review-mvp` 的完整历史（含 PR #11）归入 `main`，旧分支退役。不要继续从旧任务分支开发。
 - 最近人工发布基线：**0.5.0-r2**，2026-10-15 13:48 UTC+8发布；运行代码提交`a006f0a`，随后`602323a`补充发布记录。自动发布启用后，当前版本以 [Actions 发布摘要](https://github.com/PCcoding666/Super_Error_Log/actions) 和服务器 `current/deploy/ci-release.json` 为准，不要把这条历史基线当成实时版本。
 - 学生入口：https://study.pccoding666.com/s/ 。生产资料/凭证不在仓库；不要为开发去创建或清空真实学生数据。
-- 后续新增授权（2026-10-15）：用户选择“合并后自动上线”。CI 全绿的集成分支 push 会调用 production 发布；PR 不发布。GitHub 默认分支仍未更改。今后的 Cloud 任务从集成分支建分支并提 PR；发布规则见 [自动发布说明](../deploy/ci/README.md)。
+- 发布授权（2026-10-15）：用户选择“合并后自动上线”，并授权主分支整理。只有 `main` push 的 CI 全绿才会调用 production；PR 和其他分支不发布。发布规则见 [自动发布说明](../deploy/ci/README.md)。
+- 保留的未合并工作：`feat/web-quality-r2`（27 条提交）需与最新邀请码/上传修复对齐、审查后另行合并。本轮仅保存。历史界面设计已存入 docs。详见 [分支说明](BRANCHES.md)。
 
 ## 2. 产品实际做到哪里
 
@@ -96,7 +97,7 @@ npx playwright test tests/e2e/studentHost.spec.ts tests/e2e/photoUpload.spec.ts
 
 `tests/e2e/studentHostServer.ts`由测试fork启动，以IPC传本机地址和测试邀请码；不要直接运行它等终端打印网址。浏览器测试自动清理临时学生目录。`tests/fixtures/photo-upload.heic`是1994字节的纯色合成图片，不是用户照片。
 
-CI：`.github/workflows/ci.yml`在每个PR以及集成分支/main推送时验证；**仅集成分支 push 全绿后自动发布**。详见[CI说明](ci.md)和[发布说明](../deploy/ci/README.md)。Cloud的实现报告要区分本地测试、Actions检查、线上运行和用户验收。
+CI：`.github/workflows/ci.yml`在每个PR以及 `main` 推送时验证；**仅 `main` push 全绿后自动发布**。详见[CI说明](ci.md)和[发布说明](../deploy/ci/README.md)。Cloud的实现报告要区分本地测试、Actions检查、线上运行和用户验收。
 
 已知开发限制：旧本地PDF下载使用Express默认dotfiles策略，工作树位于隐藏路径（例如`.codex`）时可能404；上次在非隐藏目录的等内容副本验收通过。不要因此改宽整个生产静态文件访问权限。
 

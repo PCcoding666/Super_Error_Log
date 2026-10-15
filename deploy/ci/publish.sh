@@ -15,7 +15,7 @@ set -euo pipefail
 [[ "$SEL_DEPLOY_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
 run_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 [[ "$run_id" =~ ^[0-9]{1,16}-[0-9]{1,4}$ ]]
-head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/codex/ai-error-review-mvp" --jq .object.sha)"
+head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
 if [[ "$head_sha" != "$GITHUB_SHA" ]]; then
   echo 'Newer commit is on the integration branch; skip this superseded release.'
   echo 'Skipped: a newer integration commit will run CI and deploy.' >> "$GITHUB_STEP_SUMMARY"
