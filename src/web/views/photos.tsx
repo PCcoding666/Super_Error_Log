@@ -58,17 +58,21 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
           </ul>
         </section>
       )}
-      <form method="post" action="/s/capture" encType="multipart/form-data" data-upload="" id="upload-form">
+      <form method="post" action="/s/capture" encType="multipart/form-data" data-upload="" data-photo-count={props.photos.length} id="upload-form">
         <input id="camera-input" className="visually-hidden" type="file" name="photo" accept="image/*" capture="environment" data-testid="camera-input" />
+        {/* 脚本启动后启用相册多选；无脚本时仍用原有单张表单，不静默丢弃其余照片。 */}
         <input id="library-input" className="visually-hidden" type="file" name="photo" accept="image/*" data-testid="library-input" />
+        <p className="js-only small muted">从相册可以一次选多张，选好后会自动上传。</p>
         <p className="no-js-only small muted">{quoted('选好照片后点「上传这张」。')}</p>
         <button className="btn no-js-only" type="submit" data-key="upload-nojs">上传这张</button>
-        <div className="hidden" data-upload-progress=""><div className="progress"><i /></div></div>
+        <div className="hidden" data-upload-progress=""><div className="progress" role="progressbar" aria-label="整批上传进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={0}><i /></div></div>
         <p className="small" data-upload-message="" data-testid="upload-message" aria-live="polite" />
         <button type="button" className="btn hidden" data-upload-retry="" data-key="upload-retry">再试一次</button>
+        <a className="more hidden" href="/s/photos" data-upload-next="" data-key="uploaded-photos">查看已上传的照片 ›</a>
+        <ul className="upload-list" data-upload-list="" aria-label="照片上传列表" />
       </form>
-      {has ? <p data-testid="photo-count"><b>已拍 {props.photos.length} 张</b></p> : null}
-      <div className="grid" data-live="grid">
+      <p data-testid="photo-count" className={has ? undefined : 'hidden'}><b>已拍 {props.photos.length} 张</b></p>
+      <div className="grid" data-live="grid" data-photo-grid="">
         {visible.map(photo => {
           const status = photoStatus(photo);
           return (

@@ -212,7 +212,7 @@ function startPolling(){var body=document.body;var every=Number(body.getAttribut
 var timer=null,busy=false,misses=0,request=null,active=true,generation=0;
 function later(ms){clearTimeout(timer);timer=setTimeout(pollOnce,ms)}
 function net(down){$$('[data-wait-net]').forEach(function(e){e.classList.toggle('hidden',!down)})}
-function apply(doc){var olds=$$('[data-live]'),pairs=[],a=document.activeElement;
+function apply(doc){if($('form[data-upload][data-upload-pending]'))return 'later';var olds=$$('[data-live]'),pairs=[],a=document.activeElement;
 for(var i=0;i<olds.length;i++){var name=olds[i].getAttribute('data-live');var nu=doc.querySelector('[data-live="'+name+'"]');if(!nu)return 'reload';if(sig(olds[i])!==sig(nu))pairs.push([olds[i],nu])}
 if(doc.querySelectorAll('[data-live]').length!==olds.length)return 'reload';
 if(!pairs.length)return 'same';

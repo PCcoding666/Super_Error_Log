@@ -6,6 +6,7 @@ import {
   PHOTO_UPLOAD_SCRIPT,
   PREPARE_TIMEOUT_MS,
   targetSize,
+  UPLOAD_CONCURRENCY,
   UPLOAD_TIMEOUT_MS,
 } from '../../src/web/photoUpload.js';
 
@@ -45,6 +46,7 @@ describe('上传常量', () => {
     expect(MAX_UPLOAD_BYTES).toBe(15 * 1024 * 1024);
     expect(PREPARE_TIMEOUT_MS).toBeGreaterThan(0);
     expect(UPLOAD_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(UPLOAD_CONCURRENCY).toBe(1);
   });
 });
 
@@ -69,7 +71,7 @@ describe('PHOTO_UPLOAD_SCRIPT（嵌入 CLIENT_SCRIPT 的浏览器脚本）', () 
   it('幂等 key 同一张重试保持稳定；有超时与单并发', () => {
     expect(PHOTO_UPLOAD_SCRIPT).toContain("data.append('key',entry.key)");
     expect(PHOTO_UPLOAD_SCRIPT).toContain('xhr.timeout=UPLOAD_MS');
-    expect(PHOTO_UPLOAD_SCRIPT).toContain('if(!f||busy)return');
+    expect(PHOTO_UPLOAD_SCRIPT).toContain('if(!files.length||busy)return');
   });
 
   it('HEIC 读不了时提示换 Safari 或 JPEG，不给假成功', () => {
