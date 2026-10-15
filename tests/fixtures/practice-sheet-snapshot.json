@@ -1,0 +1,92 @@
+{
+  "packetId": "pkt_0123456789abcdef",
+  "week": "2026-W42",
+  "preparedAt": "2026-10-12T08:00:00.000Z",
+  "cover": {
+    "title": "本周练习",
+    "practiceSlot": "周三晚自习",
+    "rules": [
+      "不看答案，独立做",
+      "卡住先看一级提示，再看二级",
+      "做完打勾，写上做题日期"
+    ],
+    "itemList": [
+      {
+        "shortId": "M-01",
+        "sourceLabel": "原题"
+      },
+      {
+        "shortId": null,
+        "sourceLabel": "原题"
+      }
+    ]
+  },
+  "items": [
+    {
+      "itemId": "itm_0000000000000001",
+      "shortId": "M-01",
+      "position": 0,
+      "subject": "数学",
+      "knowledgeTags": [
+        "一元一次方程"
+      ],
+      "mode": "text",
+      "stemText": "解方程：2x + 3 = 7，求 x 的值。",
+      "cropMedia": null,
+      "diagramMedia": [],
+      "keyStepPrompt": "这题的关键一步是：",
+      "checkboxes": [
+        "独立做出",
+        "看了一级提示",
+        "看了二级提示",
+        "没做出来"
+      ],
+      "needsGlance": false,
+      "glanceReason": null
+    },
+    {
+      "itemId": "itm_0000000000000002",
+      "shortId": null,
+      "position": 1,
+      "subject": null,
+      "knowledgeTags": [],
+      "mode": "crop",
+      "stemText": null,
+      "cropMedia": "q2.jpg",
+      "diagramMedia": [
+        "d2.jpg"
+      ],
+      "keyStepPrompt": "这题的关键一步是：",
+      "checkboxes": [
+        "独立做出",
+        "没做出来"
+      ],
+      "needsGlance": true,
+      "glanceReason": "这题 AI 没把握，打印前看一眼截图是否完整"
+    }
+  ],
+  "answerSheet": [
+    {
+      "shortId": "M-01",
+      "hint1": "先移项",
+      "hint2": "二级提示：两边同时除以 2",
+      "answer": {
+        "text": "x = 2",
+        "source": "ai",
+        "label": "AI 生成"
+      },
+      "fallbackNote": "对照原卷第 3 题"
+    },
+    {
+      "shortId": null,
+      "hint1": null,
+      "hint2": null,
+      "answer": {
+        "text": null,
+        "source": "none",
+        "label": null
+      },
+      "fallbackNote": "回家后对照原卷"
+    }
+  ]
+}

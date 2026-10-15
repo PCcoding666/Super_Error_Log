@@ -14,18 +14,20 @@ import type { Server } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import express from 'express';
 import sharp from 'sharp';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatInviteCode, MAX_STUDENTS, normalizeInviteCode, RegistryError, StudentRegistry } from '../../src/studentHost/registry.js';
 import { runAdminCli } from '../../src/studentHost/admin-cli.js';
 import { createStudentHostGateway, LoginThrottle, SESSION_COOKIE, type StudentHostGateway } from '../../src/studentHost/router.js';
 import { StudentWorkerPool, WorkerStartError } from '../../src/studentHost/workers.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
+import { MOCK_TRANSCRIPT } from '../../src/ai/asr.js';
 
 const roots: string[] = [];
 const gateways: StudentHostGateway[] = [];
 const servers: Server[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(gateways.splice(0).map(gateway => gateway.close()));
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }));
@@ -359,6 +361,110 @@ describe('登录限速', () => {
 // ---------- 网关 + 真实 worker：隔离、代理、生命周期 ----------
 
 describe('学生 worker 隔离与代理', () => {
+  it('a rejected fix form preserves the session voice context and can transcribe again', async () => {
+    const env = await setupHost();
+    const { browser } = await loginBrowser(env);
+    await browser.post('/s/consent');
+    const upload = await uploadPhoto(browser, await photoBytes('#c1d5ef'));
+    expect(upload.ok).toBe(true);
+    let questionId: string | undefined;
+    await waitFor(async () => {
+      const html = await (await browser.get(`/s/photos/${upload.jobId}`)).text();
+      questionId = /name="questionIds" value="([^"]+)"/.exec(html)?.[1];
+      return questionId !== undefined;
+    });
+    expect((await browser.post(`/s/photos/${upload.jobId}/select`, { questionIds: questionId! })).status).toBe(303);
+    let itemId: string | undefined;
+    await waitFor(async () => {
+      const html = await (await browser.get('/s/items')).text();
+      itemId = /\/s\/items\/(itm_[0-9a-f]{16})/.exec(html)?.[1];
+      return itemId !== undefined;
+    });
+    const contextOf = (html: string): string | undefined => /<meta name="sel-voice-context" content="([0-9a-f]{64})"\s*\/?\s*>/.exec(html)?.[1];
+    const page = await browser.get(`/s/items/${itemId}/fix`);
+    expect(page.status).toBe(200);
+    const context = contextOf(await page.text());
+    expect(context).toBe(crypto.createHash('sha256').update(browser.cookies.get(SESSION_COOKIE)!).digest('hex'));
+    const rejected = await browser.post(`/s/items/${itemId}/fix`, { instruction: '' }, {
+      'x-sel-internal-voice-context': 'f'.repeat(64),
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.headers.get('cache-control')).toBe('private, no-store');
+    const html = await rejected.text();
+    expect(html).toContain('data-endpoint="/s/voice"');
+    expect(contextOf(html)).toBe(context);
+    const voice = await browser.request('/s/voice', {
+      method: 'POST', body: 'SYNTHETIC-FIX-VOICE',
+      headers: { 'content-type': 'audio/webm', 'x-sel-voice-context': contextOf(html)! },
+    });
+    expect(voice.status).toBe(200);
+    expect(await voice.json()).toEqual({ text: MOCK_TRANSCRIPT });
+  }, 120_000);
+
+  it('old-tab voice is rejected after switching students; current context transcribes without persisting audio', async () => {
+    const env = await setupHost();
+    const { browser, studentId: studentA } = await loginBrowser(env);
+    const readContext = async (): Promise<string> => {
+      // A polling read renders the same context without an unrelated finish-time
+      // page-view audit write racing the subsequent voice persistence snapshot.
+      const response = await browser.request('/s/settings', { headers: { 'x-sel-internal-voice-context': 'f'.repeat(64), 'x-sel-poll': '1' } });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      const html = await response.text();
+      const context = /<meta name="sel-voice-context" content="([0-9a-f]{64})"\s*\/?\s*>/.exec(html)?.[1];
+      expect(context).toBe(crypto.createHash('sha256').update(browser.cookies.get(SESSION_COOKIE)!).digest('hex'));
+      expect(html).not.toContain(browser.cookies.get(SESSION_COOKIE)!);
+      return context!;
+    };
+    const contextA = await readContext();
+    const { studentId: studentB } = env.registry.createStudent();
+    const invitationB = env.registry.issueInvitation(studentB);
+    expect((await browser.post('/s/login', { code: invitationB.code })).status).toBe(303);
+    const contextB = await readContext();
+    expect(contextB).not.toBe(contextA);
+    const fileHashes = (): Record<string, string> => {
+      const hashes: Record<string, string> = {};
+      const visit = (dir: string): void => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) visit(full);
+          else if (entry.isFile()) {
+            // SQLite updates shared-memory read marks even for read-only requests.
+            // Keep the filename check; compare persistent data and every other file byte-for-byte.
+            hashes[path.relative(env.hostDir, full)] = entry.name === 'app.db-shm'
+              ? 'sqlite-shared-memory'
+              : crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex');
+          }
+        }
+      };
+      for (const id of [studentA, studentB]) visit(env.registry.studentDir(id));
+      return hashes;
+    };
+    const before = fileHashes();
+    const ensure = vi.spyOn(env.pool, 'ensure');
+    const voice = (context?: string) => browser.request('/s/voice', {
+      method: 'POST', body: 'SYNTHETIC-PRIVATE-VOICE', headers: {
+        'content-type': 'audio/webm', 'x-sel-internal-voice-context': contextB,
+        ...(context === undefined ? {} : { 'x-sel-voice-context': context }),
+      },
+    });
+    for (const context of [contextA, undefined]) {
+      const rejected = await voice(context);
+      expect(rejected.status).toBe(409);
+      expect(await rejected.json()).toMatchObject({ error: { code: 'voice_context_mismatch' } });
+    }
+    expect(ensure).not.toHaveBeenCalled();
+    const accepted = await voice(contextB);
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toEqual({ text: MOCK_TRANSCRIPT });
+    expect(ensure).toHaveBeenCalledExactlyOnceWith(studentB);
+    expect(fileHashes()).toEqual(before);
+    for (const route of ['/s/offline', '/s/sw.js', '/s/assets/app.js']) {
+      const publicResponse = await browser.get(route);
+      expect(await publicResponse.text()).not.toContain(contextB);
+    }
+  }, 120_000);
+
   it('两个学生：各自 worker、各自目录与数据库；设置互不可见', async () => {
     const env = await setupHost();
     const a = await loginBrowser(env);

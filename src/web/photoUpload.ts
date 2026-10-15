@@ -33,13 +33,13 @@ export function targetSize(width: number, height: number, maxEdge: number = MAX_
  */
 export const PHOTO_UPLOAD_SCRIPT = `
 /* 拍照上传：先在浏览器里转成 JPEG（最长边 ${MAX_UPLOAD_EDGE}、去拍摄信息）再上传；失败可重试或可重选。 */
-var form=$('form[data-upload]');
-if(form){var bar=$('[data-upload-progress]'),msg=$('[data-upload-message]'),retry=$('[data-upload-retry]'),pending=null,busy=false;
+var form=uploadForm;
+if(form){var bar=$('[data-upload-progress]',form),msg=$('[data-upload-message]',form),retry=$('[data-upload-retry]',form),pending=null,busy=false;
 var inputs=$$('input[type=file]',form),labels=$$('label',form);
 var MAX_EDGE=${MAX_UPLOAD_EDGE},MAX_BYTES=${MAX_UPLOAD_BYTES},PREPARE_MS=${PREPARE_TIMEOUT_MS},UPLOAD_MS=${UPLOAD_TIMEOUT_MS},QUALITIES=${JSON.stringify(JPEG_QUALITY_LADDER)};
 function say(t){if(msg)msg.textContent=t}
 function showBar(on){if(bar)bar.classList.toggle('hidden',!on)}
-function resetBar(){if(bar&&$('i',bar))$('i',bar).style.width='0%'}
+function resetBar(){if(bar&&$('i',bar))$('i',bar).style.transform='scaleX(0)'}
 function showRetry(on){if(retry)retry.classList.toggle('hidden',!on)}
 function setBusy(on){busy=on;inputs.forEach(function(i){i.disabled=on});labels.forEach(function(l){l.setAttribute('aria-disabled',String(on))});if(retry)retry.disabled=on}
 function fail(kind,text,retryable){setBusy(false);showBar(false);say(text);showRetry(!!retryable);trailAdd('error',kind);trailSend()}
@@ -66,7 +66,7 @@ try{url=URL.createObjectURL(file);img.src=url}catch(e){finish(new Error('decode'
 function upload(entry){try{var data=new FormData();data.append('key',entry.key);data.append('photo',entry.blob,'photo.jpg');
 var xhr=new XMLHttpRequest();xhr.open('POST',form.getAttribute('action'));xhr.setRequestHeader('accept','application/json');xhr.timeout=UPLOAD_MS;
 resetBar();say('正在上传…');
-xhr.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded*100/e.total);if(bar)$('i',bar).style.width=p+'%';say(p>=100?'上传完成，正在处理照片…':'正在上传 '+p+'%')}};
+xhr.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded*100/e.total);if(bar)$('i',bar).style.transform='scaleX('+(p/100)+')';say(p>=100?'上传完成，正在处理照片…':'正在上传 '+p+'%')}};
 xhr.onload=function(){var body=null;try{body=JSON.parse(xhr.responseText)}catch(e){}
 if(xhr.status>=200&&xhr.status<300&&body&&body.ok===true&&typeof body.jobId==='string'&&body.jobId){location.replace('/s/capture');return}
 if(body&&body.error&&typeof body.error.message==='string')fail('upload_'+xhr.status,body.error.message,xhr.status!==400);

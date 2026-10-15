@@ -10,7 +10,7 @@
 - 最近人工发布基线：**0.5.0-r2**，2026-10-15 13:48 UTC+8发布；运行代码提交`a006f0a`，随后`602323a`补充发布记录。自动发布启用后，当前版本以 [Actions 发布摘要](https://github.com/PCcoding666/Super_Error_Log/actions) 和服务器 `current/deploy/ci-release.json` 为准，不要把这条历史基线当成实时版本。
 - 学生入口：https://study.pccoding666.com/s/ 。生产资料/凭证不在仓库；不要为开发去创建或清空真实学生数据。
 - 发布授权（2026-10-15）：用户选择“合并后自动上线”，并授权主分支整理。只有 `main` push 的 CI 全绿才会调用 production；PR 和其他分支不发布。发布规则见 [自动发布说明](../deploy/ci/README.md)。
-- 保留的未合并工作：`feat/web-quality-r2`（27 条提交）需与最新邀请码/上传修复对齐、审查后另行合并。本轮仅保存。历史界面设计已存入 docs。详见 [分支说明](BRANCHES.md)。
+- R2 的 27 条提交在 PR #13 中逐项审查整合，取舍和验收见 [审查记录](quality/2026-10-15-pr13-review.md)；实际合并/发布状态查看 PR 和 Actions。历史界面设计已存入 docs，详见 [分支说明](BRANCHES.md)。
 
 ## 2. 产品实际做到哪里
 
@@ -39,7 +39,7 @@
 | 用户手机上传 | **用户于2026-10-15明确说“我现在上传成功了”**，截图显示“已拍1张 · AI正在找题” | 此截图不代表这张真实卷子所有题目识别正确或整周使用已完成 |
 | 主屏幕/纸张 | 网页已可用 | 添加主屏幕、真人录音、实际打印、真实学生一周闭环仍待确认 |
 
-最近完整验收（2026-10-15，热修复代码）：`npm run verify`，typecheck/build通过，Vitest **745通过/2既有跳过**，Playwright **23通过**。这是macOS本地等内容副本的结果，不等于GitHub/Linux CI结果。Linux会按代码条件跳过依赖macOS HEIC/sips或未配置Caddy的用例。
+历史热修复验收（2026-10-15；PR #13 的新一轮结果见审查记录）：`npm run verify`，typecheck/build通过，Vitest **745通过/2既有跳过**，Playwright **23通过**。这是macOS本地等内容副本的结果，不等于GitHub/Linux CI结果。Linux会按代码条件跳过依赖macOS HEIC/sips或未配置Caddy的用例。
 
 线上热修复验收：独立合成账号、真实HTTPS、WebKit上传HEIC，返回200并登记；真实模型完成识别，1题ready且进入错题本。没有把用户原图作为线上测试再发给AI。
 
@@ -58,7 +58,7 @@
 | `src/bridge/recognitionToItems.ts` | 已选/自动识别的题桥接为学习记录，避免重复 |
 | `src/v2/` | 周数据、练习选择、追问、修正、打印快照、回传和总结 |
 | `src/web/router.ts` / `views/` | 当前手机网页路由与SSR页面，无React hydration |
-| `src/web/assets.ts` / `photoUpload.ts` | 少量浏览器脚本、PWA缓存、图片准备/上传；资源版本目前3 |
+| `src/web/assets.ts` / `clientScript.ts` / `photoUpload.ts` | 静态壳与浏览器渐进增强、图片转换/上传；CSS/JS 内容指纹自动更新缓存 |
 | `src/web/weekPlan.ts` | 今天页和本周各步骤的下一步指引 |
 | `src/ai/asr.ts` | Qwen ASR；密钥留在服务端，转写结果可编辑再提交 |
 | `src/domain/stateMachine.ts` | 延迟重做/掌握规则 |
