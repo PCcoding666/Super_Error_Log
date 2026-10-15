@@ -25,6 +25,7 @@ import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { CoachProvider, CorrectionProvider, FollowupProvider } from '../ai/provider.js';
+import { isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
 import { getWeek, discardV2Item, isV2Item, restoreV2Item, type V2WeekItem } from '../v2/weekService.js';
 import { getItemFullCrop } from '../v2/fullCrop.js';
 import { getV2Settings, updateV2Settings } from '../v2/settingsService.js';
@@ -217,10 +218,17 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   registerStaticAssets(r);
 
   r.use((request, response, next) => {
-    const context = request.headers['x-sel-internal-voice-context'];
-    if (options.studentHostWorker === true && (request.method === 'GET' || request.method === 'POST')
-      && !/^\/voice\/?$/i.test(request.path)
-      && typeof context === 'string' && /^[0-9a-f]{64}$/.test(context)) response.locals.voiceContext = context;
+    const internalPage = options.studentHostWorker === true && (request.method === 'GET' || request.method === 'POST')
+      && !/^\/voice\/?$/i.test(request.path);
+    if (internalPage) {
+      const context = request.headers['x-sel-internal-voice-context'];
+      // The strict hex value comes only from the parent gateway, never from page input.
+      if (typeof context === 'string' && /^[0-9a-f]{64}$/.test(context)) response.locals.voiceContext = context;
+      // 账号身份标签：只信父进程网关注入的内部头（网关在白名单重建时已丢弃浏览器同名头），
+      // 且必须是四个合法值之一；只是展示用元数据，不参与鉴权。
+      const role = request.headers['x-sel-internal-account-role'];
+      if (isAccountRole(role)) response.locals.accountRole = role;
+    }
     next();
   });
 
@@ -876,16 +884,20 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
 
   // ---------- 设置 ----------
+  /** 设置页的账号身份标签：只有邀请码网关 worker 模式才有（locals 由上面的内部头中间件写入）；旧独立版一律不显示。 */
+  const accountRoleOf = (response: Response): AccountRole | null =>
+    options.studentHostWorker === true && isAccountRole(response.locals.accountRole) ? response.locals.accountRole : null;
+
   r.get('/settings', page((request, response) => {
     const settings = getV2Settings();
-    render(response, SettingsPage({ ...settings, saved: request.query.saved === '1', studentHostWorker: options.studentHostWorker === true }));
+    render(response, SettingsPage({ ...settings, saved: request.query.saved === '1', studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response) }));
   }));
 
   r.post('/settings', form, page((request, response) => {
     const slotChoice = str(request.body?.practiceSlot);
     const practiceSlot = (slotChoice === '__other' ? str(request.body?.practiceSlotOther) : slotChoice).trim();
     const result = updateV2Settings({ practiceSlot, paperLocation: str(request.body?.paperLocation) });
-    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。', studentHostWorker: options.studentHostWorker === true }), 400); return; }
+    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。', studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response) }), 400); return; }
     response.redirect(303, '/s/settings?saved=1');
   }));
 

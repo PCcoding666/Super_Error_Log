@@ -472,6 +472,8 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 
 学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。受控试用最多3个学生空间，父子进程共用systemd的1GB内存上限；容量不足明确报错，不共享学生档案。
 
-管理员以服务用户运行 `dist/studentHost/admin-cli.js create|list|invite <studentId>|revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。没有公网管理员页面。
+管理员以服务用户运行 `dist/studentHost/admin-cli.js create [role] | list | invite <studentId> | set-role <studentId> <role> | revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。没有公网管理员页面。
+
+账号身份（role）只是标签：`student`/`parent`/`teacher`/`admin`，新建缺省 `student`，老账号迁移后一律 `student`。身份只能由管理员在本机用 `set-role` 修改；浏览器、网页表单、查询串都不能改身份，身份也不参与任何鉴权——每个账号仍是自己独立的空间、会话和数据。家长/老师/管理员的专属权限与账号关系尚未实现：非学生身份登录看到的仍是同一套错题本学习功能，设置页会注明「专属功能后续开放」。
 
 本轮部署检查与回滚见 `docs/quality/2026-10-15-student-web-release.md`（源码文档不随生产包部署）。关闭flag/回滚旧包不会删除新的学生目录。

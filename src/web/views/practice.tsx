@@ -3,6 +3,7 @@ import type { PracticeCard, PracticeDetail, PracticeSummary, RecommendResponse }
 import type { PrintSnapshot } from '../../v2/printService.js';
 import type { ReturnSummary } from '../../v2/returnService.js';
 import type { ReflectionSuggestionView, ReflectionTurnView, ReflectionView } from '../../v2/reflectionService.js';
+import { ACCOUNT_ROLE_LABELS, type AccountRole } from '../../studentHost/accountRole.js';
 import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';
 import { Page, Phrased, Problem, VoiceBox, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
@@ -704,7 +705,7 @@ export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
 
 // ---------- 设置（§4.12） ----------
 
-export function SettingsPage(props: { practiceSlot: string; paperLocation: string; saved: boolean; error?: string | null; studentHostWorker?: boolean }): ReactNode {
+export function SettingsPage(props: { practiceSlot: string; paperLocation: string; saved: boolean; error?: string | null; studentHostWorker?: boolean; accountRole?: AccountRole | null }): ReactNode {
   const bar: BarModel = { caption: '', primary: { title: '保存', key: 'save', form: 'settings-form' }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] };
   const places: Array<[string, string]> = [['school', '学校'], ['home', '家'], ['varies', '不固定']];
   return (
@@ -724,6 +725,13 @@ export function SettingsPage(props: { practiceSlot: string; paperLocation: strin
           <p className="hint">{quoted('决定答案页写「对照原卷第几题」还是「回家后对照原卷」')}</p>
         </fieldset>
       </form>
+      {props.accountRole ? (
+        <section className="card" data-testid="account-role">
+          <h2 className="card-title">账号身份</h2>
+          <p>{ACCOUNT_ROLE_LABELS[props.accountRole]}</p>
+          {props.accountRole !== 'student' ? <p className="hint">当前使用错题本学习功能，专属功能后续开放。</p> : null}
+        </section>
+      ) : null}
       <section className="card">
         <h2 className="card-title">连接</h2>
         <p className="tone-green" data-testid="connection-ok">已连上服务器 ✓</p>

@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { ACCOUNT_ROLES, isAccountRole, type AccountRole } from './accountRole.js';
 
 export const MAX_STUDENTS = 3;
 export const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -19,7 +20,7 @@ const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const CODE_LENGTH = 12;
 const BUSY_TIMEOUT_MS = 5000;
 
-export type RegistryErrorCode = 'capacity_full' | 'invalid_code' | 'student_not_found';
+export type RegistryErrorCode = 'capacity_full' | 'invalid_code' | 'student_not_found' | 'invalid_role';
 
 export class RegistryError extends Error {
   constructor(public readonly code: RegistryErrorCode, message: string) {
@@ -31,6 +32,8 @@ export class RegistryError extends Error {
 export interface StudentRecord {
   studentId: string;
   createdAt: string;
+  /** 账号身份标签（元数据，不参与鉴权）；老库迁移后一律是 student。 */
+  accountRole: AccountRole;
   /** 未过期且未兑换的邀请码数量（不暴露码本身）。 */
   pendingInvitations: number;
   /** 未过期且未撤销的会话数量。 */
@@ -113,7 +116,27 @@ export class StudentRegistry {
       CREATE INDEX IF NOT EXISTS idx_invitations_student ON invitations(student_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_student ON sessions(student_id);
     `);
+    this.migrateAccountRole();
     fs.chmodSync(path.join(this.hostDir, 'registry.db'), 0o600);
+  }
+
+  /**
+   * 账号身份标签的增量迁移（2026-10-15）：老库补 account_role 列，已有账号一律 student。
+   * BEGIN IMMEDIATE 序列化「检测列 + 加列」，多进程同时开库只有一个执行 ALTER；新库建表后同样走这里。
+   * 只做 ADD COLUMN，没有任何破坏性 SQL。
+   */
+  private migrateAccountRole(): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const columns = this.db.prepare('PRAGMA table_info(students)').all() as Array<{ name: string }>;
+      if (!columns.some(column => column.name === 'account_role')) {
+        this.db.exec(`ALTER TABLE students ADD COLUMN account_role TEXT NOT NULL DEFAULT 'student' CHECK (account_role IN ('student', 'parent', 'teacher', 'admin'))`);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   static open(hostDir: string, options?: StudentRegistryOptions): StudentRegistry {
@@ -135,8 +158,9 @@ export class StudentRegistry {
     return this.db.prepare('SELECT 1 FROM students WHERE id = ?').get(studentId) !== undefined;
   }
 
-  /** 新建学生空间（含独立数据目录，0700）；达到 MAX_STUDENTS 拒绝。 */
-  createStudent(): { studentId: string; studentDir: string } {
+  /** 新建学生空间（含独立数据目录，0700）；达到 MAX_STUDENTS 拒绝。身份只是标签，先校验再碰目录/库。 */
+  createStudent(role: AccountRole = 'student'): { studentId: string; studentDir: string } {
+    if (!isAccountRole(role)) throw new RegistryError('invalid_role', `身份只能是 ${ACCOUNT_ROLES.join(' / ')}。`);
     const studentId = crypto.randomUUID();
     const studentDir = this.studentDir(studentId);
     this.db.exec('BEGIN IMMEDIATE');
@@ -146,7 +170,7 @@ export class StudentRegistry {
       // 先落目录再登记；登记失败把空目录清掉，不留下无主空间。
       fs.mkdirSync(studentDir, { recursive: false, mode: 0o700 });
       fs.chmodSync(studentDir, 0o700);
-      this.db.prepare('INSERT INTO students (id, created_at) VALUES (?, ?)').run(studentId, this.now().toISOString());
+      this.db.prepare('INSERT INTO students (id, created_at, account_role) VALUES (?, ?, ?)').run(studentId, this.now().toISOString(), role);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -154,6 +178,22 @@ export class StudentRegistry {
       throw error;
     }
     return { studentId, studentDir };
+  }
+
+  /** 读账号身份标签（每请求调用，setAccountRole 后下一个请求即生效，不用重新登录）。 */
+  getAccountRole(studentId: string): AccountRole {
+    const row = this.db.prepare('SELECT account_role FROM students WHERE id = ?').get(studentId) as { account_role: string } | undefined;
+    if (!row) throw new RegistryError('student_not_found', '学生不存在。');
+    // CHECK 约束保证四值之一；这里再验一次，宁可报数据损坏也不放行未知身份。
+    if (!isAccountRole(row.account_role)) throw new RegistryError('invalid_role', '账号身份数据损坏，请用管理 CLI 重新设置。');
+    return row.account_role;
+  }
+
+  /** 改账号身份标签（只是元数据，不动目录/会话/学习记录）。 */
+  setAccountRole(studentId: string, role: AccountRole): void {
+    if (!isAccountRole(role)) throw new RegistryError('invalid_role', `身份只能是 ${ACCOUNT_ROLES.join(' / ')}。`);
+    const result = this.db.prepare('UPDATE students SET account_role = ? WHERE id = ?').run(role, studentId);
+    if (Number(result.changes) !== 1) throw new RegistryError('student_not_found', '学生不存在。');
   }
 
   /** 生成一次性邀请码；明文只在这里返回一次（CLI 打印给管理员），库中只存 SHA256。 */
@@ -223,10 +263,11 @@ export class StudentRegistry {
 
   listStudents(): StudentRecord[] {
     const nowIso = this.now().toISOString();
-    const students = this.db.prepare('SELECT id, created_at FROM students ORDER BY created_at').all() as Array<{ id: string; created_at: string }>;
+    const students = this.db.prepare('SELECT id, created_at, account_role FROM students ORDER BY created_at').all() as Array<{ id: string; created_at: string; account_role: string }>;
     return students.map(student => ({
       studentId: student.id,
       createdAt: student.created_at,
+      accountRole: isAccountRole(student.account_role) ? student.account_role : 'student',
       pendingInvitations: (this.db.prepare('SELECT COUNT(*) AS n FROM invitations WHERE student_id = ? AND redeemed_at IS NULL AND expires_at > ?').get(student.id, nowIso) as { n: number }).n,
       activeSessions: (this.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE student_id = ? AND revoked = 0 AND expires_at > ?').get(student.id, nowIso) as { n: number }).n,
     }));
