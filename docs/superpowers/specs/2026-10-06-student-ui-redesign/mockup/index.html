@@ -1,0 +1,1266 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>学生端重做原型</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:#E6E4DE;color:#1F2A2C;-webkit-text-size-adjust:100%;line-height:1.45}
+@media (prefers-color-scheme:dark){body{background:#0C0F10;color:#E4E8E7}}
+button{font:inherit;color:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;background:none;padding:0}
+input,textarea{font:inherit}
+.ic{width:20px;height:20px;flex:none;display:inline-block;vertical-align:middle}
+
+/* ───────── 演示控制台（不属于手机界面） ───────── */
+.wrap{display:flex;gap:32px;justify-content:center;align-items:flex-start;padding:24px 20px 40px;min-height:100%}
+.panel{--pb:#FBFAF7;--pc:#FFFFFF;--pi:#1F2A2C;--pm:#5E6A6C;--pl:#D9DDD6;--pa:#1F615C;--pab:#E1EEE9;
+  width:380px;flex:none;background:var(--pb);border:1px solid var(--pl);border-radius:18px;padding:18px 18px 22px;color:var(--pi);font-size:14px;max-height:calc(100vh - 48px);overflow:auto;position:sticky;top:24px}
+@media (prefers-color-scheme:dark){.panel{--pb:#161A1B;--pc:#1E2426;--pi:#E4E8E7;--pm:#9AA6A4;--pl:#30383A;--pa:#62BDB2;--pab:#1E302D}}
+.panel h1{font-size:17px;margin:0 0 4px}
+.panel .lead{color:var(--pm);font-size:12.5px;margin:0 0 12px}
+.panel h2{font-size:12px;letter-spacing:.06em;color:var(--pm);margin:18px 0 8px;font-weight:700}
+.scn{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.scn button,.opt button,.tg button{border:1px solid var(--pl);background:var(--pc);border-radius:10px;padding:8px 9px;text-align:left;font-size:12.5px;min-height:40px;line-height:1.3}
+.scn button[aria-pressed=true],.opt button[aria-pressed=true],.tg button[aria-pressed=true]{background:var(--pa);border-color:var(--pa);color:#fff;font-weight:600}
+@media (prefers-color-scheme:dark){.scn button[aria-pressed=true],.opt button[aria-pressed=true],.tg button[aria-pressed=true]{color:#06211F}}
+.dec{border:1px solid var(--pl);background:var(--pc);border-radius:12px;padding:10px 11px;margin-bottom:8px}
+.dec .q{font-weight:700;font-size:13.5px;margin-bottom:6px}
+.dec .q small{font-weight:600;color:var(--pm);margin-right:6px}
+.opt{display:flex;flex-direction:column;gap:5px}
+.opt button{display:flex;gap:6px;align-items:flex-start}
+.opt .rec{margin-left:auto;font-size:11px;font-weight:700;color:var(--pa);white-space:nowrap}
+.opt button[aria-pressed=true] .rec{color:inherit}
+.dec .why{font-size:12px;color:var(--pm);margin-top:6px}
+.tg{display:flex;flex-wrap:wrap;gap:6px}
+.tg button{min-height:36px}
+.note{background:var(--pab);border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.5}
+.note b{display:block;margin-bottom:3px}
+.panel .reset{margin-top:14px;border:1px solid var(--pl);border-radius:10px;padding:8px 12px;background:var(--pc);font-size:12.5px}
+.panel .close{display:none}
+
+/* ───────── 手机 ───────── */
+.stage{flex:none;position:sticky;top:24px}
+.phone{--paper:#F6F4EE;--card:#FFFFFF;--ink:#1D2E31;--muted:#5B696B;--teal:#1F615C;--on-teal:#FFFFFF;--mint:#DFECE6;--line:#DCE0D9;
+  --blue:#2B67D1;--blue-bg:#E4ECFA;--orange:#B05208;--orange-bg:#FBEBD8;--green:#1E7A4C;--green-bg:#DFF1E6;--red:#BE3A2C;--red-bg:#FBE5E1;--gray-bg:#ECEDEC;
+  --bar18:rgba(247,246,242,.9);--glass:rgba(255,255,255,.42);--glass-line:rgba(255,255,255,.75);--sheet:#FFFFFF;--dim:rgba(0,0,0,.32);
+  --top:47px;--bot:34px;
+  width:390px;height:844px;border-radius:55px;background:var(--paper);position:relative;overflow:hidden;color:var(--ink);font-size:16px;
+  box-shadow:0 0 0 11px #18191A,0 0 0 12px #3B3E40,0 30px 70px rgba(0,0,0,.28);transform-origin:top center}
+.phone.dark{--paper:#111516;--card:#1C2224;--ink:#E8EDEC;--muted:#9AA8A6;--teal:#5DB8AD;--on-teal:#06211F;--mint:#1D312E;--line:#2F383A;
+  --blue:#78A5F2;--blue-bg:#1B2A42;--orange:#EAA25A;--orange-bg:#3A2A17;--green:#62C08A;--green-bg:#18301F;--red:#E8786A;--red-bg:#3D201B;--gray-bg:#262C2E;
+  --bar18:rgba(22,26,27,.9);--glass:rgba(40,48,50,.45);--glass-line:rgba(255,255,255,.18);--sheet:#1C2224;--dim:rgba(0,0,0,.55)}
+.phone.glassy{background:linear-gradient(160deg,#E8F1EE 0%,#F4EEDF 45%,#E7ECF6 100%)}
+.phone.dark.glassy{background:linear-gradient(160deg,#10201E 0%,#1B1912 45%,#121826 100%)}
+.sb{position:absolute;top:0;left:0;right:0;height:47px;display:flex;justify-content:space-between;align-items:center;padding:6px 34px 0 46px;font-weight:600;font-size:15.5px;z-index:40;pointer-events:none}
+.sb .bat{display:inline-block;width:25px;height:12px;border:1.5px solid currentColor;border-radius:4px;position:relative;margin-left:6px;vertical-align:-1px}
+.sb .bat::after{content:"";position:absolute;inset:1.5px 5px 1.5px 1.5px;background:currentColor;border-radius:1.5px}
+.hi{position:absolute;bottom:8px;left:50%;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:var(--ink);opacity:.85;z-index:80;pointer-events:none}
+.scr{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:calc(var(--top) + 62px) 16px calc(var(--bot) + 176px);-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.scr::-webkit-scrollbar{display:none}
+.phone.root .scr{padding-top:calc(var(--top) + 54px)}
+.ios26.root .nav::before{height:calc(var(--top) + 6px)}
+.phone.tabs.root .scr{padding-bottom:calc(var(--bot) + 200px)}
+
+/* 导航栏：iOS 26 浮动玻璃按钮；iOS 18 实色栏 */
+.nav{position:absolute;top:var(--top);left:0;right:0;height:52px;display:flex;align-items:center;gap:8px;padding:0 14px;z-index:30}
+.nav .nt{flex:1;text-align:center;font-weight:650;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav .side{min-width:44px;display:flex;gap:6px;align-items:center}
+.nav .side.r{justify-content:flex-end}
+.ios26 .nav::before{content:"";position:absolute;left:0;right:0;top:calc(-1 * var(--top));height:calc(var(--top) + 66px);background:linear-gradient(to bottom,var(--paper) 72%,transparent);z-index:-1;pointer-events:none;opacity:.97;-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.ios26.glassy .nav::before{opacity:.5}
+.ios26 .navb{height:44px;min-width:44px;border-radius:22px;display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:0 14px;background:var(--glass);border:1px solid var(--glass-line);
+  backdrop-filter:blur(18px) saturate(180%);-webkit-backdrop-filter:blur(18px) saturate(180%);box-shadow:inset 0 1px 1px rgba(255,255,255,.55),0 4px 14px rgba(0,0,0,.10);font-weight:600;font-size:15.5px;color:var(--ink)}
+.ios26 .navb.circle{padding:0;width:44px}
+.ios18 .nav{background:var(--bar18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:.5px solid var(--line);height:44px}
+.ios18 .nav::before{content:"";position:absolute;left:0;right:0;top:calc(-1 * var(--top));height:var(--top);background:var(--bar18)}
+.ios18.root .nav{border-bottom-color:transparent;background:var(--paper)}
+.ios18.root .nav::before{background:var(--paper)}
+.ios18 .navb{color:var(--teal);font-size:16.5px;display:inline-flex;align-items:center;gap:1px;min-height:44px;font-weight:500}
+.ios18 .navb .ic{width:22px;height:22px;stroke-width:2.3}
+.ios18 .scr{padding-top:calc(var(--top) + 60px)}
+.reduceT .navb{background:var(--card)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+
+/* 内容 */
+.lt{font-size:33px;font-weight:750;letter-spacing:.01em;margin:0 2px}
+.lt-sub{color:var(--muted);font-size:14px;margin:0 2px 12px}
+.h2{font-size:22px;font-weight:700;margin:4px 2px 6px}
+.p{font-size:15px;color:var(--muted);margin:0 2px 14px}
+.sec-t{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin:22px 4px 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;margin-bottom:10px}
+.glassy .card,.glassy .row,.glassy .stepcard{background:rgba(255,255,255,.38)!important;border-color:rgba(255,255,255,.7)!important;backdrop-filter:blur(14px) saturate(170%);-webkit-backdrop-filter:blur(14px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.6),0 6px 20px rgba(0,0,0,.06)}
+.dark.glassy .card,.dark.glassy .row,.dark.glassy .stepcard{background:rgba(40,48,50,.4)!important;border-color:rgba(255,255,255,.12)!important}
+.glassy .muted,.glassy .p,.glassy .rd{color:color-mix(in srgb,var(--muted) 70%,transparent)}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 12px 12px 14px;margin-bottom:8px;min-height:56px}
+.row .rm{flex:1;min-width:0}
+.row .rt{font-weight:600;font-size:16px}
+.row .rd{font-size:13.5px;color:var(--muted);margin-top:2px}
+.row .chev{color:var(--muted);width:16px;height:16px}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;font-weight:650;border-radius:999px;padding:2px 9px;white-space:nowrap}
+.c-blue{background:var(--blue-bg);color:var(--blue)}.c-orange{background:var(--orange-bg);color:var(--orange)}.c-green{background:var(--green-bg);color:var(--green)}.c-red{background:var(--red-bg);color:var(--red)}.c-gray{background:var(--gray-bg);color:var(--muted)}
+.t-orange{color:var(--orange)}.t-green{color:var(--green)}.t-red{color:var(--red)}.t-blue{color:var(--blue)}.t-teal{color:var(--teal)}
+.link{color:var(--teal);font-weight:600;font-size:15px;min-height:44px;display:inline-flex;align-items:center;gap:4px}
+.demo-chip{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;margin:16px 0 4px;min-height:44px;border:1.5px dashed #8E6BC9;color:#7A55B8;border-radius:12px;font-size:14px;font-weight:600;background:transparent}
+.dark .demo-chip{color:#B79AE8;border-color:#9C7AD6}
+
+/* 节奏条 */
+.rhythm{display:flex;align-items:stretch;gap:4px;margin:0 0 14px}
+.rhythm .seg{flex:1;border-radius:12px;padding:7px 8px;background:var(--gray-bg);color:var(--muted);font-size:12px;line-height:1.3}
+.rhythm .seg b{display:block;font-size:13px;color:var(--ink);opacity:.75}
+.rhythm .seg.on{background:var(--teal);color:var(--on-teal)}
+.rhythm .seg.on b{color:var(--on-teal);opacity:1}
+.rhythm .seg.past{background:var(--mint)}
+.rhythm .arr{align-self:center;color:var(--muted);font-size:12px}
+
+/* 清单 */
+.plan{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:6px 6px 4px;margin-bottom:6px}
+.plan .ph{display:flex;justify-content:space-between;align-items:baseline;padding:8px 10px 6px;font-size:13.5px;color:var(--muted)}
+.plan .ph b{color:var(--ink);font-size:15px}
+.step{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;padding:11px 10px;border-radius:14px;border:1.5px solid transparent;position:relative}
+.step + .step{margin-top:2px}
+.step .num{width:28px;height:28px;border-radius:14px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;border:1.5px solid var(--line);color:var(--muted);margin-top:1px}
+.step.done .num{background:var(--green-bg);border-color:transparent;color:var(--green)}
+.step.done .num .ic{width:16px;height:16px;stroke-width:2.6}
+.step.cur{border-color:var(--teal);background:color-mix(in srgb,var(--mint) 55%,transparent)}
+.step.cur .num{background:var(--teal);border-color:var(--teal);color:var(--on-teal)}
+.step .sm{flex:1;min-width:0}
+.step .st{font-weight:650;font-size:16.5px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.step.done .st{color:var(--muted);font-weight:600}
+.step .sd{font-size:13.5px;color:var(--muted);margin-top:2px}
+.step .tag{font-size:11.5px;font-weight:700;border-radius:6px;padding:1px 6px;background:var(--gray-bg);color:var(--muted)}
+.step .now{font-size:11.5px;font-weight:700;border-radius:6px;padding:1px 6px;background:var(--teal);color:var(--on-teal)}
+.step .mins{font-size:12.5px;color:var(--muted);white-space:nowrap;margin-top:3px}
+.step .inl{margin-top:10px}
+.stepcard{background:var(--card);border:1.5px solid var(--teal);border-radius:22px;padding:18px;margin-bottom:10px}
+.stepcard .big-ic{width:52px;height:52px;border-radius:16px;background:var(--mint);color:var(--teal);display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+.stepcard .big-ic .ic{width:28px;height:28px}
+.dots{display:flex;gap:6px;margin:2px 2px 12px;align-items:center;font-size:13px;color:var(--muted)}
+.dots i{width:22px;height:6px;border-radius:3px;background:var(--line);display:block}
+.dots i.d{background:var(--green)}.dots i.c{background:var(--teal)}
+
+/* 大卡 */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px 18px 16px;margin-bottom:10px}
+.hero .ht{font-size:21px;font-weight:750;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.hero .ht .okc{width:30px;height:30px;border-radius:15px;background:var(--green-bg);color:var(--green);display:flex;align-items:center;justify-content:center}
+.hero p{margin:0 0 10px;font-size:15.5px}
+.hero .rules{margin:6px 0 10px;padding:10px 12px;border-radius:12px;background:var(--paper);font-size:14px;color:var(--ink)}
+.hero .rules div{margin:2px 0}
+.nexttime{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);padding:10px 12px;border-radius:12px;background:var(--gray-bg)}
+
+/* 横幅 */
+.banner{display:flex;gap:10px;align-items:flex-start;border-radius:14px;padding:10px 12px;margin:0 0 12px;font-size:14px;background:var(--gray-bg);color:var(--ink)}
+.banner.warn{background:var(--orange-bg)}
+.banner .bm{flex:1}
+.banner button{color:var(--teal);font-weight:650;white-space:nowrap;min-height:32px}
+
+/* 下一步按钮 */
+.nbar{position:absolute;left:0;right:0;bottom:0;padding:8px 16px calc(var(--bot) + 6px);z-index:35}
+.nbar.ios18bar{background:var(--bar18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:.5px solid var(--line)}
+.nbar.is-glass::before,.nbar.is-solid.ios26bar::before{content:"";position:absolute;left:0;right:0;bottom:0;top:-26px;background:linear-gradient(to top,var(--paper) 78%,transparent);opacity:.97;pointer-events:none;z-index:-1;-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.glassy .nbar.is-glass::before{opacity:.35}
+.nb-cap{font-size:13px;color:var(--muted);text-align:center;margin:0 0 7px;min-height:17px}
+.nb-row{display:flex;gap:10px;align-items:stretch}
+.nb-prim{flex:1;min-height:54px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:17px;font-weight:650;padding:0 18px}
+.nb-prim.solid{background:var(--teal);color:var(--on-teal);border-radius:16px}
+.nb-prim.gp{border-radius:999px;color:#fff;background:color-mix(in srgb,#1F615C 90%,transparent);backdrop-filter:blur(16px) saturate(170%);-webkit-backdrop-filter:blur(16px) saturate(170%);
+  box-shadow:inset 0 1.5px 1px rgba(255,255,255,.5),inset 0 -1px 1px rgba(0,0,0,.2),0 10px 26px rgba(20,70,66,.32);border:1px solid rgba(255,255,255,.28)}
+.dark .nb-prim.gp{background:color-mix(in srgb,#3E9E93 82%,transparent);color:#04201D}
+.nb-prim:disabled{opacity:.5;cursor:default}
+.nb-sec{min-height:54px;padding:0 16px;font-size:15.5px;font-weight:600}
+.nb-sec.g{border-radius:999px;background:var(--glass);border:1px solid var(--glass-line);backdrop-filter:blur(16px) saturate(170%);-webkit-backdrop-filter:blur(16px) saturate(170%);box-shadow:inset 0 1px 1px rgba(255,255,255,.55),0 6px 16px rgba(0,0,0,.09)}
+.nb-sec.outline{border-radius:16px;border:1.5px solid var(--teal);color:var(--teal);background:var(--card)}
+.nb-link{display:block;margin:6px auto 0;color:var(--teal);font-weight:600;font-size:14.5px;min-height:34px}
+.reduceT .nb-prim.gp{background:var(--teal);color:var(--on-teal);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none;border:0}
+.reduceT .nb-sec.g{background:var(--card);border:1.5px solid var(--line);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}
+.inline-next{margin:18px 0 0}
+.inline-next .nb-prim.solid,.inline-next .nb-prim.gp{border-radius:14px}
+.spin{width:18px;height:18px;border-radius:50%;border:2.5px solid currentColor;border-right-color:transparent;animation:sp 0.9s linear infinite;display:inline-block}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:3s}}
+
+/* 标签栏（D1-C） */
+.tabbar{position:absolute;z-index:36;display:flex;justify-content:space-around;align-items:center}
+.ios26 .tabbar{left:22px;right:22px;bottom:calc(var(--bot) - 8px);height:62px;border-radius:31px;background:var(--glass);border:1px solid var(--glass-line);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);box-shadow:inset 0 1px 1px rgba(255,255,255,.55),0 8px 24px rgba(0,0,0,.12)}
+.ios18 .tabbar{left:0;right:0;bottom:0;height:calc(var(--bot) + 50px);padding-bottom:var(--bot);background:var(--bar18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:.5px solid var(--line)}
+.reduceT .tabbar{background:var(--card)!important;backdrop-filter:none!important}
+.tabbar button{display:flex;flex-direction:column;align-items:center;gap:1px;font-size:11px;font-weight:600;color:var(--muted);min-width:76px;min-height:48px;justify-content:center;border-radius:24px}
+.tabbar button.on{color:var(--teal)}
+.ios26 .tabbar button.on{background:color-mix(in srgb,var(--teal) 14%,transparent)}
+.tabs.root .nbar{bottom:calc(var(--bot) + 58px);padding-bottom:6px}
+.ios18.tabs.root .nbar{bottom:calc(var(--bot) + 50px)}
+.tabs.root .nbar.is-glass::before,.tabs.root .nbar.ios26bar::before{display:none}
+
+/* 卷子缩略、裁图、练习纸 */
+.paper{background:#FCFBF6;color:#222;border-radius:6px;border:1px solid #D8D4C8;padding:5px 6px;overflow:hidden;position:relative;font-family:"Songti SC","STSong",serif}
+.paper .pt{font-size:6.5px;text-align:center;font-weight:700;margin-bottom:3px;letter-spacing:.05em}
+.paper .pl{font-size:5px;line-height:1.55;color:#444;white-space:nowrap;position:relative}
+.paper .pl i{color:#C62828;font-style:normal;font-weight:700;font-size:7px;position:absolute;right:2px;top:-2px}
+.paper.blur{filter:blur(1.6px) contrast(.8)}
+.thumbgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:6px 0 10px}
+.tile{display:flex;flex-direction:column;gap:5px;text-align:left}
+.tile .paper{height:128px}
+.tile .tl{font-size:12px;font-weight:600}
+.tile.add{align-items:center;justify-content:center;height:128px;border:2px dashed var(--teal);border-radius:10px;color:var(--teal);font-weight:650;font-size:14px;gap:6px;background:color-mix(in srgb,var(--mint) 40%,transparent)}
+.tile.add .ic{width:28px;height:28px}
+.pthumb{width:54px;height:70px;flex:none;overflow:hidden;border-radius:6px}
+.pthumb .paper{height:100%;padding:3px 4px}
+.pthumb .paper .pt{font-size:4.5px}.pthumb .paper .pl{font-size:3.6px}.pthumb .paper .pl i{font-size:5px}
+.crop{background:#FCFBF6;color:#1C1C1C;border-radius:10px;border:1px solid #DDD8CB;padding:10px 40px 10px 12px;font-family:"Songti SC","STSong","Noto Serif CJK SC",serif;font-size:14.5px;line-height:1.6;position:relative;overflow:hidden}
+.crop.small{max-height:96px;font-size:13px;padding:8px 10px}
+.crop .hand{font-family:"Kaiti SC","STKaiti","KaiTi",cursive;color:#1D3E9C;font-size:15px;margin-top:4px}
+.crop .redfix{font-family:"Kaiti SC","STKaiti","KaiTi",cursive;color:#C62828;font-size:15px}
+.crop .redx{position:absolute;right:12px;top:6px;color:#C62828;font-size:24px;font-weight:700;font-family:sans-serif}
+.crop svg{display:block;margin:4px 0}
+.glassy .crop .ovl{position:absolute;left:8px;right:8px;top:30%;padding:8px 12px;border-radius:14px;background:rgba(255,255,255,.4);border:1px solid rgba(255,255,255,.75);backdrop-filter:blur(8px) saturate(170%);-webkit-backdrop-filter:blur(8px) saturate(170%);font-family:-apple-system,"PingFang SC",sans-serif;font-size:13px;font-weight:650;color:#1D2E31}
+.crop .ovl{display:none}
+.glassy .crop .ovl{display:block}
+.a4{background:#fff;color:#111;border-radius:6px;box-shadow:0 1px 6px rgba(0,0,0,.18);aspect-ratio:210/297;padding:18px 16px;font-family:"Songti SC","STSong",serif;font-size:9.5px;line-height:1.55}
+.a4 h4{font-size:15px;text-align:center;margin:2px 0 2px}
+.a4 .sl{text-align:center;font-size:10px;margin-bottom:10px}
+.a4 .box{border:1px solid #444;padding:6px 8px;margin:8px 0}
+.a4 table{width:100%;border-collapse:collapse;font-size:9px}
+.a4 td{border-bottom:.5px solid #bbb;padding:3px 2px}
+
+/* 列表卡片 */
+.qcard{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;margin-bottom:10px}
+.qcard .qm{display:flex;gap:8px;align-items:center;margin-top:8px}
+.qcard .qx{font-size:14.5px;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.qcard .qs{font-size:13px;color:var(--muted)}
+.sel{border-color:var(--teal);box-shadow:0 0 0 1.5px var(--teal) inset}
+.cbox{width:26px;height:26px;border-radius:13px;border:2px solid var(--line);flex:none;display:flex;align-items:center;justify-content:center;color:transparent}
+.sel .cbox,.cbox.on{background:var(--teal);border-color:var(--teal);color:var(--on-teal)}
+.cbox .ic{width:16px;height:16px;stroke-width:3}
+
+/* 选项 */
+.choices{display:flex;flex-direction:column;gap:8px}
+.choice{display:flex;align-items:center;gap:12px;width:100%;text-align:left;min-height:54px;padding:12px 14px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);font-size:16.5px;font-weight:600}
+.choice.on{border-color:var(--teal);background:var(--mint)}
+.pills{display:flex;flex-wrap:wrap;gap:8px}
+.pill{min-height:40px;padding:8px 13px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);font-size:14.5px;font-weight:600;display:inline-flex;align-items:center;gap:5px}
+.pill.on{border-color:var(--teal);background:var(--mint);color:var(--ink)}
+.pill .mk{font-size:10.5px;font-weight:700;color:var(--teal);background:color-mix(in srgb,var(--teal) 13%,transparent);border-radius:5px;padding:0 4px}
+.grp{margin:16px 0 0}
+.grp .gt{font-weight:700;font-size:15.5px;margin:0 2px 8px;display:flex;gap:6px;align-items:center}
+.gt .mk{font-size:11px;font-weight:700;color:var(--teal);background:color-mix(in srgb,var(--teal) 13%,transparent);border-radius:5px;padding:1px 5px}
+.ta{width:100%;min-height:92px;border-radius:14px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);padding:10px 12px;font-size:16px;resize:none}
+.inp{width:100%;min-height:46px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);padding:10px 12px;font-size:16px}
+.mic{width:100%;min-height:52px;border-radius:14px;background:var(--mint);color:var(--teal);font-weight:700;font-size:16px;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:none}
+.mic.rec{background:var(--teal);color:var(--on-teal)}
+.hint{font-size:13.5px;color:var(--orange);margin:6px 2px 0;min-height:18px}
+.bubble{background:var(--card);border:1px solid var(--line);border-radius:4px 18px 18px 18px;padding:12px 14px;font-size:17px;font-weight:600;margin:12px 0}
+.bubble .who{font-size:12.5px;color:var(--muted);font-weight:700;margin-bottom:3px;display:flex;gap:5px;align-items:center}
+.prog{font-size:13.5px;color:var(--muted);margin:0 2px 8px;font-weight:600}
+.pbar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:8px 0}
+.pbar i{display:block;height:100%;background:var(--teal);border-radius:3px;transition:width .3s}
+.diff{border-radius:12px;padding:10px 12px;margin:6px 0;font-size:15px}
+.diff.b{background:var(--red-bg)}.diff.a{background:var(--green-bg)}
+details.dv{margin-top:8px}
+details.dv summary{color:var(--muted);font-size:13.5px;min-height:34px;display:flex;align-items:center}
+
+/* 弹出页 / 全屏层 / 提示 */
+.dimmer{position:absolute;inset:0;background:var(--dim);z-index:50}
+.dimmer.anim{animation:fi .2s}
+@keyframes fi{from{opacity:0}}
+.sheet{position:absolute;z-index:51;background:var(--sheet);display:flex;flex-direction:column;overflow:hidden}
+.sheet.anim{animation:su .25s ease-out}
+@keyframes su{from{transform:translateY(40px);opacity:.4}}
+@media (prefers-reduced-motion:reduce){.sheet,.dimmer{animation:none}}
+.ios26 .sheet{left:7px;right:7px;bottom:7px;top:calc(var(--top) + 12px);border-radius:38px}
+.ios26 .sheet.half{top:auto;max-height:70%}
+.ios18 .sheet{left:0;right:0;bottom:0;top:calc(var(--top) + 10px);border-radius:12px 12px 0 0}
+.ios18 .sheet.half{top:auto;max-height:70%}
+.sh-h{display:flex;align-items:center;gap:8px;padding:12px 14px 6px;flex:none}
+.sh-h .nt{flex:1;text-align:center;font-weight:650;font-size:16.5px}
+.sh-b{flex:1;overflow-y:auto;padding:8px 16px 16px}
+.sh-f{flex:none;padding:10px 16px calc(var(--bot) - 4px);border-top:.5px solid var(--line)}
+.ios26 .sh-f{border-top:0}
+.sh-f .nb-prim{width:100%}
+.layer{position:absolute;inset:0;z-index:60;background:#000;color:#fff;display:flex;flex-direction:column}
+.cam-top{height:calc(var(--top) + 44px);display:flex;align-items:flex-end;justify-content:space-between;padding:0 18px 8px;font-size:16px}
+.cam-view{flex:1;display:flex;align-items:center;justify-content:center;position:relative;background:#2a2a28}
+.cam-view .paper{width:230px;height:320px;transform:rotate(-1.5deg);box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.cam-view .paper .pt{font-size:11px}.cam-view .paper .pl{font-size:8.5px}.cam-view .paper .pl i{font-size:12px}
+.cam-tip{position:absolute;top:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.55);padding:5px 12px;border-radius:999px;font-size:13px;white-space:nowrap}
+.cam-bot{height:calc(var(--bot) + 110px);display:flex;align-items:center;justify-content:center;padding-bottom:var(--bot)}
+.shutter{width:72px;height:72px;border-radius:50%;border:4px solid #fff;display:flex;align-items:center;justify-content:center}
+.shutter i{width:58px;height:58px;border-radius:50%;background:#fff;display:block}
+.qrbox{width:200px;height:200px;border:3px solid #fff;border-radius:22px;display:flex;align-items:center;justify-content:center}
+.qrbox .ic{width:110px;height:110px;opacity:.85}
+.alert{position:absolute;z-index:70;left:50%;top:50%;transform:translate(-50%,-50%);width:280px;border-radius:22px;background:var(--sheet);text-align:center;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+.alert .ab{padding:18px 16px 14px}
+.alert .ab b{display:block;font-size:16.5px;margin-bottom:4px}
+.alert .ab span{font-size:13.5px;color:var(--muted)}
+.alert .af{display:flex;border-top:.5px solid var(--line)}
+.alert .af button{flex:1;min-height:46px;color:var(--teal);font-weight:600}
+.alert .af button + button{border-left:.5px solid var(--line);font-weight:700}
+.toast{position:absolute;left:16px;right:16px;top:calc(var(--top) + 56px);z-index:45;display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:16px;background:#1F2A2C;color:#fff;font-size:15px;box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.toast.anim{animation:fi .2s}
+.dark .toast{background:#E8EDEC;color:#111}
+.toast span{flex:1}
+.toast button{color:#7FD3C8;font-weight:700;min-height:32px}
+.dark .toast button{color:#1F615C}
+.share-row{display:flex;gap:14px;overflow:hidden;padding:6px 0 12px}
+.share-row div{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:11.5px;width:62px}
+.share-row div i{width:56px;height:56px;border-radius:14px;background:var(--gray-bg);display:block}
+.actlist{background:var(--paper);border-radius:14px;overflow:hidden}
+.actlist button{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:50px;padding:0 16px;font-size:16px;border-bottom:.5px solid var(--line)}
+.actlist button:last-child{border-bottom:0}
+.seg2{display:flex;background:var(--gray-bg);border-radius:10px;padding:2px}
+.seg2 button{flex:1;min-height:34px;border-radius:8px;font-size:14px;font-weight:600}
+.seg2 button.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+
+/* 手机上直接打开：全屏 + 顶部演示条 */
+.demo-band{display:none}
+@media (max-width:640px){
+  html,body{overflow:hidden;height:100%}
+  .wrap{padding:0;display:block;min-height:0}
+  .stage{position:static;padding-top:calc(34px + env(safe-area-inset-top))}
+  .panel{display:none;position:fixed;inset:0;z-index:200;border-radius:0;max-height:none;width:auto;top:0;padding:calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 30px)}
+  .panel.open{display:block}
+  .panel .close{display:block;position:sticky;top:0;margin:0 0 10px auto;background:var(--pa);color:#fff;border-radius:10px;padding:8px 16px;font-weight:700;z-index:2}
+  .demo-band{display:flex;position:fixed;left:0;right:0;top:0;height:calc(env(safe-area-inset-top) + 34px);padding-top:env(safe-area-inset-top);z-index:150;align-items:center;gap:8px;padding-left:12px;padding-right:12px;background:#3C2E58;color:#EFE7FF;font-size:12.5px}
+  .demo-band button{background:#EFE7FF;color:#3C2E58;border-radius:8px;padding:3px 10px;font-weight:700;font-size:12.5px;white-space:nowrap;flex:none}
+  .demo-band span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .phone{width:100vw;height:calc(100vh - 34px - env(safe-area-inset-top));height:calc(100dvh - 34px - env(safe-area-inset-top));margin-top:0;border-radius:0;box-shadow:none;--top:0px;--bot:max(14px,env(safe-area-inset-bottom));transform:none!important}
+  .sb,.hi{display:none}
+}
+</style>
+</head>
+<body>
+<div class="demo-band" id="band"><button data-act="openPanel">演示 ▾</button><span id="bandText"></span></div>
+<div class="wrap">
+  <aside class="panel" id="panel" aria-label="演示控制台（不属于手机界面）">
+    <button class="close" data-act="closePanel">完成</button>
+    <h1>学生端重做 · 可点击原型</h1>
+    <p class="lead">右边是 iPhone 13 尺寸（390 × 844）。直接点手机里的按钮就能走完一周；这里用来跳到某个时间点、切换需要你定的选项。所有题目、卷子都是编的。</p>
+    <h2>跳到某一天</h2>
+    <div class="scn" id="scn"></div>
+    <h2>需要你定的 5 件事</h2>
+    <div id="decs"></div>
+    <h2>预览（不是决定）</h2>
+    <div class="tg" id="prev"></div>
+    <h2>连接情况</h2>
+    <div class="tg" id="conn"></div>
+    <h2>这一屏</h2>
+    <div class="note" id="note"></div>
+    <button class="reset" data-act="resetAll">重新开始（回到周六）</button>
+  </aside>
+  <main class="stage" id="stage">
+    <div class="phone ios26 root" id="phone"></div>
+  </main>
+</div>
+<noscript>这个原型需要打开 JavaScript。</noscript>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ───────── 图标 ───────── */
+const ICON = {
+  camera:'<path d="M3.5 8.5h3.2l1.8-2.6h7l1.8 2.6h3.2v10.5h-17z"/><circle cx="12" cy="13.3" r="3.6"/>',
+  check:'<path d="M5 12.6l4.4 4.4L19 7.4"/>',
+  chev:'<path d="M9.5 5.5l6.5 6.5-6.5 6.5"/>',
+  back:'<path d="M15 5l-7 7 7 7"/>',
+  printer:'<path d="M7 9V4h10v5"/><rect x="3.5" y="9" width="17" height="8" rx="2"/><path d="M7 14h10v6.5H7z"/>',
+  pencil:'<path d="M4 20l1-4.2L15.8 5l3.2 3.2L8.2 19z"/>',
+  bubble:'<path d="M4 5h16v11H10l-5 4v-4H4z"/>',
+  list:'<path d="M9 6.5h11M9 12h11M9 17.5h11M4 6.5h1.5M4 12h1.5M4 17.5h1.5"/>',
+  tick:'<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 12.3l2.7 2.7L16.3 9"/>',
+  mic:'<rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/>',
+  photo:'<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 16.5l5-5 4 4 3-3 5 5"/>',
+  book:'<path d="M5 4.5h10.5a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h10.5"/>',
+  doc:'<path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4"/>',
+  qr:'<rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2"/>',
+  wifi:'<path d="M3 3l18 18"/><path d="M8.5 16.5a5 5 0 0 1 7 0M5.5 13a9 9 0 0 1 6-2.8M2.5 9.5a13 13 0 0 1 6.3-3.3"/>',
+  x:'<path d="M6 6l12 12M18 6L6 18"/>',
+  calendar:'<rect x="4" y="5.5" width="16" height="14.5" rx="2.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>',
+  home:'<path d="M4 11l8-6.5 8 6.5V20h-5.5v-5h-5v5H4z"/>',
+  sparkle:'<path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z"/>',
+  ff:'<path d="M4 6l7 6-7 6zM13 6l7 6-7 6z"/>',
+};
+const ic = (n, cls='') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]||''}</svg>`;
+
+/* ───────── 编的题目（无任何真实内容） ───────── */
+const FIG_TRI = '<svg width="200" height="62" viewBox="0 0 200 62"><path d="M8 56L46 8l40 48z" fill="none" stroke="#222" stroke-width="1.2"/><path d="M118 56l26-32 27 32z" fill="none" stroke="#222" stroke-width="1.2"/><text x="2" y="61" font-size="9">B</text><text x="44" y="7" font-size="9">A</text><text x="88" y="61" font-size="9">C</text><text x="112" y="61" font-size="9">E</text><text x="141" y="22" font-size="9">D</text><text x="173" y="61" font-size="9">F</text></svg>';
+const Q = {
+  'M-07':{no:3,subj:'数学',tag:'一元二次方程',stem:'解方程：x² − 5x + 6 = 0',work:'(x+2)(x+3)=0，x₁=−2，x₂=−3',fix:'(x−2)(x−3)=0，x₁=2，x₂=3',
+    ask:'你原来写的是 (x+2)(x+3)=0，订正是 (x−2)(x−3)=0。你当时是怎么定下括号里的正负号的？',say:'我看到加 6 就以为两个括号里都是加号，没去验算中间那一项',sum:'因式分解时把两个根的符号弄反了',state:'方法基本正确但步骤出错',cause:'计算'},
+  'M-08':{no:7,subj:'数学',tag:'二次函数',stem:'已知二次函数 y = x² − 4x + 3，求它的顶点坐标和对称轴。',work:'顶点 (2, 1)，对称轴 x = 2',fix:'顶点 (2, −1)',
+    ask:'你算出顶点纵坐标是 1，订正是 −1。你是把 x = 2 代进去算的吗？',say:'是代进去的，4 减 8 加 3 我算成 1 了',sum:'代入求值时 4 − 8 + 3 算成了 1',state:'本来会但审题计算书写失误',cause:'计算'},
+  'M-09':{no:9,subj:'数学',tag:'整式乘法',stem:'化简：(a + 2)² − (a − 2)²',work:'= 8',fix:'= 8a',
+    ask:'你的结果是 8，订正是 8a。你展开 (a+2)² 的时候，中间那一项写的是什么？',say:'我写的是 4，忘了乘 a',sum:'完全平方展开时，中间项漏了 a',state:'方法基本正确但步骤出错',cause:'知识概念'},
+  'M-10':{no:12,subj:'数学',tag:'相似三角形',stem:'如图，△ABC ∽ △DEF，AB = 6，DE = 4，BC = 9，求 EF 的长。',work:'EF = 13.5',fix:'EF = 6',low:true,fig:FIG_TRI,
+    ask:'你写的是 EF = 13.5。你当时是用哪两条边对应着列比例的？',say:'我把 AB 和 EF 对上了，比例写反了',sum:'对应边找反了，比例列成了 6 : 4 = EF : 9',state:'知道考什么但没想到方法',cause:'审题遗漏',
+    glance:'这题 AI 没把握，练习纸上印的是遮掉你答案的原图，看看有没有遮漏。'},
+  'M-11':{no:14,subj:'数学',tag:'圆 · 垂径定理',stem:'⊙O 的半径为 5，弦 AB = 8，求圆心 O 到 AB 的距离。',work:'√41',fix:'3',
+    ask:'你算出来是 √41。你画的直角三角形里，哪条边是斜边？',say:'我把 5 和 4 当成两条直角边了',sum:'把半径当成了直角边，勾股定理用反了',state:'知道考什么但没想到方法',cause:'方法选择'},
+  'P-03':{no:4,subj:'物理',tag:'欧姆定律',stem:'一个电阻两端电压为 6 V 时，通过它的电流为 0.3 A。若电压变为 9 V，电流是多少？',
+    ask:'这题你当时卡在哪一步？',say:'不知道电压变了电阻变不变',sum:'没想到电阻不变，可以先求电阻',state:'知道考什么但没想到方法',cause:'方法选择'},
+  'P-04':{no:6,subj:'物理',tag:'密度',stem:'一块体积为 20 cm³ 的金属块质量为 54 g，它的密度是多少 kg/m³？',low:true,
+    ask:'这题你当时卡在哪一步？',say:'单位不会换',sum:'g/cm³ 换成 kg/m³ 时没有乘 1000',state:'本来会但审题计算书写失误',cause:'计算',
+    glance:'这题 AI 没把握，印的是原图裁下来的题目，看看字清不清楚。'},
+  'M-02':{no:5,subj:'数学',tag:'有理数运算',stem:'计算：(−2)³ + |−3| − √16'},
+  'M-04':{no:8,subj:'数学',tag:'不等式组',stem:'解不等式组：2x − 1 > 3，且 x + 2 ≤ 7'},
+  'M-05':{no:11,subj:'数学',tag:'概率',stem:'袋子里有 3 个红球、2 个白球，随机摸出一个，摸到红球的概率是多少？'},
+  'M-13':{no:2,subj:'数学',tag:'因式分解',stem:'因式分解：x² − 9',work:'(x − 3)²',fix:'(x + 3)(x − 3)'},
+  'M-14':{no:5,subj:'数学',tag:'一次函数',stem:'一次函数 y = kx + 3 的图像经过点 (2, 7)，求 k 的值。',work:'k = 5',fix:'k = 2'},
+  'M-15':{no:11,subj:'数学',tag:'勾股定理',stem:'直角三角形两条直角边分别是 5 和 12，求斜边上的高。',work:'h = 6.5',fix:'h = 60/13',low:true},
+  'M-16':{no:15,subj:'数学',tag:'分式方程',stem:'解方程：3/(x − 1) = 2/x',work:'x = −2',fix:'x = −2（检验：x = −2 是原方程的解）'},
+};
+const PHOTO_T = {
+  p1:{title:'数学周测 · 第 1 页',head:'数学周测（第 5 周）',kind:'auto',auto:['M-07','M-08','M-09'],find:2200,nums:[1,2,3,4,5,6,7,8,9],marks:{3:1,7:1,9:1}},
+  p2:{title:'数学周测 · 第 2 页',head:'数学周测（第 5 周）',kind:'auto',auto:['M-10','M-11'],find:3800,nums:[10,11,12,13,14,15],marks:{12:1,14:1}},
+  p3:{title:'物理练习 · 答题卡另交',head:'物理练习（第 5 周）',kind:'nomark',find:3000,nums:[1,2,3,4,5,6,7,8],pickMap:{4:'P-03',6:'P-04'}},
+  p4:{title:'数学周测 · 第 3 页',head:'数学周测（第 5 周）',kind:'blur',find:2600,nums:[16,17,18,19]},
+  q1:{title:'数学周测 · 第 1 页',head:'数学周测（第 6 周）',kind:'auto',auto:['M-13','M-14','M-15'],find:2600,nums:[1,2,3,4,5,6,7,8,9,10,11],marks:{2:1,5:1,11:1}},
+  q2:{title:'数学周测 · 第 2 页',head:'数学周测（第 6 周）',kind:'auto',auto:['M-16'],find:3400,nums:[12,13,14,15,16],marks:{15:1}},
+};
+const ORDER = {W41:['p1','p2','p3','p4'], W42:['q1','q2']};
+const DAYS = {A:{num:0,label:'周六 10月10日'}, mid:{num:4,label:'周三 10月14日'}, B:{num:7,label:'周六 10月17日'}};
+const WD = ['周六','周日','周一','周二','周三','周四','周五'];
+const dayLabel = n => `${WD[((n%7)+7)%7]} ${dateMD(n)}`;
+function dateMD(n){ const d = 10 + n; return d <= 31 ? `10/${d}` : `11/${d-31}`; }
+
+/* 复盘显示别名（提交仍用原文） */
+const STATE_ALIAS = [['完全不会','完全不会'],['知道考什么但没想到方法','知道考啥，没想到方法'],['方法基本正确但步骤出错','方法对，步骤错了'],['本来会但审题计算书写失误','本来会，粗心了'],['时间不足','时间不够'],['其他','其他']];
+const CAUSE_ALIAS = [['知识概念','概念没弄懂'],['方法选择','方法选错了'],['推理步骤','推理中间断了'],['计算','算错了'],['审题遗漏','题目没看全'],['表达规范','写法不规范'],['时间注意力状态','时间不够或走神']];
+const M_ALIAS = ['还是不会','看提示可能会','现在做应该会','过几天也会'];
+const COMPLETION = [['independent','独立做出'],['hint1','看了一级提示'],['hint2','看了二级提示'],['not_solved','没做出来'],['not_done','没做']];
+
+/* ───────── 偏好（决定与预览，存本机，失败无妨） ───────── */
+const DEF_P = {ios:'26', reduceT:false, dark:false, d1:'A', d2:'A', d3:'A', d4:'A', d5:'A'};
+let P = {...DEF_P};
+try { const s = JSON.parse(localStorage.getItem('sel-redesign-prefs') || 'null'); if (s) P = {...DEF_P, ...s}; } catch (e) {}
+function saveP(){ try { localStorage.setItem('sel-redesign-prefs', JSON.stringify(P)); } catch (e) {} }
+
+/* ───────── 世界状态 ───────── */
+let S, GEN = 0, nextId = 1, lastSheet = '', lastToast = 0;
+function fresh(){
+  return { day:'A', paired:true, conn:'ready', online:true, consent:false, qrError:false,
+    photos:[], discarded:{}, practices:[], skip:{shoot:false, why:false, record:false},
+    slot:'周三晚自习', paperLoc:'school', stack:[{s:'today'}], sheet:null, layer:null, alert:null, toast:null,
+    why:null, rec:null, pr:null, choose:null, pick:null, fix:null, micPerm:false, tab:'today', scroll:{} };
+}
+const wk = () => S.day === 'A' ? 'W41' : 'W42';
+const dayNum = () => DAYS[S.day].num;
+const weekPhotos = (w = wk()) => S.photos.filter(p => p.week === w && !p.removed);
+function photoItems(p){
+  if (p.state !== 'done') return [];
+  const t = PHOTO_T[p.t];
+  let ids = t.kind === 'auto' ? t.auto.slice() : [];
+  for (const n of p.picked) ids.push(t.pickMap && t.pickMap[n] ? t.pickMap[n] : genericItem(p, n));
+  return ids;
+}
+function genericItem(p, n){
+  const id = `X-${p.t}-${n}`;
+  if (!Q[id]) Q[id] = {no:n, subj:'物理', tag:'（演示）', stem:`物理练习第 ${n} 题（演示用，题目内容省略）`};
+  return id;
+}
+const weekItems = (w = wk()) => weekPhotos(w).flatMap(photoItems).filter(id => !S.discarded[id]);
+const latest = () => S.practices[S.practices.length - 1];
+const curPractice = () => S.practices.find(p => p.week === wk());
+const prevPractice = () => [...S.practices].reverse().find(p => p.week !== wk() && p.gen);
+const allRecorded = p => p.ids.every(id => p.recorded[id]);
+const allReflected = p => p.ids.every(id => p.reflected[id]);
+const nRecorded = p => p.ids.filter(id => p.recorded[id]).length;
+function resultOf(p, id){
+  const r = p.recorded[id]; if (!r) return null;
+  if (r.c === 'independent' && r.ok) return (r.date - p.genDay >= 3) ? 'mastered' : 'pending';
+  return 'again';
+}
+const indepCorrect = p => p.ids.filter(id => { const r = p.recorded[id]; return r && r.c === 'independent' && r.ok; }).length;
+
+/* ───────── 周计划（与设计稿 3.2 同一规则） ───────── */
+function plan(){
+  if (!S.paired || S.conn === 'unauthorized' || S.conn === 'incompatible') return {phase:'connect'};
+  const L = latest();
+  if (L && L.gen && !allRecorded(L)) {
+    const d = dayNum() - L.genDay;
+    const whyPending = P.d3 === 'B' && L.week === wk() && !allReflected(L) && !S.skip.why;
+    if (d <= 1 && !whyPending) return {phase:'done', L};
+    if (d >= 2 && d <= 4) return {phase:'mid', L, d};
+  }
+  return {phase:'steps', steps: buildSteps()};
+}
+function buildSteps(){
+  const ps = weekPhotos(), cur = curPractice(), prev = prevPractice();
+  const showRecord = prev && dayNum() - prev.genDay >= 5;
+  const st = [];
+  st.push({k:'shoot', icon:'camera', title:'拍这周的卷子', desc:'整页拍，一页一张', min:2,
+    done: ps.length > 0 || S.skip.shoot || !!cur, doneText: ps.length ? `已拍 ${ps.length} 张` : '这周没拍卷子'});
+  if (showRecord) {
+    const n = prev.ids.length, k = nRecorded(prev);
+    st.push({k:'record', icon:'pencil', title:'录练习纸的结果', desc: k ? `录了 ${k}/${n} 道` : 'AI 找题要几分钟，正好先录这个', min:3,
+      done: k >= n || S.skip.record, doneText: k >= n ? `录完了，${n} 道里独立做对 ${indepCorrect(prev)} 道` : '先跳过了，下次再录'});
+  }
+  const busy = ps.filter(p => ['uploading','finding','reading','retrying'].includes(p.state));
+  const needPick = ps.filter(p => p.state === 'pick');
+  const local = ps.filter(p => p.state === 'local');
+  const failed = ps.filter(p => p.state === 'fail' || p.state === 'empty');
+  const nItems = weekItems().length;
+  const pick = {k:'pick', icon:'tick', title:'勾出做错的题', desc:'有红叉的题 AI 自己找；没批改的页要你勾', min:3};
+  if (!ps.length) { pick.done = S.skip.shoot || !!cur; pick.doneText = '这周没有新卷子'; }
+  else if (needPick.length) { pick.attn = `第 ${needPick[0].n} 张要你勾`; pick.photo = needPick[0]; }
+  else if (local.length) { pick.attn = `${local.length} 张还没上传`; pick.local = true; }
+  else if (busy.length) { pick.wait = true; pick.desc = `AI 正在找题（${busy.length} 张）`; }
+  else { pick.done = true; pick.doneText = `找到 ${nItems} 道错题`; if (failed.length) pick.doneWarn = `${failed.length} 张没认出来`; }
+  if (cur) { pick.done = true; if (!pick.doneText) pick.doneText = `找到 ${nItems} 道错题`; }
+  st.push(pick);
+  st.push({k:'choose', icon:'list', title:'选这周要练的题', desc:'AI 先帮你选好，5–8 道', min:1, done: !!cur, doneText: cur ? `选了 ${cur.ids.length} 道` : ''});
+  const nRef = cur ? cur.ids.filter(id => cur.reflected[id]).length : 0;
+  const why = {k:'why', icon:'bubble', title:'说说为什么错', optional:true, desc: nRef ? `说了 ${nRef}/${cur.ids.length} 道` : '每道 AI 问你一句，说一句就行', min:5,
+    done: !!cur && (allReflected(cur) || S.skip.why || (P.d3 === 'A' && cur.gen)), doneText: cur ? (nRef ? `说了 ${nRef}/${cur.ids.length} 道` : '跳过了') : ''};
+  const print = {k:'print', icon:'printer', title:'打印练习纸', desc:'打出来，带回学校', min:2, done: !!cur && cur.gen, doneText:'练习纸已生成'};
+  if (S.pr && S.pr.phase === 'preparing' && cur && !cur.gen) print.desc = '正在准备练习纸…';
+  if (P.d3 === 'A') st.push(why, print); else st.push(print, why);
+  return st;
+}
+function currentStep(steps){ return steps.find(s => !s.done); }
+const needsServer = act => !['startShoot','goCapture','skipShoot','goItems','openSettings'].includes(act);
+function nextFor(pl){
+  const steps = pl.steps, s = currentStep(steps); if (!s) return null;
+  const i = steps.indexOf(s);
+  const cap = `第 ${i+1} 步，共 ${steps.length} 步 · 大约 ${s.min} 分钟`;
+  let n;
+  switch (s.k) {
+    case 'shoot': n = {label:'拍第一页', icon:'camera', act:'startShoot', caption:cap, sec:{label:'这周没发卷子，跳过', act:'skipShoot'}}; break;
+    case 'record': n = {label:'录练习纸的结果', icon:'pencil', act:'goRecord', caption:cap, sec:{label:'先跳过', act:'skipRecord'}}; break;
+    case 'pick':
+      if (s.photo) n = {label:`勾第 ${s.photo.n} 张`, icon:'tick', act:'openPick', arg:s.photo.id, caption:cap};
+      else if (s.local) n = {label:'上传照片', icon:'photo', act:'askConsent', caption:'照片还在手机上，传上去 AI 才能找题'};
+      else if (s.wait) {
+        const rec = steps.find(x => x.k === 'record' && !x.done);
+        n = {label:'AI 正在找题…', spinner:true, disabled:true, caption:'大约 1–2 分钟。可以先做下一步', sec: rec ? {label:'先录结果', act:'goRecord'} : (weekItems().length ? {label:'看看找到的', act:'goItems'} : null)};
+      } else n = {label:'勾出做错的题', icon:'tick', act:'goPhotos', caption:cap};
+      break;
+    case 'choose': n = {label:'选这周要练的题', icon:'list', act:'goChoose', caption:cap}; break;
+    case 'why': n = {label:'说说为什么错', icon:'bubble', act:'goWhy', caption:cap, sec:{label: P.d3 === 'A' ? '跳过，直接打印' : '跳过', act:'skipWhy'}}; break;
+    case 'print': n = {label:'打印练习纸', icon:'printer', act:'goPrint', caption:cap}; break;
+  }
+  return n;
+}
+function gateOffline(n){
+  if (!n) return n;
+  const blocked = !S.online || S.conn === 'failed' || S.conn === 'busy';
+  if (blocked && !n.disabled && needsServer(n.act)) {
+    return {...n, disabled:true, spinner:false, caption: !S.online ? '没联网，连上后再继续' : (S.conn === 'busy' ? '服务器有点忙，过一会儿再试' : '连不上服务器，连上后再继续'), sec: n.sec && !needsServer(n.sec.act) ? n.sec : null};
+  }
+  return n;
+}
+
+/* ───────── 计时器（模拟上传、找题、准备打印） ───────── */
+function later(ms, fn){ const g = GEN; setTimeout(() => { if (g === GEN) { fn(); render(); } }, ms); }
+function startPipe(p){
+  if (!S.online) { p.state = 'local'; return; }
+  p.state = 'uploading';
+  later(900, () => { if (p.state !== 'uploading') return; p.state = 'finding';
+    later(PHOTO_T[p.t].find, () => { if (p.state !== 'finding') return; const k = PHOTO_T[p.t].kind; p.state = k === 'auto' ? 'done' : k === 'nomark' ? 'pick' : 'fail'; }); });
+}
+function addPhoto(t){
+  const w = wk();
+  const p = {id:'ph' + (nextId++), t, week:w, n: S.photos.filter(x => x.week === w).length + 1, state:'local', picked:[], removed:false};
+  S.photos.push(p);
+  if (S.consent) startPipe(p);
+  return p;
+}
+function nextTemplate(){
+  const w = wk(), used = S.photos.filter(p => p.week === w).map(p => p.t);
+  return ORDER[w].find(t => !used.includes(t));
+}
+
+/* ───────── 导航 ───────── */
+const topS = () => S.stack[S.stack.length - 1];
+function push(s, extra = {}){ S.stack.push({s, ...extra}); }
+function replace(s, extra = {}){ S.stack[S.stack.length - 1] = {s, ...extra}; }
+function home(){ S.stack = [{s:'today'}]; S.tab = 'today'; }
+function toast(text, act, arg, label){ S.toast = {text, act, arg, label, id: nextId++}; const id = S.toast.id; setTimeout(() => { if (S.toast && S.toast.id === id) { S.toast = null; render(); } }, act ? 8000 : 2600); }
+function goStepKey(k){
+  const cur = curPractice();
+  switch (k) {
+    case 'shoot': push('capture'); break;
+    case 'record': ACT.goRecord(); return;
+    case 'pick': push('photos'); break;
+    case 'choose': cur ? push('chosen') : ACT.goChoose(); return;
+    case 'why': cur ? ACT.goWhy() : ACT.goChoose(); return;
+    case 'print': cur ? ACT.goPrint() : ACT.goChoose(); return;
+  }
+}
+/* 一步做完后去哪：按周计划直接进下一步，不回首页找 */
+function goNextFromPlan(){
+  const pl = plan();
+  if (pl.phase !== 'steps') { home(); return; }
+  const n = nextFor(pl);
+  home();
+  const s = currentStep(pl.steps);
+  if (!n || n.disabled) { if (s && s.k === 'pick') push('photos'); return; }
+  if (s && s.k === 'pick') push('photos');
+  if (n.act && ACT[n.act]) ACT[n.act](n.arg);
+}
+function nextLabelFromPlan(){
+  const pl = plan(); if (pl.phase !== 'steps') return null;
+  const s = currentStep(pl.steps); if (!s) return null;
+  return s.title;
+}
+
+/* ───────── 动作 ───────── */
+const ACT = {
+  openPanel(){ $('#panel').classList.add('open'); },
+  closePanel(){ $('#panel').classList.remove('open'); },
+  resetAll(){ scenario('A0'); },
+  back(){ if (S.stack.length > 1) S.stack.pop(); if (topS().s === 'why' && S.why) S.why.phase = S.why.phase === 'thinking' ? 'ask' : S.why.phase; },
+  goHome(){ home(); },
+  goStep(k){ goStepKey(k); },
+  tab(t){ S.tab = t; S.stack = [{s:'today'}]; },
+  openSettings(){ S.sheet = {s:'settings'}; },
+  closeSheet(){ S.sheet = null; },
+  /* 连接 */
+  openScanner(){ S.layer = {s:'scanner'}; S.qrError = false; later(1800, () => { if (!S.layer || S.layer.s !== 'scanner') return; S.layer = null; S.paired = true; S.conn = 'ready'; toast('连上了 ✓'); home(); }); },
+  badQr(){ S.layer = null; S.qrError = true; },
+  closeLayer(){ S.layer = null; },
+  retryConn(){ toast('正在连接…'); later(1000, () => { S.conn = 'ready'; toast('连上了 ✓'); }); },
+  /* 拍卷子 */
+  startShoot(){ push('capture'); ACT.startCamera(); },
+  goCapture(){ push('capture'); },
+  startCamera(){ const t = nextTemplate(); if (!t) { toast('演示里的卷子拍完了'); return; } S.layer = {s:'camera', t}; },
+  shutter(){ const t = S.layer.t; S.layer = null; addPhoto(t); if (!S.consent) S.sheet = {s:'consent'}; },
+  album(){ let added = 0; for (let i = 0; i < 2; i++) { const t = nextTemplate(); if (t) { addPhoto(t); added++; } } if (!added) { toast('演示里的卷子拍完了'); return; } if (!S.consent) S.sheet = {s:'consent'}; },
+  askConsent(){ S.sheet = {s:'consent'}; },
+  consentYes(){ S.consent = true; S.sheet = null; weekPhotos().filter(p => p.state === 'local').forEach(startPipe); },
+  consentNo(){ S.sheet = null; },
+  skipShoot(){ S.skip.shoot = true; goNextFromPlan(); },
+  doneShoot(){ goNextFromPlan(); },
+  /* 勾错题 */
+  goPhotos(){ push('photos'); },
+  openPick(id){ S.pick = {pid:id, input:'', on:{}, off:{}, hint:''}; S.sheet = {s:'pick'}; },
+  pickToggle(n){ n = +n; const pk = S.pick, chk = pickChecked().has(n); if (chk) { delete pk.on[n]; pk.off[n] = 1; } else { delete pk.off[n]; pk.on[n] = 1; } },
+  pickConfirm(){ const p = S.photos.find(x => x.id === S.pick.pid); const nums = [...pickChecked()].sort((a,b) => a-b); p.picked = nums; p.state = 'reading'; S.sheet = null; toast(`加入了 ${nums.length} 道，AI 正在读题`);
+    later(2200, () => { if (p.state === 'reading') p.state = 'done'; }); },
+  pickNone(){ const p = S.photos.find(x => x.id === S.pick.pid); p.picked = []; p.state = 'done'; S.sheet = null; toast('好的，这页没有错题'); },
+  showOriginal(){ toast('（演示）这里会打开整页原图，可以两指放大'); },
+  retryPhoto(id){ const p = S.photos.find(x => x.id === id); p.state = 'retrying'; later(1600, () => { p.state = 'empty'; }); },
+  removePhoto(id){ const p = S.photos.find(x => x.id === id); p.removed = true; toast('移除了这张'); },
+  uploadPhoto(){ ACT.askConsent(); },
+  /* 错题本 */
+  goItems(){ push('items'); },
+  openItem(id){ push('detail', {id}); },
+  discard(id){ S.discarded[id] = true; S.stack.pop(); toast('已移出这道题', 'undoDiscard', id, '撤销'); },
+  undoDiscard(id){ delete S.discarded[id]; S.toast = null; },
+  openFix(id){ S.fix = {id, text:'', phase:'input', hint:''}; S.sheet = {s:'fix'}; },
+  fixGen(){ S.fix.phase = 'thinking'; later(1100, () => { if (S.fix) S.fix.phase = 'diff'; }); },
+  fixAccept(){ S.sheet = null; toast('改好了'); },
+  /* 选题 */
+  goChoose(){ const cur = curPractice(); if (cur) { push('chosen'); return; } const r = recommend(); S.choose = {sel: r.rec.map(x => x.id), others:false, slot:S.slot, other:''}; push('choose'); },
+  chooseToggle(id){ const c = S.choose, i = c.sel.indexOf(id); if (i >= 0) c.sel.splice(i, 1); else if (c.sel.length < 8) c.sel.push(id); else toast('最多 8 道。想加这道，先去掉一道。'); },
+  chooseOthers(){ S.choose.others = !S.choose.others; },
+  slot(v){ S.choose.slot = v; },
+  createPractice(){ const c = S.choose; S.practices.push({id:'pk' + (nextId++), week:wk(), ids:c.sel.slice(), slot: c.slot === '其他…' ? (c.other || '本周内') : c.slot, gen:false, genDay:null, reflected:{}, reflectM:{}, recorded:{}}); S.choose = null; S.stack.pop();
+    toast(`建好了这周的练习：${latest().ids.length} 道`); if (P.d3 === 'A') ACT.goWhy(); else ACT.goPrint(); },
+  /* 说说为什么错 */
+  goWhy(){ const cur = curPractice(); if (!cur) return; const i = cur.ids.findIndex(id => !cur.reflected[id]); S.why = {i: i < 0 ? 0 : i, phase: i < 0 ? 'done' : 'intro', ans:'', hint:'', form:null}; push('why'); },
+  whyStart(){ S.why.phase = 'ask'; },
+  whySend(){ S.why.phase = 'thinking'; later(1200, () => { if (S.why && S.why.phase === 'thinking') { whyForm(true); S.why.phase = 'confirm'; } }); },
+  whyNoAnswer(){ whyForm(false); S.why.phase = 'confirm'; },
+  whySkipOne(){ whyAdvance(); },
+  whyPick(arg){ const [g, v] = arg.split('|'); const f = S.why.form; if (g === 'm') f.m = +v; else { f[g] = v; f.mark[g] = (f.ai && f.ai[g] === v) ? 'AI 猜的' : ''; } },
+  whySubmit(){ const cur = curPractice(), id = cur.ids[S.why.i]; cur.reflected[id] = true; cur.reflectM[id] = S.why.form.m; whyAdvance(); },
+  skipWhy(){ S.skip.why = true; S.why = null; if (topS().s === 'why') S.stack.pop(); if (P.d3 === 'A') ACT.goPrint(); else home(); },
+  whyNext(){ S.why = null; S.stack.pop(); if (P.d3 === 'A') ACT.goPrint(); else home(); },
+  /* 打印 */
+  goPrint(pid){ const p = pid ? S.practices.find(x => x.id === pid) : (curPractice() || latest()); if (!p) return; S.pr = {pid:p.id, phase: p.gen ? 'ready' : 'preparing', done: p.gen ? p.ids.length : 0, opened:false};
+    if (topS().s !== 'print') push('print'); if (!p.gen) tickPrint(); },
+  openShare(){ S.sheet = {s:'share'}; },
+  sharePrint(){ S.sheet = {s:'printopts'}; },
+  shareFiles(){ S.sheet = null; S.pr.opened = true; toast('（演示）已存到「文件」'); },
+  doPrint(){ S.sheet = null; S.pr.opened = true; toast('已发送到打印机（演示）'); },
+  printedDone(){ S.pr = null; const pl = plan(); if (pl.phase === 'steps' && P.d3 === 'B' && currentStep(pl.steps) && currentStep(pl.steps).k === 'why') { home(); ACT.goWhy(); } else home(); },
+  /* 录结果 */
+  goRecord(){ const p = prevPractice() || latest(); if (!p || !p.gen) return; const todo = p.ids.filter(id => !p.recorded[id]); if (!todo.length) { push('results', {pid:p.id}); return; }
+    S.rec = {pid:p.id, todo, i:-1, date:null, ans:{}, per:{}, editDate:false, phase:'date'}; push('record'); },
+  recDate(n){ S.rec.date = +n; },
+  recStart(){ S.rec.i = 0; S.rec.phase = 'item'; },
+  recC(arg){ const [id, c] = arg.split('|'); const a = S.rec.ans[id] = S.rec.ans[id] || {}; a.c = c; if (!['independent','hint1','hint2'].includes(c)) a.ok = undefined; },
+  recOk(arg){ const [id, v] = arg.split('|'); S.rec.ans[id].ok = v === '1'; },
+  recPer(arg){ const [id, n] = arg.split('|'); S.rec.per[id] = +n; S.rec.editDate = false; },
+  recEditDate(){ S.rec.editDate = !S.rec.editDate; },
+  recPrev(){ if (S.rec.i > 0) S.rec.i--; else { S.rec.i = -1; S.rec.phase = 'date'; } },
+  recNext(){ if (S.rec.i < S.rec.todo.length - 1) S.rec.i++; else ACT.recSubmit(); },
+  recSubmit(){ S.rec.phase = 'submitting'; later(1100, () => { const p = S.practices.find(x => x.id === S.rec.pid); for (const id of S.rec.todo) { const a = S.rec.ans[id]; if (recComplete(id)) p.recorded[id] = {c:a.c, ok:!!a.ok, date: S.rec.per[id] ?? S.rec.date}; } const pid = p.id; S.rec = null; replace('results', {pid}); }); },
+  skipRecord(){ S.skip.record = true; goNextFromPlan(); },
+  resultsNext(){ goNextFromPlan(); },
+  goOlder(){ push('older'); },
+  /* 设置 */
+  setSlot(v){ S.slot = v; },
+  setLoc(v){ S.paperLoc = v; },
+  saveSettings(){ S.sheet = null; toast('已保存'); },
+  /* 演示快进 */
+  ffMid(){ scenarioKeep('mid'); },
+  ffB(){ scenarioKeep('B'); },
+  micAllow(){ S.alert = null; S.micPerm = true; setHint('好了，现在按住按钮说话'); },
+  micDeny(){ S.alert = null; setHint('没有麦克风权限，可以直接打字'); },
+};
+function setHint(t){ if (S.sheet && S.sheet.s === 'pick') S.pick.hint = t; else if (S.sheet && S.sheet.s === 'fix') S.fix.hint = t; else if (S.why) S.why.hint = t; }
+function tickPrint(){ later(450, () => { const pr = S.pr; if (!pr || pr.phase !== 'preparing') return; const p = S.practices.find(x => x.id === pr.pid); pr.done++; if (pr.done >= p.ids.length) { pr.phase = 'ready'; p.gen = true; p.genDay = dayNum(); } else tickPrint(); }); }
+function whyForm(withAI){
+  const cur = curPractice(), q = Q[cur.ids[S.why.i]];
+  const ai = withAI ? {sum:q.sum || '', state:q.state || null, cause:q.cause || null} : {sum:'', state:null, cause:null};
+  S.why.form = {sum: ai.sum, state: ai.state, cause: ai.cause, m:null, ai, mark:{sum: ai.sum ? 'AI 写的' : '', state: ai.state ? 'AI 猜的' : '', cause: ai.cause ? 'AI 猜的' : ''}};
+}
+function whyAdvance(){ const cur = curPractice(); S.why.ans = ''; S.why.hint = ''; S.why.form = null; const nx = cur.ids.findIndex((id, j) => j > S.why.i && !cur.reflected[id]); if (nx < 0) S.why.phase = 'done'; else { S.why.i = nx; S.why.phase = 'ask'; } }
+function recComplete(id){ const a = S.rec.ans[id]; if (!a || !a.c) return false; if (['independent','hint1','hint2'].includes(a.c)) return a.ok === true || a.ok === false; return true; }
+function pickChecked(){
+  const pk = S.pick, p = S.photos.find(x => x.id === pk.pid), nums = PHOTO_T[p.t].nums, set = new Set();
+  for (const n of parseNums(pk.input)) if (nums.includes(n)) set.add(n);
+  for (const n in pk.on) set.add(+n);
+  for (const n in pk.off) set.delete(+n);
+  return set;
+}
+function parseNums(t){
+  const out = []; const re = /(\d+)\s*(?:到|-|~|—|－)\s*(\d+)|(\d+)/g; let m;
+  while ((m = re.exec(t || ''))) { if (m[3]) out.push(+m[3]); else { const a = +m[1], b = +m[2]; for (let i = Math.min(a,b); i <= Math.max(a,b) && i - Math.min(a,b) < 40; i++) out.push(i); } }
+  return out;
+}
+function recommend(){
+  const items = weekItems(), already = new Set(S.practices.filter(p => p.week === wk()).flatMap(p => p.ids));
+  const back = [{id:'M-02',reason:'上次练习没独立做对'},{id:'M-04',reason:'「不等式组」近四周错了 2 次'},{id:'M-05',reason:'上次是当场做对，还要隔几天再验证'}];
+  let pool;
+  if (wk() === 'W41') pool = items.map(id => ({id, reason:'本周新错题'})).concat(back);
+  else { const prev = prevPractice(); const again = prev ? prev.ids.filter(id => resultOf(prev, id) === 'again') : []; const pend = prev ? prev.ids.filter(id => resultOf(prev, id) === 'pending') : [];
+    pool = again.map(id => ({id, reason:'上次练习没独立做对'})).concat(items.map(id => ({id, reason:'本周新错题'})), pend.map(id => ({id, reason:'上次是当场做对，还要隔几天再验证'})), back); }
+  const seen = new Set(); pool = pool.filter(x => !already.has(x.id) && !seen.has(x.id) && seen.add(x.id));
+  return {rec: pool.slice(0, 6), oth: pool.slice(6)};
+}
+
+/* ───────── 场景 ───────── */
+const SCN = [
+  ['first','第一次打开（还没连上）'], ['A0','周六 · 周末开始'], ['A1','周六 · 拍完了，AI 在找题'], ['A2','周六 · 选好了题，还没打印'],
+  ['A3','周六 · 打印完了'], ['mid','周三 · 周中打开'], ['B0','下周六 · 先拍再录结果'], ['B1','下周六 · 结果录完了'],
+];
+let curScn = 'A0';
+function scenario(key){
+  GEN++; S = fresh(); curScn = key;
+  const fillA = () => {
+    S.consent = true;
+    ['p1','p2','p3','p4'].forEach(t => { const p = addPhotoRaw(t, 'W41'); p.state = t === 'p3' ? 'done' : t === 'p4' ? 'empty' : 'done'; if (t === 'p3') p.picked = [4,6]; if (t === 'p4') p.removed = true; });
+  };
+  const practiceA = gen => { const p = {id:'pkA', week:'W41', ids:['M-07','M-08','M-09','M-10','M-11','P-03'], slot:'周三晚自习', gen, genDay: gen ? 0 : null, reflected:{}, reflectM:{}, recorded:{}};
+    if (gen) { ['M-07','M-08','M-09','M-10','M-11'].forEach((id, i) => { p.reflected[id] = true; p.reflectM[id] = [2,3,2,1,2][i]; }); } S.practices.push(p); return p; };
+  switch (key) {
+    case 'first': S.paired = false; S.conn = 'unpaired'; break;
+    case 'A0': break;
+    case 'A1': S.consent = true; { const a = addPhotoRaw('p1','W41'); a.state = 'done'; const b = addPhotoRaw('p2','W41'); startPipeFrom(b, 'finding'); const c = addPhotoRaw('p3','W41'); c.state = 'pick'; const d = addPhotoRaw('p4','W41'); d.state = 'fail'; } break;
+    case 'A2': fillA(); practiceA(false); break;
+    case 'A3': fillA(); practiceA(true); break;
+    case 'mid': fillA(); practiceA(true); S.day = 'mid'; break;
+    case 'B0': fillA(); practiceA(true); S.day = 'B'; break;
+    case 'B1': { fillA(); const p = practiceA(true); S.day = 'B'; const ans = {'M-07':['independent',1],'M-08':['hint1',1],'M-09':['independent',1],'M-10':['not_solved',0],'M-11':['independent',0],'P-03':['independent',1]};
+      for (const id in ans) p.recorded[id] = {c:ans[id][0], ok:!!ans[id][1], date:4}; ['q1','q2'].forEach(t => { const x = addPhotoRaw(t, 'W42'); x.state = 'done'; }); } break;
+  }
+  render();
+}
+function scenarioKeep(day){ GEN++; S.day = day; S.stack = [{s:'today'}]; S.sheet = null; S.layer = null; S.pr = null; S.why = null; S.rec = null; S.skip = {shoot:false, why:false, record:false}; curScn = day === 'mid' ? 'mid' : 'B0'; render(); const sc = $('#scr'); if (sc) sc.scrollTop = 0; }
+function addPhotoRaw(t, w){ const p = {id:'ph' + (nextId++), t, week:w, n: S.photos.filter(x => x.week === w).length + 1, state:'done', picked:[], removed:false}; S.photos.push(p); return p; }
+function startPipeFrom(p, st){ p.state = st; later(PHOTO_T[p.t].find, () => { if (p.state === 'finding') p.state = 'done'; }); }
+
+/* ───────── 画面零件 ───────── */
+function paperHTML(t, cls = ''){
+  const T = PHOTO_T[t]; const lines = (T.nums || [1,2,3,4,5,6]).slice(0, 9).map(n => `<div class="pl">${n}. ${'＿'.repeat(5 + (n % 4))}${T.marks && T.marks[n] ? '<i>✗</i>' : ''}</div><div class="pl">　 ${'·'.repeat(10 + (n % 6))}</div>`).join('');
+  return `<div class="paper ${T.kind === 'blur' ? 'blur' : ''} ${cls}"><div class="pt">${esc(T.head || '')}</div>${lines}</div>`;
+}
+function cropHTML(id, small){
+  const q = Q[id];
+  return `<div class="crop ${small ? 'small' : ''}"><div><b>${q.no}.</b> ${esc(q.stem)}</div>${q.fig && !small ? q.fig : ''}${q.work ? `<div class="hand">${esc(q.work)}</div>` : ''}${q.work ? '<span class="redx">✗</span>' : ''}${q.fix && !small ? `<div class="redfix">订正：${esc(q.fix)}</div>` : ''}<div class="ovl">${esc(id)} · ${esc(q.subj)}${q.low ? ' · 字可能认错了' : ''}</div></div>`;
+}
+const chipFor = (cls, text) => `<span class="chip ${cls}">${text}</span>`;
+function btnHTML(n, glass, inline){
+  const prim = `<button class="nb-prim ${glass ? 'gp' : 'solid'}" ${n.disabled ? 'disabled' : ''} data-act="${n.act || ''}" data-arg="${esc(n.arg ?? '')}">${n.spinner ? '<span class="spin"></span>' : (n.icon ? ic(n.icon) : '')}<span>${esc(n.label)}</span></button>`;
+  let sec = '', below = '';
+  if (n.sec) { if (n.sec.label.length <= 5) sec = `<button class="nb-sec ${glass ? 'g' : 'outline'}" data-act="${n.sec.act}" data-arg="${esc(n.sec.arg ?? '')}">${esc(n.sec.label)}</button>`; else below = `<button class="nb-link" data-act="${n.sec.act}" data-arg="${esc(n.sec.arg ?? '')}">${esc(n.sec.label)}</button>`; }
+  return `${inline ? '' : `<div class="nb-cap">${esc(n.caption || '')}</div>`}<div class="nb-row">${sec}${prim}</div>${below}${inline && n.caption ? `<div class="nb-cap" style="margin-top:6px">${esc(n.caption)}</div>` : ''}`;
+}
+const useGlass = () => P.ios === '26' && !P.reduceT && P.d5 !== 'B';
+function barHTML(n){
+  if (!n) return '';
+  return `<div class="nbar ${useGlass() ? 'is-glass' : 'is-solid'} ${P.ios === '26' ? 'ios26bar' : 'ios18bar'}" aria-label="下一步">${btnHTML(n, useGlass(), false)}</div>`;
+}
+function inlineHTML(n){ return n ? `<div class="inline-next">${btnHTML(n, false, true)}</div>` : ''; }
+function bannerHTML(){
+  if (!S.online) return `<div class="banner">${ic('wifi')}<div class="bm">没联网。现在看到的是 14:20 保存的内容，连上后会自动更新。</div></div>`;
+  if (S.conn === 'failed') return `<div class="banner warn"><div class="bm">连不上服务器。检查一下 Wi-Fi 或流量；照片会留在手机里，连上后自动上传。</div><button data-act="retryConn">再试一次</button></div>`;
+  if (S.conn === 'busy') return `<div class="banner warn"><div class="bm">服务器有点忙，过一会儿再试。照片都在手机里，不会丢。</div><button data-act="retryConn">过一会儿再试</button></div>`;
+  return '';
+}
+function rhythmHTML(stage){
+  const segs = [['A','周末','拍卷子·打印'],['mid','周中','在纸上做'],['B','下个周末','录结果']];
+  const order = {A:0, mid:1, B:2};
+  return `<div class="rhythm" aria-label="一周的节奏">${segs.map((s, i) => `${i ? '<span class="arr">→</span>' : ''}<div class="seg ${s[0] === stage ? 'on' : (order[s[0]] < order[stage] ? 'past' : '')}"><b>${s[1]}</b>${s[2]}</div>`).join('')}</div>`;
+}
+
+/* ───────── 各屏 ───────── */
+const V = {};
+V.today = function(){
+  const pl = plan();
+  if (pl.phase === 'connect') return V.connect();
+  if (P.d1 === 'C' && S.tab === 'items') return {...V.items({root:true}), root:true};
+  if (P.d1 === 'C' && S.tab === 'paper') return V.paperTab();
+  let body = `<div class="lt">今天</div><div class="lt-sub">${DAYS[S.day].label}</div>`;
+  let next = null, note = '';
+  if (pl.phase === 'done') {
+    const L = pl.L;
+    body += rhythmHTML('A') + bannerHTML() + `<div class="hero"><div class="ht"><span class="okc">${ic('check')}</span>这周的事做完了</div>
+      <p>把练习纸带回学校，<b>${esc(L.slot)}</b>在纸上做。</p>
+      <div class="rules"><div>· 不看答案，独立做</div><div>· 卡住先看一级提示，再看二级</div><div>· 做完打勾，写上做题日期</div></div>
+      <p class="muted" style="font-size:14.5px">下个周末打开 App，录一下做的结果。</p>
+      <div class="nexttime">${ic('calendar')}下次打开：下个周末，录结果</div>
+      <button class="link" data-act="goPrint" data-arg="${L.id}">没打出来？现在打印</button></div>
+      <button class="demo-chip" data-act="ffMid">${ic('ff')}演示：快进到周三</button>`;
+    note = '<b>做完了（设计稿 4.9）</b>没有主按钮：这时候他不该在手机上做事。只说「练习纸已生成」，所以一直留着「没打出来？现在打印」。';
+  } else if (pl.phase === 'mid') {
+    const L = pl.L;
+    body += rhythmHTML('mid') + bannerHTML() + `<div class="hero"><div class="ht">现在是在纸上做练习的时候</div>
+      <p>练习纸：${L.ids.length} 道 · ${esc(L.slot)}</p>
+      <div class="rules"><div>· 不看答案，独立做</div><div>· 卡住先看一级提示，再看二级</div><div>· 做完打勾，写上做题日期</div></div>
+      <p class="muted" style="font-size:14.5px">没做完也没关系，周末回来再录。当天做对不算真会，隔几天再做对才算，所以别急着对答案。</p>
+      <button class="link" data-act="goRecord">已经做完了？现在录结果 ${ic('chev')}</button><br>
+      <button class="link" data-act="goCapture">又发了卷子？现在拍 ${ic('chev')}</button></div>
+      <button class="demo-chip" data-act="ffB">${ic('ff')}演示：快进到下个周六</button>`;
+    note = '<b>周中打开（设计稿 3.4、4.9）</b>按「练习纸生成后过了几天」判断，不需要新设置。周中也能录，不锁任何操作，只是不催。';
+  } else {
+    const steps = pl.steps, cs = currentStep(steps);
+    next = gateOffline(nextFor(pl));
+    const hasRec = steps.some(s => s.k === 'record');
+    body += rhythmHTML(hasRec ? 'B' : 'A') + bannerHTML();
+    if (!cs) body += `<div class="hero"><div class="ht"><span class="okc">${ic('check')}</span>都做完了</div></div>`;
+    else if (P.d1 === 'B') body += singleCard(steps, cs, next);
+    else body += listCard(steps, cs, next);
+    note = P.d1 === 'B' ? '<b>D1 · B 单卡</b>只显示现在这一步，更简单；但看不出还要多久。' : (P.d1 === 'C' ? '<b>D1 · C 标签栏</b>系统标签栏在 iOS 26 自动是玻璃；下一步按钮放在标签栏上方（iOS 26 的 tabViewBottomAccessory）。多了三个要找的地方。' : '<b>今天（设计稿 4.1）</b>清单从现有数据算出来：做完打勾、当前一步描边、写明第几步和分钟数。底部按钮永远是下一步。');
+    if (hasRec) note += ' 周末 B：先拍卷子让 AI 在后台找题，等的时候录上周的结果。';
+  }
+  if (P.d1 !== 'C') body += anytimeHTML();
+  if (P.d2 === 'B' && P.d1 !== 'A') body += inlineHTML(next);
+  return {root:true, large:true, right:[{label:'设置', act:'openSettings'}], body, next: P.d2 === 'B' ? null : next, note};
+};
+function listCard(steps, cs, next){
+  const total = steps.reduce((a, s) => a + s.min, 0);
+  return `<div class="plan"><div class="ph"><b>今天大约 ${total} 分钟，一共 ${steps.length} 步</b><span>${steps.filter(s => s.done).length}/${steps.length}</span></div>${steps.map((s, i) => {
+    const cur = s === cs, cls = s.done ? 'done' : cur ? 'cur' : '';
+    const sub = s.done ? `${esc(s.doneText)}${s.doneWarn ? ` · <span class="t-orange">${esc(s.doneWarn)}</span>` : ''}` : s.attn ? `<span class="t-orange">${esc(s.attn)}</span>` : s.wait ? `<span class="t-blue">${esc(s.desc)}</span>` : esc(s.desc);
+    const inl = cur && P.d2 === 'B' ? `<div class="inl">${btnHTML(next, false, true)}</div>` : '';
+    return `<div class="step ${cls}" role="button" tabindex="0" data-act="goStep" data-arg="${s.k}"><span class="num">${s.done ? ic('check') : i + 1}</span><div class="sm"><div class="st">${esc(s.title)}${s.optional && !s.done ? '<span class="tag">可跳过</span>' : ''}${cur ? '<span class="now">现在做这个</span>' : ''}</div><div class="sd">${sub}</div>${inl}</div>${s.done ? '' : `<span class="mins">约 ${s.min} 分钟</span>`}</div>`;
+  }).join('')}</div>`;
+}
+function singleCard(steps, cs, next){
+  const i = steps.indexOf(cs);
+  const sub = cs.attn ? `<span class="t-orange">${esc(cs.attn)}</span>` : cs.wait ? `<span class="t-blue">${esc(cs.desc)}</span>` : esc(cs.desc);
+  const rest = steps.slice(i + 1).map(s => s.title).join(' → ');
+  const done = steps.filter(s => s.done).map(s => s.title).join('、');
+  return `<div class="dots">${steps.map(s => `<i class="${s.done ? 'd' : s === cs ? 'c' : ''}"></i>`).join('')}<span style="margin-left:4px">第 ${i + 1} 步 / 共 ${steps.length} 步</span></div>
+    <div class="stepcard"><div class="big-ic">${ic(cs.icon)}</div><div style="font-size:22px;font-weight:750">${esc(cs.title)}${cs.optional ? ' <span class="chip c-gray">可跳过</span>' : ''}</div><div class="p" style="margin:6px 0 4px">${sub}</div><div class="small muted">大约 ${cs.min} 分钟</div></div>
+    ${rest ? `<div class="small muted" style="margin:4px 4px">接下来：${esc(rest)}</div>` : ''}${done ? `<div class="small muted" style="margin:4px 4px">已完成：${esc(done)} ✓</div>` : ''}`;
+}
+function anytimeHTML(){
+  const n = weekItems().length, olds = S.practices.length;
+  return `<div class="sec-t">随时可以看</div>
+    <button class="row" data-act="goItems">${ic('book')}<div class="rm"><div class="rt">这周的错题${n ? `（${n}）` : ''}</div></div>${ic('chev','chev')}</button>
+    <button class="row" data-act="goOlder">${ic('doc')}<div class="rm"><div class="rt">以前的练习${olds ? `（${olds}）` : ''}</div></div>${ic('chev','chev')}</button>`;
+}
+V.connect = function(){
+  const k = !S.paired ? 'unpaired' : S.conn;
+  const v = {unpaired:{t:'先连上服务器', d:'这一步要大人帮一下：请帮你装 App 的人打开配对二维码，你点下面的按钮扫一下。只要做一次。', b:'扫码连接'},
+    unauthorized:{t:'需要重新扫码', d:'连接过期了。请帮你装 App 的人给你一个新的二维码。照片和错题都还在。', b:'重新扫码'},
+    incompatible:{t:'App 和服务器对不上', d:'请帮你装 App 的人更新 App，或者给你一个新的二维码。', b:'扫新的二维码'}}[k];
+  let body = `<div class="lt" style="margin-top:6px">${esc(v.t)}</div><p class="p" style="font-size:16px;margin-top:8px">${esc(v.d)}</p>
+    <div class="card"><div class="small muted" style="margin-bottom:6px">怎么做</div><div>① 大人在电脑上打开配对二维码</div><div>② 你点下面的「${esc(v.b)}」</div><div>③ 手机对准二维码，等它自己连上</div></div>`;
+  if (S.qrError) body += `<div class="card" style="border-color:var(--orange)"><b class="t-orange">这个二维码用不了</b><div class="small" style="margin-top:4px">请帮你装 App 的人重新生成一个，再扫一次。</div><details class="dv"><summary>具体原因</summary><div class="small muted">配对二维码指向的服务不受信任；只接受官方云域名 HTTPS 地址。</div></details></div>`;
+  return {root:true, large:false, body, next:{label: S.qrError ? '再扫一次' : v.b, icon:'qr', act:'openScanner', caption:'只要做一次'}, right:[{label:'设置', act:'openSettings'}],
+    note:'<b>连接（设计稿 4.2）</b>直说这一步要大人帮；去掉「这台 Mac」「下方本机地址」；「查看帮助」（原来会打开扫码器）改为「扫新的二维码」。手动地址移到 设置 › 开发者选项。'};
+};
+V.capture = function(){
+  const ps = weekPhotos();
+  const st = p => ({local:chipFor('c-gray','还在手机上'), uploading:chipFor('c-blue','正在上传'), finding:chipFor('c-blue','AI 正在找题'), retrying:chipFor('c-blue','AI 正在找题'), pick:chipFor('c-orange','要你勾'), reading:chipFor('c-blue','AI 正在读题'), done:chipFor('c-green','找好了'), fail:chipFor('c-red','没认出来'), empty:chipFor('c-red','没找到题')}[p.state]);
+  let body = `<div class="card" style="background:var(--mint);border-color:transparent">${ic('camera')} <b>整页拍全，别裁边</b><div class="small" style="margin-top:4px">题目和你写的答案都要拍进去。一页拍一张。</div></div>
+    <div class="thumbgrid">${ps.map(p => `<div class="tile">${paperHTML(p.t)}<div class="tl">第 ${p.n} 张</div>${st(p)}</div>`).join('')}<button class="tile add" data-act="startCamera">${ic('camera')}${ps.length ? '再拍一页' : '拍第一页'}</button></div>
+    <button class="link" data-act="album">${ic('photo')} 从相册选</button>`;
+  if (ps.some(p => p.state === 'local') && !S.consent) body += `<div class="banner warn"><div class="bm">照片还在手机上，没上传。</div><button data-act="askConsent">上传</button></div>`;
+  const next = ps.length ? {label:'拍完了，下一步', icon:'check', act:'doneShoot', caption:`已拍 ${ps.length} 张`} : {label:'拍第一页', icon:'camera', act:'startCamera', caption:'系统相机会打开，拍一张回来一次', sec:{label:'这周没发卷子，跳过', act:'skipShoot'}};
+  return {title:'拍这周的卷子', body, next,
+    note:'<b>拍卷子（设计稿 4.3）</b>系统相机一次只能拍一张，所以拍完立刻回到这里，「再拍一页」在拇指下面。相册降为次要。第一次上传前问一次同意。'};
+};
+V.photos = function(){
+  const ps = weekPhotos();
+  const rows = ps.map(p => {
+    const T = PHOTO_T[p.t], items = photoItems(p);
+    let line = '', act = '', extra = '';
+    switch (p.state) {
+      case 'local': line = chipFor('c-gray','还没上传') + ' <span class="small muted">没联网或者还没同意上传</span>'; act = 'askConsent'; break;
+      case 'uploading': line = chipFor('c-blue','正在上传'); break;
+      case 'finding': case 'retrying': line = chipFor('c-blue','AI 正在找题…'); break;
+      case 'reading': line = chipFor('c-blue','AI 正在读你勾的题'); break;
+      case 'pick': line = `${chipFor('c-orange','要你勾')} <span class="small">这页没有批改痕迹，点这里勾出错题</span>`; act = 'openPick'; break;
+      case 'done': line = T.kind === 'nomark' ? (p.picked.length ? chipFor('c-green', `你勾了 ${p.picked.length} 道`) : chipFor('c-green','这页没有错题')) : chipFor('c-green', `找到 ${items.length} 道有红叉的题`); act = 'goItems'; break;
+      case 'fail': line = `${chipFor('c-red','这张没认出来')}<div class="small muted" style="margin-top:4px">可能拍糊了。再试一次，或者重拍一张更清楚的。</div>`;
+        extra = `<div style="display:flex;gap:16px;margin-top:4px"><button class="link" data-act="retryPhoto" data-arg="${p.id}">再试一次</button><button class="link" style="color:var(--muted)" data-act="removePhoto" data-arg="${p.id}">移除</button></div>`; break;
+      case 'empty': line = `${chipFor('c-red','这张照片里没找到题目')}<div class="small muted" style="margin-top:4px">把整页拍清楚再拍一张；不是试卷的照片可以直接移除。</div>`;
+        extra = `<button class="link" data-act="removePhoto" data-arg="${p.id}">移除这张</button>`; break;
+    }
+    const inner = `<div class="pthumb">${paperHTML(p.t)}</div><div class="rm"><div class="rt">第 ${p.n} 张 · <span style="font-weight:500">${esc(T.title)}</span></div><div class="rd" style="margin-top:5px">${line}</div>${extra}</div>`;
+    return act ? `<button class="row" style="align-items:flex-start" data-act="${act}" data-arg="${p.id}">${inner}${ic('chev','chev')}</button>` : `<div class="row" style="align-items:flex-start">${inner}</div>`;
+  }).join('');
+  const body = `<p class="p">有红叉、订正的题，AI 会自己找出来。没批改过的页（比如答题卡另交的），要你自己勾。</p>${bannerHTML()}${rows || '<div class="card">这周还没拍卷子 <button class="link" data-act="goCapture">去拍</button></div>'}
+    ${weekItems().length ? `<button class="row" data-act="goItems">${ic('book')}<div class="rm"><div class="rt">看看找到的错题（${weekItems().length} 道）</div><div class="rd">不看也可以，AI 认的字大多是对的</div></div>${ic('chev','chev')}</button>` : ''}`;
+  const pick = ps.find(p => p.state === 'pick'), busy = ps.filter(p => ['uploading','finding','reading','retrying'].includes(p.state)), local = ps.find(p => p.state === 'local');
+  const failed = ps.filter(p => p.state === 'fail' || p.state === 'empty');
+  let next;
+  if (pick) next = {label:`勾第 ${pick.n} 张`, icon:'tick', act:'openPick', arg:pick.id, caption:'只有你勾的题会进错题本'};
+  else if (local) next = {label:'上传照片', icon:'photo', act:'askConsent', caption:'传上去 AI 才能找题'};
+  else if (busy.length) next = {label:'AI 正在找题…', spinner:true, disabled:true, caption:`还有 ${busy.length} 张，大约 1–2 分钟`};
+  else { const nl = nextAfter('pick'); next = {label: `下一步：${nl}`, icon:'chev', act:'goNextPlan', caption: failed.length ? `${failed.length} 张没认出来，可以先不管` : `找到 ${weekItems().length} 道错题`}; }
+  return {title:'勾出做错的题', body, next: gateOffline(next),
+    note:'<b>勾出做错的题（设计稿 4.4）</b>每张卷子一行，整行可点，一行只有一个动作。原来主页上「这页没看到批改痕迹」和「正在识别…」互相矛盾的两句，合成一句。没认出来的照片不挡路。'};
+};
+function nextAfter(k){ const pl = plan(); if (pl.phase !== 'steps') return '回到今天'; const s = currentStep(pl.steps); return s ? s.title : '回到今天'; }
+ACT.goNextPlan = () => goNextFromPlan();
+V.items = function(o = {}){
+  const ids = weekItems(), low = ids.filter(id => Q[id].low).length;
+  const cur = curPractice();
+  const card = id => { const q = Q[id]; const inP = S.practices.find(p => p.ids.includes(id)); const r = inP ? resultOf(inP, id) : null;
+    const status = r === 'mastered' ? chipFor('c-green','真会了') : r === 'again' ? chipFor('c-orange','下次再练') : r === 'pending' ? chipFor('c-blue','过几天再确认') : inP ? chipFor('c-gray','在这周的练习里') : '';
+    return `<button class="qcard" data-act="openItem" data-arg="${id}">${cropHTML(id, true)}<div class="qm"><div style="flex:1;min-width:0"><div class="qs">${esc(q.subj)} · ${esc(q.tag)} · 练习纸编号 ${id}</div>${q.low ? `<div class="small t-orange" style="font-weight:650;margin-top:2px">字可能认错了 · 点开看看</div>` : ''}${status ? `<div style="margin-top:4px">${status}</div>` : ''}</div>${ic('chev','chev')}</div></button>`; };
+  const back = ['M-02','M-04','M-05'];
+  let body = `${o.root ? '<div class="lt">这周的错题</div>' : ''}<p class="p">${ids.length} 道${low ? ` · 其中 ${low} 道 AI 可能认错了字` : ''}</p>`;
+  body += ids.length ? ids.map(card).join('') : (weekPhotos().length ? '<div class="card">AI 还在找题，找好了会出现在这里。</div>' : '<div class="card">这周还没拍卷子。</div>');
+  body += `<details class="dv"><summary>以前没练完的（${back.length}）</summary>${back.map(card).join('')}</details>`;
+  const next = !cur && ids.length && !o.root ? {label:'下一步：选这周要练的题', icon:'list', act:'goChoose', caption:'不看也可以，直接选题'} : null;
+  return {title:'这周的错题', body, next: gateOffline(next), root:o.root, large:o.root,
+    note:'<b>这周的错题（设计稿 4.5）</b>不是必经步骤。卡片整张可点、有 ›；「AI 没把握」改成「字可能认错了 · 点开看看」；不再显示「待复盘」这类流程词。'};
+};
+V.detail = function(o){
+  const q = Q[o.id], id = o.id;
+  let body = `${cropHTML(id, false)}<div class="small muted" style="margin:6px 4px 12px">整题照片 · 两指放大</div>`;
+  if (q.low) body += `<div class="banner warn"><div class="bm">AI 对这道题没把握：字或图可能认错了。对照上面的照片看一眼，不对就点「改一下」。</div></div>`;
+  body += `<div class="grp"><div class="gt">AI 认出的题目</div><div class="card">${esc(q.stem)}</div></div><div class="small muted" style="margin:0 4px">${esc(q.subj)} · ${esc(q.tag)}</div>`;
+  if (q.work) body += `<div class="grp"><div class="gt">你写的</div><div class="card">${esc(q.work)}</div></div>`;
+  if (q.fix) body += `<div class="grp"><div class="gt">订正</div><div class="card">${esc(q.fix)}</div></div>`;
+  return {title:id, body, next:gateOffline({label:'字认错了？改一下', icon:'pencil', act:'openFix', arg:id, caption:'没问题就直接返回', sec:{label:'这不是错题', act:'discard', arg:id}}),
+    note:'<b>题目详情（设计稿 4.5）</b>主操作是「改一下」；「这不是错题」保留 8 秒撤销。'};
+};
+V.chosen = function(){
+  const cur = curPractice();
+  const body = `<p class="p">这周的练习已经建好了：${cur.ids.length} 道 · ${esc(cur.slot)}。建好后题目不能再改。</p>${cur.ids.map(id => `<div class="qcard">${cropHTML(id, true)}<div class="qs" style="margin-top:6px">${esc(Q[id].subj)} · ${esc(Q[id].tag)} · ${id}</div></div>`).join('')}`;
+  const nl = nextAfter('choose');
+  return {title:'这周要练的题', body, next: {label: nl === '回到今天' ? '回到今天' : `下一步：${nl}`, icon:'chev', act:'goNextPlan', caption:''}, note:'<b>已选好的题</b>服务器没有改题的接口，所以只读。'};
+};
+V.choose = function(){
+  const c = S.choose, r = recommend(), all = r.rec.concat(r.oth);
+  const row = x => { const on = c.sel.includes(x.id), q = Q[x.id];
+    return `<button class="qcard ${on ? 'sel' : ''}" data-act="chooseToggle" data-arg="${x.id}"><div style="display:flex;gap:10px;align-items:flex-start"><span class="cbox">${ic('check')}</span><div style="flex:1;min-width:0">${cropHTML(x.id, true)}<div class="qs" style="margin-top:6px">${esc(q.subj)} · ${esc(q.tag)}</div><div class="small" style="margin-top:2px">为什么选它：${esc(x.reason)}</div></div></div></button>`; };
+  const slots = ['周三晚自习','周末','本周内','其他…'];
+  let body = `<p class="p">AI 先帮你选了 ${r.rec.length} 道，点一下可以去掉或加上。建议 5–8 道，最多 8 道。</p>${r.rec.map(row).join('')}`;
+  if (r.oth.length) body += `<button class="link" data-act="chooseOthers">${c.others ? '收起' : `其他可以选的（${r.oth.length}）`}</button>${c.others ? r.oth.map(row).join('') : ''}`;
+  body += `<div class="grp"><div class="gt">什么时候做？</div><div class="pills">${slots.map(s => `<button class="pill ${c.slot === s ? 'on' : ''}" data-act="slot" data-arg="${s}">${s}</button>`).join('')}</div>${c.slot === '其他…' ? `<input class="inp" id="slotOther" style="margin-top:8px" maxlength="20" placeholder="20 个字以内，比如：周四午休" value="${esc(c.other)}">` : ''}<div class="small muted" style="margin:6px 2px">会印在练习纸封面上，提醒你哪天做。</div></div>`;
+  const n = c.sel.length;
+  return {title:'选这周要练的题', body, next: gateOffline(n ? {label:`就练这 ${n} 道`, icon:'check', act:'createPractice', caption: n < 5 ? '少于 5 道也可以，题少的周就少练' : n >= 8 ? '已经 8 道了，最多 8 道' : `已选 ${n} 道`} : {label:'至少选 1 道', disabled:true, caption:'点题目可以选上'}),
+    note:'<b>选题（设计稿 4.6）</b>「做题时段」改为「什么时候做」，选一个，并说明印在封面上。说「建议 5–8」而不是「选 5–8」（服务器在题少时允许少选）。'};
+};
+V.why = function(){
+  const w = S.why, cur = curPractice(); if (!cur) return {title:'说说为什么错', body:'', next:null};
+  const n = cur.ids.length, id = cur.ids[w.i], q = Q[id];
+  let body = '', next = null, note = '<b>说说为什么错（设计稿 4.7）</b>原「复盘」。AI 只问、只建议，提交必须由他点。';
+  if (w.phase === 'intro') {
+    const done = cur.ids.filter(x => cur.reflected[x]).length;
+    body = `<div class="h2">每道题 AI 问你一句</div><p class="p" style="font-size:16px">你说一句就行。说出来，下次更容易发现自己是哪里想错了。不想说可以跳过，不影响打印。</p>
+      <div class="card">${cur.ids.map((x, j) => `<div style="display:flex;justify-content:space-between;padding:6px 0;${j ? 'border-top:.5px solid var(--line)' : ''}"><span>${x} · ${esc(Q[x].tag)}</span>${cur.reflected[x] ? '<span class="t-green small">说过了 ✓</span>' : '<span class="small muted">还没说</span>'}</div>`).join('')}</div>`;
+    next = {label: done ? `接着说，第 ${w.i + 1} 道` : '开始，第 1 道', icon:'bubble', act:'whyStart', caption:`${n} 道，每道大约 40 秒`, sec:{label: P.d3 === 'A' ? '跳过，直接打印' : '跳过', act:'skipWhy'}};
+  } else if (w.phase === 'ask' || w.phase === 'thinking') {
+    body = `<div class="prog">第 ${w.i + 1} 道，共 ${n} 道</div>${cropHTML(id, false)}<div class="bubble"><div class="who">${ic('sparkle')}AI 问你</div>${esc(q.ask || '这题你当时卡在哪一步？')}</div>
+      <textarea class="ta" id="whyAns" placeholder="按住下面的按钮说话，或者直接打字" ${w.phase === 'thinking' ? 'disabled' : ''}>${esc(w.ans)}</textarea>
+      <div class="small muted" style="margin:4px 2px">还能写 ${300 - w.ans.trim().length} 字</div>
+      ${micHTML('why')}<div class="hint">${esc(w.hint)}</div>
+      ${w.phase === 'thinking' ? '<div class="card" style="display:flex;gap:10px;align-items:center"><span class="spin t-teal"></span>AI 在看你的回答…</div>' : `<button class="link" data-act="whyNoAnswer">不回答，直接选 ${ic('chev')}</button><br><button class="link" style="color:var(--muted)" data-act="skipWhy">${P.d3 === 'A' ? '剩下的都跳过，直接打印' : '剩下的都跳过'}</button>`}`;
+    next = w.phase === 'thinking' ? {label:'AI 在看你的回答…', spinner:true, disabled:true, caption:''} : (w.ans.trim() ? {label:'说完了', icon:'check', act:'whySend', caption:`第 ${w.i + 1} 道，共 ${n} 道`, sec:{label:'这道跳过', act:'whySkipOne'}} : {label:'说完了', disabled:true, caption:'先说一句或写一句', sec:{label:'这道跳过', act:'whySkipOne'}});
+    note += ' 「按住说话」轻点会提示「要按住不放」（原来轻点什么都不发生）。';
+  } else if (w.phase === 'confirm') {
+    const f = w.form;
+    const group = (key, title, alias) => `<div class="grp"><div class="gt">${title}${f.mark[key] ? `<span class="mk">${f.mark[key]}</span>` : ''}</div><div class="pills">${alias.map(([raw, show]) => `<button class="pill ${f[key] === raw ? 'on' : ''}" data-act="whyPick" data-arg="${key}|${raw}">${esc(show)}</button>`).join('')}</div></div>`;
+    body = `<div class="prog">第 ${w.i + 1} 道，共 ${n} 道 · 确认一下</div>
+      <div class="grp" style="margin-top:4px"><div class="gt">一句话总结${f.sum && f.sum === f.ai.sum ? '<span class="mk">AI 写的</span>' : ''}</div><input class="inp" id="whySum" maxlength="60" placeholder="用一句话写下你错在哪（可以空着）" value="${esc(f.sum)}"><div class="small muted" style="margin:4px 2px">AI 先写了，可以改。${f.sum.trim().length}/60</div></div>
+      ${group('state', '当时怎么了？', STATE_ALIAS)}${group('cause', '主要错在哪？', CAUSE_ALIAS)}
+      <div class="grp"><div class="gt">现在再做这道题，有把握吗？</div><div class="pills">${M_ALIAS.map((t, k) => `<button class="pill ${f.m === k ? 'on' : ''}" data-act="whyPick" data-arg="m|${k}">${t}</button>`).join('')}</div><div class="small muted" style="margin:6px 2px">这个要你自己选，AI 不帮你猜。</div></div>`;
+    const miss = [!f.state && '当时怎么了', !f.cause && '错在哪', f.m === null && '有没有把握'].filter(Boolean);
+    const last = !cur.ids.some((x, j) => j > w.i && !cur.reflected[x]);
+    next = miss.length ? {label: last ? '提交' : '提交，下一道', disabled:true, caption:`还差：${miss.join('、')}`} : {label: last ? '提交' : '提交，下一道', icon:'check', act:'whySubmit', caption:`第 ${w.i + 1} 道，共 ${n} 道`};
+    note += ' 确认从 17 个大行改成一屏三组小按钮；显示用大白话，提交给服务器的仍是原文（如「时间注意力状态」）。把握从不预选。';
+  } else {
+    const k = cur.ids.filter(x => cur.reflected[x]).length;
+    body = `<div class="hero"><div class="ht"><span class="okc">${ic('check')}</span>说完了</div><p>${n} 道里说了 ${k} 道。</p><p class="muted small">下个周末录结果时，会告诉你「有把握」的题是不是真的做对了。</p></div>`;
+    next = {label: P.d3 === 'A' ? '下一步：打印练习纸' : '回到今天', icon: P.d3 === 'A' ? 'printer' : 'home', act:'whyNext', caption:''};
+  }
+  return {title:'说说为什么错', body, next: gateOffline(next), note};
+};
+function micHTML(scope){ return `<button class="mic" data-hold="${scope}">${ic('mic')}<span>按住说话</span></button>`; }
+V.print = function(){
+  const pr = S.pr, p = S.practices.find(x => x.id === pr.pid);
+  let body = '', next = null;
+  if (pr.phase === 'preparing') {
+    body = `<div class="card"><div style="display:flex;gap:10px;align-items:center;font-weight:650"><span class="spin t-teal"></span>正在准备练习纸… 第 ${pr.done}/${p.ids.length} 道</div><div class="pbar"><i style="width:${Math.round(pr.done / p.ids.length * 100)}%"></i></div><div class="small muted">大约 1 分钟。可以先离开，回来接着准备。</div></div>`;
+    next = {label:'正在准备…', spinner:true, disabled:true, caption:'准备好就可以打印'};
+  } else {
+    const glance = p.ids.filter(id => Q[id].glance);
+    body = `<div class="a4"><h4>本周练习</h4><div class="sl">做题时间：${esc(p.slot)}　　共 ${p.ids.length} 道</div><div class="box"><b>三条规则</b><br>1. 不看答案，独立做<br>2. 卡住先看一级提示，再看二级<br>3. 做完打勾，写上做题日期</div>
+      <table>${p.ids.map(id => `<tr><td>${id}</td><td>${esc(Q[id].tag)}</td><td style="text-align:right">${Q[id].low ? '原图（遮白）' : '原题'}</td></tr>`).join('')}</table><div style="margin-top:8px;color:#777">第 1 页，共 ${pagesOf(p)} 页 · 最后一页是提示和答案，可以撕下</div></div>
+      <div class="small muted" style="margin:6px 4px 12px">练习纸预览 · 左右滑动看其他页</div>`;
+    if (glance.length) body += `<div class="card"><b>打印前看一眼这 ${glance.length} 道</b>${glance.map(id => `<button class="row" style="margin:8px 0 0" data-act="openItem" data-arg="${id}"><div class="rm"><div class="rt">${id}</div><div class="rd">${esc(Q[id].glance)}</div></div>${ic('photo')}</button>`).join('')}</div>`;
+    if (pr.opened) body += `<div class="small muted" style="margin:10px 4px">打印机没反应？可以再点一次「打印」，或者用「存储到文件」发给家里人打印。</div>`;
+    next = pr.opened ? {label:'打印好了，回到今天', icon:'check', act:'printedDone', caption:'', sec:{label:'再打印', act:'openShare'}} : {label:'打印', icon:'printer', act:'openShare', caption:'会打开系统的分享面板，里面有「打印」'};
+  }
+  return {title:'打印练习纸', body, next: gateOffline(next),
+    note:'<b>打印（设计稿 4.8）</b>手机不知道他到底打没打印（服务器只知道「练习纸已生成」），所以由他自己点「打印好了」，首页也不再说「已打印」。'};
+};
+V.record = function(){
+  const r = S.rec, p = S.practices.find(x => x.id === r.pid), n = r.todo.length;
+  const dates = []; for (let d = Math.max(p.genDay, dayNum() - 6); d <= dayNum(); d++) dates.push(d);
+  const dateBtn = (d, cur, act, arg) => `<button class="pill ${cur ? 'on' : ''}" data-act="${act}" data-arg="${arg}">${d === dayNum() ? `今天 ${dateMD(d)}` : dayLabel(d)}</button>`;
+  let body = '', next = null, note = '<b>录结果（设计稿 4.10）</b>';
+  if (P.d4 === 'B') return V.recordList();
+  if (r.phase === 'date') {
+    const already = nRecorded(p);
+    const busy = weekPhotos().filter(x => ['uploading','finding','reading','retrying'].includes(x.state)).length;
+    body = `${busy ? `<div class="banner"><span class="spin t-blue"></span><div class="bm">刚拍的 ${busy} 张卷子，AI 正在后台找题。录完这个，差不多就好了。</div></div>` : ''}<p class="p">上一份练习纸（${dateMD(p.genDay)} 生成，${p.ids.length} 道）${already ? `已录 ${already} 道，还剩 ${n} 道。` : '。'}</p><div class="h2">练习纸是哪天做的？</div><div class="pills" style="margin-top:10px">${dates.map(d => dateBtn(d, r.date === d, 'recDate', d)).join('')}</div>
+      <div class="card" style="margin-top:14px;background:var(--mint);border-color:transparent"><div class="small">当天做对不算真会，隔 3 天以上独立做对才算，所以日期要填准。</div></div><div class="small muted" style="margin:4px">不是同一天做的？后面每道可以单独改。</div>`;
+    next = r.date === null ? {label:'下一步', disabled:true, caption:'先选日期'} : {label:'下一步', icon:'chev', act:'recStart', caption:`${n} 道题，每道点两下`, sec:{label:'先跳过，下次再录', act:'skipRecord'}};
+    note += '日期不预选（现在默认「今天」，但他多半是周三做、周六录，默认值通常是错的）。';
+  } else if (r.phase === 'item') {
+    const id = r.todo[r.i], a = r.ans[id] || {}, q = Q[id], needOk = ['independent','hint1','hint2'].includes(a.c);
+    const d = r.per[id] ?? r.date;
+    body = `<div class="prog">第 ${r.i + 1} 道，共 ${n} 道</div>${cropHTML(id, true)}<div class="grp"><div class="gt">这道你是怎么做的？</div><div class="choices">${COMPLETION.map(([k, t]) => `<button class="choice ${a.c === k ? 'on' : ''}" data-act="recC" data-arg="${id}|${k}"><span class="cbox ${a.c === k ? 'on' : ''}">${ic('check')}</span>${t}</button>`).join('')}</div></div>
+      ${needOk ? `<div class="grp"><div class="gt">做对了吗？</div><div class="small muted" style="margin:-4px 2px 8px">对照练习纸最后一页的答案</div><div style="display:flex;gap:10px"><button class="choice ${a.ok === true ? 'on' : ''}" data-act="recOk" data-arg="${id}|1">对了</button><button class="choice ${a.ok === false ? 'on' : ''}" data-act="recOk" data-arg="${id}|0">错了</button></div></div>` : ''}
+      ${a.c === 'not_solved' ? `<div class="grp"><div class="gt">卡在哪一步？<span class="small muted" style="font-weight:500">（可以不填）</span></div><input class="inp" placeholder="比如：不知道怎么列比例"></div>` : ''}
+      <div class="small muted" style="margin:14px 4px 0">做题日期：${dayLabel(d)} <button class="link" style="font-size:13.5px;min-height:30px" data-act="recEditDate">这道不是这天做的？改日期</button></div>
+      ${r.editDate ? `<div class="pills" style="margin-top:4px">${dates.map(x => dateBtn(x, d === x, 'recPer', `${id}|${x}`)).join('')}</div>` : ''}`;
+    const last = r.i === n - 1, ok = recComplete(id);
+    next = {label: last ? `提交 ${n} 道结果` : '下一道', icon: last ? 'check' : 'chev', act:'recNext', disabled: !ok, caption: ok ? `第 ${r.i + 1} 道，共 ${n} 道` : (a.c ? '还差：做对了吗' : '选一个做的情况'), sec:{label:'上一道', act:'recPrev'}};
+    note += 'D4 · A：一屏一个问题。五个选项和练习纸上的勾选框同一说法（一级提示 / 二级提示）。';
+  } else {
+    body = '<div class="card" style="display:flex;gap:10px;align-items:center"><span class="spin t-teal"></span>正在提交…</div>';
+    next = {label:'正在提交…', spinner:true, disabled:true, caption:''};
+  }
+  return {title:'录结果', body, next: gateOffline(next), note};
+};
+V.recordList = function(){
+  const r = S.rec, p = S.practices.find(x => x.id === r.pid);
+  const dates = []; for (let d = Math.max(p.genDay, dayNum() - 6); d <= dayNum(); d++) dates.push(d);
+  if (r.phase === 'submitting') return {title:'录结果', body:'<div class="card"><span class="spin t-teal"></span> 正在提交…</div>', next:{label:'正在提交…', spinner:true, disabled:true}, note:''};
+  let body = `<div class="gt" style="font-weight:700;margin:0 2px 8px">练习纸是哪天做的？</div><div class="pills">${dates.map(d => `<button class="pill ${r.date === d ? 'on' : ''}" data-act="recDate" data-arg="${d}">${d === dayNum() ? `今天 ${dateMD(d)}` : dayLabel(d)}</button>`).join('')}</div><div class="small muted" style="margin:6px 2px 14px">当天做对不算真会，隔 3 天以上独立做对才算。</div>`;
+  body += r.todo.map(id => { const a = r.ans[id] || {}, needOk = ['independent','hint1','hint2'].includes(a.c);
+    return `<div class="card">${cropHTML(id, true)}<div class="pills" style="margin-top:10px">${COMPLETION.map(([k, t]) => `<button class="pill ${a.c === k ? 'on' : ''}" data-act="recC" data-arg="${id}|${k}">${t}</button>`).join('')}</div>${needOk ? `<div class="pills" style="margin-top:8px"><button class="pill ${a.ok === true ? 'on' : ''}" data-act="recOk" data-arg="${id}|1">对了</button><button class="pill ${a.ok === false ? 'on' : ''}" data-act="recOk" data-arg="${id}|0">错了</button></div>` : ''}</div>`; }).join('');
+  const k = r.todo.filter(recComplete).length;
+  const next = r.date === null ? {label:'先选上面的日期', disabled:true, caption:''} : k ? {label:`提交 ${k} 道结果`, icon:'check', act:'recSubmit', caption: k < r.todo.length ? `还有 ${r.todo.length - k} 道没填，可以下次再录` : '都填好了'} : {label:'提交', disabled:true, caption:'每道选一个做的情况'};
+  return {title:'录结果', body, next: gateOffline(next), note:'<b>D4 · B 一页列表</b>今天的样子，改了文案、日期不预选、提交按钮固定在底部。点得少，但一页很长。'};
+};
+V.results = function(o){
+  const p = S.practices.find(x => x.id === o.pid);
+  const ids = p.ids.filter(id => p.recorded[id]);
+  const m = ids.filter(id => resultOf(p, id) === 'mastered'), pe = ids.filter(id => resultOf(p, id) === 'pending'), ag = ids.filter(id => resultOf(p, id) === 'again');
+  const maxD = Math.max(...m.map(id => p.recorded[id].date), 0);
+  const grp = (title, desc, arr, cls) => arr.length ? `<div class="grp"><div class="gt">${title}</div><div class="small muted" style="margin:-4px 2px 8px">${desc}</div>${arr.map(id => `<div class="row"><span class="chip ${cls}">${id}</span><div class="rm"><div class="rd" style="color:var(--ink)">${esc(Q[id].stem)}</div></div></div>`).join('')}</div>` : '';
+  const conf = p.ids.filter(id => (p.reflectM[id] ?? -1) >= 2 && p.recorded[id]);
+  const missed = conf.filter(id => !(p.recorded[id].c === 'independent' && p.recorded[id].ok));
+  const head = ids.length < p.ids.length ? `录了 ${ids.length}/${p.ids.length} 道，独立做对 ${indepCorrect(p)} 道` : `${ids.length} 道里，独立做对 ${indepCorrect(p)} 道`;
+  let body = `<div class="hero"><div class="ht">${head}</div><div class="small muted">练习纸 ${dateMD(p.genDay)} · ${esc(p.slot)}</div></div>`;
+  body += grp(`真会了 ✓（${m.length} 道）`, `隔了几天还能独立做对。${dateMD(maxD + 14)} 前后会再考你一次，再对就算稳了。`, m, 'c-green');
+  body += grp(`做对了，过几天再确认（${pe.length} 道）`, '做题那天离练习纸生成太近，过几天再做对才算数。', pe, 'c-blue');
+  body += grp(`下次再练（${ag.length} 道）`, '这几道会自动放进下次的练习。', ag, 'c-orange');
+  if (conf.length) body += `<div class="card" style="margin-top:14px"><b>你的感觉准不准：</b>你说有把握的 ${conf.length} 道里，${missed.length} 道没独立做出来${missed.length ? `<div class="small muted" style="margin-top:4px">${missed.join('、')}</div>` : ''}</div>`;
+  const pl = plan(), s = pl.phase === 'steps' ? currentStep(pl.steps) : null;
+  const next = s ? {label:`下一步：${s.title}`, icon:'chev', act:'resultsNext', caption:'上周的练习录完了'} : {label:'回到今天', icon:'home', act:'goHome', caption:''};
+  return {title:'这次的结果', body, next: gateOffline(next),
+    note:'<b>这次的结果（设计稿 4.11）</b>原「练习回报」，原来是死胡同。分三组说大白话，不逐条显示服务器的「使用了提示，未形成独立掌握证据」。最后把他交给下一步。'};
+};
+V.older = function(){
+  const body = S.practices.length ? S.practices.map(p => `<button class="row" data-act="${nRecorded(p) ? 'openResults' : 'goPrint'}" data-arg="${p.id}"><div class="rm"><div class="rt">${p.gen ? dateMD(p.genDay) : '还没生成'} · ${p.ids.length} 道 · ${esc(p.slot)}</div><div class="rd">${p.gen ? '练习纸已生成' : '还没打印'}${p.gen ? ` · 录了 ${nRecorded(p)}/${p.ids.length} 道` : ''}</div></div>${ic('chev','chev')}</button>`).join('') : '<div class="card">还没有练习。</div>';
+  return {title:'以前的练习', body, next:null, note:'<b>以前的练习</b>「已打印」一律改成「练习纸已生成」。'};
+};
+ACT.openResults = pid => push('results', {pid});
+V.paperTab = function(){
+  const body = `<div class="lt">练习纸</div><div class="lt-sub">${DAYS[S.day].label}</div>` + V.older().body;
+  return {root:true, large:true, body, next:null, note:'<b>D1 · C 的「练习纸」标签</b>'};
+};
+
+/* 弹出页 */
+const pagesOf = p => 2 + Math.ceil(p.ids.length / 2);
+const prPractice = () => (S.pr && S.practices.find(x => x.id === S.pr.pid)) || latest();
+const SH = {};
+SH.consent = () => { const ps = weekPhotos().filter(p => p.state === 'local');
+  return {half:false, left:{label:'先不传', act:'consentNo'}, title:'上传前看一下', body:`<div class="thumbgrid">${ps.map(p => `<div class="tile">${paperHTML(p.t)}</div>`).join('')}</div>
+    <p style="font-size:16px">这 ${ps.length} 张照片会传到广州的云服务器，再交给阿里云百炼的 AI 找出做错的题。照片上可能有你的名字和字迹，介意的话先遮住再拍。</p>
+    <p class="small muted">原图一直留在你的手机里，上传的是一份压缩过的副本，重试时还用这一份。阿里云怎么处理数据，不由这个 App 决定。</p>`,
+    foot:{label:'同意，上传', icon:'check', act:'consentYes'}, note:'<b>上传前看一下（设计稿 4.3）</b>隐私告知：事实一条不少，换成他能看懂的话。只问一次。'}; };
+SH.pick = () => { const pk = S.pick, p = S.photos.find(x => x.id === pk.pid), T = PHOTO_T[p.t], chk = pickChecked();
+  const missing = parseNums(pk.input).filter(n => !T.nums.includes(n));
+  return {left:{label:'取消', act:'closeSheet'}, right:{label:'看原图', act:'showOriginal'}, title:`第 ${p.n} 张：勾出做错的题`,
+    body:`<input class="inp" id="pickIn" placeholder="说出或输入题号，比如：3、7、12，或 5 到 8" value="${esc(pk.input)}">${micHTML('pick')}<div class="hint">${esc(pk.hint)}</div>
+      ${missing.length ? `<div class="small t-orange" style="margin:2px 2px 8px">这页没找到第 ${missing.join('、')} 题</div>` : ''}
+      ${T.nums.map(n => `<button class="qcard ${chk.has(n) ? 'sel' : ''}" data-act="pickToggle" data-arg="${n}"><div style="display:flex;gap:10px;align-items:center"><span class="cbox">${ic('check')}</span><div style="flex:1"><b>第 ${n} 题</b><div class="crop small" style="margin-top:6px;max-height:44px">${n}. ${'＿'.repeat(8)} ${'·'.repeat(12)}</div></div></div></button>`).join('')}
+      <div class="small muted" style="margin:8px 2px">只有勾出的题会进错题本。AI 不判断你做得对不对。</div>`,
+    foot: chk.size ? {label:`把这 ${chk.size} 道加入错题本`, icon:'check', act:'pickConfirm', sec:{label:'这页没有做错的题', act:'pickNone'}} : {label:'先勾出做错的题', disabled:true, sec:{label:'这页没有做错的题', act:'pickNone'}},
+    note:'<b>勾选面板（设计稿 4.4）</b>确认按钮固定在底部（原来在列表最后），左上有「取消」（原来没有关闭按钮）。试试「按住说话」：轻点会提示要按住。'}; };
+SH.fix = () => { const f = S.fix, q = Q[f.id];
+  let body = `<div class="small muted">AI 认出的题目</div><div class="card">${esc(q.stem)}</div>`;
+  let foot;
+  if (f.phase === 'input') { body += `<div class="gt" style="font-weight:700;margin:12px 2px 8px">说一句或写一句哪里不对</div><textarea class="ta" id="fixIn" placeholder="比如：第二行的 9 应该是 8">${esc(f.text)}</textarea>${micHTML('fix')}<div class="hint">${esc(f.hint)}</div><button class="link" data-act="toastDirect">自己动手改 ${ic('chev')}</button>`;
+    foot = f.text.trim() ? {label:'生成修改', icon:'sparkle', act:'fixGen'} : {label:'生成修改', disabled:true}; }
+  else if (f.phase === 'thinking') { body += '<div class="card"><span class="spin t-teal"></span> AI 在改…</div>'; foot = {label:'AI 在改…', spinner:true, disabled:true}; }
+  else { body += `<div class="gt" style="font-weight:700;margin:12px 2px 6px">改之前 / 改之后</div><div class="diff b">${esc(q.stem)}</div><div class="diff a">${esc(q.stem.replace('9', '8'))}</div>`; foot = {label:'就这样改', icon:'check', act:'fixAccept', sec:{label:'不改了', act:'closeSheet'}}; }
+  return {left:{label:'取消', act:'closeSheet'}, title:'改一下', body, foot, note:'<b>改一下（设计稿 4.5）</b>流程不变，只换文案。'}; };
+ACT.toastDirect = () => toast('（演示）这里是键盘直接改题干、学科、知识点');
+SH.settings = () => ({left:{label:'取消', act:'closeSheet'}, right:{label:'保存', act:'saveSettings', strong:true}, title:'设置',
+  body:`<div class="gt" style="font-weight:700;margin:4px 2px 8px">做练习的时间</div><div class="pills">${['周三晚自习','周末','本周内','其他…'].map(s => `<button class="pill ${S.slot === s ? 'on' : ''}" data-act="setSlot" data-arg="${s}">${s}</button>`).join('')}</div><div class="small muted" style="margin:6px 2px 16px">会印在练习纸封面上</div>
+    <div class="gt" style="font-weight:700;margin:4px 2px 8px">原卷平时放在哪</div><div class="seg2">${[['school','学校'],['home','家'],['varies','不固定']].map(([k, t]) => `<button class="${S.paperLoc === k ? 'on' : ''}" data-act="setLoc" data-arg="${k}">${t}</button>`).join('')}</div><div class="small muted" style="margin:6px 2px 16px">决定答案页写「对照原卷第几题」还是「回家后对照原卷」</div>
+    <div class="gt" style="font-weight:700;margin:4px 2px 8px">连接</div><div class="card">${S.paired && S.conn === 'ready' ? '<span class="t-green">已连上服务器 ✓</span>' : esc({unpaired:'还没连上服务器', failed:'连不上服务器', busy:'服务器有点忙', unauthorized:'需要重新扫码', incompatible:'App 和服务器对不上'}[S.paired ? S.conn : 'unpaired'] || '')}<div><button class="link" data-act="openScanner">重新扫码 ${ic('chev')}</button></div></div>
+    <details class="dv"><summary>开发者选项</summary><div class="card small muted">本机地址连接（仅开发调试用）<br>地址：http://127.0.0.1:3101<br>配对口令：••••</div></details>`, foot:null,
+  note:'<b>设置（设计稿 4.12）</b>「设置」写字而不只是齿轮；「这台 Mac」「本机地址」收进开发者选项。'});
+SH.share = () => ({half:true, left:{label:'关闭', act:'closeSheet'}, title:'', body:`<div class="row" style="border:0;background:var(--paper)">${ic('doc')}<div class="rm"><div class="rt">本周练习-2026-${prPractice().week}.pdf</div><div class="rd">PDF 文稿 · ${pagesOf(prPractice())} 页</div></div></div>
+    <div class="share-row"><div><i></i>信息</div><div><i></i>邮件</div><div><i></i>备忘录</div><div><i></i>更多</div></div>
+    <div class="actlist"><button data-act="sharePrint">打印 ${ic('printer')}</button><button data-act="shareFiles">存储到「文件」 ${ic('doc')}</button><button data-act="closeSheet">拷贝</button></div>`, foot:null, note:'<b>系统分享面板（演示）</b>这是系统自己的样子，iOS 26 上自动是新外观。'});
+SH.printopts = () => ({left:{label:'取消', act:'closeSheet'}, right:{label:'打印', act:'doPrint', strong:true}, title:'打印选项', body:`<div class="actlist"><button>打印机 <span class="muted">家里的打印机 ›</span></button><button>份数 <span class="muted">1</span></button><button>范围 <span class="muted">全部 ${pagesOf(prPractice())} 页</span></button><button>黑白 <span class="muted">开</span></button></div>`, foot:null, note:'<b>系统打印面板（演示）</b>'});
+
+/* 全屏层 */
+function layerHTML(){
+  const L = S.layer; if (!L) return '';
+  if (L.s === 'camera') return `<div class="layer"><div class="cam-top"><button data-act="closeLayer" style="color:#fff;min-height:44px">取消</button><span>照片</span><span style="width:40px"></span></div><div class="cam-view"><div class="cam-tip">整页拍全，别裁边</div>${paperHTML(L.t)}</div><div class="cam-bot"><button class="shutter" data-act="shutter" aria-label="拍照"><i></i></button></div></div>`;
+  if (L.s === 'scanner') return `<div class="layer"><div class="cam-top"><button data-act="closeLayer" style="color:#fff;min-height:44px">取消</button><span>扫码连接</span><span style="width:40px"></span></div><div class="cam-view" style="flex-direction:column;gap:18px"><div class="qrbox">${ic('qr')}</div><div style="font-size:14px;opacity:.85">对准二维码，会自己连上</div><button class="demo-chip" style="width:auto;padding:0 14px;color:#D9C8FF;border-color:#9C7AD6" data-act="badQr">演示：扫到一个用不了的二维码</button></div><div class="cam-bot"></div></div>`;
+  return '';
+}
+function alertHTML(){
+  if (!S.alert) return '';
+  return `<div class="dimmer" style="z-index:69"></div><div class="alert" role="alertdialog"><div class="ab"><b>“超级错题本”想使用麦克风</b><span>说出题号、回答 AI 的问题时用。声音只在手机上转成文字，不上传。</span></div><div class="af"><button data-act="micDeny">不允许</button><button data-act="micAllow">允许</button></div></div>`;
+}
+function sheetHTML(){
+  if (!S.sheet) return '';
+  const v = SH[S.sheet.s](), g = useGlass();
+  const hb = (b, side) => b ? `<button class="navb ${b.strong ? '' : ''}" style="${P.ios === '18' && b.strong ? 'font-weight:700' : ''}" data-act="${b.act}">${esc(b.label)}</button>` : '<span style="min-width:44px"></span>';
+  const anim = S.sheet.s !== lastSheet ? 'anim' : '';
+  return `<div class="dimmer ${anim}" data-act="${S.sheet.s === 'share' ? 'closeSheet' : ''}"></div><div class="sheet ${v.half ? 'half' : ''} ${anim}" role="dialog"><div class="sh-h">${hb(v.left)}<div class="nt">${esc(v.title)}</div>${hb(v.right)}</div><div class="sh-b" id="shb">${v.body}</div>${v.foot ? `<div class="sh-f">${btnHTML(v.foot, g, false).replace('<div class="nb-cap"></div>', '')}</div>` : ''}</div>`;
+}
+
+/* ───────── 渲染 ───────── */
+function render(){
+  const ph = $('#phone');
+  const t = topS();
+  const view = t.s === 'today' ? V.today() : V[t.s](t);
+  const isRoot = !!view.root;
+  ph.className = ['phone', `ios${P.ios}`, P.dark ? 'dark' : '', P.reduceT ? 'reduceT' : '', P.d5 === 'C' ? 'glassy' : '', P.d1 === 'C' ? 'tabs' : '', isRoot ? 'root' : ''].join(' ');
+  const act = document.activeElement, focusId = act && act.id && ph.contains(act) ? act.id : null, selS = focusId ? act.selectionStart : null, selE = focusId ? act.selectionEnd : null;
+  const key = S.stack.map(x => x.s + (x.id || x.pid || '')).join('/') + (S.tab || '') + (S.rec ? `r${S.rec.i}` : '') + (S.why ? `w${S.why.i}${S.why.phase === 'confirm' ? 'c' : ''}` : '') + (S.pr ? S.pr.phase : '');
+  const old = $('#scr'); if (old) S.scroll[old.dataset.key] = old.scrollTop;
+  const oldSh = $('#shb'); const shScroll = oldSh ? oldSh.scrollTop : 0;
+  // 导航栏
+  let nav = '';
+  const right = (view.right || []).map(b => `<button class="navb" data-act="${b.act}">${esc(b.label)}</button>`).join('');
+  if (isRoot) nav = `<div class="nav"><div class="side"></div><div class="nt"></div><div class="side r">${right}</div></div>`;
+  else {
+    const prev = S.stack[S.stack.length - 2]; const prevTitle = prev.s === 'today' ? '今天' : ({capture:'拍卷子', photos:'勾错题', items:'错题', detail:'题目', choose:'选题', why:'返回', print:'打印', record:'录结果', results:'结果', older:'练习', chosen:'返回'}[prev.s] || '返回');
+    const back = P.ios === '26' ? `<button class="navb circle" data-act="back" aria-label="返回">${ic('back')}</button>` : `<button class="navb" data-act="back">${ic('back')}${esc(prevTitle)}</button>`;
+    nav = `<div class="nav"><div class="side">${back}</div><div class="nt">${esc(view.title || '')}</div><div class="side r">${right}</div></div>`;
+  }
+  const tabbar = P.d1 === 'C' && isRoot && plan().phase !== 'connect' ? `<div class="tabbar">${[['today','今天','home'],['items','错题','book'],['paper','练习纸','doc']].map(([k, l, i]) => `<button class="${S.tab === k ? 'on' : ''}" data-act="tab" data-arg="${k}">${ic(i)}${l}</button>`).join('')}</div>` : '';
+  let next = view.next;
+  if (P.d1 === 'C' && isRoot && S.tab !== 'today') { const pl = plan(); next = pl.phase === 'steps' ? gateOffline(nextFor(pl)) : null; }
+  let bar = '', inline = '';
+  if (P.d2 === 'B') inline = t.s === 'today' && P.d1 !== 'B' ? '' : inlineHTML(next);
+  else bar = barHTML(next);
+  const toastH = S.toast ? `<div class="toast ${S.toast.id !== lastToast ? 'anim' : ''}" role="status"><span>${esc(S.toast.text)}</span>${S.toast.act ? `<button data-act="${S.toast.act}" data-arg="${esc(S.toast.arg)}">${esc(S.toast.label)}</button>` : ''}</div>` : '';
+  ph.innerHTML = `<div class="sb"><span>9:41</span><span>5G<span class="bat"></span></span></div>${nav}<div class="scr" id="scr" data-key="${key}">${t.s === 'today' || isRoot ? '' : bannerHTML()}${view.body}${inline}</div>${bar}${tabbar}${toastH}${sheetHTML()}${layerHTML()}${alertHTML()}<div class="hi"></div>`;
+  lastSheet = S.sheet ? S.sheet.s : ''; lastToast = S.toast ? S.toast.id : 0;
+  const sc = $('#scr'); if (sc && S.scroll[key] != null) sc.scrollTop = S.scroll[key];
+  const sh = $('#shb'); if (sh) sh.scrollTop = shScroll;
+  if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus({preventScroll:true}); try { el.setSelectionRange(selS, selE); } catch (e) {} } }
+  // 控制台
+  const sheetNote = S.sheet ? SH[S.sheet.s]().note : null;
+  $('#note').innerHTML = (sheetNote || view.note || '') + `<div style="margin-top:8px;color:var(--pm)">现在：${DAYS[S.day].label} · 系统 ${P.ios === '26' ? 'iOS 26+' : 'iOS 18–25'}${P.reduceT ? ' · 降低透明度' : ''}</div>`;
+  $('#bandText').textContent = `${DAYS[S.day].label} · D1 ${P.d1} · D2 ${P.d2} · D3 ${P.d3} · D4 ${P.d4} · D5 ${P.d5} · ${P.ios === '26' ? 'iOS 26+' : 'iOS 18'}`;
+  renderPanel();
+}
+
+/* ───────── 控制台 ───────── */
+const DECS = [
+  {k:'d1', n:'D1', q:'首页长什么样', opts:[['A','「今天」清单：全部步骤可见，当前一步高亮',1],['B','单卡：只显示现在这一步'],['C','底部三个标签：今天 · 错题 · 练习纸']], why:'推荐 A：看得到还剩几步，心里有数。C 多了三个要找的地方，玻璃标签栏好看但不帮引导。'},
+  {k:'d2', n:'D2', q:'下一步按钮放哪', opts:[['A','固定在屏幕底部，每屏同一位置',1],['B','放在当前步骤卡片里 / 内容最后，跟着滚']], why:'推荐 A：拇指够得着、每屏一样，学一次就会。B 在长页面上会滚出屏幕——正是今天的问题。'},
+  {k:'d3', n:'D3', q:'「说说为什么错」放在哪', opts:[['A','打印前，可一键跳过',1],['B','打印后（先保证纸打出来）']], why:'推荐 A：和 v2 设计的顺序一致；两种都在做纸之前记下「把握」。A 的风险是时间不够时挡住打印，所以「跳过」一直在。'},
+  {k:'d4', n:'D4', q:'录结果怎么录', opts:[['A','一题一屏，大按钮，填完点「下一道」',1],['B','一页列表（今天的样子，改了文案和日期）']], why:'推荐 A：每屏一个问题，不会漏填。B 点得少，但 6 张卡 × 5 个选项很长。'},
+  {k:'d5', n:'D5', q:'Liquid Glass 用多少', opts:[['A','系统自带 + 底部下一步按钮一处',1],['B','只要系统自带，自己不加'],['C','卡片也做成玻璃（看看为什么不推荐）']], why:'推荐 A：最重要的按钮最显眼且与系统一致。B 也行（少测一套外观）。C 违反 Apple 规范：题目照片上压了半透明标签，题干变难读——到「这周的错题」里看最明显。'},
+];
+function renderPanel(){
+  $('#scn').innerHTML = SCN.map(([k, l]) => `<button aria-pressed="${curScn === k}" data-act="scn" data-arg="${k}">${l}</button>`).join('');
+  $('#decs').innerHTML = DECS.map(d => `<div class="dec"><div class="q"><small>${d.n}</small>${d.q}</div><div class="opt">${d.opts.map(([v, t, r]) => `<button aria-pressed="${P[d.k] === v}" data-act="dec" data-arg="${d.k}|${v}"><b>${v}</b><span>${t}</span>${r ? '<span class="rec">推荐</span>' : ''}</button>`).join('')}</div><div class="why">${d.why}</div></div>`).join('');
+  $('#prev').innerHTML = [['ios','26','iOS 26 及以上'],['ios','18','iOS 18–25'],['reduceT',true,'降低透明度'],['dark',true,'深色']].map(([k, v, l]) => `<button aria-pressed="${k === 'ios' ? P.ios === v : !!P[k]}" data-act="pref" data-arg="${k}|${v}">${l}</button>`).join('');
+  const cs = !S.online ? 'offline' : (!S.paired ? 'unpaired' : S.conn);
+  $('#conn').innerHTML = [['ready','正常'],['failed','连不上服务器'],['busy','服务器忙'],['unauthorized','要重新扫码'],['incompatible','版本对不上'],['offline','没联网']].map(([k, l]) => `<button aria-pressed="${cs === k}" data-act="connSet" data-arg="${k}">${l}</button>`).join('');
+}
+ACT.scn = k => { scenario(k); $('#panel').classList.remove('open'); };
+ACT.dec = arg => { const [k, v] = arg.split('|'); P[k] = v; saveP(); if (k === 'd4' && S.rec && S.rec.phase === 'item' && v === 'B') S.rec.phase = 'date'; };
+ACT.pref = arg => { const [k, v] = arg.split('|'); if (k === 'ios') P.ios = v; else P[k] = !P[k]; saveP(); };
+ACT.connSet = k => { if (k === 'offline') { S.online = false; S.conn = 'ready'; S.paired = true; } else { const wasOff = !S.online; S.online = true; S.paired = true; S.conn = k; if (wasOff && S.consent) weekPhotos().filter(p => p.state === 'local').forEach(startPipe); } if (k === 'ready' || k === 'failed' || k === 'busy' || k === 'offline') { if (topS().s === 'today') S.qrError = false; } };
+
+/* ───────── 事件 ───────── */
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  const a = el.dataset.act; if (!a || !ACT[a]) return;
+  if (el.disabled) return;
+  e.preventDefault();
+  ACT[a](el.dataset.arg);
+  if (a !== 'openPanel' && a !== 'closePanel') render();
+});
+document.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role=button][data-act]')) { e.preventDefault(); e.target.click(); } });
+document.addEventListener('input', e => {
+  const id = e.target.id;
+  if (id === 'whyAns' && S.why) { S.why.ans = e.target.value; render(); }
+  else if (id === 'whySum' && S.why && S.why.form) { S.why.form.sum = e.target.value; render(); }
+  else if (id === 'pickIn' && S.pick) { S.pick.input = e.target.value; S.pick.on = {}; S.pick.off = {}; render(); }
+  else if (id === 'fixIn' && S.fix) { S.fix.text = e.target.value; render(); }
+  else if (id === 'slotOther' && S.choose) { S.choose.other = e.target.value; }
+});
+/* 按住说话：按住 0.25 秒才开始；轻点给提示；第一次先要权限 */
+let hold = null;
+const SAY = {pick:'4 和 6', fix:'第二行的 9 应该是 8'};
+document.addEventListener('pointerdown', e => {
+  const el = e.target.closest('[data-hold]'); if (!el) return;
+  e.preventDefault();
+  const scope = el.dataset.hold;
+  if (!S.micPerm) { S.alert = {s:'mic'}; render(); return; }
+  hold = {scope, t0: Date.now(), started:false, timer: setTimeout(() => { hold.started = true; startSpeech(scope); }, 250)};
+});
+function endHold(){
+  if (!hold) return; clearTimeout(hold.timer); clearInterval(hold.iv);
+  if (!hold.started) { setHint('要按住不放，边按边说，说完松手'); }
+  else { setHint(''); }
+  hold = null; render();
+}
+document.addEventListener('pointerup', endHold); document.addEventListener('pointercancel', endHold);
+function startSpeech(scope){
+  const full = scope === 'why' ? (Q[curPractice().ids[S.why.i]].say || '我当时没想清楚这一步') : SAY[scope];
+  let i = 0; setHint('正在听…松手结束');
+  const base = scope === 'why' ? S.why.ans : scope === 'pick' ? S.pick.input : S.fix.text;
+  const btn = () => document.querySelector('[data-hold]');
+  const b = btn(); if (b) { b.classList.add('rec'); b.querySelector('span').textContent = '正在听…松手结束'; }
+  hold.iv = setInterval(() => {
+    if (!hold) return; i = Math.min(full.length, i + 2); const txt = (base ? base + ' ' : '') + full.slice(0, i);
+    if (scope === 'why') S.why.ans = txt; else if (scope === 'pick') { S.pick.input = txt; S.pick.on = {}; S.pick.off = {}; } else S.fix.text = txt;
+    render(); const bb = btn(); if (bb) { bb.classList.add('rec'); bb.querySelector('span').textContent = '正在听…松手结束'; }
+  }, 120);
+}
+
+/* 桌面缩放：窗口太矮时整台手机等比缩小 */
+function fit(){
+  const ph = $('#phone'); if (window.innerWidth <= 640) { ph.style.transform = ''; $('#stage').style.height = ''; return; }
+  const k = Math.min(1, (window.innerHeight - 60) / 866);
+  ph.style.transform = k < 1 ? `scale(${k})` : ''; $('#stage').style.height = (866 * k) + 'px';
+}
+window.addEventListener('resize', fit);
+scenario('A0'); fit();
+</script>
+</body>
+</html>

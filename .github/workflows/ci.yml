@@ -1,0 +1,162 @@
+name: CI
+
+# PR 只验证；集成分支 push 全部验证通过后调用受限生产发布。
+# 说明文档：docs/ci.md
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# PR 可以取消旧检查；生产分支不得取消已经开始的发布。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# 只读仓库内容即可；不需要任何密钥，也不写回仓库。
+permissions:
+  contents: read
+
+jobs:
+  # 判断这次改动有没有碰 iOS：macOS runner 按 10 倍计费，只在需要时才跑 ios-unit。
+  # server 不依赖这个 job，每次都跑。
+  changes:
+    name: changes (paths filter)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # 这个 job 单独声明权限（会覆盖上面的全局设置，所以 contents 要再写一遍）：
+    # pull_request 事件下 paths-filter 通过 API 取文件列表，需要 pull-requests: read。
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      # push 事件下 paths-filter 用 git 比较，需要先 checkout；pull_request 事件其实用不到，多花几秒而已。
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Detect iOS changes
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          # push：base 设成当前分支名，表示「只和这次推送之前的提交比较」。不设的话会和默认分支 main 比较，
+          # main 的 push 只检查本次改动；PR 仍与目标分支比较。
+          # pull_request：改动文件列表通过 API 取（和 PR 的目标分支比较），base 会被忽略并告警，所以留空。
+          base: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          filters: |
+            ios:
+              - 'iOS/**'
+              - '.github/workflows/ci.yml'
+
+  # 等价于 `npm run verify`（typecheck -> build -> test -> test:e2e），拆成可见的步骤，
+  # 哪一步红了一眼就能看出来。
+  server:
+    name: server (typecheck, build, vitest, playwright)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # 全程使用 mock 模式：不需要、也不会读取任何 AI 密钥，不会发出真实模型请求。
+      SEL_AI_MODE: mock
+      # package-lock.json 里全部 255 个下载地址都指向 registry.npmmirror.com（国内镜像）。
+      # 这里让 npm 改从官方源 registry.npmjs.org 下载；锁文件里的 sha512 校验照常执行，所以装到的内容不变。
+      NPM_CONFIG_REPLACE_REGISTRY_HOST: always
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js 24
+        # package.json engines 要求 node >= 24（用到 node:sqlite），runner 自带的是 22，所以必须显式安装。
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          node --version
+          npm --version
+          npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Check deployment script syntax
+        run: |
+          python3 -c "import ast; from pathlib import Path; ast.parse(Path('deploy/ci/sel-ci-deploy.py').read_text())"
+          bash -n deploy/ci/publish.sh
+          sh -n deploy/ci/ssh-entry.sh
+          python3 -m unittest discover -s tests/deploy -p 'test_*.py'
+
+      - name: Install Playwright Chromium
+        # 必须在 Vitest 之前：tests/globalSetup.ts 会调用 generateFixtures()（用 Chromium 渲染合成试卷），
+        # src/services/pdfService.ts 生成 A4 PDF 也用 Chromium；干净的 checkout 里 fixtures/assets 不存在，所以第一次 `npm test` 就要用到浏览器。
+        run: npx playwright install --with-deps chromium
+
+      - name: Unit and integration tests (Vitest)
+        run: npm test
+
+      - name: End-to-end tests (Playwright)
+        id: e2e
+        # playwright.config.ts 自己会启动两个服务（3199 和 3196/3197），数据在 data-e2e/ 与系统临时目录。
+        # 额外参数只影响产物：加 html 报告，并在失败时保留 trace，方便从云端排查；通过与否的判定不变。
+        run: npm run test:e2e -- --reporter=list,html --trace=retain-on-failure
+        env:
+          PLAYWRIGHT_HTML_OPEN: never
+
+      - name: Upload Playwright artifacts
+        if: ${{ failure() && steps.e2e.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-failure
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # 只跑 StudentCore 包的单元测试（合成传输，不连网络、不连真实服务）。
+  # 范围外（目前不做）：iOS/UITests 下的界面回归测试需要模拟器、签名步骤和约 9 分钟以上的运行时间，
+  # 见 iOS/README.md「界面回归测试」。要加的话另起一个 job，不要塞进这个。
+  #
+  # 只在改动涉及 iOS/** 或本工作流文件时运行。条件不满足时这个 job 仍会出现在检查列表里，状态是「skipped」，
+  # GitHub 的分支保护把 skipped 当作通过，所以以后可以只把 `server` 设为必需检查，不会被 ios-unit 卡住。
+  ios-unit:
+    name: ios-unit (swift test)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      # 固定到仓库验证过的 Xcode 26.6（macos-26 镜像里的默认版本，Swift 6.2；Package.swift 需要 swift-tools 6.0）。
+      # 以后镜像换了默认版本也不会悄悄变；如果镜像移除了这个版本，这一步会明确报错，改这一行即可。
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          sw_vers
+
+      - name: Swift package tests
+        run: swift test --package-path iOS
+
+  deploy:
+    name: production
+    needs: [changes, server, ios-unit]
+    if: >-
+      ${{ always() && !cancelled() && github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.changes.result == 'success' && needs.server.result == 'success' &&
+          (needs.ios-unit.result == 'success' || needs.ios-unit.result == 'skipped') }}
+    uses: ./.github/workflows/deploy.yml
+    secrets:
+      SEL_DEPLOY_SSH_KEY: ${{ secrets.SEL_DEPLOY_SSH_KEY }}
+      SEL_DEPLOY_KNOWN_HOSTS: ${{ secrets.SEL_DEPLOY_KNOWN_HOSTS }}

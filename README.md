@@ -1,167 +1,74 @@
-# 超级错题本 (Super Error Log)
+# Super Error Log — 纸错题延迟重做闭环 MVP
 
-超级错题本是一个智能错题管理系统，帮助学生高效学习，提高成绩。系统利用AI技术，自动识别题目内容，分析错误原因，提供详细解答，让学习更高效。
+面向寄宿制初三学生的错题复习闭环：**周末数字化，工作日纸质复习，下周末结果回传**。
+当前学生用手机网页拍卷子：AI先找题，学生补勾遗漏，再选一小组题、说说为什么错、打印并隔几天重做，回来记录结果。当前原题重做闭环已实现；家长独立网页和变式题尚未接入。
 
-## 功能特点
+## Codex Cloud 从这里接手
 
-- **智能识别**：通过通义千问视觉模型，自动识别题目内容和学生答案，无需手动输入。
-- **智能分析**：利用DeepSeek大语言模型，提供正确解法和错误分析，帮助理解错误原因。
-- **知识点分类**：自动将题目按学科、知识模块和具体知识点分类，方便复习和查找。
-- **历史记录**：保存所有上传的题目和分析结果，随时查看和复习，跟踪学习进度。
-- **知识点搜索**：按知识点分类搜索错题记录，快速找到需要复习的内容。
-- **云端存储**：所有数据安全存储在云端，多设备同步，随时随地访问。
+**唯一主分支：`main`。** 新任务从最新 `main` 开分支，PR 合并回 `main`；检查通过后自动上线。分支与未合并工作见[分支说明](docs/BRANCHES.md)。请先读[当前交接说明](docs/CODEX_CLOUD_HANDOFF.md)，里面包含环境安装、代码地图、测试命令和待办。
 
-## 系统架构
+最近人工发布基线为 **0.5.0-r2**；当前线上版本以 [GitHub Actions](https://github.com/PCcoding666/Super_Error_Log/actions) 的成功发布和服务器 `current/deploy/ci-release.json` 为准。用户已确认手机上传成功，真实题目识别质量和完整一周使用仍待验收。[上传热修复记录](docs/quality/2026-10-15-photo-upload-hotfix.md)。
 
-超级错题本采用前后端分离的架构设计：
+## 当前手机入口（学生邀请码）
 
-### 后端服务
+手机Safari或Android浏览器打开 `https://study.pccoding666.com/s/`，输入自己的邀请码，即可进入独立学习空间；Safari可添加到主屏幕。无需Apple开发者账号安装，更新由服务器发布。语音使用千问ASR 3.1，结果可以编辑，再由学生提交。
 
-- **Web服务**：基于Flask的RESTful API服务
-- **数据库**：SQLite（开发环境）/ PostgreSQL（生产环境）
-- **AI服务集成**：
-  - 通义千问视觉模型：用于图像识别和文字提取
-  - DeepSeek大语言模型：用于错题分析和解答生成
+本轮设计：[学生邀请码网页版](docs/superpowers/specs/2026-10-15-student-invite-web-design.md)；发布与验收状态：[交付记录](docs/quality/2026-10-15-student-web-release.md)。功能需 `SEL_STUDENT_HOST_ENABLED=1`；受控试用上限3个学生。下方原生App与本机演示说明保留作历史与开发参考。
 
-### 前端应用
+## 历史原生iPhone路径（本轮主要交付为上面的手机版网页）
 
-- **Web应用**：基于Bootstrap 5的响应式网页应用
-- **iOS客户端**：基于SwiftUI的原生iOS应用
-- **Android客户端**：（规划中）
+原生应用位于 [`iOS/`](iOS/README.md)，主界面为中文。识别路径是 **iPhone 模拟器 → Mac 本机服务 → 百炼北京**；手机只保存本机配对令牌，不保存百炼密钥。选择照片先存本机，明确同意后才上传。真实候选与示例题分开，未通过检查的题不能确认或打印。
 
-## 快速开始
+启动说明见 [iOS README](iOS/README.md)，接口见 [移动识别 API](docs/mobile-recognition-api.md)。请先阅读 [本轮实测结果与限制](iOS/VERIFICATION.md)：真实上传和返回已经验证，但仍有裁图和笔迹识别错误，不能据此认为十张照片已全部正确整理，也不能把合成测试中的复盘/PDF当成真实题目验收。
 
-### 环境要求
+## 核心原则
 
-- Python 3.8+
-- pip
-- 虚拟环境（推荐）
+- **AI 建议，学生决定**：AI 只做提取与提示，反思必须由学生本人提交。
+- **当场做对不算掌握**：只有延迟 3–7 天的独立重做正确才进入"暂时掌握"，7–14 天确认轮再做对才"稳定掌握"。
+- **家长只见聚合**：家长视图只有完成率、学科掌握度、薄弱标签等聚合数字。
 
-### 安装步骤
-
-1. 克隆仓库
+## 旧本地演示快速开始
 
 ```bash
-git clone https://github.com/yourusername/super-error-log.git
-cd super-error-log
+npm install
+npm run demo        # 生成演示夹具并启动（mock 模式，无需 API Key）
+# 打开 http://localhost:3100
 ```
 
-2. 创建并激活虚拟环境
+演示数据：`fixtures/assets/week1/` 下有 19 个合成错题文件（17 PNG + 1 张 EXIF 旋转 JPEG + 1 个双页 PDF，共 20 题）。首页上传即可走完整流程。
 
-```bash
-python -m venv venv
-source venv/bin/activate  # 在Windows上使用 venv\Scripts\activate
-```
+## 常用命令
 
-3. 安装依赖
+| 命令 | 作用 |
+|---|---|
+| `npm run dev` | 开发服务器（tsx watch，默认端口 3100） |
+| `npm run demo` | 生成夹具 + 启动，一键演示 |
+| `npm test` | 单元 + 集成测试（Vitest） |
+| `npm run test:e2e` | E2E 旅程测试 J1–J8（Playwright，端口 3199） |
+| `npm run verify` | typecheck + 单测/集成 + 构建 + E2E 全量验证 |
+| `npm run build && npm start` | 构建并启动旧本机演示；当前生产入口为 `dist/main.js` |
 
-```bash
-pip install -r requirements.txt
-```
+## 历史本地演示配置（当前生产配置见交接说明和部署文档）
 
-4. 配置环境变量
+不配置环境变量时为本地 Mock 演示。真实使用请复制 `.env.example` 为 `.env` 并在本机填写百炼 Key 与对应地域 URL；示例使用 `SEL_AI_MODE=bailian`、`qwen3.8-27b` 和独立 `data/real` 目录。真实模式缺配置会失败，不会降级成 Mock。其他兼容服务可显式选择 `openai`。
 
-复制`.env.example`文件为`.env`并填写必要的配置信息：
+真实照片走多模态证据链：HEIC/图片归一化 → 完整题目定位 → 题干、图示、原始作答、订正与批注分开提取 → 原图清单与实际裁图的逐项完整性检查 → 学生校对 → 按证据生成候选诊断和 AI 参考提示 → 学生本人反思 → 干净打印 → 按实际作答日期回传。所有真实提取结果都需校对；只有确认不含作答的图示可进入打印题面。AI 参考不等于教师核验答案。
 
-```bash
-cp .env.example .env
-# 编辑.env文件，填写API密钥等信息
-```
+[裁图完整性说明](docs/CROP_COMPLETENESS.md)：调用 `succeeded` 不代表内容通过；缺失、不确定、未检查及过期结果不能自动进入确认、诊断或打印。改框使旧检查失效。模型误报须逐项、有依据地人工复核，保留原模型判定；自动检查不是视觉准确率的保证。
 
-5. 初始化数据库
+阶段模型对比使用 [评测说明](docs/REAL_MODEL_EVALUATION.md)。测试中的合成响应不是百炼实测；没有密钥、费用上限和人工核对结果时不会生成“最佳模型”结论。
 
-```bash
-flask db init
-flask db migrate
-flask db upgrade
-```
+## 文档
 
-6. 运行应用
+- 产品：`docs/product/`（PRD、页面规格、试点协议、假设登记）
+- 架构：`docs/architecture/`（架构、数据模型、AI Provider 契约）
+- 质量：`docs/quality/`（测试策略、发布检查单）
+- 隐私：`docs/privacy/PRIVACY_AND_MINOR_DATA.md`
+- 用户手册：`docs/MVP_USER_MANUAL.md`
+- 验证报告：`docs/PRODUCT_VALIDATION_REPORT.md`
+- 当前交接：[Codex Cloud 接手说明](docs/CODEX_CLOUD_HANDOFF.md)；分支规则：[分支说明](docs/BRANCHES.md)
+- 历史工程过程：`.ai/tasks/current/`（保留历史状态、决策、风险和测试日志，不代表当前上线状态）
 
-```bash
-python run.py
-```
+## 技术栈
 
-应用将在 http://localhost:8080 上运行。
-
-## iOS客户端
-
-超级错题本iOS客户端是一个基于SwiftUI开发的原生iOS应用，提供与Web应用相同的核心功能，并针对移动设备进行了优化。
-
-### 功能特点
-
-- **用户认证**：支持账号注册、登录和管理
-- **错题管理**：查看、搜索和管理错题记录
-- **拍照上传**：直接使用相机拍摄错题并上传
-- **知识点分类**：按知识点分类浏览错题
-- **离线访问**：支持部分内容的离线访问
-
-### 安装要求
-
-- iOS 15.0+
-- Xcode 13.0+
-- Swift 5.5+
-
-### 构建步骤
-
-1. 克隆仓库
-
-```bash
-git clone https://github.com/yourusername/super-error-log-ios.git
-cd super-error-log-ios
-```
-
-2. 打开Xcode项目
-
-```bash
-open SuperErrorLog_iOS.xcodeproj
-```
-
-3. 配置API端点
-
-在`APIService.swift`文件中配置正确的API端点：
-
-```swift
-static let baseURL = "https://your-api-endpoint.com"
-```
-
-4. 构建并运行应用
-
-在Xcode中选择目标设备或模拟器，然后点击运行按钮。
-
-## API文档
-
-API文档使用Swagger UI提供，可在应用运行后访问：
-
-```
-http://localhost:8080/api/docs
-```
-
-## 贡献指南
-
-我们欢迎所有形式的贡献，包括但不限于：
-
-- 代码贡献
-- 文档改进
-- 错误报告
-- 功能建议
-
-请遵循以下步骤：
-
-1. Fork仓库
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建Pull Request
-
-## 许可证
-
-本项目采用MIT许可证 - 详情请参阅 [LICENSE](LICENSE) 文件。
-
-## 联系方式
-
-如有任何问题或建议，请通过以下方式联系我们：
-
-- 电子邮件：support@supererrorlog.com
-- 项目主页：https://github.com/yourusername/super-error-log
-- 问题跟踪：https://github.com/yourusername/super-error-log/issues 
+TypeScript · Express 5 · React 19 SSR（表单驱动，无 hydration）· node:sqlite（零原生依赖）· sharp（EXIF 转正/元数据剥离）· Playwright（A4 PDF 生成 + E2E）· Vitest

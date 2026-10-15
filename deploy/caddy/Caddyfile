@@ -1,0 +1,59 @@
+# Super Error Log 云端入口（Task 6）
+# 域名：study.pccoding666.com（广州 ECS）
+# IP 直连：https://8.163.96.197（2026-10-03 起；自签证书，App 内固定，见 deploy/README.md §9）
+# 上游：127.0.0.1:3101（super-error-log 移动识别服务，仅回环监听）
+# 依赖：Caddy >= 2.10（request_body 指令 v2.10.0 起支持，实验性）
+
+# 全局选项：关闭 admin API（改配置需重启 Caddy，不接受运行时改写）；
+# 保留证书自动化，只关 HTTP→HTTPS 跳转——80 端口仍属原网站，不抢跳转。
+# default_sni：客户端按 IP 连接时不发 SNI；ECS 网卡上是内网地址，不设置时 Caddy 按内网 IP 找证书，
+# 找不到就以 TLS 告警结束握手。设为公网 IP 后，无 SNI 的握手使用下面 IP 站点的证书；
+# 带域名 SNI 的握手不受影响（本机 Caddy v2.10.0 实测，见 tests/integration/caddyIpEntry.test.ts）。
+{
+	admin off
+	auto_https disable_redirects
+	default_sni 8.163.96.197
+}
+
+study.pccoding666.com {
+	# TLS：ACME 默认签发，禁用 HTTP-01 质询（80 不在 Caddy 手里，走 DNS/TLS-ALPN）。
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+
+	# 站点层请求体上限：15,000,000 字节（与服务端 express.raw 15mb 一致）。
+	# 注意：request_body 是站点级指令，必须放在 reverse_proxy 外面。
+	request_body {
+		max_size 15000000
+	}
+
+	reverse_proxy 127.0.0.1:3101 {
+		# 覆盖客户端可能伪造的 X-Real-IP，仅信任 Caddy 观测到的远端地址。
+		# 服务端仅在 peer 为 127.0.0.1 且 cloud 模式时才读取该头（src/mobile/rateLimit.ts clientIp）。
+		header_up X-Real-IP {remote_host}
+		transport http {
+			# 百炼多阶段识别耗时长，上游读取超时放宽到 180s。
+			read_timeout 180s
+		}
+	}
+}
+
+# IP 直连入口：自签证书由 deploy/generate-ip-cert.sh 在服务器上生成（私钥 0640 root:caddy，只留在服务器）。
+# 证书文件缺失时 Caddy 整体启动失败（域名入口一并不可用）：先生成证书，再切换到含本段的发布版本。
+# 以下请求体上限与反向代理同域名站点（去掉注释后逐行一致，tests/integration/caddyIpEntry.test.ts 校验）。
+https://8.163.96.197 {
+	tls /etc/super-error-log/tls-ip/cert.pem /etc/super-error-log/tls-ip/key.pem
+
+	request_body {
+		max_size 15000000
+	}
+
+	reverse_proxy 127.0.0.1:3101 {
+		header_up X-Real-IP {remote_host}
+		transport http {
+			read_timeout 180s
+		}
+	}
+}

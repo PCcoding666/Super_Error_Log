@@ -1,0 +1,249 @@
+{
+  "attempts": [
+    {
+      "cond": "A",
+      "label": "官方配方 0-1000对角点+思考关",
+      "run": 1,
+      "boxes": [
+        [
+          192,
+          148,
+          806,
+          183
+        ]
+      ],
+      "raw": "```json\n[\n  {\"label\": \"第2题完整题目\", \"bbox_2d\": [192, 148, 806, 183]}\n]\n```"
+    },
+    {
+      "cond": "A",
+      "label": "官方配方 0-1000对角点+思考关",
+      "run": 2,
+      "boxes": [
+        [
+          190,
+          146,
+          832,
+          182
+        ]
+      ],
+      "raw": "```json\n[\n    {\"label\": \"第2题完整题目\", \"bbox_2d\": [190, 146, 832, 182]}\n]\n```"
+    },
+    {
+      "cond": "A",
+      "label": "官方配方 0-1000对角点+思考关",
+      "run": 3,
+      "boxes": [
+        [
+          192,
+          140,
+          853,
+          182
+        ]
+      ],
+      "raw": "```json\n[\n  {\"label\": \"第2题完整题目\", \"bbox_2d\": [192, 140, 853, 182]}\n]\n```"
+    },
+    {
+      "cond": "B",
+      "label": "我们配方 0-1xywh+思考默认",
+      "run": 1,
+      "boxes": [
+        [
+          0.11,
+          0.163,
+          0.86,
+          0.188
+        ]
+      ],
+      "raw": "{\"questionRegion\":{\"x\":0.11,\"y\":0.163,\"width\":0.75,\"height\":0.025}}"
+    },
+    {
+      "cond": "B",
+      "label": "我们配方 0-1xywh+思考默认",
+      "run": 2,
+      "boxes": [
+        [
+          0.19,
+          0.147,
+          0.8600000000000001,
+          0.183
+        ]
+      ],
+      "raw": "{\"questionRegion\":{\"x\":0.19,\"y\":0.147,\"width\":0.67,\"height\":0.036}}"
+    },
+    {
+      "cond": "B",
+      "label": "我们配方 0-1xywh+思考默认",
+      "run": 3,
+      "boxes": [
+        [
+          0.19,
+          0.156,
+          0.8500000000000001,
+          0.186
+        ]
+      ],
+      "raw": "{\"questionRegion\":{\"x\":0.19,\"y\":0.156,\"width\":0.66,\"height\":0.03}}"
+    },
+    {
+      "cond": "C",
+      "label": "隔离变量 0-1xywh+思考关",
+      "run": 1,
+      "boxes": [
+        [
+          192,
+          146,
+          815,
+          164
+        ]
+      ],
+      "raw": "```json\n{\"questionRegion\": {\"x\": 192, \"y\": 146, \"width\": 623, \"height\": 18}}\n```"
+    },
+    {
+      "cond": "C",
+      "label": "隔离变量 0-1xywh+思考关",
+      "run": 2,
+      "boxes": [
+        [
+          188,
+          143,
+          810,
+          160
+        ]
+      ],
+      "raw": "```json\n{\"questionRegion\": {\"x\": 188, \"y\": 143, \"width\": 622, \"height\": 17}}\n```"
+    },
+    {
+      "cond": "C",
+      "label": "隔离变量 0-1xywh+思考关",
+      "run": 3,
+      "boxes": [
+        [
+          188,
+          142,
+          800,
+          161
+        ]
+      ],
+      "raw": "```json\n{\"questionRegion\": {\"x\": 188, \"y\": 142, \"width\": 612, \"height\": 19}}\n```"
+    }
+  ],
+  "crops": [
+    {
+      "cond": "A",
+      "run": 1,
+      "norm01": {
+        "x1": 0.192,
+        "y1": 0.148,
+        "x2": 0.806,
+        "y2": 0.183
+      },
+      "px": {
+        "left": 581,
+        "top": 597,
+        "width": 1857,
+        "height": 141
+      },
+      "file": "/tmp/exp-A-1.jpg"
+    },
+    {
+      "cond": "A",
+      "run": 2,
+      "norm01": {
+        "x1": 0.19,
+        "y1": 0.146,
+        "x2": 0.832,
+        "y2": 0.182
+      },
+      "px": {
+        "left": 575,
+        "top": 589,
+        "width": 1941,
+        "height": 145
+      },
+      "file": "/tmp/exp-A-2.jpg"
+    },
+    {
+      "cond": "A",
+      "run": 3,
+      "norm01": {
+        "x1": 0.192,
+        "y1": 0.14,
+        "x2": 0.853,
+        "y2": 0.182
+      },
+      "px": {
+        "left": 581,
+        "top": 564,
+        "width": 1999,
+        "height": 169
+      },
+      "file": "/tmp/exp-A-3.jpg"
+    },
+    {
+      "cond": "B",
+      "run": 1,
+      "norm01": {
+        "x1": 0.11,
+        "y1": 0.163,
+        "x2": 0.86,
+        "y2": 0.188
+      },
+      "px": {
+        "left": 333,
+        "top": 657,
+        "width": 2268,
+        "height": 101
+      },
+      "file": "/tmp/exp-B-1.jpg"
+    },
+    {
+      "cond": "B",
+      "run": 2,
+      "norm01": {
+        "x1": 0.19,
+        "y1": 0.147,
+        "x2": 0.86,
+        "y2": 0.183
+      },
+      "px": {
+        "left": 575,
+        "top": 593,
+        "width": 2026,
+        "height": 145
+      },
+      "file": "/tmp/exp-B-2.jpg"
+    },
+    {
+      "cond": "B",
+      "run": 3,
+      "norm01": {
+        "x1": 0.19,
+        "y1": 0.156,
+        "x2": 0.85,
+        "y2": 0.186
+      },
+      "px": {
+        "left": 575,
+        "top": 629,
+        "width": 1996,
+        "height": 121
+      },
+      "file": "/tmp/exp-B-3.jpg"
+    },
+    {
+      "cond": "C",
+      "run": 1,
+      "error": "Error: extract_area: bad extract area"
+    },
+    {
+      "cond": "C",
+      "run": 2,
+      "error": "Error: extract_area: bad extract area"
+    },
+    {
+      "cond": "C",
+      "run": 3,
+      "error": "Error: extract_area: bad extract area"
+    }
+  ]
+}

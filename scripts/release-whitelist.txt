@@ -1,0 +1,8 @@
+# 发布白名单（Task 6）：build-release.sh 按本清单打包，逐行一个路径。
+# 目录会递归打包。新增条目必须先确认不含密钥/照片/运行数据/依赖；
+# 并同步更新脚本内 allowed_pattern（产包后白名单正检），否则新增条目会被自检拒绝。
+dist
+package.json
+package-lock.json
+.env.example
+deploy
