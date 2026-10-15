@@ -412,11 +412,15 @@ test('等 AI 时局部轮询：只换状态区域（不整页刷新、标题和�
     if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url());
     if (request.headers()['x-sel-poll'] === '1') polls += 1;
   });
-  const before = await allTrail();
   await page.goto(`${WEB}/s/photos`);
   await expect(row).toContainText('AI 正在找题…');
   await expect(page.locator('body')).toHaveAttribute('data-poll', '3');
   await expect(page.getByTestId('wait-line')).toContainText(/已经等了 \d+ 秒 · 找好了这一页会自己更新/);
+  // Start after navigation has settled. Chromium/SW can issue more than one
+  // initial navigation request; the invariant here is no new page-view writes
+  // during polling, not how many requests opened the page in the first place.
+  const before = await allTrail();
+  expect(before).toContain('view /s/photos#open');
   // 打上记号：整页刷新的话，这些记号都会没了。
   await page.evaluate(() => { (window as unknown as { __mark: number }).__mark = 1; (document.querySelector('h1') as unknown as { __mark: number }).__mark = 1; });
   const loadedAt = navigations.length;
@@ -431,11 +435,11 @@ test('等 AI 时局部轮询：只换状态区域（不整页刷新、标题和�
   expect(waited).toMatch(/已经等了 \d+ 秒/);
   await expect(page.getByTestId('wait-line')).toHaveCount(0);
   await expect(page.locator('[data-announcer]')).not.toBeEmpty();
-  // 互动记录：这一段里只打开过一次 /s/photos；轮询不记看页；换了几次就记几条 update，比轮询次数少；没有整页刷新。
+  // 互动记录：加载完成后轮询不再记看页；换了几次就记几条 update，比轮询次数少；没有整页刷新。
   await expect.poll(async () => count(await allTrail(), 'view /s/photos#update') - count(before, 'view /s/photos#update')).toBeGreaterThanOrEqual(1);
   const after = await allTrail();
   const updates = count(after, 'view /s/photos#update') - count(before, 'view /s/photos#update');
-  expect(count(after, 'view /s/photos#open') - count(before, 'view /s/photos#open')).toBe(1);
+  expect(count(after, 'view /s/photos#open')).toBe(count(before, 'view /s/photos#open'));
   expect(updates).toBeLessThan(polls);
   expect(count(after, 'view /s/photos#refresh')).toBe(count(before, 'view /s/photos#refresh'));
   await page.context().close();
