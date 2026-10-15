@@ -163,7 +163,7 @@ await service.listen();
 
 function pairingCode(): Promise<{ payload: Parameters<typeof webPairingLink>[0] }> {
   return new Promise((resolve, reject) => {
-    const request = http.request({ socketPath: service.admin.socketPath, path: '/pairing-code', method: 'GET' }, response => {
+    const request = http.request({ socketPath: service.admin!.socketPath, path: '/pairing-code', method: 'GET' }, response => {
       let raw = '';
       response.setEncoding('utf8');
       response.on('data', chunk => { raw += chunk; });

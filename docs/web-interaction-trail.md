@@ -1,6 +1,6 @@
 # 学生网页版的互动记录（interaction trail）
 
-日期：2026-10-11（quality round 1）。代码：`src/web/trail.ts`（服务器）、`src/web/assets.ts` 里的 `trailAdd` / `trailSend`（页面脚本）。
+日期：2026-10-11（quality round 1）。代码：`src/web/trail.ts`（服务器）、`src/web/clientScript.ts` 里的 `trailAdd` / `trailSend`（页面脚本）。
 测试：`tests/unit/webTrail.test.ts`（路由模板、cookie 解析）、`tests/integration/webClient.test.ts`「互动记录」（五类事件都写进审计日志、不带内容）、
 `tests/e2e/webClient.spec.ts` 周末 A 末尾（真实浏览器里的点按、看页、提交、跳过）。
 
@@ -61,7 +61,7 @@
 - 轮询请求本身**不记** `web_view`（服务器看到这个头就跳过「打开了一页」）。所以等了 2 分钟不会留下 40 条看页记录。
 - 区域真的变了、脚本把它换上去以后，记一次 `web_view <路由>#update`（随一个 HEAD 带来，和不跳页的点按一样）。
   一次状态变化一条；状态没变的轮询什么都不记。
-- 轮询出错（429、401、500）照常记 `web_error`；脚本随后整页重新载入，让他看到服务器给的那一页（忙、要重新连接）。
+- 轮询超时、429 或 5xx 保留当前页面并退避重试，避免丢失正在准备或待重试的照片；登录失效才重新进入登录页。服务端仍记录相应错误。
 - 关掉脚本时退回 `<meta refresh>`：每次刷新都是一次真正的打开，记 `web_view …#open`（和 R1 一样）。
 
 新的按钮标识（点按照常由页面脚本记成 `web_tap`，只有固定的英文键）：`content.voice-retry`（录音转写失败后「再转一次」，用的是同一段录音）、

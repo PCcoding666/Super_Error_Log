@@ -29,10 +29,6 @@ study.pccoding666.com {
 		max_size 15000000
 	}
 
-	# 响应压缩（2026-10-12 提出，生产配置变更，待 Peng 批准后随发布生效，见 deploy/README.md §10.5）：
-	# 页面、样式、脚本、JSON 按客户端支持用 zstd 或 gzip 压缩；JPEG / PNG 不压（Caddy 默认只压文本类、≥ 512 字节的响应）。
-	encode zstd gzip
-
 	reverse_proxy 127.0.0.1:3101 {
 		# 覆盖客户端可能伪造的 X-Real-IP，仅信任 Caddy 观测到的远端地址。
 		# 服务端仅在 peer 为 127.0.0.1 且 cloud 模式时才读取该头（src/mobile/rateLimit.ts clientIp）。
@@ -53,8 +49,6 @@ https://8.163.96.197 {
 	request_body {
 		max_size 15000000
 	}
-
-	encode zstd gzip
 
 	reverse_proxy 127.0.0.1:3101 {
 		header_up X-Real-IP {remote_host}

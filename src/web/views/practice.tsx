@@ -704,7 +704,7 @@ export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
 
 // ---------- 设置（§4.12） ----------
 
-export function SettingsPage(props: { practiceSlot: string; paperLocation: string; saved: boolean; error?: string | null }): ReactNode {
+export function SettingsPage(props: { practiceSlot: string; paperLocation: string; saved: boolean; error?: string | null; studentHostWorker?: boolean }): ReactNode {
   const bar: BarModel = { caption: '', primary: { title: '保存', key: 'save', form: 'settings-form' }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] };
   const places: Array<[string, string]> = [['school', '学校'], ['home', '家'], ['varies', '不固定']];
   return (
@@ -728,6 +728,12 @@ export function SettingsPage(props: { practiceSlot: string; paperLocation: strin
         <h2 className="card-title">连接</h2>
         <p className="tone-green" data-testid="connection-ok">已连上服务器 ✓</p>
         <a className="more" href="/s/install" data-key="settings-install"><Phrased text="怎么放到主屏幕" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
+        {props.studentHostWorker ? (
+          <form method="post" action="/s/logout" className="inline-form">
+            <button className="link-btn" type="submit" data-testid="logout" data-key="logout">退出登录</button>
+            <p className="hint">退出后这台手机要重新输入邀请码才能进来。照片、错题和练习都在，不会丢。</p>
+          </form>
+        ) : null}
       </section>
     </Page>
   );

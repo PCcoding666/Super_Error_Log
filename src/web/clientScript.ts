@@ -1,3 +1,5 @@
+import { PHOTO_UPLOAD_SCRIPT } from './photoUpload.js';
+
 /**
  * 学生网页版的浏览器脚本（发布包只含 dist/，所以以字符串形式随 tsc 编译进去，由 /s/assets/app.<hash>.js 下发）。
  * 只做浏览器必须做的事：上传进度、录音、选题计数、打印、按需显隐、说明状态的动效；关掉脚本时每屏照样能用（语音除外）。
@@ -5,27 +7,6 @@
  * 结构：页面级的事件用委托（点按记录、打印、选项按下），每块内容的小功能放在 enhance(scope) 里——
  * 页面加载时对整页跑一次，局部更新换上来的区域再对那一块跑一次（每个元素只挂一次）。
  */
-/**
- * 头部的一小段同步脚本（在第一次渲染之前就挂好，主脚本 defer 加载来不及）：接住 Chromium 自己跳过的跨文档过渡。
- *
- * 根因（quality round 2 iteration 2 实测）：跳页时，Chromium 有时在新的一页第一次渲染之前就把这次跨文档过渡跳过了——
- * 这时 pagereveal 事件里 viewTransition 是 null（这个过渡对象根本没交给页面），但浏览器内部还是把它的 ready 承诺
- * 以 AbortError「Transition was skipped」拒绝掉；页面手里没有这个对象，没人能接，于是控制台多一条「Uncaught (in promise)」。
- * 关掉过渡就没有；页面脚本换成空的也照样出现；交到页面手里的过渡（pagereveal 里不是 null 的）一个都没有被拒绝。
- * 所以这里只认这一种情况：这一页揭开时浏览器没有给过渡（viewTransition 为 null），随后来的拒绝原因是
- * AbortError「Transition was skipped」——这是浏览器替页面跳过的过渡，页面确认收到。别的任何拒绝照常报出来。
- * 交到页面手里的过渡，如果在播放中被打断（又跳页、返回），ready 的 AbortError 由页面接住；其他错误照样抛出。
- */
-export const EARLY_SCRIPT = String.raw`(function(){
-var skippedByBrowser=false;
-addEventListener('pagereveal',function(e){var vt=e.viewTransition;
-if(!vt){skippedByBrowser=true;return}
-vt.ready.catch(function(err){if(!err||err.name!=='AbortError')throw err})});
-addEventListener('unhandledrejection',function(e){var r=e.reason;
-if(skippedByBrowser&&r&&r.name==='AbortError'&&String(r.message).indexOf('Transition was skipped')>=0)e.preventDefault()});
-})();
-`;
-
 export const CLIENT_SCRIPT = String.raw`(function(){
 var root=document.documentElement;root.classList.add('js');
 var standalone=window.navigator.standalone===true||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches);
@@ -35,6 +16,16 @@ function $(s,el){return (el||document).querySelector(s)}function $$(s,el){return
 function within(scope,s){var list=$$(s,scope);if(scope&&scope.matches&&scope.matches(s))list.unshift(scope);return list}
 /* 每个元素的每个小功能只挂一次 */
 function once(el,name){var k='__sel_'+name;if(el[k])return false;el[k]=true;return true}
+/* 页面所属的语音会话在加载时固定；旧单学生页面没有这个 meta。重试也不能换成另一个页面的会话。 */
+var voiceMeta=$('meta[name="sel-voice-context"]');var voiceContext=voiceMeta?voiceMeta.getAttribute('content'):null;
+/* 超时覆盖 fetch 和整个响应正文；即使底层忽略 abort，超时/取消后的结果也不会再交给调用方。 */
+function boundedRequest(url,options,ms,read){var controller=window.AbortController?new AbortController():null,done=false,timer=null,settle;
+if(controller)options.signal=controller.signal;
+var promise=new Promise(function(resolve,reject){settle=function(error,value){if(done)return;done=true;clearTimeout(timer);if(error)reject(error);else resolve(value)};
+timer=setTimeout(function(){cancel(new Error('request_timeout'))},ms);
+Promise.resolve().then(function(){if(!done)return fetch(url,options)}).then(function(response){if(!done)return read(response)}).then(function(value){settle(null,value)},function(error){settle(error)})});
+function cancel(error){if(done)return;settle(error||new Error('request_cancelled'));if(controller)controller.abort()}
+return{promise:promise,cancel:cancel}}
 function uuid(){if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();var b=new Uint8Array(16);crypto.getRandomValues(b);b[6]=b[6]&15|64;b[8]=b[8]&63|128;var h=Array.prototype.map.call(b,function(x){return(x+256).toString(16).slice(1)}).join('');return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20)}
 if('serviceWorker' in navigator&&location.protocol==='https:'||('serviceWorker' in navigator&&/^(localhost|127\.0\.0\.1)$/.test(location.hostname))){window.addEventListener('load',function(){navigator.serviceWorker.register('/s/sw.js',{scope:'/s/'}).catch(function(){})})}
 /* 互动记录（docs/web-interaction-trail.md）：只记「在哪一页、点了哪个按钮的标识」，不记任何内容。
@@ -59,7 +50,7 @@ document.addEventListener('change',function(e){var c=e.target&&e.target.closest&
 function primaryOf(bar){return $('[data-testid=next-step-primary]',bar)}
 function primaryState(bar){var p=primaryOf(bar);return p?p.textContent+'|'+(p.disabled||p.classList.contains('disabled')):''}
 function watchPrimary(bar){if(!window.MutationObserver||!once(bar,'primary'))return;var last=primaryState(bar);
-new MutationObserver(function(){var now=primaryState(bar);if(now!==last){last=now;play(primaryOf(bar),'m-swap')}}).observe(bar,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['disabled','data-testid']})}
+new MutationObserver(function(){var primary=primaryOf(bar);if(primary)primary.setAttribute('aria-label',primary.textContent);var now=primaryState(bar);if(now!==last){last=now;play(primaryOf(bar),'m-swap')}}).observe(bar,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['disabled','data-testid']})}
 /* 「今天」清单：和这次打开里上一次看到的比，刚做完的那步打勾（✓ 弹出来），「现在做这个」挪到下一步（那一行浮上来）；
    这周的事刚做完时，做完了的卡片浮上来、✓ 弹出来。只在本机的会话存储里记步骤名，不记任何内容。 */
 function trackSteps(scope){var box=within(scope,'[data-steps]')[0];if(!box)return;
@@ -85,18 +76,12 @@ function enhance(scope){
 within(scope,'[data-js-primary]').forEach(function(el){el.setAttribute('data-testid','next-step-primary')});
 within(scope,'.next-bar').forEach(function(nbar){if(!once(nbar,'bar'))return;function barH(){root.style.setProperty('--bar-h',nbar.offsetHeight+'px')}barH();if(window.ResizeObserver)new ResizeObserver(barH).observe(nbar);watchPrimary(nbar)});
 trackSteps(scope);
-/* 拍照上传：选好照片立刻上传并显示进度；失败时照片还在这个页面里，可以再试一次 */
-within(scope,'form[data-upload]').forEach(function(form){if(!once(form,'upload'))return;var bar=$('[data-upload-progress]',form),msg=$('[data-upload-message]',form),retry=$('[data-upload-retry]',form),pending=null;
-function send(file){pending=file;var data=new FormData();data.append('key',file.__key||(file.__key=uuid()));data.append('photo',file,'photo.jpg');
-var xhr=new XMLHttpRequest();xhr.open('POST',form.getAttribute('action'));xhr.setRequestHeader('accept','application/json');
-if(bar)bar.classList.remove('hidden');if(retry)retry.classList.add('hidden');if(msg)msg.textContent='正在上传…';
-xhr.upload.onprogress=function(e){if(e.lengthComputable&&bar){var p=Math.round(e.loaded*100/e.total);$('i',bar).style.transform='scaleX('+(p/100)+')';msg.textContent='正在上传 '+p+'%'}};
-xhr.onload=function(){var body={};try{body=JSON.parse(xhr.responseText)}catch(e){}
-if(xhr.status>=200&&xhr.status<300){if(msg)msg.textContent='传上去了';location.replace(body.next||location.pathname);return}
-if(msg)msg.textContent=(body.error&&body.error.message)||'没传上去。照片还在这个页面里。';if(retry&&xhr.status!==400)retry.classList.remove('hidden')};
-xhr.onerror=function(){if(msg)msg.textContent='没传上去。照片还在这个页面里。';if(retry)retry.classList.remove('hidden');if(bar)bar.classList.add('hidden');trailAdd('error','upload_network')};xhr.send(data)}
-$$('input[type=file]',form).forEach(function(input){input.addEventListener('change',function(){var f=input.files&&input.files[0];if(f)send(f);input.value=''})});
-if(retry)retry.addEventListener('click',function(){if(pending)send(pending)})});
+/* 上传使用与 main 相同的图片转换、超时和重试逻辑；局部更新时只挂一次。 */
+within(scope,'form[data-upload]').forEach(function(uploadForm){if(!once(uploadForm,'upload'))return;
+(function(){
+${PHOTO_UPLOAD_SCRIPT}
+})();
+});
 /* 选题：数字跟着变，最多 8 道 */
 within(scope,'form[data-pick-count]').forEach(function(pick){if(!once(pick,'count'))return;var max=Number(pick.getAttribute('data-max')||'8'),min=Number(pick.getAttribute('data-min')||'1'),btn=$('[data-count-label]'),warn=$('[data-max-warning]');
 function upd(e){var boxes=$$('input[type=checkbox][name=itemIds],input[type=checkbox][name=questionIds]',pick);var n=boxes.filter(function(b){return b.checked}).length;
@@ -118,52 +103,73 @@ within(scope,'textarea[data-single-line]').forEach(function(t){if(!once(t,'singl
 /* 字数 */
 within(scope,'textarea[data-count]').forEach(function(t){if(!once(t,'count'))return;var out=$(t.getAttribute('data-count'));function upd(){if(out)out.textContent='还能写 '+Math.max(0,Number(t.getAttribute('maxlength'))-t.value.length)+' 字'}t.addEventListener('input',upd);upd()});
 /* 等待提示：提交后按钮换字，防止连点 */
-within(scope,'form[data-wait]').forEach(function(f){if(!once(f,'wait'))return;f.addEventListener('submit',function(){var b=document.querySelector('button[form="'+f.id+'"]')||$('button[type=submit]',f);if(b){b.textContent=f.getAttribute('data-wait');b.classList.add('waiting');setTimeout(function(){b.disabled=true},0)}})});
+within(scope,'form[data-wait]').forEach(function(f){if(!once(f,'wait'))return;f.addEventListener('submit',function(){var b=document.querySelector('button[form="'+f.id+'"]')||$('button[type=submit]',f);if(b){b.textContent=f.getAttribute('data-wait');b.setAttribute('aria-label',b.textContent);b.classList.add('waiting');setTimeout(function(){b.disabled=true},0)}})});
 /* 练习纸预览缩放到容器宽（容器变宽变窄时跟着重算） */
 within(scope,'.sheet-wrap').forEach(function(w){if(!once(w,'fit'))return;var s=$('.sheet-scale',w);if(!s)return;function fit(){var k=w.clientWidth/s.scrollWidth;if(k<1){s.style.transform='scale('+k+')';w.style.height=(s.scrollHeight*k)+'px'}}fit();if(window.ResizeObserver)new ResizeObserver(fit).observe(w);else window.addEventListener('resize',fit)});
 /* 语音：点一下开始，「说完了」结束；转出来的字放进文本框，他改完自己提交（AI 只转写，不替他提交）。
    开着麦克风时：音量条（Web Audio AnalyserNode，只动 transform）+ 计时；底部主按钮暂时不能点（先说完再提交）。
    转写时：说已经转了几秒。转写失败：刚才那段录音还留在页面里，可以「再转一次」，也可以直接打字。打开麦克风期间再点不会开第二个录音。 */
 within(scope,'[data-voice-for]').forEach(function(box){if(!once(box,'voice'))return;var target=document.getElementById(box.getAttribute('data-voice-for'));
-var btn=$('[data-voice-btn]',box),note=$('[data-voice-note]',box),waitEl=$('[data-voice-wait]',box),live=$('[data-voice-live]',box),meter=$('[data-voice-meter]',box),clock=$('[data-voice-time]',box),heard=$('[data-voice-heard]',box),retry=$('[data-voice-retry]',box);
+var btn=$('[data-voice-btn]',box),note=$('[data-voice-note]',box),waitEl=$('[data-voice-wait]',box),live=$('[data-voice-live]',box),meter=$('[data-voice-meter]',box),clock=$('[data-voice-time]',box),heard=$('[data-voice-heard]',box),retry=$('[data-voice-retry]',box),cancelBtn=$('[data-voice-cancel]',box);
 var form=box.closest('form');var method=$('input[name=method]',form||document);var primary=form&&form.id?document.querySelector('button[form="'+form.id+'"]'):null;
 var ok=target&&btn&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder;
 if(!ok){if(note)note.textContent='可以直接打字';return}
-box.classList.remove('hidden');var rec=null,chunks=[],timer=null,stream=null,starting=false,ticker=null,t0=0,ac=null,src=null,analyser=null,raf=0,lastBlob=null,saved=null;
+box.classList.remove('hidden');var rec=null,chunks=[],timer=null,stream=null,ticker=null,t0=0,ac=null,src=null,analyser=null,raf=0,lastBlob=null,saved=null;
+var phase='idle',generation=0,request=null,active=true,sessionChanged=false;
 function type(){var c=['audio/mp4','audio/webm;codecs=opus','audio/webm'];for(var i=0;i<c.length;i++){if(MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(c[i]))return c[i]}return ''}
 function clockText(s){return Math.floor(s/60)+':'+('0'+(s%60)).slice(-2)}
 /* 底部主按钮：录音、转写时暂时换字、不能点；结束后换回来 */
 function holdPrimary(text){if(!primary)return;if(!saved)saved={t:primary.textContent,d:primary.disabled};primary.textContent=text;primary.disabled=true;primary.classList.add('disabled')}
 function releasePrimary(){if(!primary||!saved)return;primary.textContent=saved.t;primary.disabled=saved.d;primary.classList.toggle('disabled',saved.d);saved=null;primary.dispatchEvent(new Event('voice-done'))}
-function reset(){btn.classList.remove('on','hidden');btn.textContent='点一下开始说';btn.disabled=false;if(waitEl)waitEl.textContent=''}
-function stopMeter(){if(raf)cancelAnimationFrame(raf);raf=0;if(src){try{src.disconnect()}catch(e){}src=null}if(meter)meter.setAttribute('data-level','0')}
-function startMeter(s){if(!ac||!meter)return;try{if(ac.resume)ac.resume();src=ac.createMediaStreamSource(s);analyser=ac.createAnalyser();analyser.fftSize=512;src.connect(analyser)}catch(e){return}
+function showCancel(on){if(cancelBtn)cancelBtn.classList.toggle('hidden',!on)}
+function reset(){btn.classList.remove('on','hidden');btn.textContent='点一下开始说';btn.disabled=sessionChanged;if(waitEl)waitEl.textContent='';showCancel(false)}
+function stopMeter(){if(raf)cancelAnimationFrame(raf);raf=0;if(src){try{src.disconnect()}catch(e){}src=null}if(analyser){try{analyser.disconnect()}catch(e){}analyser=null}if(meter)meter.setAttribute('data-level','0')}
+function startMeter(s){if(!ac||!meter)return;try{if(ac.resume)ac.resume().catch(function(){});src=ac.createMediaStreamSource(s);analyser=ac.createAnalyser();analyser.fftSize=512;src.connect(analyser)}catch(e){return}
 var buf=new Uint8Array(analyser.fftSize),last=0,lastHeard=0;function loop(ts){raf=requestAnimationFrame(loop);if(ts-last<80)return;last=ts;analyser.getByteTimeDomainData(buf);var sum=0;for(var i=0;i<buf.length;i++){var v=(buf[i]-128)/128;sum+=v*v}
 var rms=Math.sqrt(sum/buf.length);var level=Math.max(0,Math.min(5,Math.round(rms*24)));meter.setAttribute('data-level',String(level));
 if(heard&&ts-lastHeard>500){lastHeard=ts;heard.textContent=level>=1?'听到声音了':'没听到声音，靠近一点说'}}raf=requestAnimationFrame(loop)}
 function stopClock(){if(ticker){clearInterval(ticker);ticker=null}}
-function stop(){if(rec&&rec.state!=='inactive')rec.stop();if(timer){clearTimeout(timer);timer=null}}
+function stopTracks(s){if(s)s.getTracks().forEach(function(track){try{track.stop()}catch(e){}})}
+/* 清理不等于「说完」：先卸下回调再停录音，绝不由 pagehide/取消/错误自动上传。 */
+function cleanupCapture(){if(timer){clearTimeout(timer);timer=null}var old=rec;rec=null;
+if(old){old.onstop=old.ondataavailable=old.onerror=null;try{if(old.state!=='inactive')old.stop()}catch(e){}}
+stopTracks(stream);stream=null;chunks=[];stopMeter();stopClock();if(live)live.classList.add('hidden');
+if(ac){var context=ac;ac=null;try{context.close().catch(function(){})}catch(e){}}}
+function discard(message){generation+=1;if(request){request.cancel();request=null}cleanupCapture();lastBlob=null;phase='idle';if(retry)retry.classList.add('hidden');reset();releasePrimary();if(message&&note)note.textContent=message}
+function micFailed(id){if(id!==generation||!active)return;discard('用不了麦克风，可以直接打字。');trailAdd('error','mic_denied');trailSend()}
+function stop(){if(phase!=='recording'||!rec)return;phase='stopping';btn.disabled=true;if(timer){clearTimeout(timer);timer=null}try{rec.stop()}catch(e){micFailed(generation)}}
 /* 转写中：按钮先收起来（不会再点出第二次）；「正在转成文字…」读一次，「已经 N 秒」每秒更新但不读（不在 aria-live 里） */
-function send(blob){lastBlob=blob;if(retry)retry.classList.add('hidden');btn.classList.remove('on');btn.classList.add('hidden');holdPrimary('正在转成文字…');
+function send(blob){if(!active||sessionChanged||phase!=='idle')return;var id=++generation;phase='sending';lastBlob=blob;if(retry)retry.classList.add('hidden');btn.classList.remove('on');btn.classList.add('hidden');showCancel(true);holdPrimary('正在转成文字…');
 if(note)note.textContent='正在转成文字…';var sent=Date.now();function wait(){if(waitEl)waitEl.textContent='已经 '+Math.floor((Date.now()-sent)/1000)+' 秒，一般几秒就好'}wait();stopClock();ticker=setInterval(wait,1000);
-fetch(box.getAttribute('data-endpoint'),{method:'POST',headers:{'content-type':blob.type.split(';')[0]||'audio/mp4'},body:blob,credentials:'same-origin'}).then(function(r){return r.json().then(function(b){return{ok:r.ok,status:r.status,b:b}})}).then(function(x){stopClock();if(waitEl)waitEl.textContent='';
+var headers={'content-type':blob.type.split(';')[0]||'audio/mp4'};if(voiceContext!==null)headers['x-sel-voice-context']=voiceContext;
+request=boundedRequest(box.getAttribute('data-endpoint'),{method:'POST',headers:headers,body:blob,credentials:'same-origin'},45000,function(r){
+if(r.status===409)return{ok:false,status:409,b:null};return r.json().then(function(b){return{ok:r.ok,status:r.status,b:b}})});
+function finished(){request=null;phase='idle';stopClock();reset();releasePrimary()}
+request.promise.then(function(x){if(id!==generation||!active)return;
+if(x.status===409){sessionChanged=true;lastBlob=null;if(retry){retry.disabled=true;retry.classList.add('hidden')}finished();if(note)note.textContent='登录已切换，请刷新页面后再录音。已输入的文字保留。';return}
+finished();
 if(x.ok&&x.b.text){target.value=(target.value?target.value+' ':'')+x.b.text;target.dispatchEvent(new Event('input'));play(target,'m-rise');if(method)method.value='voice';if(note)note.textContent='转好了，看一眼，不对就改';lastBlob=null}
 else if(x.ok){if(note)note.textContent='没听清，再说一次';lastBlob=null;trailAdd('error','voice_empty');trailSend()}
 else{var again=x.status===429||x.status>=500;if(note)note.textContent=again?'这次没转成文字。刚才的录音还在：点「再转一次」，或者直接打字。':((x.b.error&&x.b.error.message)||'这次没转成文字，再说一次，或者直接打字。');
-if(again&&retry){retry.classList.remove('hidden');play(retry,'m-rise');box.scrollIntoView({block:'nearest'})}else lastBlob=null;trailAdd('error','voice_'+x.status);trailSend()}reset();releasePrimary()}).catch(function(){stopClock();if(waitEl)waitEl.textContent='';if(note)note.textContent='没传上去。刚才的录音还在：点「再转一次」，或者直接打字。';if(retry){retry.classList.remove('hidden');play(retry,'m-rise');box.scrollIntoView({block:'nearest'})}trailAdd('error','voice_network');reset();releasePrimary()})}
+if(again&&retry){retry.classList.remove('hidden');play(retry,'m-rise');box.scrollIntoView({block:'nearest'})}else lastBlob=null;trailAdd('error','voice_'+x.status);trailSend()}
+}).catch(function(error){if(id!==generation||!active)return;finished();if(note)note.textContent=(error&&error.message==='request_timeout'?'转写超时了。':'没传上去。')+'刚才的录音还在：点「再转一次」，或者直接打字。';if(retry){retry.classList.remove('hidden');play(retry,'m-rise');box.scrollIntoView({block:'nearest'})}trailAdd('error','voice_network')})}
 if(retry)retry.addEventListener('click',function(){if(lastBlob)send(lastBlob)});
-btn.addEventListener('click',function(){if(rec&&rec.state==='recording'){stop();return}
+if(cancelBtn)cancelBtn.addEventListener('click',function(e){e.preventDefault();discard('已取消，可以直接打字。')});
+window.addEventListener('pagehide',function(){active=false;discard('录音已取消，可以重新录音或直接打字。')});
+window.addEventListener('pageshow',function(){active=true});
+btn.addEventListener('click',function(){if(!active||sessionChanged)return;if(phase==='recording'){stop();return}
 /* 打开麦克风要一会儿（第一次还会问权限）：马上给反馈，这期间再点不会开第二个录音 */
-if(starting)return;starting=true;btn.disabled=true;btn.textContent='正在打开麦克风…';if(retry)retry.classList.add('hidden');
+if(phase!=='idle')return;var id=++generation;phase='starting';lastBlob=null;btn.disabled=true;btn.textContent='正在打开麦克风…';if(retry)retry.classList.add('hidden');showCancel(true);
 /* 音量要在点按的这一下里建好（iOS Safari 只在用户点按时允许开声音） */
 var AC=window.AudioContext||window.webkitAudioContext;if(!ac&&AC){try{ac=new AC()}catch(e){ac=null}}
-navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){starting=false;btn.disabled=false;stream=s;chunks=[];var t=type();rec=t?new MediaRecorder(s,{mimeType:t}):new MediaRecorder(s);
-rec.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data)};
-rec.onstop=function(){stream.getTracks().forEach(function(x){x.stop()});stopMeter();stopClock();if(live)live.classList.add('hidden');send(new Blob(chunks,{type:(rec.mimeType||t||'audio/mp4')}))};
-rec.start();btn.classList.add('on');btn.textContent='说完了';holdPrimary('正在听你说…');
+Promise.resolve().then(function(){if(id===generation&&active)return navigator.mediaDevices.getUserMedia({audio:true})}).then(function(s){if(id!==generation||!active){stopTracks(s);return}btn.disabled=false;stream=s;chunks=[];var t=type();rec=t?new MediaRecorder(s,{mimeType:t}):new MediaRecorder(s);var current=rec;
+rec.ondataavailable=function(e){if(id===generation&&current===rec&&e.data&&e.data.size)chunks.push(e.data)};
+rec.onerror=function(){micFailed(id)};
+rec.onstop=function(){if(id!==generation||!active||current!==rec)return;var blob=new Blob(chunks,{type:(current.mimeType||t||'audio/mp4')});cleanupCapture();phase='idle';send(blob)};
+rec.start();phase='recording';btn.classList.add('on');btn.textContent='说完了';holdPrimary('正在听你说…');
 if(live){live.classList.remove('hidden');play(live,'m-rise')}if(note)note.textContent='';if(heard)heard.textContent='';
 t0=Date.now();if(clock)clock.textContent='0:00';ticker=setInterval(function(){if(clock)clock.textContent=clockText(Math.floor((Date.now()-t0)/1000))},250);
-startMeter(s);timer=setTimeout(stop,60000)}).catch(function(){starting=false;reset();if(note)note.textContent='用不了麦克风，可以直接打字。';btn.classList.add('hidden');trailAdd('error','mic_denied');trailSend()})})});
+startMeter(s);timer=setTimeout(stop,60000)}).catch(function(){micFailed(id)})})});
 /* 整张练习纸：先是缩略图，点「展开看整张」或点缩略图展开；再点收起 */
 within(scope,'.sheet-box').forEach(function(box){if(!once(box,'sheetbox'))return;var t=$('.sheet-toggle',box),f=$('.sheet-frame',box);
 function set(open){box.setAttribute('data-open',open?'true':'false');if(t)t.setAttribute('aria-expanded',String(open));if(open)play(f,'m-rise')}
@@ -203,7 +209,7 @@ if(node.getAttribute('data-announce')){said.unshift(node.getAttribute('data-anno
 if(oldPrimary!==null&&primaryState(node)!==oldPrimary){var p=primaryOf(node);play(p,'m-swap');if(p&&!p.disabled)said.push(p.textContent)}
 enhance(node);return said}
 function startPolling(){var body=document.body;var every=Number(body.getAttribute('data-poll')||0);if(!every||!window.fetch||!window.DOMParser)return;
-var timer=null,busy=false,misses=0;
+var timer=null,busy=false,misses=0,request=null,active=true,generation=0;
 function later(ms){clearTimeout(timer);timer=setTimeout(pollOnce,ms)}
 function net(down){$$('[data-wait-net]').forEach(function(e){e.classList.toggle('hidden',!down)})}
 function apply(doc){var olds=$$('[data-live]'),pairs=[],a=document.activeElement;
@@ -215,13 +221,18 @@ for(var j=0;j<pairs.length;j++){if(a&&a!==document.body&&pairs[j][0].contains(a)
 var said=[];pairs.forEach(function(p){said=said.concat(swapRegion(p[0],p[1]))});
 document.title=doc.title;var ann=$('[data-announcer]');if(ann&&said.length)ann.textContent=said.slice(0,3).join('。');
 startElapsed();trailAdd('auto','update');trailSend();return 'swapped'}
-function pollOnce(){if(document.visibilityState!=='visible'||busy)return;busy=true;
-fetch(location.pathname+location.search,{headers:{'x-sel-poll':'1'},credentials:'same-origin',cache:'no-store'}).then(function(r){
-if(!r.ok||r.redirected||new URL(r.url).pathname!==location.pathname){location.reload();throw 'gone'}return r.text()}).then(function(html){busy=false;misses=0;net(false);
-var doc=new DOMParser().parseFromString(html,'text/html');var result=apply(doc);if(result==='reload'){location.reload();return}
+function pollOnce(){if(!active||document.visibilityState!=='visible'||busy)return;busy=true;var id=++generation;
+request=boundedRequest(location.pathname+location.search,{headers:{'x-sel-poll':'1'},credentials:'same-origin',cache:'no-store'},15000,function(r){
+if(r.status===429||r.status>=500)throw new Error('poll_retry');
+if(!r.ok||r.redirected||new URL(r.url).pathname!==location.pathname)return{gone:true};return r.text().then(function(html){return{html:html}})});
+request.promise.then(function(result){if(id!==generation||!active)return;request=null;busy=false;if(result.gone){location.reload();return}misses=0;net(false);
+var doc=new DOMParser().parseFromString(result.html,'text/html');result=apply(doc);if(result==='reload'){location.reload();return}
 var next=Number(doc.body.getAttribute('data-poll')||0);if(result==='later'){later(every*1000);return}
-if(next>0){every=next;later(every*1000)}else{body.removeAttribute('data-poll');clearTimeout(timer)}}).catch(function(e){busy=false;if(e==='gone')return;misses+=1;net(true);later(Math.min(every*1000*Math.pow(2,misses),30000))})}
-document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&body.getAttribute('data-poll'))later(0)});
+if(next>0){every=next;later(every*1000)}else{body.removeAttribute('data-poll');clearTimeout(timer)}}).catch(function(){if(id!==generation||!active)return;request=null;busy=false;misses+=1;net(true);later(Math.min(every*1000*Math.pow(2,misses),30000))})}
+function pause(){generation+=1;clearTimeout(timer);if(request){request.cancel();request=null}busy=false}
+document.addEventListener('visibilitychange',function(){if(document.visibilityState!=='visible')pause();else if(active&&body.getAttribute('data-poll'))later(0)});
+window.addEventListener('pagehide',function(){active=false;pause()});
+window.addEventListener('pageshow',function(){if(!active){active=true;if(body.getAttribute('data-poll'))later(0)}});
 later(every*1000)}
 
 document.addEventListener('DOMContentLoaded',function(){enhance(document.body);startElapsed();startPolling()});

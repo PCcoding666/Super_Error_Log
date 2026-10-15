@@ -1,11 +1,11 @@
-# Super Error Log 单进程服务（v2.0 T2 起）
-# 一个进程同时提供：/v1 识别（设备令牌鉴权，语义不变）+ /v2 手机接口（设备令牌鉴权）。
-# 云端公网入口不挂任何 Web 页面（/、/parent、/items、/trends 等一律 404）。
+# Super Error Log 主服务（含受控学生网页版）
+# 主进程提供 /v1、/v2 原生手机接口和 /s/ 网页入口；学生空间启用后由独立子进程处理。
+# 仅 /s/ 为学生网页，/、/parent、/items、/trends 旧页面不公开。
 # 目标机：广州 ECS（239），systemd 230+，cgroup v1
 # 管理说明见 deploy/README.md；改本文件后 systemctl daemon-reload。
 
 [Unit]
-Description=Super Error Log single-process service (cloud mode: /v1 + /v2 API only, no web pages)
+Description=Super Error Log mobile API and student web service
 After=network-online.target
 Wants=network-online.target
 
@@ -22,7 +22,7 @@ ExecStart=/opt/super-error-log/node-v24/bin/node /opt/super-error-log/current/di
 
 # 密钥只进 EnvironmentFile（0600 root:root），不进单元文件、不进命令行。
 EnvironmentFile=/etc/super-error-log/env
-# 进程标题与崩溃转储中不含用户照片/密钥；只服务移动识别入口。
+# 进程标题与崩溃转储中不含用户照片/密钥。
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

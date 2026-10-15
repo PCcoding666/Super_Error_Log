@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { APP_NAME, APP_SHORT_NAME, CSS_PATH, EARLY_PATH, JS_PATH, THEME_COLOR, THEME_COLOR_DARK } from '../assets.js';
+import { APP_NAME, APP_SHORT_NAME, CSS_PATH, JS_PATH, THEME_COLOR, THEME_COLOR_DARK } from '../assets.js';
 import { phrasePieces } from '../phrases.js';
 
 /** 底部下一步按钮里的一个按钮：链接、表单提交、页面里表单的提交按钮、拍照的 label、或不可点。 */
@@ -26,20 +26,20 @@ export function ButtonView(props: { button: BarButton; primary: boolean; look?: 
   const testId = primary ? 'next-step-primary' : `next-step-secondary-${button.key}`;
   const cls = `btn${look === 'primary' ? ' primary' : look === 'alt' ? ' alt' : ''}`;
   if ('href' in button) {
-    return <a className={cls} href={button.href} data-testid={testId} data-key={button.key} data-print={button.print ? '' : undefined}><Phrased text={button.title} /></a>;
+    return <a className={cls} href={button.href} aria-label={button.title} data-testid={testId} data-key={button.key} data-print={button.print ? '' : undefined}><Phrased text={button.title} /></a>;
   }
   if ('post' in button) {
     const formId = `bar-${button.key}`;
     return (
       <form method="post" action={button.post} id={formId} data-wait={button.wait}>
         {Object.entries(button.fields ?? {}).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
-        <button className={cls} type="submit" data-testid={testId} data-key={button.key}><Phrased text={button.title} /></button>
+        <button className={cls} type="submit" aria-label={button.title} data-testid={testId} data-key={button.key}><Phrased text={button.title} /></button>
       </form>
     );
   }
   if ('form' in button) {
     return (
-      <button className={`${cls}${button.disabled ? ' disabled' : ''}`} type="submit" form={button.form} name={button.name} value={button.value} data-testid={testId} data-key={button.key}
+      <button className={`${cls}${button.disabled ? ' disabled' : ''}`} type="submit" form={button.form} name={button.name} value={button.value} aria-label={button.title} data-testid={testId} data-key={button.key}
         disabled={button.disabled} data-main="" data-count-label={button.countTemplate ? '' : undefined} data-template={button.countTemplate} data-empty={button.emptyTitle}>
         <Phrased text={button.title} />
       </button>
@@ -47,9 +47,9 @@ export function ButtonView(props: { button: BarButton; primary: boolean; look?: 
   }
   if ('labelFor' in button) {
     // 拍照 / 从相册选：label 直接打开系统相机或相册（不靠脚本）。键盘焦点落在被它指向的文件输入上，焦点环画在这个 label 上（见样式）。
-    return <label className={cls} htmlFor={button.labelFor} data-testid={testId} data-key={button.key}><Phrased text={button.title} /></label>;
+    return <label className={cls} htmlFor={button.labelFor} aria-label={button.title} data-testid={testId} data-key={button.key}><Phrased text={button.title} /></label>;
   }
-  return <button className={`${cls}${button.waiting ? ' waiting' : ''}`} type="button" disabled data-testid={testId} data-key={button.key}><Phrased text={button.title} /></button>;
+  return <button className={`${cls}${button.waiting ? ' waiting' : ''}`} type="button" disabled aria-label={button.title} data-testid={testId} data-key={button.key}><Phrased text={button.title} /></button>;
 }
 
 /**
@@ -105,7 +105,9 @@ export function Page(props: PageProps): ReactNode {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <title>{`${props.title} · ${APP_NAME}`}</title>
-        <meta name="referrer" content="no-referrer" />
+        {/* Same-origin forms need a non-null Origin for the invitation gateway's CSRF check.
+            Cross-origin destinations still receive no Referer under this policy. */}
+        <meta name="referrer" content="same-origin" />
         <meta name="format-detection" content="telephone=no" />
         <meta name="theme-color" content={THEME_COLOR} media="(prefers-color-scheme: light)" />
         <meta name="theme-color" content={THEME_COLOR_DARK} media="(prefers-color-scheme: dark)" />
@@ -119,8 +121,6 @@ export function Page(props: PageProps): ReactNode {
         {/* 等 AI 的页面：开着脚本时由脚本按 data-poll 局部更新（看不见、正在输入时不换）；关掉脚本时退回 meta refresh。 */}
         {props.pollSeconds ? <noscript><meta httpEquiv="refresh" content={String(props.pollSeconds)} /></noscript> : null}
         <link rel="stylesheet" href={CSS_PATH} />
-        {/* 很小的同步脚本：第一次渲染之前挂好跨文档过渡的处理（见 clientScript.ts 的 EARLY_SCRIPT） */}
-        <script src={EARLY_PATH}></script>
         {/* defer：不挡首屏；只在有 / 没有脚本时出现的东西由样式的 scripting 媒体特性决定，不等脚本 */}
         <script src={JS_PATH} defer></script>
       </head>
@@ -171,7 +171,7 @@ export function WaitLine(props: { since: string | null; now: Date; expect: strin
     <p className="wait-line small" data-testid="wait-line">
       {seconds !== null && Number.isFinite(seconds) ? <><span className="ph" data-elapsed={String(seconds)}>{elapsedText(seconds)}</span>{' · '}</> : null}
       <Phrased text={props.expect} />
-      <span className="wait-net hidden" data-wait-net="">{' · 网络断了，连上后接着等'}</span>
+      <span className="wait-net hidden" data-wait-net="">{' · 暂时没拿到最新进度，正在重试'}</span>
     </p>
   );
 }
@@ -193,7 +193,9 @@ export function VoiceBox(props: { target: string; testIds?: boolean }): ReactNod
         <span className="small muted">最多 60 秒</span>
       </span>
       <span className="small muted voice-note" data-voice-note="" data-testid={t('voice-note')} aria-live="polite" />
+      <button type="button" className="voice-cancel hidden" data-voice-cancel="" data-key="voice-cancel" data-testid={t('voice-cancel')}>取消，改用打字</button>
       <span className="small muted voice-wait" data-voice-wait="" data-testid={t('voice-wait')} />
+      <span className="small muted" data-testid={t('voice-privacy')}>录音会发给通义千问转文字，本应用不保存录音；最多 60 秒，也可以直接打字</span>
     </div>
   );
 }

@@ -25,8 +25,9 @@ function atomsOf(text: string): Atom[] {
     if (!part) continue;
     if (QUOTE.test(part) && /^「[^「」]{1,12}」$/u.test(part)) { atoms.push({ text: pendingOpen + part }); pendingOpen = ''; continue; }
     for (const { segment, isWordLike } of SEGMENTER.segment(part)) {
-      if (/^\s+$/u.test(segment)) { atoms.push({ text: segment, space: true }); continue; }
+      if (/^\s+$/u.test(segment)) { if (pendingOpen) pendingOpen += segment; else atoms.push({ text: segment, space: true }); continue; }
       if (!isWordLike && CLOSING.test(segment)) {
+        if (pendingOpen) { atoms.push({ text: pendingOpen + segment, closer: true }); pendingOpen = ''; continue; }
         const last = atoms[atoms.length - 1];
         // 前面是空格（「勾 · 漏了题」的「·」）：当成普通的一块，和后面的空格、词粘在一起（「· 漏了」），不改动原文的顺序。
         if (last && !last.space) { last.text += segment; last.closer = true; } else { atoms.push({ text: pendingOpen + segment }); pendingOpen = ''; }

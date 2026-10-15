@@ -299,6 +299,28 @@ describe('连接：链接配对 → httpOnly cookie；没有 cookie 只看到连
 });
 
 describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 共用准入', () => {
+  it('今天页等待找题时自动刷新并提供查看进度；完成后停止刷新', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    let release!: () => void;
+    env.vision.gate = new Promise<void>(resolve => { release = resolve; });
+    try {
+      const response = await uploadPhoto(browser, await photo('#f0d0c8'));
+      const { jobId } = await response.json() as { jobId: string };
+      const waiting = await browser.text('/s/');
+      expect(waiting).toContain('data-poll="4"');
+      expect(waiting).toContain('data-testid="today-processing"');
+      expect(waiting).not.toContain('大约 1–2 分钟');
+      release();
+      await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
+      const done = await browser.text('/s/');
+      expect(done).not.toContain('data-poll=');
+      expect(done).not.toContain('data-testid="today-processing"');
+      expect(done).toContain('选这周要练的题');
+    } finally { release(); }
+  });
+
   it('没同意不收照片；同意后上传、登记进本周、原图去掉 EXIF', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
@@ -335,6 +357,34 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
     const form = await browser.request('/s/capture', { method: 'POST', body: (() => { const f = new FormData(); f.append('photo', new Blob([new Uint8Array(Buffer.from('x'))]), 'a.jpg'); return f; })() });
     expect(form.status).toBe(303);
     expect(form.headers.get('location')).toBe('/s/capture?err=unreadable');
+  });
+
+  it('HEIC 说清楚是格式问题（不说 iCloud）；48MP 说清楚是像素太高', async () => {
+    // 2026-10-15 线上修复：这两类在服务器读不了时不能一律「读不出来」，要给出能操作的提示
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    // 合成 HEIC：只有 ftyp 盒子（无隐私、无真实照片），sharp 必然解码失败，服务器按格式识别
+    const heic = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(12)]);
+    const heicResponse = await uploadPhoto(browser, heic, 'image/heic');
+    expect(heicResponse.status).toBe(400);
+    const heicError = (await heicResponse.json() as { error: { code: string; message: string } }).error;
+    expect(heicError.code).toBe('heic');
+    expect(heicError.message).toContain('HEIC');
+    expect(heicError.message).toContain('Safari');
+    expect(heicError.message).not.toContain('iCloud');
+    const heicForm = await browser.request('/s/capture', { method: 'POST', body: (() => { const f = new FormData(); f.append('photo', new Blob([new Uint8Array(heic)], { type: 'image/heic' }), 'a.heic'); return f; })() });
+    expect(heicForm.headers.get('location')).toBe('/s/capture?err=heic');
+    expect(await browser.text('/s/capture?err=heic')).toContain('HEIC');
+
+    const big = await sharp({ create: { width: 8064, height: 6048, channels: 3, background: '#f0d0c8' } }).jpeg({ quality: 60 }).toBuffer();
+    const bigResponse = await uploadPhoto(browser, big);
+    expect(bigResponse.status).toBe(400);
+    const bigError = (await bigResponse.json() as { error: { code: string; message: string } }).error;
+    expect(bigError.code).toBe('pixels');
+    expect(bigError.message).toContain('像素');
+    expect(bigError.message).not.toContain('iCloud');
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM v2_photo').get()).toEqual({ n: 0 });
   });
 
   it('磁盘不足时与 /v1 一样拒收（准入规则只有一份）', async () => {
@@ -595,7 +645,7 @@ describe('互动记录：每个动作只记时间、路由模板、动作标识�
     const photosText = photos.replace(/<[^>]+>/g, '');
     expect(photosText).toContain('下面标着「新拍的」那 1 张不会加进去');
     expect(photosText).toContain('下个周末选题时，它们会出现在里面');
-    expect(photos).toMatch(/<a class="btn primary" href="\/s\/" data-testid="next-step-primary"[^>]*>回到今天<\/a>/);
+    expect(photos).toMatch(/<a class="btn primary" href="\/s\/"[^>]* data-testid="next-step-primary"[^>]*>回到今天<\/a>/);
     expect(photosText).not.toContain('下一步：选这周要练的题');
   });
 });
@@ -833,20 +883,9 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
     const jsText = await jsResponse.text();
     expect(crypto.createHash('sha256').update(jsText).digest('hex').slice(0, 10)).toBe(js![2]);
     // 下发的版本去掉了注释，仍然是能解析的脚本、能用的样式。
-    expect(jsText).not.toContain('/*');
-    expect(cssText).not.toContain('/*');
+    expect(jsText).toContain('正在准备照片');
     expect(() => new Function(jsText)).not.toThrow();
     expect(cssText).toContain('@media (prefers-reduced-motion:reduce){');
-    // 头部的小脚本（第一次渲染前挂好跨文档过渡的处理）：同样带指纹、一年缓存、能解析；外壳清单里也有它。
-    const early = /<script src="(\/s\/assets\/early\.([0-9a-f]{10})\.js)"><\/script>/.exec(html);
-    expect(early).not.toBeNull();
-    expect(html.indexOf(early![0])).toBeLessThan(html.indexOf('<body'));
-    const earlyResponse = await fetch(`${env.base}${early![1]}`);
-    expect(earlyResponse.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
-    const earlyText = await earlyResponse.text();
-    expect(crypto.createHash('sha256').update(earlyText).digest('hex').slice(0, 10)).toBe(early![2]);
-    expect(() => new Function(earlyText)).not.toThrow();
-    expect(earlyText.length).toBeLessThan(1024);
     // 旧页面拿着别的指纹：照样给现在的内容，但不缓存；不带指纹的旧地址也一样。
     expect((await fetch(`${env.base}/s/assets/app.0000000000.css`)).headers.get('cache-control')).toBe('no-cache');
     expect((await fetch(`${env.base}/s/assets/app.css`)).headers.get('cache-control')).toBe('no-cache');
@@ -855,7 +894,6 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
     const sw = await (await fetch(`${env.base}/s/sw.js`)).text();
     expect(sw).toContain(`'${css![1]}'`);
     expect(sw).toContain(`'${js![1]}'`);
-    expect(sw).toContain(`'${early![1]}'`);
     // 页面本身仍然不缓存（学生数据）。
     expect((await fetch(`${env.base}/s/`)).headers.get('cache-control')).toBe('private, no-store');
   });

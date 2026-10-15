@@ -5,7 +5,7 @@
  */
 import crypto from 'node:crypto';
 import sharp from 'sharp';
-import { CLIENT_SCRIPT, EARLY_SCRIPT } from './clientScript.js';
+import { CLIENT_SCRIPT } from './clientScript.js';
 
 export const APP_NAME = '超级错题本';
 export const APP_SHORT_NAME = '错题本';
@@ -254,11 +254,7 @@ border-radius:var(--r-2);min-height:52px;padding:var(--s-3) var(--s-4);cursor:po
 .btn[disabled],.btn.disabled{background:var(--disabled-bg);border-color:var(--disabled-bg);color:var(--disabled-ink);cursor:default;filter:none}
 .btn.waiting::before{content:"";flex:0 0 auto;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .9s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-/* ---------- 动效（只动 transform / opacity；时长与缓动只从上面的 token 取） ----------
-   页与页之间：跨文档 View Transitions（浏览器不支持时就是普通跳转）。底栏单独成一层，留在原位，只换按钮上的字；内容淡出、新的一页从下往上浮现。 */
-/* 只在开着脚本时启用（Chromium 在关掉脚本的页面上，跨文档过渡会一直挡着点按） */
-@media (scripting:enabled){@view-transition{navigation:auto}}
-.next-bar{view-transition-name:next-bar}
+/* 状态变化时的小动效；跨文档跳页保持浏览器原生行为。 */
 /* 很窄的视口（页面缩放 200% 时只剩约 195 CSS px）：内边距收一点，节奏条三格竖着排，A4 缩略图放到说明下面——
    给文字留出一行四五个字的宽度，标题、清单行按词组断行时不会剩一个字 */
 @media (max-width:300px){
@@ -279,11 +275,6 @@ border-radius:var(--r-2);min-height:52px;padding:var(--s-3) var(--s-4);cursor:po
   .caption-flow:empty{display:none}
   .next-bar .btn{min-height:var(--tap);padding:var(--s-2) var(--s-3)}
 }
-::view-transition-old(root){animation:vt-out 150ms cubic-bezier(.2,.8,.2,1) both}
-::view-transition-new(root){animation:vt-in 300ms cubic-bezier(.2,.8,.2,1) both}
-::view-transition-group(next-bar){animation-duration:220ms;animation-timing-function:cubic-bezier(.2,.8,.2,1)}
-@keyframes vt-out{to{opacity:0}}
-@keyframes vt-in{from{opacity:0;transform:translateY(12px)}}
 /* 新出现的内容（结果、找到的题、换上来的状态）：从下往上浮现 */
 @keyframes rise{from{opacity:0;transform:translateY(8px)}}
 /* 打勾：✓ 弹出来 */
@@ -301,9 +292,7 @@ border-radius:var(--r-2);min-height:52px;padding:var(--s-3) var(--s-4);cursor:po
 .m-stagger>:nth-child(2){animation-delay:60ms}.m-stagger>:nth-child(3){animation-delay:120ms}.m-stagger>:nth-child(4){animation-delay:180ms}.m-stagger>:nth-child(n+5){animation-delay:240ms}
 /* 减少动态效果：全部关掉（页与页之间也是普通跳转）。转圈换成不动的圆环，录音的音量条换成一行字。 */
 @media (prefers-reduced-motion:reduce){
-  @view-transition{navigation:none}
   *,*::before,*::after{animation:none!important;transition:none!important}
-  ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}
 }
 body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-input:focus-visible) label[for=library-input]{outline:3px solid var(--focus);outline-offset:3px}
 /* 只在有 / 没有脚本时出现的东西：按浏览器的 scripting 媒体特性判断（脚本 defer 加载，不等它加 .js 类，首屏不跳）；老浏览器退回 .js 类 */
@@ -357,6 +346,9 @@ body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-
   @page{size:A4;margin:0}
   body{background:#fff;padding:0;color:#000}
   .top,.next-bar,main>*:not(.print-root){display:none!important}
+  main>[data-live=print]{display:block!important}
+  main>[data-live=print]>*:not(.print-root){display:none!important}
+  main>[data-live=print]{animation:none!important}
   main{padding:0;max-width:none;margin:0}
   .sheet-frame{padding:0;margin:0;background:none;border-radius:0}
   .sheet-wrap{overflow:visible;height:auto!important;margin:0}
@@ -375,27 +367,20 @@ export { CLIENT_SCRIPT };
  * 页面、Service Worker 的外壳清单都引用带指纹的名字。ASSET_VERSION 由两个指纹算出，Service Worker 的缓存名跟着换。
  */
 const fingerprint = (text: string): string => crypto.createHash('sha256').update(text).digest('hex').slice(0, 10);
-/**
- * 下发的版本去掉注释、行首空白和空行（源码里的说明留给人看，不用每次传给手机）。样式和脚本里都没有含「/*」的字符串或正则，
- * 所以按 /* … *\/ 去注释是安全的；脚本保留换行（不依赖自动补分号的规则变化）。tests/integration/webClient.test.ts 校验脚本仍能解析。
- */
-const compact = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]+/gm, '').replace(/\n{2,}/g, '\n').trim() + '\n';
-export const STYLES_SERVED = compact(STYLES);
-export const SCRIPT_SERVED = compact(CLIENT_SCRIPT);
-export const EARLY_SERVED = compact(EARLY_SCRIPT);
+// 保留脚本原文，避免用正则去注释误改字符串/正则字面量。指纹缓存仍减少重复下载。
+export const STYLES_SERVED = STYLES;
+export const SCRIPT_SERVED = CLIENT_SCRIPT;
 export const STYLES_HASH = fingerprint(STYLES_SERVED);
 export const SCRIPT_HASH = fingerprint(SCRIPT_SERVED);
-export const EARLY_HASH = fingerprint(EARLY_SERVED);
-export const ASSET_VERSION = fingerprint(`${STYLES_HASH}:${SCRIPT_HASH}:${EARLY_HASH}`);
+export const ASSET_VERSION = fingerprint(`${STYLES_HASH}:${SCRIPT_HASH}`);
 export const CSS_PATH = `/s/assets/app.${STYLES_HASH}.css`;
 export const JS_PATH = `/s/assets/app.${SCRIPT_HASH}.js`;
-export const EARLY_PATH = `/s/assets/early.${EARLY_HASH}.js`;
 /** 带指纹的资源：一年、不变。 */
 export const IMMUTABLE = 'public, max-age=31536000, immutable';
 
 /** Service Worker：只缓存外壳（离线页、样式、脚本、图标），学生数据一律不缓存（只在导航失败时换成离线页）。 */
 export const SERVICE_WORKER = `const CACHE='sel-shell-${ASSET_VERSION}';
-const SHELL=['/s/offline','${CSS_PATH}','${EARLY_PATH}','${JS_PATH}','/s/assets/icon-192.png'];
+const SHELL=['/s/offline','${CSS_PATH}','${JS_PATH}','/s/assets/icon-192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const r=e.request;

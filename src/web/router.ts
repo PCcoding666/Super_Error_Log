@@ -10,9 +10,11 @@ import express, { Router, type ErrorRequestHandler, type Request, type Response 
 import multer from 'multer';
 import sharp from 'sharp';
 import type { ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { sendHtml } from '../views/render.js';
 import { getDb } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
+import { isHeif } from '../media/images.js';
 import { getQuestionCrop } from '../services/evidenceService.js';
 import { ATTEMPT_STATES, CAUSES } from '../domain/types.js';
 import { registerV2Photo } from '../bridge/recognitionToItems.js';
@@ -32,13 +34,13 @@ import { getReturnSummary, submitReturns } from '../v2/returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from '../v2/reflectionService.js';
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
-import { EARLY_HASH, EARLY_SERVED, IMMUTABLE, SCRIPT_HASH, SCRIPT_SERVED, SERVICE_WORKER, STYLES_HASH, STYLES_SERVED, iconPng, manifest } from './assets.js';
+import { registerStaticAssets } from './staticAssets.js';
 import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, giveConsent, hasConsent, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
 import { trailRecorder, trailTaps } from './trail.js';
 import { DEFAULT_TIME_ZONE, localDayOrdinal, localDayText, stepCaption, type StepKind } from './weekPlan.js';
-import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, OfflinePage, PairPage, TodayPage, type BusyReason, type TodayWait } from './views/today.js';
+import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, PairPage, TodayPage, type BusyReason, type TodayWait } from './views/today.js';
 import { CapturePage, ConsentPage, PhotosPage, PickPage, findingSince } from './views/photos.js';
 import { EditPage, FixPage, ItemDetailPage, ItemsPage } from './views/items.js';
 import {
@@ -58,6 +60,8 @@ export interface WebClientOptions {
   followupProvider?: FollowupProvider;
   correctionProvider?: CorrectionProvider;
   coachProvider?: CoachProvider;
+  /** 学生邀请码网关的 worker 模式：设置页显示「退出登录」（POST /s/logout 由网关处理）。 */
+  studentHostWorker?: boolean;
   /** 「距生成几天」、录结果的日期按哪个时区的日历算；缺省用进程时区（与回传校验、ISO 周一致）。 */
   timeZone?: string;
   now?: () => Date;
@@ -77,8 +81,11 @@ const SECURITY_HEADERS: Record<string, string> = {
 };
 
 const UPLOAD_ERRORS: Record<string, string> = {
-  unreadable: '这张照片读不出来。换一张，或者检查 iCloud 照片有没有下载好。',
+  unreadable: '这张照片读不出来，可能没拍好或者文件坏了。换一张试试。',
+  heic: '这张照片是 HEIC 格式，服务器读不了。用 iPhone 自带的 Safari 打开这个网页再选一次（会自动转好），或者先把它存成 JPEG。',
+  pixels: '这张照片像素太高，服务器处理不了。用 Safari 打开这个网页重选一次，会自动缩小再传。',
   too_big: '这张照片太大了（超过 15 MB），换一张。',
+  submit_failed: '没传上去。过一会儿再试，照片还在这个页面里。',
   busy: '服务器有点忙，过一会儿再试。照片没传上去，再拍一次就好。',
   full: '服务器存不下新照片了，请告诉帮你装错题本的人。',
   paused: '服务器正在恢复，过一会儿再试。',
@@ -89,6 +96,14 @@ class NotFound extends Error {}
 
 function render(response: Response, node: ReactNode, status = 200): void {
   response.status(status);
+  const context = response.locals.voiceContext;
+  if (typeof context === 'string' && /^[0-9a-f]{64}$/.test(context)) {
+    // The strict hex value comes only from worker middleware below, never from page input.
+    const html = renderToStaticMarkup(node).replace('</head>', `<meta name="sel-voice-context" content="${context}"/></head>`);
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.send(`<!doctype html>${html}`);
+    return;
+  }
   sendHtml(response, node);
 }
 
@@ -199,35 +214,15 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const failed = (response: Response, code: string): void => { response.locals.trailError = code; };
 
   // ---------- 公开资源（无学生数据） ----------
-  // 缓存：页面与学生数据（含图片）一律 private, no-store（移动服务的全局头）；这里只给不带学生数据的静态资源换成可缓存的。
-  const cacheFor = (response: Response, value: string): void => { response.setHeader('cache-control', value); response.removeHeader('pragma'); };
-  r.get('/manifest.webmanifest', (_request, response) => { cacheFor(response, 'no-cache'); response.type('application/manifest+json').send(JSON.stringify(manifest())); });
-  r.get('/sw.js', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/javascript').send(SERVICE_WORKER); });
-  // 带内容指纹的样式与脚本：指纹对得上就缓存一年（immutable）；对不上（旧页面拿着旧指纹）照样给现在的内容，但不缓存。
-  r.get(/^\/assets\/app\.([0-9a-f]{10})\.css$/, (request, response) => {
-    cacheFor(response, (request.params as Record<string, string>)[0] === STYLES_HASH ? IMMUTABLE : 'no-cache');
-    response.type('text/css').send(STYLES_SERVED);
+  registerStaticAssets(r);
+
+  r.use((request, response, next) => {
+    const context = request.headers['x-sel-internal-voice-context'];
+    if (options.studentHostWorker === true && (request.method === 'GET' || request.method === 'POST')
+      && !/^\/voice\/?$/i.test(request.path)
+      && typeof context === 'string' && /^[0-9a-f]{64}$/.test(context)) response.locals.voiceContext = context;
+    next();
   });
-  r.get(/^\/assets\/app\.([0-9a-f]{10})\.js$/, (request, response) => {
-    cacheFor(response, (request.params as Record<string, string>)[0] === SCRIPT_HASH ? IMMUTABLE : 'no-cache');
-    response.type('text/javascript').send(SCRIPT_SERVED);
-  });
-  r.get(/^\/assets\/early\.([0-9a-f]{10})\.js$/, (request, response) => {
-    cacheFor(response, (request.params as Record<string, string>)[0] === EARLY_HASH ? IMMUTABLE : 'no-cache');
-    response.type('text/javascript').send(EARLY_SERVED);
-  });
-  // 不带指纹的旧地址（R1 的页面、Service Worker 里还可能有）：照样给，每次都要重新验证。
-  r.get('/assets/app.css', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/css').send(STYLES_SERVED); });
-  r.get('/assets/app.js', (_request, response) => { cacheFor(response, 'no-cache'); response.type('text/javascript').send(SCRIPT_SERVED); });
-  const icon = (size: number, maskable = false) => async (_request: Request, response: Response): Promise<void> => {
-    cacheFor(response, 'public, max-age=604800');
-    response.type('image/png').send(await iconPng(size, maskable));
-  };
-  r.get('/assets/icon-192.png', icon(192));
-  r.get('/assets/icon-512.png', icon(512));
-  r.get('/assets/icon-maskable-512.png', icon(512, true));
-  r.get('/assets/apple-touch-icon.png', icon(180));
-  r.get('/offline', (_request, response) => render(response, OfflinePage()));
 
   /** 连接页上「服务器忙」时这台手机的连接情况：没有 cookie = 还没连上；cookie 有效 = 连着；cookie 失效 = 连接过期（只读，不计入失败次数）。 */
   const connectionOf = async (request: Request): Promise<BusyReason> => {
@@ -399,12 +394,24 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       }
       const file = (request.files as Express.Multer.File[] | undefined ?? []).find(entry => entry.size > 0);
       if (!file) { fail('empty', 400); return; }
-      // 统一转成 JPEG：按 EXIF 摆正，去掉位置等拍摄信息（sharp 默认不保留元数据）。HEIC 在服务器上读不了时请他换一张。
+      // 统一转成 JPEG：按 EXIF 摆正，去掉位置等拍摄信息（sharp 默认不保留元数据）。
+      // 失败要分清原因（2026-10-15 线上修复）：HEIC 服务器读不了、像素超限、文件损坏，不能一律说「读不出来」。
+      // 脚本端已在浏览器里转过格式与尺寸，走到这里的多是没脚本/旧缓存的原图直传，告诉他换 Safari 或 JPEG。
       let jpeg: Buffer;
       try {
-        jpeg = await sharp(file.buffer, { failOn: 'error', limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 90 }).toBuffer();
-        if (jpeg.length > MAX_PHOTO_BYTES) jpeg = await sharp(file.buffer, { limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 75 }).toBuffer();
-      } catch { fail('unreadable', 400); return; }
+        const normalize = async (): Promise<Buffer> => {
+          const high = await sharp(file.buffer, { failOn: 'error', limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 90 }).toBuffer();
+          return high.length <= MAX_PHOTO_BYTES ? high : sharp(file.buffer, { failOn: 'error', limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 75 }).toBuffer();
+        };
+        // Release the image slot before submit(), which acquires the same slot itself.
+        jpeg = admission ? await admission.withImage(normalize) : await normalize();
+      } catch (error) {
+        const code = isHeif(file.buffer) ? 'heic'
+          : error instanceof Error && /pixel limit/i.test(error.message) ? 'pixels'
+          : 'unreadable';
+        fail(code, 400);
+        return;
+      }
       if (jpeg.length > MAX_PHOTO_BYTES) { fail('too_big', 400); return; }
       const key = UUID.test(str(request.body?.key)) ? str(request.body?.key) : crypto.randomUUID();
       let jobId: string;
@@ -413,7 +420,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         if (submitted.created && reserve?.capacity) reserve.handoff = true;
         jobId = submitted.job.id;
       } catch (error) {
-        if (error instanceof MobileRequestError) { fail(error.status === 503 ? 'paused' : error.status === 429 ? 'busy' : 'unreadable', error.status); return; }
+        if (error instanceof MobileRequestError) { fail(error.status === 503 ? 'paused' : error.status === 429 ? 'busy' : 'submit_failed', error.status); return; }
         throw error;
       }
       registerV2Photo(jobId);
@@ -871,14 +878,14 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // ---------- 设置 ----------
   r.get('/settings', page((request, response) => {
     const settings = getV2Settings();
-    render(response, SettingsPage({ ...settings, saved: request.query.saved === '1' }));
+    render(response, SettingsPage({ ...settings, saved: request.query.saved === '1', studentHostWorker: options.studentHostWorker === true }));
   }));
 
   r.post('/settings', form, page((request, response) => {
     const slotChoice = str(request.body?.practiceSlot);
     const practiceSlot = (slotChoice === '__other' ? str(request.body?.practiceSlotOther) : slotChoice).trim();
     const result = updateV2Settings({ practiceSlot, paperLocation: str(request.body?.paperLocation) });
-    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。' }), 400); return; }
+    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。', studentHostWorker: options.studentHostWorker === true }), 400); return; }
     response.redirect(303, '/s/settings?saved=1');
   }));
 

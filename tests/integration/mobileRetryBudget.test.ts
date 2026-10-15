@@ -207,7 +207,7 @@ describe('自动重试预算统一（Task 01-C）', () => {
       await cloud.listen(); await vi.waitFor(() => expect(model.release).toBeTypeOf('function'));
     } finally { await cloud.close(); model.release?.(); }
     expect(model.calls).toEqual({ inventory: 1, transcribe: 0, verify: 0, ground: 0 });
-    expect(fs.existsSync(cloud.admin.socketPath)).toBe(false);
+    expect(fs.existsSync(cloud.admin!.socketPath)).toBe(false);
   });
   it('a reserved request whose trace could not persist remains consumed after reopen', async () => {
     const model = await startModelServer(); model.failVerifyTimes = 100;

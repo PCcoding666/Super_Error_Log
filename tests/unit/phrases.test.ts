@@ -10,6 +10,11 @@ const SAMPLES = [
 const letters = (text: string): number => (text.match(/[\p{L}\p{N}]/gu) ?? []).length;
 
 describe('phrasePieces', () => {
+  it('空括号、括号里的空格、引号均保持原文顺序', () => {
+    for (const text of ['（ 题目）', '前面（ ）后面', 'abc( test)', 'abc()', '（「题目」）', '末尾（ ', '[  ]', '「 」']) {
+      expect(phrasePieces(text).join(''), text).toBe(text);
+    }
+  });
   it('拼回去与原文逐字相同', () => {
     for (const text of SAMPLES) expect(phrasePieces(text).join(''), text).toBe(text);
   });

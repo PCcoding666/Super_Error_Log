@@ -103,6 +103,8 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
   const { plan, week } = props.state;
   const slot = plan.practice?.practiceSlot ?? props.practiceSlot;
   const active = plan.stage === 'midweek' ? 1 : plan.stage === 'weekendB' ? 2 : 0;
+  const finding = props.state.photos.some(photo => photo.state === 'finding');
+  const waiting = finding || plan.next?.isWaiting === true;
   let content: ReactNode;
   if (plan.stage === 'done') {
     content = (
@@ -141,10 +143,12 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
     );
   }
   return (
-    <Page title="今天" back={null} bar={barFromPlan(plan.next)} flash={props.flash} pollSeconds={props.wait ? 4 : undefined}>
+    <Page title="今天" back={null} bar={barFromPlan(plan.next)} flash={props.flash} pollSeconds={waiting || props.wait ? 4 : undefined}>
       <h1>今天</h1>
       <Rhythm active={active} />
-      <div data-live="today">{content}</div>
+      <div data-live="today">{content}
+        {finding ? <p className="small muted" data-testid="today-processing">照片已保存，正在处理。你可以先离开，回来会接着显示进度。<a href="/s/photos" data-key="today-progress">查看处理进度</a></p> : null}
+      </div>
       {props.showInstallHint ? <InstallHint /> : null}
       <section className="card" aria-labelledby="anytime-title">
         <h2 className="section-label" id="anytime-title">随时可以看</h2>

@@ -154,7 +154,7 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
   expect(Math.abs(height - 841.9)).toBeLessThan(2);
   await page.emulateMedia({ media: 'screen' });
 
-  // 从配对到「这周的事做完了」、再到练习纸 A4：页面报错与控制台 error 一条都没有（跨文档过渡被跳过也不报）。
+  // 从配对到「这周的事做完了」、再到练习纸 A4：页面报错与控制台 error 一条都没有。
   expect(errors).toEqual([]);
 
   // 没联网 / 服务器连不上：Service Worker 只缓存了外壳，导航失败时给离线页（不含任何学生数据）。
@@ -176,9 +176,9 @@ test('周末 A：只按底部下一步按钮，从配对走到「这周的事做
   // 外壳只有离线页、带内容指纹的样式与脚本（和页面引用的是同一个名字）、图标。
   const shell = await page.evaluate(() => [document.querySelector('link[rel=stylesheet]')?.getAttribute('href') ?? '', document.querySelector('script[src]:not([defer])')?.getAttribute('src') ?? '', document.querySelector('script[src][defer]')?.getAttribute('src') ?? '']);
   expect(shell[0]).toMatch(/^\/s\/assets\/app\.[0-9a-f]{10}\.css$/);
-  expect(shell[1]).toMatch(/^\/s\/assets\/early\.[0-9a-f]{10}\.js$/);
+  expect(shell[1]).toBe(''); // No early script that suppresses browser errors.
   expect(shell[2]).toMatch(/^\/s\/assets\/app\.[0-9a-f]{10}\.js$/);
-  expect(cached).toEqual([shell[0], shell[1], shell[2], '/s/assets/icon-192.png', '/s/offline'].sort());
+  expect(cached).toEqual([shell[0], shell[2], '/s/assets/icon-192.png', '/s/offline'].sort());
   await page.context().setOffline(false);
 
   // 互动记录：页面脚本记下的点按（跳页的随下一个请求带来，拍照 / 打印这类不跳页的立刻发 HEAD）和服务器上判定的看页、提交、跳过。
@@ -441,6 +441,37 @@ test('等 AI 时局部轮询：只换状态区域（不整页刷新、标题和�
   await page.context().close();
 });
 
+test('轮询遇到 503 和挂起仍能恢复；待重试的照片和当前页面不丢', async ({ browser }) => {
+  test.setTimeout(90_000);
+  const page = await pairedPage(browser);
+  await fault('vision=hold');
+  try {
+    await upload(page, '#d8e3c9');
+    let failedUpload = false;
+    await page.route('**/s/capture', async route => {
+      if (route.request().method() === 'POST' && !failedUpload) { failedUpload = true; await route.abort('connectionfailed'); }
+      else await route.continue();
+    });
+    await page.locator('#library-input').setInputFiles({ name: 'retry.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#b0d3e0', 800) });
+    await expect(page.locator('[data-upload-retry]')).toBeVisible();
+    await page.evaluate(() => { (window as unknown as { marker: string }).marker = 'keep-upload'; });
+    let polls = 0;
+    await page.route('**/s/capture', async route => {
+      if (route.request().headers()['x-sel-poll'] !== '1') { await route.fallback(); return; }
+      polls += 1;
+      if (polls === 1) await route.fulfill({ status: 503, body: 'temporary' });
+      else if (polls === 2) { /* no headers/body: client must time out */ }
+      else await route.continue();
+    });
+    await expect.poll(() => polls, { timeout: 55_000 }).toBeGreaterThanOrEqual(3);
+    expect(await page.evaluate(() => (window as unknown as { marker: string }).marker)).toBe('keep-upload');
+    await expect(page.locator('[data-upload-retry]')).toBeVisible();
+    const before = await page.getByTestId('photo-tile').count();
+    await page.locator('[data-upload-retry]').click();
+    await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1);
+  } finally { await fault('vision=release'); await page.context().close(); }
+});
+
 test.describe('关掉脚本（等 AI 的页面）', () => {
   test('等 AI 的页面退回 <meta refresh>：自己整页刷新，找好了就不再刷新', async ({ browser }) => {
     const page = await pairedPage(browser, { javaScriptEnabled: false });
@@ -464,7 +495,7 @@ test.describe('关掉脚本（等 AI 的页面）', () => {
   });
 });
 
-test('减少动态效果：样式里的动效、过渡全关，页与页之间也不做过渡；不减少时都在', async ({ browser }) => {
+test('减少动态效果：样式里的动效、过渡全关，页间保持原生跳转；不减少时保留状态动效', async ({ browser }) => {
   const probe = async (reducedMotion: 'reduce' | 'no-preference') => {
     const page = await pairedPage(browser, { reducedMotion });
     await page.addInitScript(() => {
@@ -501,7 +532,7 @@ test('减少动态效果：样式里的动效、过渡全关，页与页之间�
   expect(normal.pop).toMatchObject({ animation: 'pop', duration: '0.3s' });
   expect(normal.progress.transition).toBe('0.3s');
   expect(normal.meter.display).not.toBe('none');
-  expect(normal.viewTransition).toBe(true);
+  expect(normal.viewTransition).toBe(false);
 });
 
 test.describe('说说为什么错：录音时的反馈，选项断行', () => {
