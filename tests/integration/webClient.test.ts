@@ -335,6 +335,34 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
     expect(form.headers.get('location')).toBe('/s/capture?err=unreadable');
   });
 
+  it('HEIC 说清楚是格式问题（不说 iCloud）；48MP 说清楚是像素太高', async () => {
+    // 2026-10-15 线上修复：这两类在服务器读不了时不能一律「读不出来」，要给出能操作的提示
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    // 合成 HEIC：只有 ftyp 盒子（无隐私、无真实照片），sharp 必然解码失败，服务器按格式识别
+    const heic = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(12)]);
+    const heicResponse = await uploadPhoto(browser, heic, 'image/heic');
+    expect(heicResponse.status).toBe(400);
+    const heicError = (await heicResponse.json() as { error: { code: string; message: string } }).error;
+    expect(heicError.code).toBe('heic');
+    expect(heicError.message).toContain('HEIC');
+    expect(heicError.message).toContain('Safari');
+    expect(heicError.message).not.toContain('iCloud');
+    const heicForm = await browser.request('/s/capture', { method: 'POST', body: (() => { const f = new FormData(); f.append('photo', new Blob([new Uint8Array(heic)], { type: 'image/heic' }), 'a.heic'); return f; })() });
+    expect(heicForm.headers.get('location')).toBe('/s/capture?err=heic');
+    expect(await browser.text('/s/capture?err=heic')).toContain('HEIC');
+
+    const big = await sharp({ create: { width: 8064, height: 6048, channels: 3, background: '#f0d0c8' } }).jpeg({ quality: 60 }).toBuffer();
+    const bigResponse = await uploadPhoto(browser, big);
+    expect(bigResponse.status).toBe(400);
+    const bigError = (await bigResponse.json() as { error: { code: string; message: string } }).error;
+    expect(bigError.code).toBe('pixels');
+    expect(bigError.message).toContain('像素');
+    expect(bigError.message).not.toContain('iCloud');
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM v2_photo').get()).toEqual({ n: 0 });
+  });
+
   it('磁盘不足时与 /v1 一样拒收（准入规则只有一份）', async () => {
     const env = await setup({ admission: new AdmissionController({ diskProbe: async () => 1n, dataUsageProbe: async () => 0n }) });
     const browser = await pairBrowser(env);
