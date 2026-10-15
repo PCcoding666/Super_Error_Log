@@ -41,7 +41,8 @@ if ! timeout 120 ssh "${ssh_args[@]}" "submit ${GITHUB_SHA} ${checksum} ${run_id
   echo 'Submission connection ended; checking whether the server accepted this run.'
 fi
 last_phase=''
-for ((poll=0; poll<100; poll++)); do
+deploy_deadline=$((SECONDS + 1050))
+while ((SECONDS < deploy_deadline)); do
   if status="$(timeout 30 ssh "${ssh_args[@]}" "status ${run_id}" 2>/dev/null)"; then
     phase="$(printf '%s' "$status" | python3 -c 'import json,sys; print(json.load(sys.stdin)["phase"])')"
     if [[ "$phase" != "$last_phase" ]]; then

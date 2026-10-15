@@ -6,7 +6,7 @@ This file provides guidance to the AI agent when working with code in this repos
 
 Read `docs/CODEX_CLOUD_HANDOFF.md` first for the current product, entry points, verification evidence, and pending acceptance. The active delivery branch is `codex/student-invite-web`; its PR base is `codex/ai-error-review-mvp`. `main` is an old snapshot. `.ai/tasks/current/` and early PRD/manual files contain historical status, not the current release state.
 
-Primary student surface: mobile browser `/s/`, per-student invitation login, server-owned learning records. Production release: `0.5.0-r2`; the user has confirmed successful real-phone photo upload. iOS is retained but is not the current distribution path.
+Primary student surface: mobile browser `/s/`, per-student invitation login, server-owned learning records. The last manual release baseline is `0.5.0-r2`; after CI/CD activation, read the latest successful production Action and server release manifest for the current version. The user has confirmed successful real-phone photo upload. iOS is retained but is not the current distribution path.
 
 ## What this is
 

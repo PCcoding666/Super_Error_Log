@@ -7,7 +7,7 @@
 - 仓库：`PCcoding666/Super_Error_Log`（私有）。
 - 接手分支：**`codex/student-invite-web`**。用户已明确授权把当前状态同步到GitHub，后续由Codex Cloud继续开发。
 - 现有集成分支：`codex/ai-error-review-mvp`；本轮基于`5436a44`。GitHub默认`main`仍是早期版本，不是当前产品。
-- 生产版本：**0.5.0-r2**，2026-10-15 13:48 UTC+8发布；运行代码提交`a006f0a`，随后`602323a`补充发布记录。接手说明的后续提交不代表额外上线。
+- 最近人工发布基线：**0.5.0-r2**，2026-10-15 13:48 UTC+8发布；运行代码提交`a006f0a`，随后`602323a`补充发布记录。自动发布启用后，当前版本以 [Actions 发布摘要](https://github.com/PCcoding666/Super_Error_Log/actions) 和服务器 `current/deploy/ci-release.json` 为准，不要把这条历史基线当成实时版本。
 - 学生入口：https://study.pccoding666.com/s/ 。生产资料/凭证不在仓库；不要为开发去创建或清空真实学生数据。
 - 后续新增授权（2026-10-15）：用户选择“合并后自动上线”。CI 全绿的集成分支 push 会调用 production 发布；PR 不发布。GitHub 默认分支仍未更改。今后的 Cloud 任务从集成分支建分支并提 PR；发布规则见 [自动发布说明](../deploy/ci/README.md)。
 
