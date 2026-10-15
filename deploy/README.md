@@ -1,3 +1,7 @@
+# 自动发布入口（2026-10-15）
+
+用户已批准集成分支合并后自动上线，见 [GitHub 自动发布](ci/README.md)。下面的手动步骤保留给首次装机和人工维护；日常修改通过 PR → CI → 自动发布。
+
 # 云端部署手册（广州 ECS 239 · cgroup v1 · study.pccoding666.com）
 
 发布包由 `npm run release:build` 产出（白名单打包，详见 `scripts/release-whitelist.txt`）。
@@ -463,3 +467,11 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 5. 点「拍第一页」→「同意，上传」→ 拍一页（用合成或无个人信息的纸）→ 出现「已拍 1 张」→「拍完了，下一步」→ 一两分钟内变成「找到 N 道…」。
 6. 可选：在「说说为什么错」里点「点一下开始说」，允许麦克风，说一句话，文字出现在文本框里（这是第一次在生产上真实调用 `qwen-audio-3.1-asr-flash`，同时验证生产密钥有这个模型的权限；出现「这次没转成文字」多半是密钥没有该模型权限或额度，先查这个）。
 
+
+## 学生邀请码手机版网页（2026-10-15）
+
+学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。受控试用最多3个学生空间，父子进程共用systemd的1GB内存上限；容量不足明确报错，不共享学生档案。
+
+管理员以服务用户运行 `dist/studentHost/admin-cli.js create|list|invite <studentId>|revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。没有公网管理员页面。
+
+本轮部署检查与回滚见 `docs/quality/2026-10-15-student-web-release.md`（源码文档不随生产包部署）。关闭flag/回滚旧包不会删除新的学生目录。

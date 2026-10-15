@@ -23,7 +23,8 @@ if (configuration.mode === 'cloud') {
   const service = await assembleCloudService(configuration);
   await service.listen();
   console.log(`单进程服务已启动：http://${configuration.host}:${configuration.port}（模式：cloud，/v1 + /v2）`);
-  console.log(`云端管理入口已监听：${service.admin.socketPath}`);
+  if (service.admin) console.log(`云端管理入口已监听：${service.admin.socketPath}`);
+  if (process.env.SEL_STUDENT_HOST_ENABLED === '1') console.log('学生邀请码网页已接管 /s（每学生独立空间）；旧单学生网页不再直接暴露。');
   const shutdown = async (): Promise<void> => {
     try { await service.close(); } finally { process.exit(0); }
   };

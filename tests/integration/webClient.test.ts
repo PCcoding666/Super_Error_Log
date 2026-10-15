@@ -297,6 +297,28 @@ describe('连接：链接配对 → httpOnly cookie；没有 cookie 只看到连
 });
 
 describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 共用准入', () => {
+  it('今天页等待找题时自动刷新并提供查看进度；完成后停止刷新', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    let release!: () => void;
+    env.vision.gate = new Promise<void>(resolve => { release = resolve; });
+    try {
+      const response = await uploadPhoto(browser, await photo('#f0d0c8'));
+      const { jobId } = await response.json() as { jobId: string };
+      const waiting = await browser.text('/s/');
+      expect(waiting).toContain('data-refresh="4"');
+      expect(waiting).toContain('data-testid="today-processing"');
+      expect(waiting).not.toContain('大约 1–2 分钟');
+      release();
+      await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
+      const done = await browser.text('/s/');
+      expect(done).not.toContain('data-refresh=');
+      expect(done).not.toContain('data-testid="today-processing"');
+      expect(done).toContain('选这周要练的题');
+    } finally { release(); }
+  });
+
   it('没同意不收照片；同意后上传、登记进本周、原图去掉 EXIF', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
@@ -333,6 +355,34 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
     const form = await browser.request('/s/capture', { method: 'POST', body: (() => { const f = new FormData(); f.append('photo', new Blob([new Uint8Array(Buffer.from('x'))]), 'a.jpg'); return f; })() });
     expect(form.status).toBe(303);
     expect(form.headers.get('location')).toBe('/s/capture?err=unreadable');
+  });
+
+  it('HEIC 说清楚是格式问题（不说 iCloud）；48MP 说清楚是像素太高', async () => {
+    // 2026-10-15 线上修复：这两类在服务器读不了时不能一律「读不出来」，要给出能操作的提示
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    // 合成 HEIC：只有 ftyp 盒子（无隐私、无真实照片），sharp 必然解码失败，服务器按格式识别
+    const heic = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(12)]);
+    const heicResponse = await uploadPhoto(browser, heic, 'image/heic');
+    expect(heicResponse.status).toBe(400);
+    const heicError = (await heicResponse.json() as { error: { code: string; message: string } }).error;
+    expect(heicError.code).toBe('heic');
+    expect(heicError.message).toContain('HEIC');
+    expect(heicError.message).toContain('Safari');
+    expect(heicError.message).not.toContain('iCloud');
+    const heicForm = await browser.request('/s/capture', { method: 'POST', body: (() => { const f = new FormData(); f.append('photo', new Blob([new Uint8Array(heic)], { type: 'image/heic' }), 'a.heic'); return f; })() });
+    expect(heicForm.headers.get('location')).toBe('/s/capture?err=heic');
+    expect(await browser.text('/s/capture?err=heic')).toContain('HEIC');
+
+    const big = await sharp({ create: { width: 8064, height: 6048, channels: 3, background: '#f0d0c8' } }).jpeg({ quality: 60 }).toBuffer();
+    const bigResponse = await uploadPhoto(browser, big);
+    expect(bigResponse.status).toBe(400);
+    const bigError = (await bigResponse.json() as { error: { code: string; message: string } }).error;
+    expect(bigError.code).toBe('pixels');
+    expect(bigError.message).toContain('像素');
+    expect(bigError.message).not.toContain('iCloud');
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM v2_photo').get()).toEqual({ n: 0 });
   });
 
   it('磁盘不足时与 /v1 一样拒收（准入规则只有一份）', async () => {

@@ -138,6 +138,7 @@ export function FixPage(props: { item: V2WeekItem; revision: number; clientReque
         <textarea id="fix-instruction" name="instruction" maxLength={200} required defaultValue={props.instruction ?? ''} placeholder="说一句或写一句哪里不对，比如：第二行的 16 应该是 13" />
         <div className="voice hidden" data-voice-for="fix-instruction" data-endpoint="/s/voice">
           <button type="button" data-key="voice">点一下开始说</button> <span className="small muted" data-voice-note="" />
+          <span className="small muted">录音会发给通义千问转文字，本应用不保存录音；最多 60 秒，也可以直接打字</span>
         </div>
       </form>
       <a className="more" href={`/s/items/${item.id}/edit`} data-key="fix-manual">自己动手改<span aria-hidden="true">›</span></a>

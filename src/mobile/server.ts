@@ -10,7 +10,7 @@ if (configuration.mode === 'cloud') {
   const service = await assembleCloudService(configuration);
   await service.listen();
   console.log(`移动识别服务已启动：http://${configuration.host}:${configuration.port}（模式：cloud）`);
-  console.log(`云端管理入口已监听：${service.admin.socketPath}`);
+  if (service.admin) console.log(`云端管理入口已监听：${service.admin.socketPath}`);
   const shutdown = async (): Promise<void> => {
     try { await service.close(); } finally { process.exit(0); }
   };

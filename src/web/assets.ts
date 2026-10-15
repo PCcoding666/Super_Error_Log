@@ -4,6 +4,7 @@
  * 脚本只做浏览器必须做的事（上传进度、录音、选题计数、打印、按需显隐）；关掉脚本时每屏照样能用（语音除外）。
  */
 import sharp from 'sharp';
+import { PHOTO_UPLOAD_SCRIPT } from './photoUpload.js';
 
 export const APP_NAME = '超级错题本';
 export const APP_SHORT_NAME = '错题本';
@@ -12,7 +13,7 @@ export const THEME_COLOR = '#1F615C';
 export const THEME_COLOR_DARK = '#17191C';
 export const BACKGROUND_COLOR = '#F7F5ED';
 /** 资源版本：改了样式或脚本就改这个，让浏览器与 Service Worker 换新。 */
-export const ASSET_VERSION = '2';
+export const ASSET_VERSION = '3';
 
 export const STYLES = `
 /* ---------- 设计 token（浅色 / 深色两套；所有颜色只从这里取） ----------
@@ -252,19 +253,8 @@ var nbar=$('.next-bar');function barH(){root.style.setProperty('--bar-h',(nbar?n
 /* 等 AI 的页面自己刷新：只在页面看得见、他没在输入的时候刷新（关掉脚本时由 <noscript> 里的 meta refresh 接手） */
 var every=Number(document.body.getAttribute('data-refresh')||0);
 if(every>0){var due=Date.now()+every*1000;setInterval(function(){if(Date.now()<due||document.visibilityState!=='visible')return;var a=document.activeElement;if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))return;due=Infinity;trailAdd('auto','refresh');location.reload()},500)}
-/* 拍照上传：选好照片立刻上传并显示进度；失败时照片还在这个页面里，可以再试一次 */
-var form=$('form[data-upload]');
-if(form){var bar=$('[data-upload-progress]'),msg=$('[data-upload-message]'),retry=$('[data-upload-retry]'),pending=null;
-function send(file){pending=file;var data=new FormData();data.append('key',file.__key||(file.__key=uuid()));data.append('photo',file,'photo.jpg');
-var xhr=new XMLHttpRequest();xhr.open('POST',form.getAttribute('action'));xhr.setRequestHeader('accept','application/json');
-if(bar)bar.classList.remove('hidden');if(retry)retry.classList.add('hidden');if(msg)msg.textContent='正在上传…';
-xhr.upload.onprogress=function(e){if(e.lengthComputable&&bar){var p=Math.round(e.loaded*100/e.total);$('i',bar).style.width=p+'%';msg.textContent='正在上传 '+p+'%'}};
-xhr.onload=function(){var body={};try{body=JSON.parse(xhr.responseText)}catch(e){}
-if(xhr.status>=200&&xhr.status<300){if(msg)msg.textContent='传上去了';location.replace(body.next||location.pathname);return}
-if(msg)msg.textContent=(body.error&&body.error.message)||'没传上去。照片还在这个页面里。';if(retry&&xhr.status!==400)retry.classList.remove('hidden')};
-xhr.onerror=function(){if(msg)msg.textContent='没传上去。照片还在这个页面里。';if(retry)retry.classList.remove('hidden');trailAdd('error','upload_network')};xhr.send(data)}
-$$('input[type=file]',form).forEach(function(input){input.addEventListener('change',function(){var f=input.files&&input.files[0];if(f)send(f);input.value=''})});
-if(retry)retry.addEventListener('click',function(){if(pending)send(pending)})}
+/* 拍照上传：浏览器里先转成 JPEG 再传（HEIC、超大像素在服务器读不了）；细节见 src/web/photoUpload.ts */
+${PHOTO_UPLOAD_SCRIPT}
 /* 选题：数字跟着变，最多 8 道 */
 var pick=$('form[data-pick-count]');
 if(pick){var max=Number(pick.getAttribute('data-max')||'8'),min=Number(pick.getAttribute('data-min')||'1'),btn=$('[data-count-label]'),warn=$('[data-max-warning]');

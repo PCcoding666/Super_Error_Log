@@ -13,6 +13,7 @@ import type { ReactNode } from 'react';
 import { sendHtml } from '../views/render.js';
 import { getDb } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
+import { isHeif } from '../media/images.js';
 import { getQuestionCrop } from '../services/evidenceService.js';
 import { ATTEMPT_STATES, CAUSES } from '../domain/types.js';
 import { registerV2Photo } from '../bridge/recognitionToItems.js';
@@ -57,6 +58,8 @@ export interface WebClientOptions {
   followupProvider?: FollowupProvider;
   correctionProvider?: CorrectionProvider;
   coachProvider?: CoachProvider;
+  /** 学生邀请码网关的 worker 模式：设置页显示「退出登录」（POST /s/logout 由网关处理）。 */
+  studentHostWorker?: boolean;
   /** 「距生成几天」、录结果的日期按哪个时区的日历算；缺省用进程时区（与回传校验、ISO 周一致）。 */
   timeZone?: string;
   now?: () => Date;
@@ -76,8 +79,11 @@ const SECURITY_HEADERS: Record<string, string> = {
 };
 
 const UPLOAD_ERRORS: Record<string, string> = {
-  unreadable: '这张照片读不出来。换一张，或者检查 iCloud 照片有没有下载好。',
+  unreadable: '这张照片读不出来，可能没拍好或者文件坏了。换一张试试。',
+  heic: '这张照片是 HEIC 格式，服务器读不了。用 iPhone 自带的 Safari 打开这个网页再选一次（会自动转好），或者先把它存成 JPEG。',
+  pixels: '这张照片像素太高，服务器处理不了。用 Safari 打开这个网页重选一次，会自动缩小再传。',
   too_big: '这张照片太大了（超过 15 MB），换一张。',
+  submit_failed: '没传上去。过一会儿再试，照片还在这个页面里。',
   busy: '服务器有点忙，过一会儿再试。照片没传上去，再拍一次就好。',
   full: '服务器存不下新照片了，请告诉帮你装错题本的人。',
   paused: '服务器正在恢复，过一会儿再试。',
@@ -354,12 +360,24 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       }
       const file = (request.files as Express.Multer.File[] | undefined ?? []).find(entry => entry.size > 0);
       if (!file) { fail('empty', 400); return; }
-      // 统一转成 JPEG：按 EXIF 摆正，去掉位置等拍摄信息（sharp 默认不保留元数据）。HEIC 在服务器上读不了时请他换一张。
+      // 统一转成 JPEG：按 EXIF 摆正，去掉位置等拍摄信息（sharp 默认不保留元数据）。
+      // 失败要分清原因（2026-10-15 线上修复）：HEIC 服务器读不了、像素超限、文件损坏，不能一律说「读不出来」。
+      // 脚本端已在浏览器里转过格式与尺寸，走到这里的多是没脚本/旧缓存的原图直传，告诉他换 Safari 或 JPEG。
       let jpeg: Buffer;
       try {
-        jpeg = await sharp(file.buffer, { failOn: 'error', limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 90 }).toBuffer();
-        if (jpeg.length > MAX_PHOTO_BYTES) jpeg = await sharp(file.buffer, { limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 75 }).toBuffer();
-      } catch { fail('unreadable', 400); return; }
+        const normalize = async (): Promise<Buffer> => {
+          const high = await sharp(file.buffer, { failOn: 'error', limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 90 }).toBuffer();
+          return high.length <= MAX_PHOTO_BYTES ? high : sharp(file.buffer, { failOn: 'error', limitInputPixels: 40_000_000 }).rotate().jpeg({ quality: 75 }).toBuffer();
+        };
+        // Release the image slot before submit(), which acquires the same slot itself.
+        jpeg = admission ? await admission.withImage(normalize) : await normalize();
+      } catch (error) {
+        const code = isHeif(file.buffer) ? 'heic'
+          : error instanceof Error && /pixel limit/i.test(error.message) ? 'pixels'
+          : 'unreadable';
+        fail(code, 400);
+        return;
+      }
       if (jpeg.length > MAX_PHOTO_BYTES) { fail('too_big', 400); return; }
       const key = UUID.test(str(request.body?.key)) ? str(request.body?.key) : crypto.randomUUID();
       let jobId: string;
@@ -368,7 +386,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         if (submitted.created && reserve?.capacity) reserve.handoff = true;
         jobId = submitted.job.id;
       } catch (error) {
-        if (error instanceof MobileRequestError) { fail(error.status === 503 ? 'paused' : error.status === 429 ? 'busy' : 'unreadable', error.status); return; }
+        if (error instanceof MobileRequestError) { fail(error.status === 503 ? 'paused' : error.status === 429 ? 'busy' : 'submit_failed', error.status); return; }
         throw error;
       }
       registerV2Photo(jobId);
@@ -822,14 +840,14 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // ---------- 设置 ----------
   r.get('/settings', page((request, response) => {
     const settings = getV2Settings();
-    render(response, SettingsPage({ ...settings, saved: request.query.saved === '1' }));
+    render(response, SettingsPage({ ...settings, saved: request.query.saved === '1', studentHostWorker: options.studentHostWorker === true }));
   }));
 
   r.post('/settings', form, page((request, response) => {
     const slotChoice = str(request.body?.practiceSlot);
     const practiceSlot = (slotChoice === '__other' ? str(request.body?.practiceSlotOther) : slotChoice).trim();
     const result = updateV2Settings({ practiceSlot, paperLocation: str(request.body?.paperLocation) });
-    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。' }), 400); return; }
+    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。', studentHostWorker: options.studentHostWorker === true }), 400); return; }
     response.redirect(303, '/s/settings?saved=1');
   }));
 
