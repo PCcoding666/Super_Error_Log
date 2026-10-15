@@ -21,7 +21,7 @@ registry SQLite 用事务存 students/invitations/sessions；只存邀请码和�
 公共资源仅脚本/样式/icon/manifest/sw/offline；所有含学生数据HTML/图片/打印响应no-store。service worker只缓存静态壳，退出后不能看到上一学生内容。不同学生猜到同一题目/练习/job/media ID也只访问自己的worker数据。
 
 ## ASR与打印
-保留 qwen-audio-3.1-asr-flash（官方2026-10-15模型目录已核实 https://help.aliyun.com/zh/model-studio/model-list-speech-recognition/ ），不使用浏览器 SpeechRecognition 作为云转写替代。北京百炼原生接口，沿用现有30秒/大小限制及M4A/WebM支持；仅内存处理，音频/转写/密钥不入日志。明确提示录音发送至百炼处理，失败保留原输入、可重试或键盘输入、绝不自动提交反思。实测Safari录音容器与服务器接口；不宣称离线语音。
+保留 qwen-audio-3.1-asr-flash（官方2026-10-15模型目录已核实 https://help.aliyun.com/zh/model-studio/model-list-speech-recognition/ ），不使用浏览器 SpeechRecognition 作为云转写替代。北京百炼原生接口，沿用现有60秒/5MB限制及M4A/WebM支持；本应用仅内存处理录音，音频/转写/密钥不入日志；不对百炼侧留存作未经证实的保证。明确提示录音发送至百炼处理，失败保留原输入、可重试或键盘输入、绝不自动提交反思。实测Safari录音容器与服务器接口；不宣称离线语音。
 打印复用现有 /s/ 原生浏览器打印页面，学生可分享/存PDF；验证题目页不泄露答案、提示与答案分开。不把Swift排版直接移植。
 
 ## 发布与手机

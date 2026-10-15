@@ -1,8 +1,11 @@
+import type { AddressInfo } from 'node:net';
 import type { MobileConfiguration } from './configuration.js';
 import { createMobileApp } from './router.js';
 import { BailianMobileVision } from './vision.js';
 import { PairingManager } from './pairing.js';
 import { createAdminServer, type AdminServerHandle } from './adminServer.js';
+import { createStudentHostGateway, type StudentHostGateway } from '../studentHost/router.js';
+import { resolveStudentHostDir } from '../studentHost/registry.js';
 import { getDb } from '../db/connection.js';
 import { ensureStudentProfile } from '../services/studentService.js';
 import { bridgePending } from '../bridge/recognitionToItems.js';
@@ -16,12 +19,18 @@ import type { MobileVisionBoundary } from './vision.js';
 export interface CloudAssemblyOverrides {
   vision?: MobileVisionBoundary;
   transcriber?: SpeechTranscriber;
+  /** 学生空间 worker（studentHost/worker.ts）不需要管理 socket：深层目录下 unix socket 路径可能超长。 */
+  adminServer?: boolean;
 }
 
 export interface CloudAssembly {
   configuration: MobileConfiguration;
-  admin: AdminServerHandle;
+  admin: AdminServerHandle | null;
+  /** 设备令牌管理（学生空间 worker 用它签发只有父进程知道的内部令牌）。 */
+  pairing: PairingManager;
   listen(): Promise<void>;
+  /** 实际监听的端口（configuration.port 传 0 时由系统分配）；未监听返回 null。 */
+  boundPort(): number | null;
   close(): Promise<void>;
 }
 
@@ -43,14 +52,22 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
   // T5：重启后续做 preparing 状态的打印快照（已完成的题不重做）。
   resumePendingSnapshots();
   const pairing = await PairingManager.open(configuration.dataDir, { pairingUrl: configuration.pairingUrl });
-  const admin = await createAdminServer(pairing);
+  const admin = overrides.adminServer === false ? null : await createAdminServer(pairing);
   // 语音转写缺配置在这里就失败（启动即失败，不等到第一次录音）。
   const transcriber = overrides.transcriber ?? getTranscriber();
+  // 2026-10-15 学生邀请码网页：SEL_STUDENT_HOST_ENABLED=1 时 /s 换成「邀请码登录 + 独立学生空间转发」网关，
+  // 本进程自己的单学生 /s 不再直接暴露（/v1 /v2 旧 App 接口保持不变）。worker 进程绝不带这个 flag（不递归）。
+  const studentHost: StudentHostGateway | null = process.env.SEL_STUDENT_HOST_ENABLED === '1'
+    ? await createStudentHostGateway({ hostDir: resolveStudentHostDir(configuration.dataDir) })
+    : null;
   const app = await createMobileApp({
     dataDir: configuration.dataDir, vision: overrides.vision ?? new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true,
     v2Router: ({ limiter }) => createV2Router({ mobileDataDir: configuration.dataDir, transcriber, limiter }),
     // 学生网页版 /s/（2026-10-09）：同一进程、同一端口、同一 Caddy 站点。
-    webClient: deps => createWebClientRouter({ ...deps, mobileDataDir: configuration.dataDir, transcriber }),
+    // studentHost 网关开启时由网关接管 /s；studentHostWorker 标记只出现在 worker 进程里（设置页显示「退出登录」）。
+    webClient: studentHost
+      ? deps => studentHost.router({ limiter: deps.limiter, ipOf: deps.ipOf, originScheme: 'https:' })
+      : deps => createWebClientRouter({ ...deps, mobileDataDir: configuration.dataDir, transcriber, studentHostWorker: process.env.SEL_STUDENT_WORKER === '1' }),
   });
   let server: Awaited<ReturnType<typeof app.listen>> | null = null;
   const listen = (): Promise<void> => new Promise((resolve, reject) => {
@@ -59,9 +76,15 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     app.once('error', onError);
     server = app.listen(configuration.port, configuration.host, () => { app.off('error', onError); resolve(); });
   });
+  const boundPort = (): number | null => {
+    const address = server?.address();
+    return address && typeof address === 'object' ? (address as AddressInfo).port : null;
+  };
   const close = async (): Promise<void> => {
+    // 先停学生 worker（不再接新请求后再杀子进程，避免半截 multipart 写入）。
+    if (studentHost) await studentHost.close();
     await app.locals.mobileRecognitionService.stop();
-    await admin.close();
+    if (admin) await admin.close();
     const current = server;
     server = null;
     if (current) await new Promise<void>((resolve, reject) => {
@@ -69,5 +92,5 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
       current.close(() => { current.off('error', reject); resolve(); });
     });
   };
-  return { configuration, admin, listen, close };
+  return { configuration, admin, pairing, listen, boundPort, close };
 }

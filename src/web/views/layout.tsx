@@ -101,7 +101,9 @@ export function Page(props: PageProps): ReactNode {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <title>{`${props.title} · ${APP_NAME}`}</title>
-        <meta name="referrer" content="no-referrer" />
+        {/* Same-origin forms need a non-null Origin for the invitation gateway's CSRF check.
+            Cross-origin destinations still receive no Referer under this policy. */}
+        <meta name="referrer" content="same-origin" />
         <meta name="format-detection" content="telephone=no" />
         <meta name="theme-color" content={THEME_COLOR} media="(prefers-color-scheme: light)" />
         <meta name="theme-color" content={THEME_COLOR_DARK} media="(prefers-color-scheme: dark)" />

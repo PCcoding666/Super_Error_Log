@@ -8,23 +8,23 @@
 **Spec:** ../specs/2026-10-15-student-invite-web-design.md
 
 ## S1 邀请码、会话和独立学生服务（WorkBuddy）
-- [ ] 新建 src/studentHost/registry.ts：StudentRegistry，学生空间上限3；issue/redeem/authenticate/revoke，安全随机与事务。
-- [ ] 新建 src/studentHost/admin-cli.ts：create/list/invite/revoke-sessions，码只在生成时输出，不入日志。
-- [ ] 新建 src/studentHost/worker.ts、workers.ts：child_process.fork、IPC ready(port,token)、每学生独立env/dir；有界启动、恢复、退出和令牌刷新。
-- [ ] 新建 src/studentHost/router.ts：公开静态资源与登录页、同源POST兑换/退出，流式代理学生路径；权限和路径严格隔离。
-- [ ] 最小修改 src/mobile/cloudAssembly.ts 与 src/main.ts：仅flag启用、CloudAssembly端口/生命周期钩子；worker不能递归启动host。保持现有装配测试兼容。
-- [ ] 测试 tests/integration/studentHost.test.ts：双学生数据/文件/作业/打印隔离，重启、撤销、并发兑换、路径攻击、伪造cookie/header、body流转发、启动失败、容量满。测试走真实网关和worker，允许合成provider但不假装真实模型。
-- [ ] typecheck/build/针对性测试；写交付报告列出未解决问题，不提交不推送不部署。
+- [x] 新建 src/studentHost/registry.ts：StudentRegistry，学生空间上限3；issue/redeem/authenticate/revoke，安全随机与事务。
+- [x] 新建 src/studentHost/admin-cli.ts：create/list/invite/revoke-sessions，码只在生成时输出，不入日志。
+- [x] 新建 src/studentHost/worker.ts、workers.ts：child_process.fork、IPC ready(port,token)、每学生独立env/dir；有界启动、恢复、退出和令牌刷新。
+- [x] 新建 src/studentHost/router.ts：公开静态资源与登录页、同源POST兑换/退出，流式代理学生路径；权限和路径严格隔离。
+- [x] 最小修改 src/mobile/cloudAssembly.ts 与 src/main.ts：仅flag启用、CloudAssembly端口/生命周期钩子；worker不能递归启动host。保持现有装配测试兼容。
+- [x] 测试 tests/integration/studentHost.test.ts：双学生数据/文件/作业/打印隔离，重启、撤销、并发兑换、路径攻击、伪造cookie/header、body流转发、启动失败、容量满。测试走真实网关和worker，允许合成provider但不假装真实模型。
+- [x] typecheck/build/针对性测试；写交付报告列出未解决问题，不提交不推送不部署。
 
 ## S2 登录/安装体验及语音验收（WorkBuddy，S1后）
-- [ ] 保留现有视觉语言，输入码分组/粘贴可用，错误清晰；退出按钮及设置中主屏幕安装引导。
-- [ ] Qwen 3.1 ASR 验证现有请求格式；Safari/Android MIME检查；更新录音发送百炼说明；键盘输入保底。
-- [ ] 浏览器覆盖登录→拍照/选题→追问→打印→回传与退出，公共PWA资源可安装、不缓存学习内容。
-- [ ] 更新 deploy/README.md、.env.example、发布检查单、唯一当前状态文档；记载独立空间及CLI和回滚。
+- [x] 保留现有视觉语言，输入码分组/粘贴可用，错误清晰；退出按钮及设置中主屏幕安装引导。
+- [x] Qwen 3.1 ASR 验证现有请求格式；Safari/Android MIME检查；更新录音发送百炼说明；键盘输入保底。
+- [x] 浏览器覆盖登录→拍照/选题→追问→打印→回传与退出，公共PWA资源可安装、不缓存学习内容。
+- [x] 更新 deploy/README.md、.env.example、发布检查单、唯一当前状态文档；记载独立空间及CLI和回滚。
 
 ## S3 独立审查与发布（Codex）
-- [ ] 审查隔离/路径/worker生命周期/私密内容/兼容；返修后针对性回归。
-- [ ] npm run verify 全通过；新增浏览器验收、合成音频真实ASR验证。
+- [x] 审查隔离/路径/worker生命周期/私密内容/兼容；返修后针对性回归。
+- [x] npm run verify 全通过；新增浏览器验收、合成音频真实ASR验证。
 - [ ] 已授权部署：确认基线、备份、打包校验、上线、新码和旧API验证；不推送。
 - [ ] 手机上打开网页，完成专属码登录、添加主屏幕；逐项记录可观察证据与需人操作处。
 
