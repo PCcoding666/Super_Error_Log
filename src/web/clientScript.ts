@@ -79,6 +79,13 @@ ${UI_SHEET_SCRIPT}
 within(scope,'[data-js-primary]').forEach(function(el){el.setAttribute('data-testid','next-step-primary')});
 within(scope,'.next-bar').forEach(function(nbar){if(!once(nbar,'bar'))return;function barH(){root.style.setProperty('--bar-h',nbar.offsetHeight+'px')}barH();if(window.ResizeObserver)new ResizeObserver(barH).observe(nbar);watchPrimary(nbar)});
 trackSteps(scope);
+/* 设置页：正常连接只占一行，失败时才显示重试；不轮询、不读取学习内容。 */
+within(scope,'[data-connection-status]').forEach(function(conn){if(!once(conn,'connection'))return;var retry=$('[data-connection-retry]',conn.parentNode),busy=false;if(!retry)return;
+function state(ok){conn.textContent=ok?'已连接':'连接失败';conn.classList.toggle('tone-red',!ok);retry.classList.toggle('hidden',ok)}
+window.addEventListener('offline',function(){if(conn.isConnected)state(false)});if(navigator.onLine===false)state(false);
+retry.addEventListener('click',function(){if(busy)return;busy=true;retry.disabled=true;conn.textContent='连接中…';
+var request=boundedRequest('/s/settings',{method:'HEAD',credentials:'same-origin',cache:'no-store',redirect:'error'},8000,function(r){return r.ok&&navigator.onLine!==false});
+request.promise.then(state,function(){state(false)}).finally(function(){busy=false;retry.disabled=false})})});
 /* 上传使用与 main 相同的图片转换、超时和重试逻辑；局部更新时只挂一次。 */
 within(scope,'form[data-upload]').forEach(function(uploadForm){if(!once(uploadForm,'upload'))return;
 (function(){

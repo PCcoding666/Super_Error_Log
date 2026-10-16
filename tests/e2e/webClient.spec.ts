@@ -699,12 +699,17 @@ test('页面缩放 200%（195×422 CSS px）：没有单字孤行或标点落行
     expect(report.orphans, `${path} 单字孤行`).toEqual([]);
     expect(report.punctuation, `${path} 标点落在行首 / 行尾`).toEqual([]);
     const layout = await page.evaluate(() => {
-      const bar = document.querySelector('.tab-bar, .next-bar:not(.next-bar-inline)')!.getBoundingClientRect();
+      const bar = document.querySelector('.tab-bar, .next-bar:not(.next-bar-inline)')?.getBoundingClientRect();
       const primary = document.querySelector('[data-testid=next-step-primary]');
       const p = primary ? primary.getBoundingClientRect() : null;
-      return { barShare: bar.height / innerHeight, overflow: document.documentElement.scrollWidth - innerWidth, primaryVisible: p ? p.top >= 0 && p.bottom <= innerHeight + 1 : null };
+      return { barShare: bar ? bar.height / innerHeight : null, overflow: document.documentElement.scrollWidth - innerWidth, primaryVisible: p ? p.top >= 0 && p.bottom <= innerHeight + 1 : null };
     });
-    expect(layout.barShare, `${path} 底栏占视口`).toBeLessThanOrEqual(0.5);
+    if (path === '/s/settings') {
+      expect(layout.barShare, '设置页不再有固定操作栏').toBeNull();
+    } else {
+      expect(layout.barShare, `${path} 保留导航`).not.toBeNull();
+      expect(layout.barShare, `${path} 底栏占视口`).toBeLessThanOrEqual(0.5);
+    }
     expect(layout.overflow, `${path} 横向溢出`).toBeLessThanOrEqual(0);
     expect(layout.primaryVisible, `${path} 主按钮`).not.toBe(false);
   }

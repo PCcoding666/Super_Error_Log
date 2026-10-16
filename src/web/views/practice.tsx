@@ -107,7 +107,7 @@ export function ChoosePage(props: { recommend: RecommendResponse; practiceSlot: 
           <fieldset>
             <legend>什么时候做？</legend>
             <SlotChoice current={props.practiceSlot} />
-            <p className="hint">会印在练习纸封面上，提醒你哪天做</p>
+            <p className="hint">会显示在「今天」页，提醒你哪天做</p>
           </fieldset>
         </form>
       )}
@@ -319,7 +319,6 @@ export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
       <section className="page">
         <h3>{snapshot.cover.title}</h3>
         <p>{weekRangeText(snapshot.week, 'long')}</p>
-        <p>什么时候做：{snapshot.cover.practiceSlot}</p>
         <p><b>规则：</b></p>
         {snapshot.cover.rules.map((rule, index) => <p key={rule}>{index + 1}. {rule}</p>)}
         <p><b>题目清单：</b></p>
@@ -338,7 +337,7 @@ export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
             <p>{hintLine('一级提示：', entry.hint1)}</p>
             <p>{hintLine('二级提示：', entry.hint2)}</p>
             <p>{entry.answer.text ? `答案：${entry.answer.text}${entry.answer.label ? `（${entry.answer.label}）` : ''}` : '答案：（无）'}</p>
-            <p>{entry.fallbackNote}</p>
+            <p>对照原卷查看解析</p>
           </div>
         ))}
       </section>
@@ -386,7 +385,7 @@ export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
             </li>
           ))}
         </ul>
-        <p className="small muted"><Phrased text={`什么时候做：${snapshot.cover.practiceSlot}。答案在最后一页，做完再看。`} /></p>
+        <p className="small muted"><Phrased text="答案在最后一页，做完再看。" /></p>
       </section>
       <section className="print-root sheet-box" data-open="false" data-testid="sheet-box" aria-labelledby="sheet-box-title">
         <p className="sheet-box-text">
@@ -704,44 +703,32 @@ export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
 
 // ---------- 设置（§4.12） ----------
 
-export function SettingsPage(props: { practiceSlot: string; paperLocation: string; saved: boolean; error?: string | null; studentHostWorker?: boolean; accountRole?: AccountRole | null }): ReactNode {
-  const bar: BarModel = { caption: '', primary: { title: '保存', key: 'save', form: 'settings-form' }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] };
-  const places: Array<[string, string]> = [['school', '学校'], ['home', '家'], ['varies', '不固定']];
+export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?: AccountRole | null }): ReactNode {
   return (
-    <Page title="设置" bar={bar} showSettings={false} flash={{ ok: props.saved ? '保存好了' : null, err: props.error ?? null }}>
+    <Page title="设置" showSettings={false} bodyClass="settings-page">
       <h1>设置</h1>
-      <form method="post" action="/s/settings" id="settings-form">
-        <fieldset>
-          <legend>做练习的时间</legend>
-          <SlotChoice current={props.practiceSlot} />
-          <p className="hint">会印在练习纸封面上</p>
-        </fieldset>
-        <fieldset>
-          <legend>原卷平时放在哪</legend>
-          <div className="choices-inline">
-            {places.map(([value, label]) => <label key={value} className="choice"><input type="radio" name="paperLocation" value={value} defaultChecked={props.paperLocation === value} /><span>{label}</span></label>)}
+      <dl className="settings-list">
+        {props.accountRole ? (
+          <div className="settings-row">
+            <dt>账号身份</dt>
+            <dd data-testid="account-role">{ACCOUNT_ROLE_LABELS[props.accountRole]}</dd>
           </div>
-          <p className="hint">{quoted('决定答案页写「对照原卷第几题」还是「回家后对照原卷」')}</p>
-        </fieldset>
-      </form>
-      {props.accountRole ? (
-        <section className="card" data-testid="account-role">
-          <h2 className="card-title">账号身份</h2>
-          <p>{ACCOUNT_ROLE_LABELS[props.accountRole]}</p>
-          {props.accountRole !== 'student' ? <p className="hint">当前使用错题本学习功能，专属功能后续开放。</p> : null}
-        </section>
-      ) : null}
-      <section className="card">
-        <h2 className="card-title">连接</h2>
-        <p className="tone-green" data-testid="connection-ok">已连上服务器 ✓</p>
-        <a className="more" href="/s/install" data-key="settings-install"><Phrased text="怎么放到主屏幕" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
-        {props.studentHostWorker ? (
-          <form method="post" action="/s/logout" className="inline-form">
-            <button className="link-btn" type="submit" data-testid="logout" data-key="logout">退出登录</button>
-            <p className="hint">退出后这台手机要重新输入邀请码才能进来。照片、错题和练习都在，不会丢。</p>
-          </form>
         ) : null}
-      </section>
+        <div className="settings-row">
+          <dt>服务连接</dt>
+          <dd className="settings-connection">
+            <span role="status" data-testid="connection-ok" data-connection-status="">已连接</span>
+            <button className="link-btn hidden" type="button" data-connection-retry="" data-key="connection-retry">重试</button>
+          </dd>
+        </div>
+      </dl>
+      <a className="settings-link" href="/s/install" data-key="settings-install"><Phrased text="怎么放到主屏幕" /><span className="chev" aria-hidden="true">›</span></a>
+      {props.studentHostWorker ? (
+        <form method="post" action="/s/logout" className="settings-logout">
+          <button className="link-btn" type="submit" data-testid="logout" data-key="logout">退出登录</button>
+          <p className="hint">退出后需重新输入邀请码，学习记录会保留。</p>
+        </form>
+      ) : null}
     </Page>
   );
 }

@@ -7,7 +7,7 @@
  * 3. 题面不得出现答案、学生原作、订正、批注。
  * 4. 提示两级，来自 coach；生成失败不阻塞：提示为空，纸上写"对照原卷"。
  * 5. 答案优先原卷参考答案（reference_answer 观察记录），否则 coach 答案，否则空。
- * 6. "对照原卷"措辞随学生设置 paperLocation。
+ * 6. 答案页统一提示"对照原卷查看解析"，封面不预设练习时间。
  * 7. 每份包每题至多 1 次 coach，不重试（由逐题单次调用结构保证）。
  *
  * 后台准备在单进程内：同一练习包同时只有一个准备任务（preparing Map）；
@@ -25,7 +25,6 @@ import { cropPhoto, normalizePhoto, type Box } from '../media/images.js';
 import { audit } from '../services/eventLog.js';
 import { getEvidence, evidenceSource } from '../services/evidenceService.js';
 import { getPractice } from './practiceService.js';
-import { getV2Settings, type PaperLocation } from './settingsService.js';
 
 // ---------- 快照形状（手机据此排版） ----------
 
@@ -84,13 +83,6 @@ function rowOf(packetId: string): SnapshotRow | undefined {
 export function normalizeQuestionNumber(raw: string): string {
   const normalized = raw.trim().replace(/^[（(第]+/, '').replace(/[.．、。:：)）题]+$/, '');
   return normalized || raw;
-}
-
-function fallbackNote(paperLocation: PaperLocation, questionNumber: string): string {
-  const number = normalizeQuestionNumber(questionNumber);
-  if (paperLocation === 'school') return `对照原卷第 ${number} 题`;
-  if (paperLocation === 'home') return `回家后对照原卷第 ${number} 题`;
-  return `对照原卷第 ${number} 题（原卷不在手边就回家再对）`;
 }
 
 /** coach 的诊断对象：有复盘取学生确认的归纳与错因；没有则 possibleCause=null。 */
@@ -189,14 +181,15 @@ export async function maskedQuestionCrop(source: Buffer, evidence: Evidence): Pr
 }
 
 function buildSnapshot(
-  packetId: string, week: string, practiceSlot: string, preparedAt: string,
+  packetId: string, week: string, preparedAt: string,
   items: PrintSnapshotItem[], answerSheet: PrintAnswerEntry[],
 ): PrintSnapshot {
   const ordered = [...items].sort((a, b) => a.position - b.position);
   return {
     packetId, week, preparedAt,
     cover: {
-      title: '本周练习', practiceSlot, rules: [...COVER_RULES],
+      // 保留字符串字段以兼容既有快照协议；网页封面只留实际做题日期的填写处。
+      title: '本周练习', practiceSlot: '', rules: [...COVER_RULES],
       itemList: ordered.map(item => ({ shortId: item.shortId, sourceLabel: '原题' })),
     },
     items: ordered,
@@ -212,7 +205,6 @@ async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
   try {
     const detail = getPractice(packetId);
     if (!detail) throw new Error('练习包不存在');
-    const settings = getV2Settings();
 
     // 续做：snapshot_json 里已有的部分进度（同形状、只含已完成题）直接沿用。
     const row = rowOf(packetId)!;
@@ -297,15 +289,15 @@ async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
         hint1: coaching?.hints[0] ?? null,
         hint2: coaching?.hints[1] ?? null,
         answer,
-        fallbackNote: fallbackNote(settings.paperLocation, evidence.questionNumber),
+        fallbackNote: '对照原卷查看解析',
       });
 
       // 每题完成立即落部分进度：重启续做不重做已完成题。
       db.prepare('UPDATE v2_print_snapshot SET progress_done = ?, snapshot_json = ? WHERE packet_id = ?')
-        .run(items.length, JSON.stringify(buildSnapshot(packetId, detail.week, detail.practiceSlot ?? settings.practiceSlot, preparedAt, items, answerSheet)), packetId);
+        .run(items.length, JSON.stringify(buildSnapshot(packetId, detail.week, preparedAt, items, answerSheet)), packetId);
     }
 
-    const final = buildSnapshot(packetId, detail.week, detail.practiceSlot ?? settings.practiceSlot, preparedAt, items, answerSheet);
+    const final = buildSnapshot(packetId, detail.week, preparedAt, items, answerSheet);
     // 收尾一个事务：快照 ready + 包 generated（generated_at 仅首次）+ scheduled 题转 packet_generated。
     db.exec('BEGIN');
     try {

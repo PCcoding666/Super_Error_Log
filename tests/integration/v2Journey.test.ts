@@ -23,7 +23,7 @@ import type { MobileRecognitionService } from '../../src/mobile/service.js';
 import { createV2Router } from '../../src/v2/router.js';
 
 const PAIRING = 't5b-shared-token-0123456789';
-const FALLBACK_NOTE_SCHOOL = /^对照原卷第 \S+ 题$/;
+const FALLBACK_NOTE = '对照原卷查看解析';
 const DAY_MS = 86400000;
 
 const roots: string[] = [];
@@ -417,7 +417,7 @@ describe('T5b 端到端串联：学生的一周', () => {
     expect(snapshot.packetId).toBe(practice.id);
     expect(snapshot.week).toBe(isoWeekKey(new Date()));
     expect(typeof snapshot.preparedAt).toBe('string');
-    expect(snapshot.cover).toMatchObject({ title: '本周练习', practiceSlot: '周三晚自习' });
+    expect(snapshot.cover).toMatchObject({ title: '本周练习', practiceSlot: '' });
     expect(snapshot.cover.rules).toEqual(['不看答案，独立做', '卡住先看一级提示，再看二级', '做完打勾，写上做题日期']);
     expect(snapshot.cover.itemList).toHaveLength(3);
     expect(snapshot.cover.itemList[0]).toMatchObject({ shortId: item1.shortId, sourceLabel: '原题' });
@@ -445,7 +445,7 @@ describe('T5b 端到端串联：学生的一周', () => {
       shortId: item1.shortId, hint1: '一级提示：先移项', hint2: '二级提示：两边同时减 y',
       answer: { text: 'x = 1 - y', source: 'ai', label: 'AI 参考，未经老师核验' },
     });
-    expect(snapshot.answerSheet[0]!.fallbackNote).toMatch(FALLBACK_NOTE_SCHOOL);
+    expect(snapshot.answerSheet[0]!.fallbackNote).toBe(FALLBACK_NOTE);
     // 题2有原卷参考答案 → paper 优先于 coach。
     expect(snapshot.answerSheet[1]!.answer).toEqual({ text: 'x = (1-y)/2', source: 'paper', label: '原卷参考答案' });
 

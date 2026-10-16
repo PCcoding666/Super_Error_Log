@@ -10,7 +10,7 @@ import { RateLimiter } from '../../src/mobile/rateLimit.js';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-invite-browser-'));
 const registry = StudentRegistry.open(root);
-const students = [0, 1].map(() => registry.createStudent().studentId);
+const students = [registry.createStudent().studentId, registry.createStudent('admin').studentId];
 const codes = students.map(id => registry.issueInvitation(id).code);
 const reloginCodes = students.map(id => registry.issueInvitation(id).code);
 const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_STUDENT_WORKER_FAKE: '1' } });

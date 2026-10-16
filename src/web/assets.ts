@@ -112,6 +112,16 @@ main p,main li{max-width:32em}
 .list a.row,.list .row{display:flex;gap:var(--s-3);align-items:center;padding:var(--s-4) 0;text-decoration:none;color:inherit;min-height:56px}
 .list .row-text{flex:1;min-width:0}
 .list .row-block{display:block}
+.settings-page{--bar-h:0px}
+.settings-list{margin:var(--s-4) 0 0;padding:0}
+.settings-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s-2) var(--s-4);min-height:56px;padding:var(--s-2) 0;border-bottom:1px solid var(--line)}
+.settings-row dd{margin:0 0 0 auto;max-width:100%;color:var(--muted);text-align:right}
+.settings-connection{display:flex;align-items:center;gap:var(--s-2)}
+.settings-connection .link-btn{margin:0;min-height:var(--tap)}
+.settings-link{display:flex;align-items:center;justify-content:space-between;gap:var(--s-4);min-height:56px;padding:var(--s-2) 0;border-bottom:1px solid var(--line);text-decoration:none;color:inherit}
+.settings-logout{margin:var(--s-5) 0}
+.settings-logout .link-btn{min-height:var(--tap);padding:0;margin:0;color:var(--red)}
+.settings-logout .hint{margin:var(--s-1) 0}
 .flush{margin:0}
 .pre{white-space:pre-wrap}
 .eyebrow{font-size:var(--fs-2);color:var(--muted);margin:var(--s-1) 0 0;line-height:var(--lh-tight)}
