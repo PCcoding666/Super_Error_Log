@@ -167,7 +167,7 @@ describe('PWA 外壳：manifest、图标、Service Worker、离线页（无学�
     const response = await fetch(`${env.base}/s/manifest.webmanifest`);
     expect(response.headers.get('content-type')).toContain('application/manifest+json');
     const manifest = await response.json() as Record<string, unknown>;
-    expect(manifest).toMatchObject({ display: 'standalone', orientation: 'portrait', start_url: '/s/', scope: '/s/', theme_color: '#F2F3F7' });
+    expect(manifest).toMatchObject({ display: 'standalone', orientation: 'portrait', start_url: '/s/', scope: '/s/', theme_color: '#F2F2F7' });
     expect((manifest.icons as Array<{ sizes: string }>).map(icon => icon.sizes)).toEqual(['192x192', '512x512', '512x512']);
     const icon = Buffer.from(await (await fetch(`${env.base}/s/assets/apple-touch-icon.png`)).arrayBuffer());
     expect(await sharp(icon).metadata()).toMatchObject({ format: 'png', width: 180, height: 180 });
