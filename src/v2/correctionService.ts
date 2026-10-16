@@ -5,6 +5,7 @@
  * 规则 3 由校验层强制：不许把学生原作的错误"改对"（改动字符数 ≤ 原文 50% 且 ≤ 20）。
  * 只对 v2 来源的题服务；不走 Web 的 saveEvidence。instruction 与修改文字只存库、不进日志。
  */
+import { categoryForItem } from '../classification/itemCategories.js';
 import { getCorrectionProvider } from '../ai/index.js';
 import { validateCorrectionChanges, validateEvidence, type CorrectionChange, type CorrectionProposalResult, type Evidence } from '../ai/evidence.js';
 import type { CorrectionProvider } from '../ai/provider.js';
@@ -141,7 +142,7 @@ function cardOf(itemId: string): V2WeekItem {
      WHERE ei.id = ?`,
   ).get(itemId) as { id: string; short_id: string | null; subject: string | null; knowledge_tags: string; text_excerpt: string | null; status: V2WeekItem['status']; confidence_badge: string | null; job_id: string };
   return {
-    id: row.id, shortId: row.short_id, subject: row.subject,
+    id: row.id, shortId: row.short_id, ...categoryForItem(row.id),
     knowledgeTags: JSON.parse(row.knowledge_tags) as string[], questionExcerpt: row.text_excerpt,
     badge: row.confidence_badge === 'low' ? 'low' : 'ok', status: row.status,
     cropUrl: `/v2/items/${row.id}/crop`, jobId: row.job_id,

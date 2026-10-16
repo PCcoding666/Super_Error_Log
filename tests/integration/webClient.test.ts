@@ -457,7 +457,7 @@ describe('错题页学科切换', () => {
     expect(await browser.text('/s/items')).toContain(`/s/items/${ids[1]}`);
     const empty = await browser.text('/s/items?subject=' + encodeURIComponent('化学'));
     expect(empty).not.toContain('data-testid="item-card"');
-    expect(empty).toContain('这周还没有化学错题');
+    expect(empty).toContain('这个年级还没有化学错题');
     const unknown = await browser.text('/s/items?subject=' + encodeURIComponent('未分类'));
     expect(unknown).toContain(`/s/items/${ids[2]}`);
     expect(unknown).not.toContain(`/s/items/${ids[0]}`);
@@ -468,7 +468,7 @@ describe('错题页学科切换', () => {
     await browser.get('/s/items?subject=' + encodeURIComponent('物理'));
     db.prepare('UPDATE v2_photo SET registered_at=?').run('2020-01-01T00:00:00Z');
     const backlog = await browser.text('/s/items');
-    expect(backlog).toContain('以前没练完的（1）');
+    expect(backlog).toContain('（1 道）');
     expect(backlog).toContain(`/s/items/${ids[1]}`);
     expect(backlog).not.toContain(`/s/items/${ids[0]}`);
     expect(backlog).not.toContain(`/s/items/${ids[2]}`);
@@ -519,7 +519,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
       expect(await browser.text('/s/photos')).not.toContain('已新增 2 道错题');
       const questions = (await env.service.getJob(added.jobId)).questions.map(q => q.id);
       expect((await browser.post(`/s/photos/${added.jobId}/select`, { questionIds: questions })).status).toBe(303);
-      await waitFor(async () => (await env.service.getJob(added.jobId)).questions.every(q => q.status === 'ready'));
+      await waitFor(async () => { const job = await env.service.getJob(added.jobId); return job.status === 'completed' && job.questions.every(q => q.status === 'ready'); });
     }
     const photos = await browser.text('/s/photos');
     expect(photos).toContain('已新增 2 道错题');
@@ -1058,5 +1058,54 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
     const tiny = await photo('#f0d0c8', 120);
     const { displayImage } = await import('../../src/web/images.js');
     expect(await displayImage(tiny, 'big')).toBe(tiny);
+  });
+});
+
+describe('年级、学科、章节分类', () => {
+  async function categoryFixture() {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    expect((await uploadPhoto(browser, await photo('#fa8080'))).status).toBe(200);
+    await waitFor(async () => { await browser.get('/s/items'); return (getDb().prepare('SELECT COUNT(*) AS n FROM error_item').get() as {n:number}).n === 3; });
+    const rows = getDb().prepare('SELECT id FROM error_item ORDER BY item_index').all() as {id:string}[];
+    return { browser, rows };
+  }
+
+  it('edits only one item and keeps knowledge points as detail rather than a fourth classification', async () => {
+    const { browser, rows } = await categoryFixture();
+    const id = rows[0]!.id;
+    const before = getDb().prepare('SELECT * FROM error_item WHERE id=?').get(id);
+    const response = await browser.post(`/s/items/${id}/category`, { grade: '初二', subject: '物理', chapter: '力与运动' });
+    expect(response.status).toBe(303);
+    expect(await browser.visibleText(`/s/items/${id}`)).toContain('初二 · 物理 · 力与运动');
+    expect(getDb().prepare('SELECT * FROM error_item WHERE id=?').get(id)).toEqual(before);
+    expect(await browser.visibleText(`/s/items/${rows[1]!.id}`)).toContain('初三 · 数学 · 二次函数');
+    expect((await browser.post(`/s/items/${id}/category`, { grade: '大学', subject: '物理', chapter: '力' })).status).toBe(400);
+    expect(await browser.visibleText(`/s/items/${id}`)).toContain('初二 · 物理 · 力与运动');
+  });
+
+  it('selects the union of whole chapters including older items and hands the exact set to practice selection', async () => {
+    const { browser, rows } = await categoryFixture();
+    for (const [index, row] of rows.entries()) {
+      expect((await browser.post(`/s/items/${row.id}/category`, { grade: '初三', subject: '数学', chapter: index < 2 ? '一元二次方程' : '二次函数' })).status).toBe(303);
+    }
+    getDb().prepare("UPDATE v2_photo SET registered_at='2025-01-01T00:00:00Z'").run();
+    const response = await browser.post('/s/items/select', { grade: '初三', subject: '数学', chapters: ['一元二次方程', '二次函数'] });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    const selected = [...html.matchAll(/<input[^>]*name="itemIds"[^>]*>/g)].filter(match => /checked/.test(match[0])).map(match => /value="([^"]+)"/.exec(match[0])![1]);
+    expect(selected.sort()).toEqual(rows.map(row => row.id).sort());
+    const empty = await browser.post('/s/items/select', { grade: '初二', subject: '数学', chapters: ['一元二次方程'] });
+    expect(empty.status).toBe(400);
+  });
+
+  it('settings saves the student grade for future questions without moving existing classifications', async () => {
+    const { browser, rows } = await categoryFixture();
+    expect((await browser.post('/s/settings/grade', { grade: '初一' })).status).toBe(303);
+    try {
+      expect(await browser.text('/s/settings')).toContain('value="初一" selected');
+      expect(await browser.visibleText(`/s/items/${rows[0]!.id}`)).toContain('初三 · 数学');
+    } finally { getDb().prepare("UPDATE student_profile SET grade='初三'").run(); }
   });
 });

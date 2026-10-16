@@ -3,6 +3,7 @@
  * 只做登记与映射：不复制图片（storage_path 指向手机任务目录里的规范化原图，裁图现算），不调用模型。
  * 整个任务的写入放在一个事务里；任何一步失败整体回滚并记录 bridge_error（fail-closed）。
  */
+import { readItemCategory } from '../classification/itemCategories.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { validateEvidence } from '../ai/evidence.js';
@@ -155,6 +156,7 @@ export function bridgeJob(jobId: string, mobileDataDir: string): void {
         .run(itemId, JSON.stringify(content), JSON.stringify(question.verification ?? null), badgeOf(question), now());
       db.prepare('INSERT INTO mobile_item_link (item_id, job_id, question_id, question_revision, selected_by_student) VALUES (?,?,?,?,?)')
         .run(itemId, jobId, question.id, question.revision, question.selectedByStudent === true ? 1 : 0);
+      readItemCategory(db, photo.student_id, itemId);
     }
 
     if (batchId) assignShortIds(batchId);

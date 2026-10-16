@@ -50,6 +50,9 @@ button,a,label,summary{touch-action:manipulation}
 .top a{display:inline-flex;align-items:center;gap:6px;min-height:var(--tap);min-width:var(--tap);justify-content:center;padding:0 var(--s-2);text-decoration:none;font-size:var(--fs-2);font-weight:600;border-radius:var(--r-pill)}
 .top .nav-icon{width:20px;height:20px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .top .settings-icon{width:19px;height:19px}
+.category-filter{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.category-filter select{width:auto;flex:1;min-width:88px;min-height:44px}
+.chapter-group>.choice{margin:0}.chapter-group details{margin:0}.chapter-group summary{min-height:44px;padding-top:12px}
 .top .subject-switch{position:relative;margin:0 auto 0 0;min-width:0;max-width:calc(100% - 100px);color:var(--accent)}
 .subject-switch>summary{display:flex;align-items:center;gap:4px;list-style:none;padding:0 var(--s-2);min-height:var(--tap);font-size:var(--fs-2);border-radius:var(--r-pill)}
 .subject-switch>summary::-webkit-details-marker{display:none}

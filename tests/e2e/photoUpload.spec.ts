@@ -97,6 +97,9 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   await expect(page.getByTestId('item-card')).toHaveCount(7);
   const numbers = await page.getByTestId('item-card').locator('.meta-line.muted').allTextContents();
   for (let n = 1; n <= 7; n++) expect(numbers.join('\n')).toContain(`M-${String(n).padStart(2, '0')}`);
+  for (const group of await page.locator('.chapter-group details').all()) {
+    if (!(await group.getAttribute('open'))) await group.locator('summary').click();
+  }
   await page.getByTestId('item-card').last().click();
   await expect(page.getByTestId('question-text')).toHaveText('求 x 的值。');
   await page.goto(gateway.base + '/s/');
