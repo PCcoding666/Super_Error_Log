@@ -1,3 +1,5 @@
+import { CLASSIFICATION_SCHEMA_SQL } from './classificationSchema.js';
+
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS student_profile (
   id TEXT PRIMARY KEY,
@@ -279,4 +281,5 @@ CREATE TABLE IF NOT EXISTS v2_print_snapshot (
   created_at TEXT NOT NULL,
   ready_at TEXT
 );
+${CLASSIFICATION_SCHEMA_SQL}
 `;
