@@ -430,6 +430,51 @@ describe('勾出做错的题：没批改的页由学生勾，勾了才精读', (
   });
 });
 
+describe('错题页学科切换', () => {
+  it('筛选当前题目、数量和历史题目，记住选择并保留旧学科与未分类入口', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent', { agree: 'yes' });
+    const upload = await uploadPhoto(browser, await photo('#d34040'));
+    expect(upload.status).toBe(200);
+    const { jobId } = await upload.json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
+    await browser.get('/s/items'); // Bridge synthetic recognition into learning records.
+    const db = getDb();
+    const ids = (db.prepare('SELECT item_id FROM mobile_item_link ORDER BY item_id').all() as { item_id: string }[]).map(row => row.item_id);
+    expect(ids).toHaveLength(3);
+    db.prepare('UPDATE error_item SET subject=? WHERE id=?').run('物理', ids[1]!);
+    db.prepare('UPDATE error_item SET subject=NULL WHERE id=?').run(ids[2]!);
+    db.prepare("UPDATE evidence_record SET confidence_badge='low' WHERE item_id=?").run(ids[0]!);
+    const physics = await browser.text('/s/items?subject=' + encodeURIComponent('物理'));
+    expect(physics).toContain(`/s/items/${ids[1]}`);
+    expect(physics).not.toContain(`/s/items/${ids[0]}`);
+    expect(physics).not.toContain(`/s/items/${ids[2]}`);
+    expect(physics).toContain('1 道');
+    expect(physics).not.toContain('AI 可能认错了字');
+    expect(physics).toContain('切换学科');
+    expect(physics).not.toMatch(/<h[12][^>]*>物理<\/h[12]>/);
+    expect(await browser.text('/s/items')).toContain(`/s/items/${ids[1]}`);
+    const empty = await browser.text('/s/items?subject=' + encodeURIComponent('化学'));
+    expect(empty).not.toContain('data-testid="item-card"');
+    expect(empty).toContain('这周还没有化学错题');
+    const unknown = await browser.text('/s/items?subject=' + encodeURIComponent('未分类'));
+    expect(unknown).toContain(`/s/items/${ids[2]}`);
+    expect(unknown).not.toContain(`/s/items/${ids[0]}`);
+    db.prepare('UPDATE error_item SET subject=? WHERE id=?').run('英语', ids[2]!);
+    expect(await browser.text('/s/items?subject=' + encodeURIComponent('英语'))).toContain(`/s/items/${ids[2]}`);
+    const invalid = await browser.text('/s/items?subject=not-a-subject');
+    expect(invalid).not.toContain('not-a-subject');
+    await browser.get('/s/items?subject=' + encodeURIComponent('物理'));
+    db.prepare('UPDATE v2_photo SET registered_at=?').run('2020-01-01T00:00:00Z');
+    const backlog = await browser.text('/s/items');
+    expect(backlog).toContain('以前没练完的（1）');
+    expect(backlog).toContain(`/s/items/${ids[1]}`);
+    expect(backlog).not.toContain(`/s/items/${ids[0]}`);
+    expect(backlog).not.toContain(`/s/items/${ids[2]}`);
+  });
+});
+
 describe('一周的闭环：选题 → 说说为什么错（学生自己提交）→ 打印 → 录结果', () => {
   for (const marked of [true, false]) it(`5 道练习生成后补充 2 道（${marked ? '自动识别' : '学生勾选'}），快照、题号、进度及已有做题记录不变`, async () => {
     const env = await setup();
