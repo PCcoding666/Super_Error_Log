@@ -530,7 +530,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     throw new NotFound();
   };
 
-  const itemsPage = async (request: Request, error?: string): Promise<ReactNode> => {
+  const itemsPage = async (request: Request, response: Response, error?: string): Promise<ReactNode> => {
     const state = await loadToday(ctx, request);
     const library = getWeek(ctx.mobileDataDir, true);
     const all = [...library.items, ...library.backlog];
@@ -540,6 +540,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const requested = str(request.method === 'POST' ? request.body?.subject : request.query.subject);
     const remembered = readCookies(request)[COOKIE.itemsSubject] ?? '';
     const subject = [requested, remembered, ...all.filter(item => item.grade === grade).map(item => item.subject), ...subjects].find(value => value && subjects.includes(value)) ?? '数学';
+    setCookie(request, response, COOKIE.itemsSubject, subject, null);
     const matches = (item: V2WeekItem): boolean => item.grade === grade && item.subject === subject;
     return ItemsPage({ items: library.items.filter(matches), backlog: library.backlog.filter(matches),
       category: { grade, subject, subjects }, anyPhoto: state.week.photos.length > 0,
@@ -548,9 +549,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       flash: {err:error} });
   };
   r.get('/items', page(async (request, response) => {
-    const subject = str(request.query.subject);
-    if (subject && subject.length <= 100) setCookie(request, response, COOKIE.itemsSubject, subject, null);
-    render(response, await itemsPage(request));
+    render(response, await itemsPage(request, response));
   }));
 
   r.post('/items/select', form, page(async (request, response) => {
@@ -559,7 +558,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const library = getWeek(ctx.mobileDataDir, true);
     const selected = [...library.items, ...library.backlog].filter(item => item.grade === grade && item.subject === subject && chapters.has(item.chapter ?? '未分类'));
     if (!isGrade(grade) || selected.length === 0) {
-      render(response, await itemsPage(request, '请至少选择一个有错题的章节。'), 400); return;
+      render(response, await itemsPage(request, response, '请至少选择一个有错题的章节。'), 400); return;
     }
     const recommend = recommendPractice(ctx.mobileDataDir);
     const eligible = new Set([...recommend.recommended, ...recommend.others].map(item => item.id));

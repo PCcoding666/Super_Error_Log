@@ -9,7 +9,7 @@
  *   - 请求头白名单重建：过滤用户带来的 sel_device、authorization 与转发头；注入只有父进程知道的内部
  *     sel_device 令牌、真实 IP 与账号身份标签 x-sel-internal-account-role（只是元数据，来自注册表，
  *     浏览器带来的同名头一律丢弃）。原始 Host 保留。
- *   - 响应 Set-Cookie 只放行业务 cookie（sel_consent/sel_photos/sel_skip/sel_a2hs/sel_items_subject），
+ *   - 响应 Set-Cookie 只放行业务 cookie（见 BUSINESS_COOKIES），
  *     绝不把内部 sel_device 或 sel_student 发给浏览器；含学生数据的响应一律 no-store。
  *   - 请求体流式转发（不解析 multipart）；有限超时；客户端断连取消上游请求（POST 不自动重放）。
  */

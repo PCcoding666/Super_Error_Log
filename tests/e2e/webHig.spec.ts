@@ -77,6 +77,38 @@ test('根导航切换页面；本周安排支持模态焦点、关闭和窄屏�
 
 test.describe('网页渐进增强', () => {
   test.use({ javaScriptEnabled: false });
+  test('错题学科切换无需脚本，返回列表记住选择且窄屏大字不溢出', async ({ page, request }, testInfo) => {
+    await connect(page, request);
+    await page.getByTestId('tab-items').click();
+    const switcher = page.getByTestId('subject-switch');
+    await expect(switcher).toContainText('数学');
+    const left = await switcher.boundingBox();
+    const right = await page.getByTestId('settings-link').boundingBox();
+    expect(left!.x + left!.width).toBeLessThan(right!.x);
+    await switcher.click();
+    await page.getByRole('navigation', { name: '选择学科' }).getByRole('link', { name: '物理' }).click();
+    await expect(switcher).toContainText('物理');
+    await expect(page.getByRole('heading', { name: '错题本', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '物理', exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('item-card')).toHaveCount(0);
+    await expect(page.getByText('这个年级还没有物理错题', { exact: true })).toBeVisible();
+    await page.getByTestId('tab-today').click();
+    await page.getByTestId('tab-items').click();
+    await expect(switcher).toContainText('物理');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.screenshot({ path: testInfo.outputPath('items-subject-dark.png') });
+    await page.setViewportSize({ width: 320, height: 740 });
+    // addStyleTag waits for a load handler that cannot run with page scripts disabled.
+    await page.evaluate(() => document.documentElement.style.setProperty('font-size', '200%', 'important'));
+    await switcher.click();
+    const chemistry = page.getByRole('navigation', { name: '选择学科' }).getByRole('link', { name: '化学' });
+    await expect(chemistry).toBeInViewport();
+    expect((await chemistry.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+    await page.screenshot({ path: testInfo.outputPath('items-subject-menu-large.png') });
+    await chemistry.click();
+    await expect(switcher).toContainText('化学');
+  });
   test('无脚本可以展开完整安排并切换根页面', async ({ page, request }) => {
     await connect(page, request);
     const details = page.locator('[data-week-sheet]');

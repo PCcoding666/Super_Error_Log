@@ -32,13 +32,15 @@ export function ItemCard(props: { item: V2WeekItem; href?: string; extra?: React
     : <div className="row" data-testid="item-card">{body}</div>;
 }
 
-export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel; category?: { grade: string; subject: string; subjects: string[] }; removed?: string | null; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
-  const low = props.items.filter(item => item.badge === 'low').length;
-  if (props.category) {
+export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel; category: { grade: string; subject: string; subjects: string[] }; removed?: string | null; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
     const { grade, subject, subjects } = props.category;
     const all = [...props.items, ...props.backlog];
     const chapters = [...new Set(all.map(item => item.chapter ?? '未分类'))];
-    return <Page title="错题本" tab="items" bar={props.bar} flash={props.flash}>
+    const subjectSwitch = <details className="subject-switch">
+      <summary aria-label={`切换学科，当前${subject}`} data-testid="subject-switch"><span>{subject}</span><svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary>
+      <nav className="subject-options" aria-label="选择学科">{subjects.map(name => <a key={name} href={`/s/items?${new URLSearchParams({grade, subject:name})}`} aria-current={name === subject ? 'page' : undefined}><span>{name}</span>{name === subject ? <span aria-hidden="true">✓</span> : null}</a>)}</nav>
+    </details>;
+    return <Page title="错题本" tab="items" bar={props.bar} flash={props.flash} topLeading={subjectSwitch}>
       <h1>错题本</h1>
       <form method="get" action="/s/items" className="category-filter">
         <label htmlFor="library-grade">年级</label>
@@ -46,7 +48,6 @@ export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; a
         <input type="hidden" name="subject" value={subject} />
         <button className="link-btn" type="submit">查看</button>
       </form>
-      <nav className="subject-tabs" aria-label="选择学科">{subjects.map(name => <a key={name} href={`/s/items?${new URLSearchParams({grade, subject:name})}`} aria-current={name === subject ? 'page' : undefined}>{name}</a>)}</nav>
       {props.removed ? <div className="flash flash-row" role="status" data-testid="removed"><span>已移出这道题</span><form method="post" action={`/s/items/${props.removed}/restore`}><button className="link-btn" type="submit">撤销</button></form></div> : null}
       <p className="lead muted">{grade} · {subject} · {all.length} 道</p>
       {all.length ? <form method="post" action="/s/items/select" id="chapter-form">
@@ -63,37 +64,6 @@ export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; a
         <p className="hint">下一步可逐题调整，再加入练习；每次练习最多 8 道。</p>
       </form> : <section className="card"><p>这个年级还没有{subject}错题</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="btn" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '去勾' : '去拍'}</a></section>}
     </Page>;
-  }
-
-  return (
-    <Page title="这周的错题" tab="items" bar={props.bar} flash={props.flash}>
-      <h1>这周的错题</h1>
-      {props.removed ? (
-        <div className="flash flash-row" role="status" data-testid="removed">
-          <span>已移出这道题</span>
-          <form method="post" action={`/s/items/${props.removed}/restore`} className="inline-form"><button className="link-btn" type="submit" data-key="item-restore">撤销</button></form>
-        </div>
-      ) : null}
-      {props.items.length > 0 ? (
-        <>
-          <p className="lead muted">{props.items.length} 道{low > 0 ? ` · 其中 ${low} 道 AI 可能认错了字` : ''}</p>
-          <section className="card"><ul className="list">{props.items.map(item => <li key={item.id}><ItemCard item={item} href={`/s/items/${item.id}`} /></li>)}</ul></section>
-        </>
-      ) : props.anyPhoto && props.finding ? (
-        <section className="card"><p>AI 还在找题，找好了会出现在这里</p></section>
-      ) : props.anyPhoto ? (
-        <section className="card"><p>{quoted('这几张卷子里没找到做错的题。没批改的页可以去「勾出做错的题」自己勾。')}</p><a className="btn" href="/s/photos" data-key="empty-pick">去勾</a></section>
-      ) : (
-        <section className="card"><p>这周还没拍卷子</p><a className="btn" href="/s/capture" data-key="empty-capture">去拍</a></section>
-      )}
-      {props.backlog.length > 0 ? (
-        <details>
-          <summary data-key="items-backlog">以前没练完的（{props.backlog.length}）</summary>
-          <section className="card"><ul className="list">{props.backlog.map(item => <li key={item.id}><ItemCard item={item} href={`/s/items/${item.id}`} /></li>)}</ul></section>
-        </details>
-      ) : null}
-    </Page>
-  );
 }
 
 const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };

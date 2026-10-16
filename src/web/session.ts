@@ -6,7 +6,7 @@
  * - sel_photos：本周照片的两个本机标记（这页没有做错的题 / 移除这张），只存识别任务 ID。
  * - sel_skip：本次打开里点过的「跳过」（会话 cookie，关掉网页即失效，对应 App 的「只记在内存里」）。
  * - sel_a2hs：看过「放到主屏幕」提示。
- * - sel_items_subject：本次浏览错题本选择的学科。
+ * - sel_items_subject：本次浏览错题页选择的学科（会话 cookie）。
  * 不存任何题目、照片、回答或名字。
  */
 import type { Request, Response } from 'express';

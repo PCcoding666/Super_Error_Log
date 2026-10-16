@@ -323,9 +323,11 @@ describe('学生网关登录与退出', () => {
     expect(consent.status).toBe(303);
     expect(browser.cookies.has('sel_consent')).toBe(true);
     expect(browser.lastSetCookie.every(line => !line.startsWith('sel_device='))).toBe(true);
-    await browser.request('/s/items?subject=' + encodeURIComponent('物理'));
+    // The real invitation gateway must pass the preference in both directions.
+    const physics = await browser.get('/s/items?subject=' + encodeURIComponent('物理'));
+    expect(await physics.text()).toContain('切换学科，当前物理');
     expect(browser.cookies.has('sel_items_subject')).toBe(true);
-    expect(await (await browser.request('/s/items')).text()).toContain('物理');
+    expect(await (await browser.get('/s/items')).text()).toContain('切换学科，当前物理');
     const logout = await browser.post('/s/logout');
     expect(logout.status).toBe(303);
     expect(browser.cookies.has(SESSION_COOKIE)).toBe(false);
