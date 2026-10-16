@@ -83,6 +83,7 @@ export interface PageProps {
   /** 顶部左边的返回：缺省回到「今天」；首页传 null。label 只写去哪（「今天」），箭头由外壳画。 */
   back?: { href: string; label: string } | null;
   showSettings?: boolean;
+  topLeading?: ReactNode;
   bar?: BarModel | null;
   barExtra?: ReactNode;
   /** 自己写的底栏（练习纸单独页：开着 / 关掉脚本时主按钮不同），代替 bar。 */
@@ -125,6 +126,7 @@ export function Page(props: PageProps): ReactNode {
       </head>
       <body className={bodyClass} data-poll={props.pollSeconds ? String(props.pollSeconds) : undefined}>
         <header className={`top${back ? '' : ' top-root'}`}>
+          {props.topLeading}
           {back ? <a href={back.href} data-testid="back-link" data-key="back"><svg className="nav-icon chev-left" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m14 5-7 7 7 7" /></svg>{back.label}</a> : null}
           {props.showSettings === false ? <span /> : <a href="/s/settings" data-testid="settings-link" data-key="settings"><svg className="nav-icon settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 3-.7 2.4-2 .9-2.2-.6-2 3.4 1.6 1.8v2.2l-1.6 1.8 2 3.4 2.2-.6 2 .9L9 21h4l.7-2.4 2-.9 2.2.6 2-3.4-1.6-1.8v-2.2l1.6-1.8-2-3.4-2.2.6-2-.9L13 3Z" /><circle cx="11" cy="12" r="3" /></svg>设置</a>}
         </header>

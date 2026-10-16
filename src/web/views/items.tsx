@@ -30,10 +30,18 @@ export function ItemCard(props: { item: V2WeekItem; href?: string; extra?: React
     : <div className="row" data-testid="item-card">{body}</div>;
 }
 
-export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel; removed?: string | null; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
+export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; subjects?: string[]; selectedSubject?: string; anyPhoto: boolean; finding: boolean; bar: BarModel; removed?: string | null; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
   const low = props.items.filter(item => item.badge === 'low').length;
+  const subjectSwitch = props.selectedSubject ? (
+    <details className="subject-switch">
+      <summary aria-label={`切换学科，当前${props.selectedSubject}`} data-testid="subject-switch"><span>{props.selectedSubject}</span><svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary>
+      <nav className="subject-options" aria-label="选择学科">
+        {props.subjects?.map(subject => <a key={subject} href={`/s/items?subject=${encodeURIComponent(subject)}`} aria-current={subject === props.selectedSubject ? 'page' : undefined}><span>{subject}</span>{subject === props.selectedSubject ? <span aria-hidden="true">✓</span> : null}</a>)}
+      </nav>
+    </details>
+  ) : null;
   return (
-    <Page title="这周的错题" tab="items" bar={props.bar} flash={props.flash}>
+    <Page title="这周的错题" tab="items" bar={props.bar} flash={props.flash} topLeading={subjectSwitch}>
       <h1>这周的错题</h1>
       {props.removed ? (
         <div className="flash flash-row" role="status" data-testid="removed">
@@ -46,6 +54,13 @@ export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; a
           <p className="lead muted">{props.items.length} 道{low > 0 ? ` · 其中 ${low} 道 AI 可能认错了字` : ''}</p>
           <section className="card"><ul className="list">{props.items.map(item => <li key={item.id}><ItemCard item={item} href={`/s/items/${item.id}`} /></li>)}</ul></section>
         </>
+      ) : props.selectedSubject ? (
+        <section className="card">
+          <p>{`这周还没有${props.selectedSubject}错题`}</p>
+          {props.finding ? <p className="muted">AI 还在找题，稍后可以再来看看</p> : null}
+          {!props.anyPhoto ? <p className="muted">这周还没拍卷子</p> : null}
+          <a className="btn" href={props.anyPhoto ? '/s/photos' : '/s/capture'} data-key={props.anyPhoto ? 'empty-pick' : 'empty-capture'}>{props.anyPhoto ? '去勾' : '去拍'}</a>
+        </section>
       ) : props.anyPhoto && props.finding ? (
         <section className="card"><p>AI 还在找题，找好了会出现在这里</p></section>
       ) : props.anyPhoto ? (

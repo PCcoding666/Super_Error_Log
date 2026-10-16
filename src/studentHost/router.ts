@@ -9,7 +9,7 @@
  *   - 请求头白名单重建：过滤用户带来的 sel_device、authorization 与转发头；注入只有父进程知道的内部
  *     sel_device 令牌、真实 IP 与账号身份标签 x-sel-internal-account-role（只是元数据，来自注册表，
  *     浏览器带来的同名头一律丢弃）。原始 Host 保留。
- *   - 响应 Set-Cookie 只放行业务 cookie（sel_consent/sel_photos/sel_skip/sel_a2hs），
+ *   - 响应 Set-Cookie 只放行业务 cookie（见 BUSINESS_COOKIES），
  *     绝不把内部 sel_device 或 sel_student 发给浏览器；含学生数据的响应一律 no-store。
  *   - 请求体流式转发（不解析 multipart）；有限超时；客户端断连取消上游请求（POST 不自动重放）。
  */
@@ -30,7 +30,7 @@ import { HostErrorPage, LoginPage } from './loginView.js';
 export const SESSION_COOKIE = 'sel_student';
 
 /** 允许在浏览器与 worker 之间来回的业务 cookie（不含 sel_device / sel_student）。 */
-const BUSINESS_COOKIES: ReadonlySet<string> = new Set([COOKIE.consent, COOKIE.photos, COOKIE.skip, COOKIE.a2hs, TRAIL_COOKIE]);
+const BUSINESS_COOKIES: ReadonlySet<string> = new Set([COOKIE.consent, COOKIE.photos, COOKIE.skip, COOKIE.a2hs, COOKIE.itemsSubject, TRAIL_COOKIE]);
 
 const SECURITY_HEADERS: Record<string, string> = {
   'content-security-policy': "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",

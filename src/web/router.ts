@@ -13,6 +13,8 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { sendHtml } from '../views/render.js';
 import { getDb } from '../db/connection.js';
+import { readCatalog } from '../classification/catalog.js';
+import { requireProfile } from '../services/studentService.js';
 import { audit } from '../services/eventLog.js';
 import { isHeif } from '../media/images.js';
 import { getQuestionCrop } from '../services/evidenceService.js';
@@ -529,10 +531,21 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   r.get('/items', page(async (request, response) => {
     const state = await loadToday(ctx, request);
+    // Include legacy labels so older/uncategorized records never disappear from the switcher.
+    const subjectOf = (item: V2WeekItem): string => item.subject?.trim() || '未分类';
+    const allItems = [...state.week.items, ...state.week.backlog];
+    const subjects = [...new Set([
+      ...readCatalog(getDb(), requireProfile().id).subjects.map(subject => subject.name),
+      ...allItems.map(subjectOf),
+    ])];
+    const requested = str(request.query.subject);
+    const remembered = readCookies(request)[COOKIE.itemsSubject] ?? '';
+    const selectedSubject = [requested, remembered, ...allItems.map(subjectOf), ...subjects].find(subject => subjects.includes(subject));
+    if (selectedSubject) setCookie(request, response, COOKIE.itemsSubject, selectedSubject, null);
     const removed = ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null;
     const current = state.plan.currentIndex === null ? null : state.plan.steps[state.plan.currentIndex];
     const bar = current?.kind === 'choose' ? nextStepBar(state, null) : { caption: '', primary: null, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] };
-    render(response, ItemsPage({ items: state.week.items, backlog: state.week.backlog, anyPhoto: state.week.photos.length > 0, finding: state.photos.some(photo => photo.state === 'finding'), bar, removed }));
+    render(response, ItemsPage({ items: state.week.items.filter(item => subjectOf(item) === selectedSubject), backlog: state.week.backlog.filter(item => subjectOf(item) === selectedSubject), subjects, selectedSubject, anyPhoto: state.week.photos.length > 0, finding: state.photos.some(photo => photo.state === 'finding'), bar, removed }));
   }));
 
   const detail = (itemId: string, error?: string | null): ReactNode => {
