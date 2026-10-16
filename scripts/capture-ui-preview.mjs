@@ -12,7 +12,7 @@ if (!['127.0.0.1', 'localhost'].includes(base.hostname)) throw new Error('Captur
 const out = path.resolve(value('--out'));
 await mkdir(out, { recursive: true });
 const manifest = await (await fetch(new URL('manifest.json', base))).json();
-if (manifest.generator !== 'sel-ui-preview-v1' || !manifest.syntheticDataOnly) throw new Error('Expected a generated synthetic comparison.');
+if (!['sel-ui-preview-v1', 'sel-ui-preview-v2'].includes(manifest.generator) || !manifest.syntheticDataOnly) throw new Error('Expected a generated synthetic comparison.');
 const browser = await chromium.launch({ headless: true });
 const issues = [];
 const captures = [];
@@ -39,6 +39,17 @@ try {
       const name = `${version}-${scenario.id}.png`;
       await page.screenshot({ path: path.join(out, name), animations: 'disabled' });
       captures.push({ scenario: scenario.id, title: scenario.title, version, file: name });
+    }
+  }
+  if (manifest.sources.after.sheetEnhancementIncluded) {
+    for (const appearance of ['light', 'dark']) {
+      await page.goto(new URL(`after/today.html?theme=${appearance}`, base).href);
+      await ready(page);
+      await page.getByTestId('week-plan-open').click();
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('dialog')).opacity === '1');
+      const name = `after-week-plan-${appearance}.png`;
+      await page.screenshot({ path: path.join(out, name), animations: 'disabled' });
+      captures.push({ scenario: 'week-plan', title: `本周安排 · ${appearance === 'light' ? '浅色' : '深色'}`, version: 'after', file: name });
     }
   }
   const report = await browser.newPage({ viewport: { width: 1200, height: 1100 }, deviceScaleFactor: 1, locale: 'zh-CN' });

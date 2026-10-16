@@ -3,9 +3,9 @@
 生成器分别加载两个 checkout 的真实 React SSR 组件和 `STYLES`，使用同一组合成数学题、照片与固定日期 `2026-10-17T02:00:00.000Z`。不启动应用、不读取数据库，也不向生产服务发请求。旧版 DOM 来自旧版组件。
 
 ```sh
-# 协调者先准备 4317be8 的独立、干净 checkout，并让它使用现有 node_modules。
+# HIG 重设计与上一轮 e279827 的干净 checkout 对比。原始 4317be8 快照仍保留。
 npm run ui:preview -- \
-  --before /workspace/Super_Error_Log-ui-before \
+  --before /workspace/Super_Error_Log-ui-v1 \
   --after /workspace/Super_Error_Log \
   --out /workspace/Super_Error_Log-ui-preview/dist
 
@@ -25,7 +25,7 @@ npm run ui:preview:capture -- \
   --out /workspace/Super_Error_Log-ui-preview/dist/evidence
 ```
 
-产物包括 26 张页面截图、浅深色并排对照图、两段 WebM 录屏和 `evidence/index.html` 图集。捕获脚本只接受本机静态预览地址，检查没有页面错误或外部/非 GET 请求。重新运行生成器会清除旧输出，因此应先生成页面，再捕获证据。
+产物包括 30 张页面截图（含新版浅深色安排面板）、浅深色并排对照图、两段 WebM 录屏和 `evidence/index.html` 图集。捕获脚本只接受本机静态预览地址，检查没有页面错误或外部/非 GET 请求。重新运行生成器会清除旧输出，因此应先生成页面，再捕获证据。
 
 `dist/index.html` 是对照入口，`before/`、`after/` 是各版本实际页面，`assets/` 是公共的演示适配器及合成 SVG。每个版本的 `assets/` 保留自己的 CSS 和图标。可独立复制整个输出目录静态托管；不要只复制入口页面。
 
@@ -42,7 +42,7 @@ npm run ui:preview:capture -- \
 - 照片输入可显示本机选择的图片和文件名，使用临时 blob URL；不上传、不转码、不识别、不保存。继续时显示预设的合成识别状态。
 - 录音、打印、结果记录、题目修改等未实现的服务动作会显示明确提示，不发送请求。
 
-导出时移除原应用 `CLIENT_SCRIPT`、Service Worker 入口、manifest、自动刷新与语音 endpoint；表单 action 改为页内锚点，应用链接改为本地场景或提示。CSP 禁止网络连接与表单提交，只有独立演示适配器执行浏览器交互。实际 SSR 后仅做这些静态资源/行为适配和同一份预览提示，不重新拼装应用内容。深色/浅色 CSS 变体只替换来源 CSS 的系统外观 media 条件。
+导出时移除原应用 `CLIENT_SCRIPT`、Service Worker 入口、manifest、自动刷新与语音 endpoint；表单 action 改为页内锚点，应用链接改为本地场景或提示。CSP 禁止网络连接与表单提交，独立演示适配器负责服务动作演示；新版还复用实际网页的 `UI_SHEET_SCRIPT`，仅处理本周安排的 dialog、焦点和关闭手势，无网络及存储。旧版不补造这个交互。实际 SSR 后仅做这些静态资源/行为适配和同一份预览提示，不重新拼装应用内容。深色/浅色 CSS 变体只替换来源 CSS 的系统外观 media 条件。
 
 生成器检查 HTML 的本地链接及素材是否存在，拒绝输出应用脚本、自动刷新或外部资源。生成步骤在干净临时 cwd、最小 mock 环境中启动两个独立进程，避免读取 checkout 下的 `.env`，并确认没有写入临时数据。输出只含合成页面、CSS、图标、SVG、演示脚本和来源信息，不含应用源码。
 
