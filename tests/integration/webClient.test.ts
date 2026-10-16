@@ -564,6 +564,8 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const print = await browser.text(`/s/print/${packetId}`);
     expect(print).toContain('做完再看');
     expect(print).toContain('做题日期：________');
+    expect(print).not.toContain('什么时候做：');
+    expect(print).toContain('对照原卷查看解析');
     expect(print).toContain('打印好了，回到今天');
     const sheet = await browser.get(`/s/print/${packetId}/sheet`);
     expect(sheet.status).toBe(200);

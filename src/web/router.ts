@@ -889,17 +889,17 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const accountRoleOf = (response: Response): AccountRole | null =>
     options.studentHostWorker === true && isAccountRole(response.locals.accountRole) ? response.locals.accountRole : null;
 
-  r.get('/settings', page((request, response) => {
-    const settings = getV2Settings();
-    render(response, SettingsPage({ ...settings, saved: request.query.saved === '1', studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response) }));
+  r.get('/settings', page((_request, response) => {
+    render(response, SettingsPage({ studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response) }));
   }));
 
+  // 兼容已打开的旧网页；新设置页不再提供做题时段与原卷位置表单。
   r.post('/settings', form, page((request, response) => {
     const slotChoice = str(request.body?.practiceSlot);
     const practiceSlot = (slotChoice === '__other' ? str(request.body?.practiceSlotOther) : slotChoice).trim();
     const result = updateV2Settings({ practiceSlot, paperLocation: str(request.body?.paperLocation) });
-    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。', studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response) }), 400); return; }
-    response.redirect(303, '/s/settings?saved=1');
+    if (!result.ok) { failed(response, 'settings_invalid'); render(response, ErrorPage({ title: '设置没有保存', detail: '请重新打开设置页。', reason: result.message }), 400); return; }
+    response.redirect(303, '/s/settings');
   }));
 
   // ---------- 语音转写（同源镜像 /v2/reflections/transcribe：同一校验、同一转写器、同一限流档） ----------

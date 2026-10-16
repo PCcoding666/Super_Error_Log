@@ -259,7 +259,7 @@ describe('T5 打印快照', () => {
     expect(typeof snapshot.preparedAt).toBe('string');
     expect(snapshot.cover).toMatchObject({
       title: '本周练习',
-      practiceSlot: '本周内',
+      practiceSlot: '',
       rules: ['不看答案，独立做', '卡住先看一级提示，再看二级', '做完打勾，写上做题日期'],
     });
     expect(snapshot.cover.itemList).toHaveLength(2);
@@ -330,7 +330,7 @@ describe('T5 打印快照', () => {
     expect(snapshot.items[0]!.stemText).toContain('题干');
   });
 
-  it('RED4 答案三种来源；coach 失败提示为空且 fallbackNote 随 paperLocation 变化；每题恰好 1 次 coach', async () => {
+  it('RED4 答案三种来源；coach 失败提示为空，旧原卷位置设置不影响统一提示；每题恰好 1 次 coach', async () => {
     const coach = new CountingCoach();
     coach.failFor = e => e.questionText.includes('失败题');
     const { base, dataDir, auth } = await setupApp(coach);
@@ -357,20 +357,18 @@ describe('T5 打印快照', () => {
     const failed = sheetOf(items[2]!.id);
     expect(failed).toMatchObject({ hint1: null, hint2: null });
     expect(failed.answer).toMatchObject({ text: null, source: 'none' });
-    // fallbackNote 的题号取该题证据里的 questionNumber（从 coach 调用记录回查，避免夹具编号耦合）。
-    const numberOf = (stemFragment: string): string => coach.calls.find(call => call.evidence.questionText.includes(stemFragment))!.evidence.questionNumber;
-    expect(failed.fallbackNote).toBe(`对照原卷第 ${numberOf('失败题：求 y。')} 题`);
+    expect(failed.fallbackNote).toBe('对照原卷查看解析');
 
-    // home / varies：措辞随设置变化。
+    // 已存的 home / varies 偏好同样不改变答案页提示。
     await setPaperLocation(base, auth, 'home');
     const practiceB = await makePractice(base, auth, [items[3]!.id]);
     const snapshotB = await prepareReady(base, auth, practiceB.id);
-    expect(snapshotB.answerSheet[0]!.fallbackNote).toBe(`回家后对照原卷第 ${numberOf('失败题：求 z。')} 题`);
+    expect(snapshotB.answerSheet[0]!.fallbackNote).toBe('对照原卷查看解析');
 
     await setPaperLocation(base, auth, 'varies');
     const practiceC = await makePractice(base, auth, [items[4]!.id]);
     const snapshotC = await prepareReady(base, auth, practiceC.id);
-    expect(snapshotC.answerSheet[0]!.fallbackNote).toBe(`对照原卷第 ${numberOf('失败题：求 w。')} 题（原卷不在手边就回家再对）`);
+    expect(snapshotC.answerSheet[0]!.fallbackNote).toBe('对照原卷查看解析');
 
     // coach 每题恰好 1 次、不重试（含失败题）。
     expect(coach.calls).toHaveLength(5);
@@ -559,7 +557,7 @@ describe('T5 打印快照', () => {
     expect(byItemId.get(diagramMissingLocated.id)).toMatchObject({ mode: 'crop', needsGlance: false, glanceReason: null });
   });
 
-  it('T5R2-F2 fallbackNote 题号规整：带标点/括号的题号印成"第 N 题"', async () => {
+  it('答案页提示不依赖原卷题号，封面不预设练习时间', async () => {
     const { base, dataDir, auth } = await setupApp();
     const items = await bridgeItems(base, auth, dataDir, [
       { tags: ['知识点A'], number: '2.' }, { tags: ['知识点B'], number: '（3）' },
@@ -569,8 +567,9 @@ describe('T5 打印快照', () => {
     const practice = await makePractice(base, auth, items.map(item => item.id));
     const snapshot = await prepareReady(base, auth, practice.id);
     expect(snapshot.answerSheet.map(entry => entry.fallbackNote)).toEqual([
-      '对照原卷第 2 题', '对照原卷第 3 题', '对照原卷第 4 题', '对照原卷第 13 题',
+      '对照原卷查看解析', '对照原卷查看解析', '对照原卷查看解析', '对照原卷查看解析',
     ]);
+    expect(snapshot.cover.practiceSlot).toBe('');
     // 证据里的题号保持原值，不改。
     const row = getDb().prepare('SELECT content_json FROM evidence_record WHERE item_id = ?').get(items[0]!.id) as { content_json: string };
     expect((JSON.parse(row.content_json) as { questionNumber: string }).questionNumber).toBe('2.');

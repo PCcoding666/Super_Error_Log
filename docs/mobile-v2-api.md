@@ -277,7 +277,7 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
   "preparedAt": "2026-09-30T08:21:00.000Z",
   "cover": {
     "title": "本周练习",
-    "practiceSlot": "周三晚自习",
+    "practiceSlot": "",
     "rules": ["不看答案，独立做", "卡住先看一级提示，再看二级", "做完打勾，写上做题日期"],
     "itemList": [{ "shortId": "M-12", "sourceLabel": "原题" }]
   },
@@ -304,7 +304,7 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
       "hint1": "一级提示：先移项",
       "hint2": "二级提示：两边同时减 y",
       "answer": { "text": "x = 1 - y", "source": "ai", "label": "AI 参考，未经老师核验" },
-      "fallbackNote": "对照原卷第 1 题"
+      "fallbackNote": "对照原卷查看解析"
     }
   ]
 }
@@ -312,7 +312,8 @@ ID 形态：题目 `itm_<16位hex>`，练习包 `pkt_<16位hex>`，复盘 `dia_<
 
 - `mode`：`text` 印 `stemText`（`requiresDiagram` 时另附 `diagramMedia` 图片）；徽标 `low` 或需要图示但无图示区域时印遮白裁图 `cropMedia`（题面上的作答/订正/批注/参考答案已遮白）。`crop` 模式下 `stemText` 同样是识别出的题干文字（不是 `null`）——截图有问题时学生还有文字，文字有问题时还有截图；排版时在文字旁标注"AI 对这题没把握，以截图为准"。
 - `answer.source`：`paper`（原卷参考答案，`label` `原卷参考答案`）/ `ai`（coach 答案，`label` `AI 参考，未经老师核验`）/ `none`（`text`/`label` 为 `null`）。
-- `fallbackNote` 随设置里 `paperLocation`：`school` → `对照原卷第 N 题`；`home` → `回家后对照原卷第 N 题`；`varies` → `对照原卷第 N 题（原卷不在手边就回家再对）`。`N` 是规整后的题号：去掉首尾空白、结尾的 `.．、。:：)）` 与"题"、开头的 `(（` 与"第"（如 `"2."`→`第 2 题`、`"（3）"`→`第 3 题`）；规整后为空则用原值。
+- 新快照的 `fallbackNote` 统一为 `对照原卷查看解析`，不再读取历史 `paperLocation` 偏好。
+- 新快照的 `cover.practiceSlot` 保留字符串字段并置为空字符串，封面不预设练习时间。网页版对旧快照也不展示预设时间，并使用统一的答案页提示；已冻结的快照数据不改写。
 - `needsGlance` 见 §6。
 
 ### 3.14 `GET /v2/practice/:id/print/media/:name` — 快照图片

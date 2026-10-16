@@ -360,6 +360,15 @@ describe('登录限速', () => {
 
 // ---------- 网关 + 真实 worker：隔离、代理、生命周期 ----------
 
+function savedPracticeSlot(registry: StudentRegistry, studentId: string): string {
+  const db = new DatabaseSync(path.join(registry.studentDir(studentId), 'app.db'), { readOnly: true });
+  try {
+    return (db.prepare('SELECT practice_slot FROM v2_setting').get() as { practice_slot: string }).practice_slot;
+  } finally {
+    db.close();
+  }
+}
+
 describe('学生 worker 隔离与代理', () => {
   it('a rejected fix form preserves the session voice context and can transcribe again', async () => {
     const env = await setupHost();
@@ -473,9 +482,9 @@ describe('学生 worker 隔离与代理', () => {
     expect(saveA.status).toBe(303);
     const saveB = await b.browser.post('/s/settings', { practiceSlot: '乙晚饭后', paperLocation: 'school' });
     expect(saveB.status).toBe(303);
-    expect(await (await a.browser.get('/s/settings')).text()).toContain('甲放学后');
-    expect(await (await a.browser.get('/s/settings')).text()).not.toContain('乙晚饭后');
-    expect(await (await b.browser.get('/s/settings')).text()).toContain('乙晚饭后');
+    // 旧提交入口仍兼容，但精简后的设置页不展示这些历史偏好。
+    expect(savedPracticeSlot(env.registry, a.studentId)).toBe('甲放学后');
+    expect(savedPracticeSlot(env.registry, b.studentId)).toBe('乙晚饭后');
     // 独立进程 ×2、独立目录、各自 app.db
     expect(env.pool.size).toBe(2);
     for (const { studentId } of [a, b]) {
@@ -557,7 +566,7 @@ describe('学生 worker 隔离与代理', () => {
     // A 下一次请求自动重拉，设置还在（独立目录落盘）
     const page = await a.browser.get('/s/settings');
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('甲放学后');
+    expect(savedPracticeSlot(env.registry, a.studentId)).toBe('甲放学后');
     expect(env.pool.isRunning(a.studentId)).toBe(true);
   }, 120_000);
 
@@ -591,7 +600,7 @@ describe('学生 worker 隔离与代理', () => {
     const browser = new Browser(base2);
     const page = await browser.request('/s/settings', { headers: { cookie: `${SESSION_COOKIE}=${oldToken}` } });
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('甲放学后');
+    expect(savedPracticeSlot(registry2, a.studentId)).toBe('甲放学后');
   }, 120_000);
 
   it('worker 启动失败：503 页面，不路由到别人', async () => {
