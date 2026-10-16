@@ -19,7 +19,7 @@ export interface BarModel {
   secondary: BarButton[];
 }
 
-/** look：primary = 实心主按钮；outline = 描边按钮（没有主按钮时的次要操作）；alt = 文字按钮（主按钮上方的一行次要操作）。 */
+/** look：primary = 实心主按钮；outline = 低强调按钮（保留既有参数名）；alt = 主按钮上方的文字操作。 */
 export function ButtonView(props: { button: BarButton; primary: boolean; look?: 'primary' | 'outline' | 'alt' }): ReactNode {
   const { button, primary } = props;
   const look = props.look ?? (primary ? 'primary' : 'outline');
@@ -52,16 +52,12 @@ export function ButtonView(props: { button: BarButton; primary: boolean; look?: 
   return <button className={`${cls}${button.waiting ? ' waiting' : ''}`} type="button" disabled aria-label={button.title} data-testid={testId} data-key={button.key}><Phrased text={button.title} /></button>;
 }
 
-/**
- * 底部固定的下一步按钮（设计稿 §4.0）。从上到下：说明小字（第几步、大约几分钟）→ 次要操作（一行文字按钮）→ 主按钮。
- * 主按钮永远在最下面、整行宽，每一屏同一个位置；次要操作不和它抢（不是同样的实心大按钮），文字一行放得下。
- * 没有主按钮的状态（做完了、周中、随时可以看）：次要操作是整行的描边按钮，竖着排。
- */
-export function NextBar(props: { model: BarModel; extra?: ReactNode }): ReactNode {
+/** 当前任务操作。任务页固定在底部；根页面内联到任务内容，避免与全局导航竞争。 */
+export function NextBar(props: { model: BarModel; extra?: ReactNode; inline?: boolean }): ReactNode {
   const { model } = props;
   const hasPrimary = model.primary !== null;
   return (
-    <nav className="next-bar" data-testid="next-step-bar" aria-label="下一步" data-live="bar">
+    <nav className={`next-bar${props.inline ? ' next-bar-inline' : ''}`} data-testid="next-step-bar" aria-label="下一步" data-live={props.inline ? undefined : "bar"}>
       <div className="inner">
         {model.caption || model.captionAfterPrint ? (
           <p className="caption bar-caption" data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
@@ -82,6 +78,8 @@ export function NextBar(props: { model: BarModel; extra?: ReactNode }): ReactNod
 
 export interface PageProps {
   title: string;
+  /** 三个常驻内容入口；任务页保留返回和当前任务操作。 */
+  tab?: 'today' | 'items' | 'practices';
   /** 顶部左边的返回：缺省回到「今天」；首页传 null。label 只写去哪（「今天」），箭头由外壳画。 */
   back?: { href: string; label: string } | null;
   showSettings?: boolean;
@@ -98,7 +96,8 @@ export interface PageProps {
 
 /** 学生网页版的页面外壳：PWA 头信息、顶部返回、内容、底部下一步按钮。没有任何第三方资源。 */
 export function Page(props: PageProps): ReactNode {
-  const back = props.back === undefined ? { href: '/s/', label: '今天' } : props.back;
+  const back = props.tab ? null : props.back === undefined ? { href: '/s/', label: '今天' } : props.back;
+  const bodyClass = [props.bodyClass, props.tab ? 'has-tabbar' : ''].filter(Boolean).join(' ') || undefined;
   return (
     <html lang="zh-CN">
       <head>
@@ -124,24 +123,38 @@ export function Page(props: PageProps): ReactNode {
         {/* defer：不挡首屏；只在有 / 没有脚本时出现的东西由样式的 scripting 媒体特性决定，不等脚本 */}
         <script src={JS_PATH} defer></script>
       </head>
-      <body className={props.bodyClass} data-poll={props.pollSeconds ? String(props.pollSeconds) : undefined}>
-        <header className="top">
-          {back ? <a href={back.href} data-testid="back-link" data-key="back"><span className="chev-left" aria-hidden="true">‹</span>{back.label}</a> : <span />}
-          {props.showSettings === false ? <span /> : <a href="/s/settings" data-testid="settings-link" data-key="settings">设置</a>}
+      <body className={bodyClass} data-poll={props.pollSeconds ? String(props.pollSeconds) : undefined}>
+        <header className={`top${back ? '' : ' top-root'}`}>
+          {back ? <a href={back.href} data-testid="back-link" data-key="back"><svg className="nav-icon chev-left" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m14 5-7 7 7 7" /></svg>{back.label}</a> : null}
+          {props.showSettings === false ? <span /> : <a href="/s/settings" data-testid="settings-link" data-key="settings"><svg className="nav-icon settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 3-.7 2.4-2 .9-2.2-.6-2 3.4 1.6 1.8v2.2l-1.6 1.8 2 3.4 2.2-.6 2 .9L9 21h4l.7-2.4 2-.9 2.2.6 2-3.4-1.6-1.8v-2.2l1.6-1.8-2-3.4-2.2.6-2-.9L13 3Z" /><circle cx="11" cy="12" r="3" /></svg>设置</a>}
         </header>
         <main>
           {props.flash?.ok ? <div className="flash" role="status" data-testid="flash-ok">{props.flash.ok}</div> : null}
           {props.flash?.err ? <div className="flash err" role="alert" data-testid="flash-err">{props.flash.err}</div> : null}
           {props.children}
-          {/* 视口很矮时（例如页面缩放到 200%）底栏只留按钮，底栏上那行说明挪到内容最后（两处同一句话，任何时候只显示一处）。 */}
-          {props.bar ? <p className="caption-flow small muted" data-caption-flow="" data-live="caption" data-after={props.bar.captionAfterPrint}>{props.bar.caption}</p> : null}
-          {/* 局部更新换上来的状态由这一行读给读屏软件（换掉的区域本身是新节点，读屏不一定会念） */}
+          {props.tab && props.bar ? <NextBar model={props.bar} extra={props.barExtra} inline /> : null}
+          {!props.tab && props.bar ? <p className="caption-flow small muted" data-caption-flow="" data-live="caption" data-after={props.bar.captionAfterPrint}>{props.bar.caption}</p> : null}
           {props.pollSeconds ? <p className="visually-hidden" aria-live="polite" data-announcer="" /> : null}
         </main>
-        {props.bar ? <NextBar model={props.bar} extra={props.barExtra} /> : props.after ?? null}
+        {!props.tab && props.bar ? <NextBar model={props.bar} extra={props.barExtra} /> : props.after ?? null}
+        {props.tab ? <TabBar selected={props.tab} /> : null}
       </body>
     </html>
   );
+}
+
+/** 原创矢量图标；链接采用真实地址，浏览器返回和无脚本访问都保持可用。 */
+function TabBar(props: { selected: NonNullable<PageProps['tab']> }): ReactNode {
+  const tabs = [
+    { key: 'today' as const, href: '/s/', label: '今天', path: 'M7 3v3m10-3v3M4 10h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Zm3 10 3 3 5-5' },
+    { key: 'items' as const, href: '/s/items', label: '错题', path: 'M5 3h13a1 1 0 0 1 1 1v17H6a2 2 0 0 1-2-2V5a2 2 0 0 1 1-2Zm-1 14h15M8 7h7M8 11h5' },
+    { key: 'practices' as const, href: '/s/practices', label: '练习', path: 'M7 4h11a1 1 0 0 1 1 1v16H6V5a1 1 0 0 1 1-1Zm2-1h7v4H9Zm0 9 2 2 4-4m-6 7h6' },
+  ];
+  return <nav className="tab-bar" aria-label="主要导航" data-testid="root-tabs">
+    {tabs.map(tab => <a key={tab.key} href={tab.href} aria-current={props.selected === tab.key ? 'page' : undefined} data-testid={`tab-${tab.key}`} data-key={`tab-${tab.key}`}>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d={tab.path} /></svg><span>{tab.label}</span>
+    </a>)}
+  </nav>;
 }
 
 /** 错误句式（§4.0）：先说发生了什么，再说东西还在不在；服务器原文放进「具体原因」折叠行。 */

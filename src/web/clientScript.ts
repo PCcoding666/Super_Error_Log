@@ -1,4 +1,5 @@
 import { PHOTO_UPLOAD_SCRIPT } from './photoUpload.js';
+import { UI_SHEET_SCRIPT } from './sheet.js';
 
 /**
  * 学生网页版的浏览器脚本（发布包只含 dist/，所以以字符串形式随 tsc 编译进去，由 /s/assets/app.<hash>.js 下发）。
@@ -71,6 +72,8 @@ document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&
 
 /* ---------- 每块内容的小功能 ---------- */
 function enhance(scope){
+/* Sheet 与内容一起局部更新；节点自身标记确保不重复绑定。 */
+${UI_SHEET_SCRIPT}
 /* 底栏多高，内容下面就留多高（最后一行能滚到底栏上面）；主按钮换字时放动效 */
 /* 只有开着脚本才能用的主按钮（练习纸单独页的「打印」）：脚本在的时候它才是主按钮 */
 within(scope,'[data-js-primary]').forEach(function(el){el.setAttribute('data-testid','next-step-primary')});
@@ -192,6 +195,8 @@ function startElapsed(){if(!ticking&&$('[data-elapsed]')){tickElapsed();ticking=
    换上来的：变了的那几行浮上来、进度条往前走、主按钮换字滑进来、读屏念一句；然后报一次 update（一次状态变化记一次）。
    页面不再需要等（新的一页没有 data-poll）就停。看不见的时候不取；断网时退后再试，并在等待行后面说一声。 */
 function sig(el){var c=el.cloneNode(true);$$('[data-elapsed]',c).forEach(function(e){e.textContent='';e.setAttribute('data-elapsed','')});
+/* 渐进增强的临时状态不属于服务器内容，避免每次轮询都重建同一份安排。 */
+within(c,'[data-week-sheet]').forEach(function(details){details.removeAttribute('data-sheet-ready');details.open=false;var summary=$('summary',details);if(summary){summary.removeAttribute('aria-haspopup');summary.removeAttribute('aria-expanded')}});
 within(c,'*').forEach(function(e){e.removeAttribute('style');if(e.classList)Array.prototype.slice.call(e.classList).forEach(function(k){if(/^m-/.test(k))e.classList.remove(k)})});
 $$('[data-wait-net]',c).forEach(function(e){e.classList.add('hidden')});return c.innerHTML}
 function swapRegion(old,nu){var keepImgs={};$$('img',old).forEach(function(i){keepImgs[i.getAttribute('src')]=i});
@@ -212,7 +217,7 @@ function startPolling(){var body=document.body;var every=Number(body.getAttribut
 var timer=null,busy=false,misses=0,request=null,active=true,generation=0;
 function later(ms){clearTimeout(timer);timer=setTimeout(pollOnce,ms)}
 function net(down){$$('[data-wait-net]').forEach(function(e){e.classList.toggle('hidden',!down)})}
-function apply(doc){if($('form[data-upload][data-upload-pending]'))return 'later';var olds=$$('[data-live]'),pairs=[],a=document.activeElement;
+function apply(doc){if($('form[data-upload][data-upload-pending]')||document.body.classList.contains('sheet-is-open'))return 'later';var olds=$$('[data-live]'),pairs=[],a=document.activeElement;
 for(var i=0;i<olds.length;i++){var name=olds[i].getAttribute('data-live');var nu=doc.querySelector('[data-live="'+name+'"]');if(!nu)return 'reload';if(sig(olds[i])!==sig(nu))pairs.push([olds[i],nu])}
 if(doc.querySelectorAll('[data-live]').length!==olds.length)return 'reload';
 if(!pairs.length)return 'same';

@@ -677,10 +677,9 @@ function PracticeLink(props: { practice: PracticeRow; showIds: boolean }): React
 
 /** 以前的练习：最近一份单独一张卡，下面列出它的题；更早的每份一行（题号写在行里）。只用现有数据。 */
 export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
-  const bar: BarModel = { caption: '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
   const [latest, ...older] = props.practices;
   return (
-    <Page title="以前的练习" bar={bar}>
+    <Page title="以前的练习" tab="practices">
       <h1>以前的练习</h1>
       {!latest ? <section className="card"><p>还没有练习。选了题就会出现在这里。</p></section> : (
         <>

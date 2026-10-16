@@ -258,6 +258,41 @@ describe('voice request and microphone lifecycle', () => {
 });
 
 describe('poll request lifecycle', () => {
+  it('keeps unchanged home content, defers swaps while the weekly sheet is open, and enhances updated steps', async () => {
+    const html = `<!doctype html><meta charset="utf-8"><body data-poll="3"><div data-live="today" data-announce="waiting task">
+      <h2 id="current-task">waiting task</h2><nav class="next-bar next-bar-inline">next task</nav>
+      <details data-week-sheet><summary aria-controls="week-plan-content">本周安排</summary>
+        <div id="week-plan-content" data-sheet-content><h2 id="week-plan-title">本周安排</h2><p>waiting steps</p></div>
+      </details></div><p data-announcer aria-live="polite"></p></body>`;
+    const page = await boot(html);
+    const original = await page.locator('[data-live=today]').elementHandle();
+    await page.clock.fastForward(3_001);
+    await respond(page, 200, html);
+    await page.clock.runFor(50);
+    expect(await original!.evaluate(element => element.isConnected)).toBe(true);
+
+    await page.locator('summary').click();
+    expect(await page.getByRole('dialog').isVisible()).toBe(true);
+    const updated = html.replace(' data-poll="3"', '').replaceAll('waiting task', 'ready task').replace('waiting steps', 'ready steps');
+    await page.clock.fastForward(3_001);
+    await respond(page, 200, updated, false, 1);
+    await page.clock.runFor(50);
+    expect(await page.locator('#current-task').textContent()).toBe('waiting task');
+    expect(await page.getByRole('dialog').textContent()).toContain('waiting steps');
+
+    await page.keyboard.press('Escape');
+    await page.clock.runFor(250);
+    await page.clock.fastForward(3_001);
+    await respond(page, 200, updated, false, 2);
+    await page.waitForFunction(() => !document.body.hasAttribute('data-poll'));
+    expect(await page.locator('#current-task').textContent()).toBe('ready task');
+    expect(await page.locator('[data-announcer]').textContent()).toContain('ready task');
+    await page.locator('summary').click();
+    expect(await page.getByRole('dialog').textContent()).toContain('ready steps');
+    expect(await page.locator('dialog').count()).toBe(1);
+    expect((await stats(page)).errors).toEqual([]);
+  });
+
   it('uses the current grid and camera labels when a poll completed before album selection', async () => {
     const html = `<!doctype html><body data-poll="3">
       <form data-upload action="/s/capture" data-photo-count="1">

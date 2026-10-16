@@ -33,7 +33,7 @@ export function ItemCard(props: { item: V2WeekItem; href?: string; extra?: React
 export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel; removed?: string | null; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
   const low = props.items.filter(item => item.badge === 'low').length;
   return (
-    <Page title="这周的错题" bar={props.bar} flash={props.flash}>
+    <Page title="这周的错题" tab="items" bar={props.bar} flash={props.flash}>
       <h1>这周的错题</h1>
       {props.removed ? (
         <div className="flash flash-row" role="status" data-testid="removed">

@@ -685,7 +685,7 @@ async function lineReport(page: Page): Promise<{ orphans: string[]; punctuation:
   });
 }
 
-test('页面缩放 200%（Safari「aA」放大：390 宽的屏幕只剩 195×422 CSS px）：没有单字孤行、标点不落行首，底栏不超过视口一半，主按钮整个看得见', async ({ browser }) => {
+test('页面缩放 200%（195×422 CSS px）：没有单字孤行或标点落行首，固定导航不超过半屏，当前操作完整可见', async ({ browser }) => {
   const page = await pairedPage(browser, { viewport: { width: 195, height: 422 }, deviceScaleFactor: 6 });
   await page.goto(`${WEB}/s/practices`);
   const hrefs = await page.getByTestId('practice-row').evaluateAll(rows => rows.map(row => row.getAttribute('href') ?? ''));
@@ -693,11 +693,13 @@ test('页面缩放 200%（Safari「aA」放大：390 宽的屏幕只剩 195×422
   expect(printed).toBeTruthy();
   for (const path of ['/s/', '/s/settings', '/s/choose', `/s/print/${printed}`, `/s/print/${printed}/sheet`, '/s/practices']) {
     await page.goto(`${WEB}${path}`);
+    const inlinePrimary = page.locator('.next-bar-inline [data-testid=next-step-primary]');
+    if (await inlinePrimary.count()) await inlinePrimary.scrollIntoViewIfNeeded();
     const report = await lineReport(page);
     expect(report.orphans, `${path} 单字孤行`).toEqual([]);
     expect(report.punctuation, `${path} 标点落在行首 / 行尾`).toEqual([]);
     const layout = await page.evaluate(() => {
-      const bar = document.querySelector('.next-bar')!.getBoundingClientRect();
+      const bar = document.querySelector('.tab-bar, .next-bar:not(.next-bar-inline)')!.getBoundingClientRect();
       const primary = document.querySelector('[data-testid=next-step-primary]');
       const p = primary ? primary.getBoundingClientRect() : null;
       return { barShare: bar.height / innerHeight, overflow: document.documentElement.scrollWidth - innerWidth, primaryVisible: p ? p.top >= 0 && p.bottom <= innerHeight + 1 : null };
