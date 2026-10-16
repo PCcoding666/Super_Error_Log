@@ -31,7 +31,7 @@ describe('classification schema: additive migration and integrity', () => {
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name);
     expect(tables).toEqual(expect.arrayContaining([
       'learning_stage', 'classification_catalog', 'classification_subject', 'classification_topic',
-      'item_classification', 'item_classification_topic', 'classification_batch', 'classification_task',
+      'item_classification', 'item_classification_topic', 'photo_subject_selection', 'classification_batch', 'classification_task',
     ]));
     expect(db.prepare('SELECT name FROM learning_stage WHERE id=?').get('junior')).toEqual({ name: '初中' });
   });
@@ -125,6 +125,36 @@ describe('classification schema: additive migration and integrity', () => {
     expect(db.prepare(`SELECT s.name AS subject,t.name AS topic FROM item_classification c
       JOIN classification_subject s ON s.id=c.subject_id JOIN item_classification_topic l ON l.item_id=c.item_id
       JOIN classification_topic t ON t.id=l.topic_id`).get()).toEqual({ subject: '我的数学', topic: '方程训练' });
+  });
+
+  it('persists a manual photo subject before any extracted question exists', () => {
+    const db = database();
+    classificationStudent(db, 'a');
+    subject(db);
+    db.exec("INSERT INTO v2_photo (job_id,student_id,registered_at) VALUES ('photo','a','2026-10-16')");
+    db.exec("INSERT INTO photo_subject_selection (job_id,student_id,subject_id) VALUES ('photo','a','math')");
+    db.exec(SCHEMA_SQL);
+    expect(db.prepare('SELECT job_id,student_id,stage_id,subject_id FROM photo_subject_selection').get())
+      .toEqual({ job_id: 'photo', student_id: 'a', stage_id: 'junior', subject_id: 'math' });
+    expect(db.prepare('SELECT count(*) AS n FROM error_item').get()).toEqual({ n: 0 });
+    db.exec("DELETE FROM v2_photo WHERE job_id='photo'");
+    expect(db.prepare('SELECT count(*) AS n FROM photo_subject_selection').get()).toEqual({ n: 0 });
+  });
+
+  it('rejects a photo subject from another student or stage and a NULL photo identity', () => {
+    const db = database();
+    classificationStudent(db, 'a');
+    classificationStudent(db, 'b');
+    subject(db);
+    subject(db, 'b', 'b-math');
+    db.exec("INSERT INTO learning_stage (id,name) VALUES ('senior','高中')");
+    subject(db, 'a', 'senior-math', 'senior');
+    db.exec("INSERT INTO v2_photo (job_id,student_id,registered_at) VALUES ('photo','a','2026-10-16')");
+    const insert = db.prepare('INSERT INTO photo_subject_selection (job_id,student_id,subject_id) VALUES (?,?,?)');
+    expect(() => insert.run('photo', 'a', 'b-math')).toThrow(/FOREIGN KEY/);
+    expect(() => insert.run('photo', 'b', 'b-math')).toThrow(/FOREIGN KEY/);
+    expect(() => insert.run('photo', 'a', 'senior-math')).toThrow(/FOREIGN KEY/);
+    expect(() => insert.run(null, 'a', 'math')).toThrow(/NOT NULL/);
   });
 
   it('persists batch retries and prevents tasks borrowing a different student’s item', () => {

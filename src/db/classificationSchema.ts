@@ -77,6 +77,19 @@ CREATE TABLE IF NOT EXISTS item_classification_topic (
 );
 CREATE INDEX IF NOT EXISTS idx_classification_topic_items ON item_classification_topic(topic_id,item_id);
 
+-- Preserve the student's upload-time choice while asynchronous recognition has not created items yet.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_classification_photo_owner ON v2_photo(job_id,student_id);
+CREATE TABLE IF NOT EXISTS photo_subject_selection (
+  job_id TEXT NOT NULL PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  stage_id TEXT NOT NULL DEFAULT 'junior',
+  subject_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (job_id,student_id) REFERENCES v2_photo(job_id,student_id) ON DELETE CASCADE,
+  FOREIGN KEY (subject_id,student_id,stage_id) REFERENCES classification_subject(id,student_id,stage_id)
+);
+
 -- Persistent bookkeeping for PR5. No historical processing or AI runs during migration.
 CREATE TABLE IF NOT EXISTS classification_batch (
   id TEXT NOT NULL PRIMARY KEY,

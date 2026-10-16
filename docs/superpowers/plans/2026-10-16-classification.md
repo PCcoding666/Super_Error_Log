@@ -43,12 +43,12 @@
 **Interfaces:**
 - Consumes: `SCHEMA_SQL`, `getDb(): DatabaseSync`, `newId(prefix: string): string`, `now(): string`。
 - Produces: `ensureJuniorCatalog(database: DatabaseSync, studentId: string): void` 与 `readCatalog(database: DatabaseSync, studentId: string, stageId?: string): ClassificationCatalog`；目录字段使用 `id/name/standardKey/topics`，不使用展示名作关联键。
-- Produces: `learning_stage`, `classification_catalog`, `classification_subject`, `classification_topic`, `item_classification`, `item_classification_topic`, `classification_batch`, `classification_task`。
+- Produces: `learning_stage`, `classification_catalog`, `classification_subject`, `classification_topic`, `item_classification`, `item_classification_topic`, `photo_subject_selection`, `classification_batch`, `classification_task`。
 
 - [x] Step 1: 先写迁移/约束/目录集成测试，使用内存 SQLite 和合成学生/错题。
 - [x] Step 2: 运行新增测试，确认因分类结构/能力缺失失败。记录到 `/workspace/work/classification/`。
 - [x] Step 3: 实现新增 SQL、初中目录和两个目录函数；初始化只发生一次，不改错题、不回写人工目录调整。
-- [x] Step 4: 新增测试全绿；运行 `SEL_AI_MODE=mock npm run verify`，检查实际结果。最终类型检查/构建、Vitest 833 通过（5 跳过）、Playwright 37 通过（6 跳过）；部署 Python 14 项通过。
+- [x] Step 4: 新增测试全绿；最后完整运行 `SEL_AI_MODE=mock npm run verify` 退出码 0，类型检查/构建、Vitest 835 通过（5 跳过）、Playwright 37 通过（6 跳过）；部署 Python 14 项通过。
 - [ ] Step 5: 单独审查 diff，记录结果；创建 PR 到 `main` 并检查 Actions。
 - [ ] Step 6: 生成白名单发布包与 SHA256；在具备人工迁移发布入口后合并、发布和核验。未上线则明确报告阻塞，不能跳过部署保护。
 
