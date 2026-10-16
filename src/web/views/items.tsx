@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { V2WeekItem } from '../../v2/weekService.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
-import { Page, Problem, quoted, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, VoiceBox, quoted, type BarModel } from './layout.js';
 
 /** 卡片只显示对他有意义的状态（§4.5）。 */
 export function cardStatus(status: string): string | null {
@@ -17,7 +17,7 @@ export function ItemCard(props: { item: V2WeekItem; href?: string; extra?: React
   const status = cardStatus(item.status);
   const body = (
     <span className="row-text">
-      <img className="crop" src={`/s/img/item/${item.id}`} alt={item.shortId ?? '题目裁图'} loading="lazy" />
+      <img className="crop" src={`/s/img/item/${item.id}?s=list`} alt={item.shortId ?? '题目裁图'} loading="lazy" />
       <span className="excerpt">{item.questionExcerpt ?? ''}</span>
       <span className="meta-line muted">{[meta, item.shortId ? `练习纸编号 ${item.shortId}` : ''].filter(Boolean).join(' · ')}</span>
       {item.badge === 'low' ? <span className="meta-line tone-orange">字可能认错了 · 点开看看</span> : null}
@@ -80,7 +80,7 @@ export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView
       <p className="eyebrow">练习纸编号</p>
       <h1>{item.shortId ?? '题目'}</h1>
       {props.error ? <Problem title="没成功" detail={props.error} /> : null}
-      <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full`} alt="整题照片" /></a>
+      <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /></a>
       <p className="hint">整题照片 · 点开可以两指放大</p>
       {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">{quoted('字可能认错了：对照上面的照片看一眼，不对就点「改一下」。')}</p> : null}
       <section className="card">
@@ -136,12 +136,9 @@ export function FixPage(props: { item: V2WeekItem; revision: number; clientReque
         <input type="hidden" name="method" value="keyboard" />
         <label htmlFor="fix-instruction" className="field-label">哪里不对</label>
         <textarea id="fix-instruction" name="instruction" maxLength={200} required defaultValue={props.instruction ?? ''} placeholder="说一句或写一句哪里不对，比如：第二行的 16 应该是 13" />
-        <div className="voice hidden" data-voice-for="fix-instruction" data-endpoint="/s/voice">
-          <button type="button" data-key="voice">点一下开始说</button> <span className="small muted" data-voice-note="" />
-          <span className="small muted">录音会发给通义千问转文字，本应用不保存录音；最多 60 秒，也可以直接打字</span>
-        </div>
+        <VoiceBox target="fix-instruction" />
       </form>
-      <a className="more" href={`/s/items/${item.id}/edit`} data-key="fix-manual">自己动手改<span aria-hidden="true">›</span></a>
+      <a className="more" href={`/s/items/${item.id}/edit`} data-key="fix-manual"><Phrased text="自己动手改" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
     </Page>
   );
 }

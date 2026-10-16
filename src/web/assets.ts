@@ -3,9 +3,9 @@
  * Service Worker、manifest 与图标都以 TypeScript 字符串形式随 tsc 编译进 dist，不放 public/。
  * 脚本只做浏览器必须做的事（上传进度、录音、选题计数、打印、按需显隐）；关掉脚本时每屏照样能用（语音除外）。
  */
+import crypto from 'node:crypto';
 import sharp from 'sharp';
-import { PHOTO_UPLOAD_SCRIPT } from './photoUpload.js';
-import { UI_SHEET_SCRIPT } from './sheet.js';
+import { CLIENT_SCRIPT } from './clientScript.js';
 export { UI_SHEET_SCRIPT } from './sheet.js';
 
 export const APP_NAME = '超级错题本';
@@ -14,8 +14,6 @@ export const THEME_COLOR = '#F2F2F7';
 /** 状态栏跟随页面底色，浏览器边缘与页面衔接。 */
 export const THEME_COLOR_DARK = '#000000';
 export const BACKGROUND_COLOR = '#F2F2F7';
-/** 资源版本：改了样式或脚本就改这个，让浏览器与 Service Worker 换新。 */
-export const ASSET_VERSION = '5';
 
 export const STYLES = `
 /* ---------- HIG 网页适配：系统字体、中性分组底、蓝色交互、实色内容 ----------
@@ -30,7 +28,8 @@ export const STYLES = `
 --lh-text:1.6;--lh-tight:1.4;
 --s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:24px;--s-6:32px;--page-inset:20px;
 --r-1:10px;--r-2:20px;--r-control:14px;--r-pill:999px;
---tap:44px}
+--tap:44px;
+--dur-1:150ms;--dur-2:220ms;--dur-3:300ms;--ease:cubic-bezier(.2,.8,.2,1)}
 @media (prefers-color-scheme:dark){:root{
 --paper:#000000;--card:#1C1C1E;--ink:#F5F5F7;--muted:#AEAEB5;--accent:#64AAFF;--on-teal:#061D37;--mint:#172B44;--line:#38383D;--field:#8C8C94;
 --gray:var(--muted);--blue:var(--accent);--orange:#F2B57C;--green:#79D79B;--red:#FF9FA4;
@@ -38,7 +37,7 @@ export const STYLES = `
 --surface-shadow:none;--bar-shadow:0 3px 20px rgba(0,0,0,.3)}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-padding-bottom:calc(var(--bar-h,200px) + var(--s-5))}
-body{margin:0;background:var(--paper);color:var(--ink);
+body{margin:0;background:var(--paper);color:var(--ink);line-break:strict;
 font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
 font-size:var(--fs-3);line-height:var(--lh-text);font-variant-numeric:tabular-nums;font-kerning:normal;
 padding:env(safe-area-inset-top) 0 calc(var(--bar-h,200px) + var(--s-5))}
@@ -58,7 +57,16 @@ p{margin:var(--s-2) 0}
 p,li{text-wrap:pretty}
 /* 短句（列表项、选项、标签、说明行、标题）按词组断行：字与字之间不断，只在标点、空格处换行，「「相 / 机」」这类拆词不再出现；
    一句太长、没有断点时才在任意处断。长段落照常按字换行（中文排版的惯例），其中的「」引语由 .q 保持在同一行。 */
-main h1,main h2,legend,.field-label,.caption,.choice span,.steps-text li,.meta-line,.row-text,.step-detail{word-break:keep-all;overflow-wrap:anywhere}
+legend,.field-label,.steps-text li,.row-text{word-break:keep-all;overflow-wrap:anywhere}
+/* 小字说明行（科目 · 知识点、状态）：按字断行再平衡成两行，长词（「一元一次方程」）在窄的地方不会被硬拆出一个字 */
+.meta-line{word-break:normal;overflow-wrap:anywhere;text-wrap:balance}
+/* 题干摘录、底栏说明：正常按字断行（keep-all 放不下时会硬拆，把「：」「，」拆到行首），标点规则由 line-break: strict 管 */
+.meta-line.excerpt,.caption,.caption-flow{word-break:normal;overflow-wrap:normal}
+.meta-line.excerpt{text-wrap:wrap}
+/* 卡片标题、清单行的步骤名和说明、按钮、链接：用 Phrased 按词组分段（phrases.ts），段内正常断行，标点不落行首（line-break: strict） */
+/* 大标题只有一行放不下时才换行（页面缩放 200% 时）：按字断再平衡成两行，不会剩一个字（「说说为什么 / 错」→「说说为 / 什么错」） */
+/* 选项文字不用 keep-all（一个词组放不下时会被硬拆出单字）：由 ChoiceText 按词组分成不可拆的小块，再平衡成一到两行 */
+.choice-text{text-wrap:balance;overflow-wrap:anywhere}
 .q{white-space:nowrap}
 main p,main li{max-width:32em}
 .muted{color:var(--muted)}.small{font-size:var(--fs-2)}
@@ -87,7 +95,13 @@ main p,main li{max-width:32em}
 .step-detail{display:block;font-size:var(--fs-2);margin-top:var(--s-1)}
 .step-min{color:var(--muted);white-space:nowrap}
 .step-detail{text-wrap:balance}
-.ph{display:inline-block}
+.ph{display:inline-block;word-break:normal}
+/* 链接后面的「›」贴在最后一个词组里，不单独换到下一行 */
+.chev-i{margin-left:var(--s-1)}
+.sheet-toggle .when-open,.sheet-toggle[aria-expanded=true] .when-closed{display:none}
+.sheet-toggle[aria-expanded=true] .when-open{display:inline}
+/* 底栏那行说明的第二份，平时不显示（视口很矮时才显示，见底栏那一段） */
+.caption-flow{display:none}
 .steps .chev{align-self:center;flex:0 0 auto}
 .chip{display:inline-block;font-size:var(--fs-1);font-weight:600;line-height:var(--lh-tight);padding:1px var(--s-2);border-radius:var(--r-pill);margin-left:var(--s-2);vertical-align:1px;background:var(--mint);color:var(--muted);white-space:nowrap}
 .chip.now{background:color-mix(in srgb,var(--teal) 14%,var(--card));color:var(--teal)}
@@ -144,8 +158,70 @@ textarea.autogrow{min-height:52px;resize:none;field-sizing:content;overflow:hidd
 .voice.hidden{display:none}
 .voice button{font:inherit;font-weight:600;border-radius:var(--r-pill);border:1px solid transparent;background:var(--mint);color:var(--teal);padding:var(--s-2) var(--s-4);min-height:var(--tap);cursor:pointer}
 .voice button.on{background:var(--teal);color:var(--on-teal)}
+.voice .voice-note,.voice .voice-wait{flex-basis:100%}
+.voice .voice-wait:empty{display:none}
+.voice .voice-note+.voice-wait{margin-top:calc(var(--s-2) * -1)}
+.voice .voice-note:empty{display:none}
+.voice button.hidden{display:none}
+/* 开着麦克风：音量条（7 根，按音量分 6 档，只动 transform）+ 计时 */
+.voice-live{display:inline-flex;align-items:center;gap:var(--s-2) var(--s-3);flex-wrap:wrap}
+.voice-live.hidden{display:none}
+.meter{display:inline-flex;align-items:center;gap:3px;height:28px}
+.meter i{display:block;width:4px;height:28px;border-radius:2px;background:var(--teal);transform:scaleY(.12);transition:transform var(--dur-1) var(--ease)}
+.meter[data-level="0"] i{opacity:.45}
+.meter[data-level="0"] i:nth-child(1){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(2){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(3){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(4){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(5){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(6){transform:scaleY(0.12)}
+.meter[data-level="0"] i:nth-child(7){transform:scaleY(0.12)}
+.meter[data-level="1"] i:nth-child(1){transform:scaleY(0.15)}
+.meter[data-level="1"] i:nth-child(2){transform:scaleY(0.24)}
+.meter[data-level="1"] i:nth-child(3){transform:scaleY(0.3)}
+.meter[data-level="1"] i:nth-child(4){transform:scaleY(0.21)}
+.meter[data-level="1"] i:nth-child(5){transform:scaleY(0.27)}
+.meter[data-level="1"] i:nth-child(6){transform:scaleY(0.18)}
+.meter[data-level="1"] i:nth-child(7){transform:scaleY(0.12)}
+.meter[data-level="2"] i:nth-child(1){transform:scaleY(0.25)}
+.meter[data-level="2"] i:nth-child(2){transform:scaleY(0.4)}
+.meter[data-level="2"] i:nth-child(3){transform:scaleY(0.5)}
+.meter[data-level="2"] i:nth-child(4){transform:scaleY(0.35)}
+.meter[data-level="2"] i:nth-child(5){transform:scaleY(0.45)}
+.meter[data-level="2"] i:nth-child(6){transform:scaleY(0.3)}
+.meter[data-level="2"] i:nth-child(7){transform:scaleY(0.2)}
+.meter[data-level="3"] i:nth-child(1){transform:scaleY(0.35)}
+.meter[data-level="3"] i:nth-child(2){transform:scaleY(0.56)}
+.meter[data-level="3"] i:nth-child(3){transform:scaleY(0.7)}
+.meter[data-level="3"] i:nth-child(4){transform:scaleY(0.49)}
+.meter[data-level="3"] i:nth-child(5){transform:scaleY(0.63)}
+.meter[data-level="3"] i:nth-child(6){transform:scaleY(0.42)}
+.meter[data-level="3"] i:nth-child(7){transform:scaleY(0.28)}
+.meter[data-level="4"] i:nth-child(1){transform:scaleY(0.42)}
+.meter[data-level="4"] i:nth-child(2){transform:scaleY(0.68)}
+.meter[data-level="4"] i:nth-child(3){transform:scaleY(0.85)}
+.meter[data-level="4"] i:nth-child(4){transform:scaleY(0.59)}
+.meter[data-level="4"] i:nth-child(5){transform:scaleY(0.77)}
+.meter[data-level="4"] i:nth-child(6){transform:scaleY(0.51)}
+.meter[data-level="4"] i:nth-child(7){transform:scaleY(0.34)}
+.meter[data-level="5"] i:nth-child(1){transform:scaleY(0.5)}
+.meter[data-level="5"] i:nth-child(2){transform:scaleY(0.8)}
+.meter[data-level="5"] i:nth-child(3){transform:scaleY(1)}
+.meter[data-level="5"] i:nth-child(4){transform:scaleY(0.7)}
+.meter[data-level="5"] i:nth-child(5){transform:scaleY(0.9)}
+.meter[data-level="5"] i:nth-child(6){transform:scaleY(0.6)}
+.meter[data-level="5"] i:nth-child(7){transform:scaleY(0.4)}
+.voice-time{font-weight:600;font-variant-numeric:tabular-nums;min-width:2.6em}
+.heard{display:none}
+@media (prefers-reduced-motion:reduce){.meter{display:none}.heard{display:inline}}
 .progress{height:8px;border-radius:var(--r-pill);background:var(--line);overflow:hidden;margin:var(--s-2) 0}
-.progress i{display:block;height:100%;background:var(--teal);width:0}
+.progress i{display:block;height:100%;background:var(--teal);transform-origin:left center;transform:scaleX(0);transition:transform var(--dur-3) var(--ease)}
+.upload-list{list-style:none;padding:0;margin:var(--s-3) 0}
+.upload-item{padding:var(--s-2) 0;border-bottom:1px solid var(--line)}
+.upload-name{font-weight:600;overflow-wrap:anywhere}
+[data-photo-grid] figcaption{overflow-wrap:anywhere}
+label[aria-disabled=true]{opacity:.6;cursor:default}
+.wait-line{color:var(--muted);margin:var(--s-2) 0 0;font-variant-numeric:tabular-nums}
 details{margin:var(--s-3) 0}
 summary{cursor:pointer;font-weight:600;min-height:var(--tap);padding:10px 0;line-height:24px}
 .compare{display:grid;grid-template-columns:1fr;gap:var(--s-2)}
@@ -193,11 +269,53 @@ border-radius:var(--r-control);min-height:52px;min-width:0;padding:var(--s-3) va
 @media (prefers-reduced-transparency:reduce){.next-bar{background:var(--bar-solid);-webkit-backdrop-filter:none;backdrop-filter:none}}
 @media (forced-colors:active){.card,.choice,.btn,.rhythm li.on{border:1px solid CanvasText}.btn.primary,.steps .current{outline:1px solid Highlight}}
 @media (max-width:360px){:root{--page-inset:16px}.card{padding:var(--s-4)}.rhythm li{padding:var(--s-2) 2px}}
+/* 状态变化时的小动效；跨文档跳页保持浏览器原生行为。 */
+/* 很窄的视口（页面缩放 200% 时只剩约 195 CSS px）：内边距收一点，节奏条三格竖着排，A4 缩略图放到说明下面——
+   给文字留出一行四五个字的宽度，标题、清单行按词组断行时不会剩一个字 */
+@media (max-width:300px){
+  main{padding:0 var(--s-2)}
+  .card{padding:var(--s-3)}
+  .steps a,.steps .row{gap:var(--s-2);padding:var(--s-2) var(--s-1)}
+  .rhythm{flex-direction:column}
+  .rhythm li{display:flex;justify-content:center;gap:var(--s-2)}
+  .sheet-box[data-open=false]>.sheet-frame{grid-column:1/-1;grid-row:auto;margin-top:var(--s-2)}
+  .choices-inline .choice{flex-basis:100%}
+}
+/* 视口很矮（页面缩放 200%、横着拿手机）：底栏只留按钮，说明挪到内容最后；按钮紧凑一点。底栏不超过视口的一半，主按钮一直在 */
+@media (max-height:560px){
+  .next-bar{padding-top:var(--s-1)}
+  .next-bar .inner{gap:var(--s-1)}
+  .next-bar .bar-caption{display:none}
+  .caption-flow{display:block;margin:var(--s-4) 0 0}
+  .caption-flow:empty{display:none}
+  .next-bar .btn{min-height:var(--tap);padding:var(--s-2) var(--s-3)}
+}
+/* 新出现的内容（结果、找到的题、换上来的状态）：从下往上浮现 */
+@keyframes rise{from{opacity:0;transform:translateY(8px)}}
+/* 打勾：✓ 弹出来 */
+@keyframes pop{0%{opacity:0;transform:scale(.3)}60%{opacity:1;transform:scale(1.15)}100%{opacity:1;transform:none}}
+/* 点了一下：轻轻按下去 */
+@keyframes press{50%{transform:scale(.97)}}
+/* 主按钮换了字：新字从下面滑进来 */
+@keyframes swap{from{opacity:0;transform:translateY(6px)}}
+.tick{display:inline-block}
+.m-rise{animation:rise var(--dur-3) var(--ease) both}
+.m-pop{animation:pop var(--dur-3) var(--ease) both}
+.m-press{animation:press var(--dur-1) var(--ease)}
+.m-swap{animation:swap var(--dur-2) var(--ease) both}
+.m-stagger>*{animation:rise var(--dur-3) var(--ease) both}
+.m-stagger>:nth-child(2){animation-delay:60ms}.m-stagger>:nth-child(3){animation-delay:120ms}.m-stagger>:nth-child(4){animation-delay:180ms}.m-stagger>:nth-child(n+5){animation-delay:240ms}
+/* 减少动态效果：全部关掉（页与页之间也是普通跳转）。转圈换成不动的圆环，录音的音量条换成一行字。 */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
 body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-input:focus-visible) label[for=library-input]{outline:3px solid var(--focus);outline-offset:3px}
+/* 只在有 / 没有脚本时出现的东西：按浏览器的 scripting 媒体特性判断（脚本 defer 加载，不等它加 .js 类，首屏不跳）；老浏览器退回 .js 类 */
 .js .no-js-only{display:none!important}
 .js-only{display:none!important}
 .js .js-only{display:revert!important}
 .js .js-only.btn{display:flex!important}
+@media (scripting:enabled){.no-js-only{display:none!important}.js-only{display:revert!important}.js-only.btn{display:flex!important}}
 .hidden{display:none!important}
 .visually-hidden{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .status{display:inline-block;font-size:var(--fs-1);font-weight:600}
@@ -214,7 +332,7 @@ html:has(body.has-tabbar){scroll-padding-bottom:calc(106px + env(safe-area-inset
 @supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){.tab-bar{background:var(--bar);-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}}
 .next-bar-inline{position:static;padding:var(--s-4) 0 0;background:transparent;border:0;box-shadow:none;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 .next-bar-inline .inner{max-width:none;gap:var(--s-3)}
-.next-bar-inline .caption{text-align:left;font-size:var(--fs-1)}
+.next-bar-inline .caption{display:block;text-align:left;font-size:var(--fs-1)}
 .next-bar-inline .bar-main{order:1}
 .next-bar-inline .bar-alt{order:2;justify-content:flex-start;margin:calc(var(--s-2) * -1) 0 0}
 .next-bar-inline .bar-alt .btn{padding:var(--s-2) 0;justify-content:flex-start}
@@ -274,6 +392,20 @@ body.sheet-is-open{overflow:hidden}
 @media (prefers-color-scheme:dark) and (prefers-contrast:more){:root{--muted:#D2D2D8;--line:#777780;--field:#A9A9B2}}
 @media (forced-colors:active){.tab-bar,.week-sheet{border:1px solid CanvasText}.tab-bar a[aria-current=page]{outline:2px solid Highlight}}
 @media print{.tab-bar,.week-sheet{display:none!important}}
+/* 打印页的首屏（纸面本身不变）：第 1 道按纸上的原样、原大小排出来；整张 A4 先是缩略图，点开看整张 */
+.sheet-peek{background:transparent;margin-top:var(--s-3)}
+.sheet-peek .peek-page{background:#fff;border-radius:var(--r-1);padding:0 4mm;box-shadow:0 1px 4px rgba(0,0,0,.18);overflow:hidden}
+@media screen{.sheet-peek .peek-page{filter:var(--photo-dim)}}
+@media screen{
+  .sheet-box{background:var(--card);border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-4);margin:var(--s-3) 0;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:var(--s-3);align-items:center}
+  .sheet-box>.sheet-box-text{grid-column:1;margin:0}
+  .sheet-box>.sheet-toggle{grid-column:1;justify-self:start;margin:0}
+  .sheet-box>.sheet-frame{grid-column:1/-1;margin:var(--s-3) 0 0}
+}
+@media screen and (scripting:enabled){
+  .sheet-box[data-open=false]>.sheet-frame{grid-column:2;grid-row:1/span 2;width:clamp(56px,25vw,96px);margin:0;padding:4px;cursor:zoom-in}
+  .sheet-box[data-open=false] .sheet-wrap{height:auto!important;aspect-ratio:210/297}
+}
 /* 练习纸预览的画框（只在屏幕上；打印时去掉，纸面版式不变） */
 .sheet-frame{background:var(--surround);border-radius:var(--r-2);padding:var(--s-3);margin:var(--s-3) 0}
 .sheet-frame .sheet-wrap{margin:0}
@@ -300,100 +432,41 @@ body.sheet-is-open{overflow:hidden}
   @page{size:A4;margin:0}
   body{background:#fff;padding:0;color:#000}
   .top,.next-bar,main>*:not(.print-root){display:none!important}
+  main>[data-live=print]{display:block!important}
+  main>[data-live=print]>*:not(.print-root){display:none!important}
+  main>[data-live=print]{animation:none!important}
   main{padding:0;max-width:none;margin:0}
   .sheet-frame{padding:0;margin:0;background:none;border-radius:0}
   .sheet-wrap{overflow:visible;height:auto!important;margin:0}
   .sheet-scale{transform:none!important;width:auto!important}
   .sheet .page{box-shadow:none;margin:0;break-after:page;page-break-after:always}
   .sheet .page:last-child{break-after:auto;page-break-after:auto}
+  .print-root>:not(.sheet-frame){display:none!important}
 }
 `;
 
-/** 浏览器脚本：同步加载（head 里），先给 <html> 加 .js，再在 DOMContentLoaded 后挂各个小功能。 */
-export const CLIENT_SCRIPT = String.raw`(function(){
-var root=document.documentElement;root.classList.add('js');
-var standalone=window.navigator.standalone===true||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches);
-if(standalone)root.classList.add('standalone');
-function $(s,el){return (el||document).querySelector(s)}function $$(s,el){return Array.prototype.slice.call((el||document).querySelectorAll(s))}
-function uuid(){if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();var b=new Uint8Array(16);crypto.getRandomValues(b);b[6]=b[6]&15|64;b[8]=b[8]&63|128;var h=Array.prototype.map.call(b,function(x){return(x+256).toString(16).slice(1)}).join('');return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20)}
-if('serviceWorker' in navigator&&location.protocol==='https:'||('serviceWorker' in navigator&&/^(localhost|127\.0\.0\.1)$/.test(location.hostname))){window.addEventListener('load',function(){navigator.serviceWorker.register('/s/sw.js',{scope:'/s/'}).catch(function(){})})}
-/* 互动记录（docs/web-interaction-trail.md）：只记「在哪一页、点了哪个按钮的标识」，不记任何内容。
-   先放进短命 cookie sel_tap，随下一个请求交给服务器写进审计日志；不跳页的点按（打印、录音、拍照）立刻发一个 HEAD 把它带过去。 */
-function trailAdd(role,key){try{var id=Math.random().toString(36).slice(2,8);var entry=id+'.'+role+'.'+String(key).replace(/[^A-Za-z0-9_-]/g,'').slice(0,40)+'@'+location.pathname;
-var m=document.cookie.match(/(?:^|; )sel_tap=([^;]*)/);var list=m?decodeURIComponent(m[1]).split('|'):[];list.push(entry);list=list.slice(-6);
-document.cookie='sel_tap='+encodeURIComponent(list.join('|'))+'; path=/s; max-age=120; samesite=lax'+(location.protocol==='https:'?'; secure':'')}catch(e){}}
-function trailSend(){try{fetch(location.pathname,{method:'HEAD',credentials:'same-origin',cache:'no-store',keepalive:true}).catch(function(){})}catch(e){}}
-window.__trail={add:trailAdd,send:trailSend};
-document.addEventListener('click',function(e){var t=e.target;if(!t||!t.closest)return;var el=t.closest('a[href],button,label[for],summary');if(!el||el.disabled)return;
-var role=el.closest('.next-bar')?(el.getAttribute('data-testid')==='next-step-primary'?'primary':'secondary'):el.closest('header.top')?'top':'content';
-var key=el.getAttribute('data-key')||el.getAttribute('data-testid')||(el.tagName==='SUMMARY'?'summary':'unnamed');trailAdd(role,key);
-var href=el.getAttribute('href')||'';var nav=(el.tagName==='A'&&!el.hasAttribute('data-print')&&href.charAt(0)!=='#'&&el.target!=='_blank')||(el.tagName==='BUTTON'&&el.type==='submit');
-if(!nav)trailSend()},true);
-document.addEventListener('DOMContentLoaded',function(){
-${UI_SHEET_SCRIPT}
-/* 底栏多高，内容下面就留多高（最后一行能滚到底栏上面） */
-var nbar=$('.next-bar');function barH(){root.style.setProperty('--bar-h',(nbar?nbar.offsetHeight:0)+'px')}barH();if(nbar&&window.ResizeObserver)new ResizeObserver(barH).observe(nbar);
-/* 等 AI 的页面自己刷新：只在页面看得见、他没在输入的时候刷新（关掉脚本时由 <noscript> 里的 meta refresh 接手） */
-var every=Number(document.body.getAttribute('data-refresh')||0);
-if(every>0){var due=Date.now()+every*1000;setInterval(function(){if(Date.now()<due||document.visibilityState!=='visible')return;var a=document.activeElement;if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))return;due=Infinity;trailAdd('auto','refresh');location.reload()},500)}
-/* 拍照上传：浏览器里先转成 JPEG 再传（HEIC、超大像素在服务器读不了）；细节见 src/web/photoUpload.ts */
-${PHOTO_UPLOAD_SCRIPT}
-/* 选题：数字跟着变，最多 8 道 */
-var pick=$('form[data-pick-count]');
-if(pick){var max=Number(pick.getAttribute('data-max')||'8'),min=Number(pick.getAttribute('data-min')||'1'),btn=$('[data-count-label]'),warn=$('[data-max-warning]');
-function upd(e){var boxes=$$('input[type=checkbox][name=itemIds],input[type=checkbox][name=questionIds]',pick);var n=boxes.filter(function(b){return b.checked}).length;
-if(n>max&&e&&e.target&&e.target.checked){e.target.checked=false;n=max;if(warn)warn.classList.remove('hidden')}else if(warn&&n<max)warn.classList.add('hidden');
-if(btn){var t=n<min?btn.getAttribute('data-empty'):btn.getAttribute('data-template').replace('{n}',n);btn.textContent=t;btn.disabled=n<min;btn.classList.toggle('disabled',n<min)}}
-pick.addEventListener('change',upd);upd()}
-/* 「其他…」做练习的时间 */
-$$('[data-slot-other]').forEach(function(box){var input=$('input[type=text]',box.parentNode);function upd(){var other=$('input[value="__other"]',box.parentNode);if(input&&other)input.closest('.choice').classList.toggle('hidden',!other.checked)}box.parentNode.addEventListener('change',upd);upd()});
-/* 录结果：选了前三种才问对不对；没做出来才问卡在哪 */
-$$('[data-record-item]').forEach(function(f){function upd(){var c=$('input[name=completion]:checked',f);var v=c?c.value:'';var k=$('[data-correct]',f),s=$('[data-stuck]',f);
-if(k)k.classList.toggle('hidden',!(v==='independent'||v==='hint1'||v==='hint2'));if(s)s.classList.toggle('hidden',v!=='not_solved')}f.addEventListener('change',upd);upd()});
-/* 说说为什么错：缺项提示 */
-$$('form[data-reflection]').forEach(function(f){var line=$('[data-missing]'),btn=document.querySelector('button[form="'+f.id+'"]');function upd(){var miss=[];
-if(!$('input[name=attemptState]:checked',f))miss.push('当时怎么了');if(!$('input[name=cause]:checked',f))miss.push('错在哪');if(!$('input[name=masteryFeeling]:checked',f))miss.push('有没有把握');
-if(line){line.textContent=miss.length?'还差：'+miss.join('、'):'';}if(btn){btn.disabled=miss.length>0;btn.classList.toggle('disabled',miss.length>0)}}f.addEventListener('change',upd);upd()});
-/* 字数 */
-/* 一句话总结：一行话，回车不换行；跟着内容长高 */
-$$('textarea[data-single-line]').forEach(function(t){t.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.isComposing)e.preventDefault()});if(window.CSS&&CSS.supports&&CSS.supports('field-sizing','content'))return;function fit(){t.style.height='auto';t.style.height=(t.scrollHeight+3)+'px'}t.addEventListener('input',fit);fit()});
-$$('textarea[data-count]').forEach(function(t){var out=$(t.getAttribute('data-count'));function upd(){if(out)out.textContent='还能写 '+Math.max(0,Number(t.getAttribute('maxlength'))-t.value.length)+' 字'}t.addEventListener('input',upd);upd()});
-/* 等待提示：提交后按钮换字，防止连点 */
-$$('form[data-wait]').forEach(function(f){f.addEventListener('submit',function(){var b=document.querySelector('button[form="'+f.id+'"]')||$('button[type=submit]',f);if(b){b.textContent=f.getAttribute('data-wait');b.classList.add('waiting');setTimeout(function(){b.disabled=true},0)}})});
-/* 打印 */
-var printBtn=$('[data-print]');
-if(printBtn){var after=function(){var first=$('[data-testid=next-step-primary][data-print]');if(first&&$('[data-after-print]')){(first.closest('.bar-main')||first).classList.add('hidden');first.setAttribute('data-testid','print-used')}
-$$('[data-after-print]').forEach(function(el){el.classList.remove('hidden')});var done=$('[data-print-done]');if(done)done.setAttribute('data-testid','next-step-primary');
-var cap=$('[data-testid=next-step-caption]');if(cap&&cap.getAttribute('data-after'))cap.textContent=cap.getAttribute('data-after')};
-window.addEventListener('afterprint',after);$$('[data-print]').forEach(function(b){b.addEventListener('click',function(e){e.preventDefault();try{window.print()}catch(x){}setTimeout(after,600)})})}
-/* 练习纸预览缩放到屏幕宽 */
-$$('.sheet-wrap').forEach(function(w){var s=$('.sheet-scale',w);if(!s)return;function fit(){var k=w.clientWidth/s.scrollWidth;if(k<1){s.style.transform='scale('+k+')';w.style.height=(s.scrollHeight*k)+'px'}}fit();window.addEventListener('resize',fit)});
-/* 语音：点一下开始，再点一下结束；转出来的字放进文本框，他改完自己提交 */
-$$('[data-voice-for]').forEach(function(box){var target=document.getElementById(box.getAttribute('data-voice-for'));var btn=$('button',box),note=$('[data-voice-note]',box),method=$('input[name=method]',box.closest('form')||document);
-var ok=target&&btn&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder;
-if(!ok){if(note)note.textContent='可以直接打字';return}
-box.classList.remove('hidden');var rec=null,chunks=[],timer=null,stream=null,starting=false;
-function type(){var c=['audio/mp4','audio/webm;codecs=opus','audio/webm'];for(var i=0;i<c.length;i++){if(MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(c[i]))return c[i]}return ''}
-function reset(){btn.classList.remove('on');btn.textContent='点一下开始说';btn.disabled=false}
-function stop(){if(rec&&rec.state!=='inactive')rec.stop();if(timer){clearTimeout(timer);timer=null}}
-btn.addEventListener('click',function(){if(rec&&rec.state==='recording'){stop();return}
-/* 打开麦克风要一会儿（第一次还会问权限）：马上给反馈，这期间再点不会开第二个录音 */
-if(starting)return;starting=true;btn.disabled=true;btn.textContent='正在打开麦克风…';
-navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){starting=false;btn.disabled=false;stream=s;chunks=[];var t=type();rec=t?new MediaRecorder(s,{mimeType:t}):new MediaRecorder(s);
-rec.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data)};
-rec.onstop=function(){stream.getTracks().forEach(function(x){x.stop()});var blob=new Blob(chunks,{type:(rec.mimeType||t||'audio/mp4')});btn.textContent='正在转成文字…';btn.classList.remove('on');btn.disabled=true;
-fetch(box.getAttribute('data-endpoint'),{method:'POST',headers:{'content-type':blob.type.split(';')[0]||'audio/mp4'},body:blob,credentials:'same-origin'}).then(function(r){return r.json().then(function(b){return{ok:r.ok,status:r.status,b:b}})}).then(function(x){
-if(x.ok&&x.b.text){target.value=(target.value?target.value+' ':'')+x.b.text;target.dispatchEvent(new Event('input'));if(method)method.value='voice';if(note)note.textContent='转好了，看一眼，不对就改'}
-else if(x.ok){if(note)note.textContent='没听清，再说一次';trailAdd('error','voice_empty');trailSend()}else{if(note)note.textContent=(x.b.error&&x.b.error.message)||'这次没转成文字，再说一次，或者直接打字。';trailAdd('error','voice_'+x.status);trailSend()}reset()}).catch(function(){if(note)note.textContent='没传上去，可以直接打字';trailAdd('error','voice_network');reset()})};
-rec.start();btn.classList.add('on');btn.textContent='正在听…再点一下结束';if(note)note.textContent='最多说 60 秒';timer=setTimeout(stop,60000)}).catch(function(){starting=false;reset();if(note)note.textContent='用不了麦克风，可以直接打字。';box.querySelector('button').classList.add('hidden');trailAdd('error','mic_denied');trailSend()})})});
-/* 离线页：真没联网时换标题 */
-var off=$('[data-offline-title]');if(off&&navigator.onLine===false){off.textContent='没联网';var d=$('[data-offline-detail]');if(d)d.textContent='连上 Wi-Fi 或流量后点「再试一次」。拍过的照片和错题都在服务器上，不会丢。'}
-});})();
-`;
+/** 浏览器脚本见 clientScript.ts（结构与各个小功能的说明都在那里）。 */
+export { CLIENT_SCRIPT };
+
+/**
+ * 带内容指纹的静态资源（/s/assets/app.<10 位 sha256>.css|js）：内容变了文件名就变，所以可以让浏览器缓存一年（immutable）；
+ * 页面、Service Worker 的外壳清单都引用带指纹的名字。ASSET_VERSION 由两个指纹算出，Service Worker 的缓存名跟着换。
+ */
+const fingerprint = (text: string): string => crypto.createHash('sha256').update(text).digest('hex').slice(0, 10);
+// 保留脚本原文，避免用正则去注释误改字符串/正则字面量。指纹缓存仍减少重复下载。
+export const STYLES_SERVED = STYLES;
+export const SCRIPT_SERVED = CLIENT_SCRIPT;
+export const STYLES_HASH = fingerprint(STYLES_SERVED);
+export const SCRIPT_HASH = fingerprint(SCRIPT_SERVED);
+export const ASSET_VERSION = fingerprint(`${STYLES_HASH}:${SCRIPT_HASH}`);
+export const CSS_PATH = `/s/assets/app.${STYLES_HASH}.css`;
+export const JS_PATH = `/s/assets/app.${SCRIPT_HASH}.js`;
+/** 带指纹的资源：一年、不变。 */
+export const IMMUTABLE = 'public, max-age=31536000, immutable';
 
 /** Service Worker：只缓存外壳（离线页、样式、脚本、图标），学生数据一律不缓存（只在导航失败时换成离线页）。 */
 export const SERVICE_WORKER = `const CACHE='sel-shell-${ASSET_VERSION}';
-const SHELL=['/s/offline','/s/assets/app.css?v=${ASSET_VERSION}','/s/assets/app.js?v=${ASSET_VERSION}','/s/assets/icon-192.png'];
+const SHELL=['/s/offline','${CSS_PATH}','${JS_PATH}','/s/assets/icon-192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const r=e.request;

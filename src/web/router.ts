@@ -10,6 +10,7 @@ import express, { Router, type ErrorRequestHandler, type Request, type Response 
 import multer from 'multer';
 import sharp from 'sharp';
 import type { ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { sendHtml } from '../views/render.js';
 import { getDb } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
@@ -24,6 +25,7 @@ import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { CoachProvider, CorrectionProvider, FollowupProvider } from '../ai/provider.js';
+import { isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
 import { getWeek, discardV2Item, isV2Item, restoreV2Item, type V2WeekItem } from '../v2/weekService.js';
 import { getItemFullCrop } from '../v2/fullCrop.js';
 import { getV2Settings, updateV2Settings } from '../v2/settingsService.js';
@@ -33,16 +35,17 @@ import { getReturnSummary, submitReturns } from '../v2/returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from '../v2/reflectionService.js';
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
-import { CLIENT_SCRIPT, SERVICE_WORKER, STYLES, iconPng, manifest } from './assets.js';
+import { registerStaticAssets } from './staticAssets.js';
+import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, giveConsent, hasConsent, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
-import { actionHref, loadPhotos, loadToday, type TodayState, type WebContext } from './state.js';
+import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
 import { trailRecorder, trailTaps } from './trail.js';
 import { DEFAULT_TIME_ZONE, localDayOrdinal, localDayText, stepCaption, type StepKind } from './weekPlan.js';
-import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, OfflinePage, PairPage, TodayPage } from './views/today.js';
-import { CapturePage, ConsentPage, PhotosPage, PickPage } from './views/photos.js';
+import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, PairPage, TodayPage, type BusyReason, type TodayWait } from './views/today.js';
+import { CapturePage, ConsentPage, PhotosPage, PickPage, findingSince } from './views/photos.js';
 import { EditPage, FixPage, ItemDetailPage, ItemsPage } from './views/items.js';
 import {
-  ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage,
+  ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage, printExpect,
   WhyAskPage, WhyConfirmPage, WhyDonePage, WhyIntroPage, COMPLETIONS, type DayOption, type PrintState, type RecordAnswer,
 } from './views/practice.js';
 import type { BarButton, BarModel } from './views/layout.js';
@@ -94,6 +97,14 @@ class NotFound extends Error {}
 
 function render(response: Response, node: ReactNode, status = 200): void {
   response.status(status);
+  const context = response.locals.voiceContext;
+  if (typeof context === 'string' && /^[0-9a-f]{64}$/.test(context)) {
+    // The strict hex value comes only from worker middleware below, never from page input.
+    const html = renderToStaticMarkup(node).replace('</head>', `<meta name="sel-voice-context" content="${context}"/></head>`);
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.send(`<!doctype html>${html}`);
+    return;
+  }
   sendHtml(response, node);
 }
 
@@ -204,18 +215,30 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const failed = (response: Response, code: string): void => { response.locals.trailError = code; };
 
   // ---------- 公开资源（无学生数据） ----------
-  r.get('/manifest.webmanifest', (_request, response) => { response.type('application/manifest+json').send(JSON.stringify(manifest())); });
-  r.get('/sw.js', (_request, response) => { response.type('text/javascript').send(SERVICE_WORKER); });
-  r.get('/assets/app.css', (_request, response) => { response.type('text/css').send(STYLES); });
-  r.get('/assets/app.js', (_request, response) => { response.type('text/javascript').send(CLIENT_SCRIPT); });
-  const icon = (size: number, maskable = false) => async (_request: Request, response: Response): Promise<void> => {
-    response.type('image/png').send(await iconPng(size, maskable));
+  registerStaticAssets(r);
+
+  r.use((request, response, next) => {
+    const internalPage = options.studentHostWorker === true && (request.method === 'GET' || request.method === 'POST')
+      && !/^\/voice\/?$/i.test(request.path);
+    if (internalPage) {
+      const context = request.headers['x-sel-internal-voice-context'];
+      // The strict hex value comes only from the parent gateway, never from page input.
+      if (typeof context === 'string' && /^[0-9a-f]{64}$/.test(context)) response.locals.voiceContext = context;
+      // 账号身份标签：只信父进程网关注入的内部头（网关在白名单重建时已丢弃浏览器同名头），
+      // 且必须是四个合法值之一；只是展示用元数据，不参与鉴权。
+      const role = request.headers['x-sel-internal-account-role'];
+      if (isAccountRole(role)) response.locals.accountRole = role;
+    }
+    next();
+  });
+
+  /** 连接页上「服务器忙」时这台手机的连接情况：没有 cookie = 还没连上；cookie 有效 = 连着；cookie 失效 = 连接过期（只读，不计入失败次数）。 */
+  const connectionOf = async (request: Request): Promise<BusyReason> => {
+    const token = readCookies(request)[COOKIE.device];
+    if (!token) return 'unpaired';
+    try { await options.pairing.authenticate(`Bearer ${token}`); return 'connected'; }
+    catch (error) { if (error instanceof PairingError) return 'expired'; throw error; }
   };
-  r.get('/assets/icon-192.png', icon(192));
-  r.get('/assets/icon-512.png', icon(512));
-  r.get('/assets/icon-maskable-512.png', icon(512, true));
-  r.get('/assets/apple-touch-icon.png', icon(180));
-  r.get('/offline', (_request, response) => render(response, OfflinePage()));
 
   // ---------- 配对：打开链接 → 确认页 → 点一下兑换 → httpOnly cookie ----------
   r.get('/pair', (request, response) => {
@@ -242,7 +265,12 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         if (!(error instanceof PairingError)) throw error;
         failed(response, error.code);
         const gate = options.limiter.pairingFailure(options.ipOf(request));
-        if (!gate.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(gate.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds, connected: false }), 429); return; }
+        if (!gate.allowed) {
+          failed(response, 'busy');
+          response.setHeader('retry-after', String(gate.retryAfterSeconds));
+          render(response, BusyPage({ retryAfterSeconds: gate.retryAfterSeconds, reason: await connectionOf(request) }), 429);
+          return;
+        }
         const status = error.code === 'pairing_expired' ? 410 : error.code === 'pairing_used' ? 409 : error.code === 'pairing_not_found' ? 404 : error.code === 'pairing_unavailable' ? 503 : 400;
         render(response, ConnectPage({ reason: 'unpaired', error: PAIRING_REASONS[error.code] ?? '这个二维码用不了。' }), status);
       }
@@ -267,7 +295,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       catch (error) {
         if (!(error instanceof PairingError)) throw error;
         const fail = options.limiter.authFailure(options.ipOf(request));
-        if (!fail.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(fail.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: fail.retryAfterSeconds, connected: false }), 429); return; }
+        // 带着 cookie 却鉴权失败：以前连上过、连接失效了（不是「还没连上」）。
+        if (!fail.allowed) { failed(response, 'busy'); response.setHeader('retry-after', String(fail.retryAfterSeconds)); render(response, BusyPage({ retryAfterSeconds: fail.retryAfterSeconds, reason: 'expired' }), 429); return; }
         reject('unauthorized');
         return;
       }
@@ -277,7 +306,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         failed(response, 'busy');
         response.setHeader('retry-after', String(query.retryAfterSeconds));
         if (request.path === '/voice' || wantsJson(request)) { response.status(429).json({ error: { code: 'rate_limited', message: '请求过于频繁，请稍后再试。' } }); return; }
-        render(response, BusyPage({ retryAfterSeconds: query.retryAfterSeconds, connected: true }), 429);
+        render(response, BusyPage({ retryAfterSeconds: query.retryAfterSeconds, reason: 'connected' }), 429);
         return;
       }
       if (request.method === 'POST' && crossSite(request)) { failed(response, 'cross_site'); response.status(403).send('forbidden'); return; }
@@ -296,10 +325,23 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.get('/', page(async (request, response) => {
     const state = await loadToday(ctx, request);
     const flash = request.query.paired === '1' ? { ok: '连上了 ✓' } : undefined;
-    render(response, TodayPage({ state, practiceSlot: getV2Settings().practiceSlot, flash, showInstallHint: !sawInstallHint(request) }));
+    render(response, TodayPage({ state, practiceSlot: getV2Settings().practiceSlot, flash, showInstallHint: !sawInstallHint(request), wait: todayWait(state), now: ctx.now() }));
   }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
   r.get('/install', page((_request, response) => render(response, InstallPage())));
+
+  /** 「今天」在等 AI 吗：找题中的照片（从最早那张算）或正在准备的练习纸（从开始准备算）。都不在等时 null。 */
+  const todayWait = (state: TodayState): TodayWait | null => {
+    if (state.photos.some(photo => photo.state === 'finding')) return { since: findingSince(state.photos), expect: 'AI 找好以后，这一步会自己打勾' };
+    if (state.preparingPrintID) {
+      const since = printStartedAt(state.preparingPrintID);
+      const status = getPrintStatus(state.preparingPrintID);
+      const progress = status.httpStatus === 200 ? (status.body as { progress?: { done: number; total: number } }).progress : undefined;
+      const elapsed = since ? Math.max(0, Math.floor((ctx.now().getTime() - Date.parse(since)) / 1000)) : null;
+      return { since, expect: printExpect(progress?.done ?? 0, progress?.total ?? 0, elapsed) };
+    }
+    return null;
+  };
 
   // 「跳过」只记在本次打开里（会话 cookie）；「跳过，直接打印」顺手开始准备练习纸。
   r.post('/skip', form, page((request, response) => {
@@ -402,6 +444,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const state = await loadToday(ctx, request);
     const refresh = state.photos.some(photo => photo.state === 'finding');
     const err = request.query.err === 'retry' ? '这次没重试成功，过一会儿再试。' : null;
+    // 刚从勾选面板加了题回来：说一声加了几道，那一张的那一行浮上来（只是两个小数字，不带任何 ID）。
+    const addedPhoto = state.photos.find(photo => photo.number === Number(str(request.query.n)));
+    const added = /^[1-9]\d?$/.test(str(request.query.added)) && addedPhoto && addedPhoto.itemCount > 0 ? { count: addedPhoto.itemCount, number: addedPhoto.number } : null;
     const photos = state.photos.filter(photo => !(photo.dismissed && photo.failure));
     // 这周的练习纸已经生成（做完了 / 周中）以后又拍了卷子：这周的练习已经定了，不再带他去选题；
     // 说清楚新找到的题去了哪（进错题本，下个周末再选），下一步是「回到今天」（门槛 G3）。
@@ -410,11 +455,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       const bar: BarModel = needsPick
         ? { caption: '', primary: { title: `勾第 ${needsPick.number} 张`, key: 'openPick', href: `/s/photos/${needsPick.jobId}` }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] }
         : { caption: refresh ? 'AI 在后台找题，可以先回去' : '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
-      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.createdAt ?? null, flash: { err } }));
+      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.generatedAt ?? null, added, now: ctx.now(), flash: { err } }));
       return;
     }
     const bar = nextStepBar(state, 'pick');
-    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, flash: { err } }));
+    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, newSince: state.latestDetail?.generatedAt ?? null, added, now: ctx.now(), flash: { err } }));
   }));
 
   const weekPhoto = async (request: Request, jobId: string) => {
@@ -434,12 +479,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const { photo } = await weekPhoto(request, jobId);
     const ids = list(request.body?.questionIds).filter(id => UUID.test(id));
     if (ids.length === 0) { failed(response, 'none_picked'); render(response, PickPage({ photo, error: '先勾出做错的题。' }), 400); return; }
-    try { await options.service.select(jobId, [...new Set(ids)].slice(0, 30)); }
+    const chosen = [...new Set(ids)].slice(0, 30);
+    try { await options.service.select(jobId, chosen); }
     catch (error) {
       if (error instanceof MobileRequestError) { failed(response, 'select_failed'); render(response, PickPage({ photo, error: error.message }), error.status); return; }
       throw error;
     }
-    response.redirect(303, '/s/photos');
+    response.redirect(303, `/s/photos?added=${chosen.length}&n=${photo.number}`);
   }));
 
   const markPhoto = (kind: 'pickDone' | 'dismissed') => page(async (request, response) => {
@@ -712,7 +758,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.get('/print/:pid', page(async (request, response) => {
     const practice = practiceOf(String(request.params.pid));
     const state = await loadToday(ctx, request);
-    render(response, PrintPage({ practiceId: practice.id, state: printState(practice.id), caption: captionFor(state, 'print') }));
+    const print = printState(practice.id);
+    render(response, PrintPage({ practiceId: practice.id, state: print, caption: captionFor(state, 'print'), since: print.status === 'preparing' ? printStartedAt(practice.id) : null, now: ctx.now() }));
   }));
 
   r.get('/print/:pid/sheet', page((request, response) => {
@@ -838,16 +885,20 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
 
   // ---------- 设置 ----------
+  /** 设置页的账号身份标签：只有邀请码网关 worker 模式才有（locals 由上面的内部头中间件写入）；旧独立版一律不显示。 */
+  const accountRoleOf = (response: Response): AccountRole | null =>
+    options.studentHostWorker === true && isAccountRole(response.locals.accountRole) ? response.locals.accountRole : null;
+
   r.get('/settings', page((request, response) => {
     const settings = getV2Settings();
-    render(response, SettingsPage({ ...settings, saved: request.query.saved === '1', studentHostWorker: options.studentHostWorker === true }));
+    render(response, SettingsPage({ ...settings, saved: request.query.saved === '1', studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response) }));
   }));
 
   r.post('/settings', form, page((request, response) => {
     const slotChoice = str(request.body?.practiceSlot);
     const practiceSlot = (slotChoice === '__other' ? str(request.body?.practiceSlotOther) : slotChoice).trim();
     const result = updateV2Settings({ practiceSlot, paperLocation: str(request.body?.paperLocation) });
-    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。', studentHostWorker: options.studentHostWorker === true }), 400); return; }
+    if (!result.ok) { failed(response, 'settings_invalid'); render(response, SettingsPage({ ...getV2Settings(), saved: false, error: result.message.includes('practiceSlot') ? '做练习的时间要写 1–20 个字。' : '选一下原卷平时放在哪。', studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response) }), 400); return; }
     response.redirect(303, '/s/settings?saved=1');
   }));
 
@@ -874,23 +925,26 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const job = await options.service.getJob(jobId);
     const source = await options.service.getMedia(jobId, job.sourceMediaId);
     const full = request.query.full === '1';
-    const bytes = await sharp(source, { limitInputPixels: 40_000_000 }).rotate().resize({ width: full ? 1600 : 360, withoutEnlargement: true }).jpeg({ quality: full ? 85 : 70 }).toBuffer();
+    // 网格里的缩略图：一格约 114 CSS px 宽，按 2 倍下发（228 px）；「看原图」1600 px。
+    const bytes = await sharp(source, { limitInputPixels: 40_000_000 }).rotate().resize({ width: full ? 1600 : 228, withoutEnlargement: true }).jpeg({ quality: full ? 85 : 70 }).toBuffer();
     response.type('image/jpeg').send(bytes);
   }));
+  // 题目裁图：?s=thumb|list|big 按显示尺寸的 2 倍以内缩小后下发（从不放大）；不带 s 的是原图（「看原图」、打印用）。磁盘上的原图不动。
   r.get('/img/cand/:jobId/:questionId', page(async (request, response) => {
     const jobId = requireMatch(String(request.params.jobId), UUID);
     if (!registered(jobId)) throw new NotFound();
-    response.type('image/jpeg').send(await options.service.getCandidateCrop(jobId, requireMatch(String(request.params.questionId), UUID)));
+    response.type('image/jpeg').send(await displayImage(await options.service.getCandidateCrop(jobId, requireMatch(String(request.params.questionId), UUID)), displaySize(request.query.s)));
   }));
   r.get('/img/item/:id', page(async (request, response) => {
     const itemId = requireMatch(String(request.params.id), ITEM_ID);
     if (!isV2Item(itemId)) throw new NotFound();
-    response.type('image/jpeg').send(request.query.scope === 'full' ? await getItemFullCrop(itemId) : await getQuestionCrop(itemId));
+    response.type('image/jpeg').send(await displayImage(request.query.scope === 'full' ? await getItemFullCrop(itemId) : await getQuestionCrop(itemId), displaySize(request.query.s)));
   }));
-  r.get('/img/print/:pid/:name', page((request, response) => {
+  r.get('/img/print/:pid/:name', page(async (request, response) => {
     const media = readPrintMedia(requireMatch(String(request.params.pid), PACKET_ID), String(request.params.name));
     if (!media) throw new NotFound();
-    response.type('image/jpeg').send(media);
+    // 练习纸上（打印）用原图；手机上看的那一道、打印前看一眼的截图用缩小的。
+    response.type('image/jpeg').send(await displayImage(media, displaySize(request.query.s)));
   }));
 
   r.use((_request, response) => render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整。回到今天接着做。' }), 404));

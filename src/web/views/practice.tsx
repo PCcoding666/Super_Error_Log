@@ -3,9 +3,30 @@ import type { PracticeCard, PracticeDetail, PracticeSummary, RecommendResponse }
 import type { PrintSnapshot } from '../../v2/printService.js';
 import type { ReturnSummary } from '../../v2/returnService.js';
 import type { ReflectionSuggestionView, ReflectionTurnView, ReflectionView } from '../../v2/reflectionService.js';
+import { ACCOUNT_ROLE_LABELS, type AccountRole } from '../../studentHost/accountRole.js';
 import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';
-import { Page, Phrased, Problem, quoted, type BarButton, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, VoiceBox, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
+
+// ---------- 选项的断行 ----------
+
+/**
+ * 选项文字按词组断开（每段一个不可拆的小块，换行只落在段与段之间）：两列的选项在 360 / 375 / 390 px 下
+ * 要么一行放下，要么平衡成两行，不会出现「推理中间断 / 了」这种单字孤行。没列出的选项按标点断（Phrased）。只改断行，文字不变。
+ */
+const CHOICE_PHRASES: Record<string, string[]> = {
+  '知道考啥，没想到方法': ['知道考啥，', '没想到', '方法'], '方法对，步骤错了': ['方法对，', '步骤错了'], '本来会，粗心了': ['本来会，', '粗心了'],
+  '概念没弄懂': ['概念', '没弄懂'], '方法选错了': ['方法', '选错了'], '推理中间断了': ['推理', '中间断了'], '题目没看全': ['题目', '没看全'],
+  '写法不规范': ['写法', '不规范'], '时间不够或走神': ['时间不够', '或走神'],
+  '看提示可能会': ['看提示', '可能会'], '现在做应该会': ['现在做', '应该会'], '过几天也会': ['过几天', '也会'],
+  '看了一级提示': ['看了', '一级提示'], '看了二级提示': ['看了', '二级提示'], '周三晚自习': ['周三', '晚自习'],
+};
+
+export function ChoiceText(props: { text: string }): ReactNode {
+  const pieces = CHOICE_PHRASES[props.text];
+  if (!pieces) return <span className="choice-text"><Phrased text={props.text} /></span>;
+  return <span className="choice-text">{pieces.map((piece, index) => <span key={index} className="ph">{piece}</span>)}</span>;
+}
 
 // ---------- 选这周要练的题（§4.6） ----------
 
@@ -17,7 +38,7 @@ export function SlotChoice(props: { current: string; name?: string }): ReactNode
   return (
     <div className="choices-inline">
       {SLOT_PRESETS.map(slot => (
-        <label key={slot} className="choice"><input type="radio" name={name} value={slot} defaultChecked={props.current === slot} /><span>{slot}</span></label>
+        <label key={slot} className="choice"><input type="radio" name={name} value={slot} defaultChecked={props.current === slot} /><ChoiceText text={slot} /></label>
       ))}
       <label className="choice" data-slot-other=""><input type="radio" name={name} value="__other" defaultChecked={!preset} /><span>其他…</span></label>
       <label className="choice choice-full">
@@ -33,7 +54,7 @@ function ChooseRow(props: { card: PracticeCard; checked: boolean }): ReactNode {
     <label className="choice pick" data-testid="choose-row">
       <input type="checkbox" name="itemIds" value={card.id} defaultChecked={props.checked} />
       <span className="grow">
-        <img className="crop" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} loading="lazy" />
+        <img className="crop" src={`/s/img/item/${card.id}?s=list`} alt={card.shortId ?? '题目裁图'} loading="lazy" />
         <span className="excerpt">{card.questionExcerpt ?? ''}</span>
         <span className="meta-line muted">为什么选它：{card.reason}</span>
         {card.badge === 'low' ? <span className="meta-line tone-orange">字可能认错了 · 点开看看</span> : null}
@@ -114,7 +135,7 @@ function PracticeItemRows(props: { items: PracticeDetail['items']; status: (item
         const status = props.status(item, index);
         return (
           <li key={item.id} className="row qrow">
-            <img className="thumb" src={`/s/img/item/${item.id}`} alt="" loading="lazy" />
+            <img className="thumb" src={`/s/img/item/${item.id}?s=thumb`} alt="" loading="lazy" />
             <span className="row-text">
               <b>{item.shortId ?? `第 ${index + 1} 道`}</b>
               <span className="meta-line muted">{[item.subject, ...item.knowledgeTags].filter(Boolean).join(' · ') || '错题'}</span>
@@ -142,7 +163,7 @@ export function WhyIntroPage(props: { practice: PracticeDetail; index: number; t
         <p className="muted">不想说可以跳过，不影响打印。</p>
       </section>
       <section className="card">
-        <h2 className="card-title">这次的 {props.total} 道</h2>
+        <h2 className="card-title"><Phrased text={`这次的 ${props.total} 道`} /></h2>
         <PracticeItemRows items={props.practice.items} testId="why-items" status={(item, index) => (
           item.reflected ? { text: '说过了 ✓', tone: 'green' }
             : !props.pending.includes(item.id) ? { text: '跳过了' }
@@ -171,7 +192,7 @@ export function WhyAskPage(props: { practiceId: string; card: PracticeCard; inde
   return (
     <Page title="说说为什么错" bar={bar}>
       <h1>说说为什么错</h1>
-      <img className="crop big" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
+      <img className="crop big" src={`/s/img/item/${card.id}?s=big`} alt={card.shortId ?? '题目裁图'} />
       {props.error ? <Problem title="没提交上" detail={props.error} /> : null}
       {answered.map(turn => (
         <div key={turn.turn}>
@@ -185,10 +206,7 @@ export function WhyAskPage(props: { practiceId: string; card: PracticeCard; inde
           <label htmlFor="answer-text" className="field-label">你的回答</label>
           <textarea id="answer-text" name="answer" maxLength={300} required defaultValue={props.answer ?? ''} placeholder="点「点一下开始说」说话，或者直接打字" data-count="#answer-count" aria-describedby="answer-count" />
           <p className="hint" id="answer-count">还能写 300 字</p>
-          <div className="voice hidden" data-voice-for="answer-text" data-endpoint="/s/voice" data-testid="voice">
-            <button type="button" data-testid="voice-button">点一下开始说</button> <span className="small muted" data-voice-note="" data-testid="voice-note" aria-live="polite" />
-            <span className="small muted" data-testid="voice-privacy">录音会发给通义千问转文字，本应用不保存录音；最多 60 秒，也可以直接打字</span>
-          </div>
+          <VoiceBox target="answer-text" testIds />
         </form>
       ) : null}
     </Page>
@@ -202,7 +220,7 @@ function Group<T extends string | number>(props: { legend: string; name: string;
       {props.hint ? <p className="hint">{props.hint}</p> : null}
       <div className="choices-inline">
         {props.choices.map(([label, value]) => (
-          <label key={String(value)} className="choice"><input type="radio" name={props.name} value={String(value)} defaultChecked={props.selected === value} /><span>{label}</span></label>
+          <label key={String(value)} className="choice"><input type="radio" name={props.name} value={String(value)} defaultChecked={props.selected === value} /><ChoiceText text={label} /></label>
         ))}
       </div>
     </fieldset>
@@ -222,7 +240,7 @@ export function WhyConfirmPage(props: { practiceId: string; card: PracticeCard; 
   return (
     <Page title="说说为什么错" bar={bar} barExtra={<p className="caption tone-orange" data-missing="" data-testid="missing" />}>
       <h1>说说为什么错</h1>
-      <img className="crop" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
+      <img className="crop" src={`/s/img/item/${card.id}?s=list`} alt={card.shortId ?? '题目裁图'} />
       {props.error ? <Problem title={props.error} /> : null}
       <form method="post" action={`/s/why/${props.practiceId}/${card.id}/submit`} id="reflection-form" data-reflection="">
         <label htmlFor="reflection-summary" className="field-label">一句话总结（AI 先写了，可以改）{summary ? <span className="tag">{previous ? '你上次选的' : 'AI 写的'}</span> : null}</label>
@@ -246,14 +264,14 @@ export function WhyDonePage(props: { practice: PracticeDetail }): ReactNode {
   };
   return (
     <Page title="说完了" bar={bar}>
-      <h1>说完了 ✓</h1>
+      <h1>说完了 <span className="tick m-pop">✓</span></h1>
       <section className="card">
         <p className="card-title" data-testid="why-done">{props.practice.items.length} 道里说了 {reflected} 道</p>
         <p className="muted">{reflected > 0 ? '你说的会记下来。下周录完结果，能看看当时的感觉准不准。' : '这次没说也没关系，下次可以再说。'}</p>
         <p>{props.practice.generatedAt ? '下一步：把练习纸打出来，带回学校。' : '下一步：准备练习纸。AI 给每道题写好提示和答案，大约 1 分钟。'}</p>
       </section>
       <section className="card">
-        <h2 className="card-title">这次的 {props.practice.items.length} 道</h2>
+        <h2 className="card-title"><Phrased text={`这次的 ${props.practice.items.length} 道`} /></h2>
         <PracticeItemRows items={props.practice.items} testId="why-done-items" status={item => (item.reflected ? { text: '说过了 ✓', tone: 'green' } : { text: '这次没说' })} />
         <p className="small muted">这几道都会印在练习纸上，说没说都一样要做。</p>
       </section>
@@ -275,6 +293,23 @@ function hintLine(prefix: string, text: string | null): string {
   return text.startsWith(prefix) ? text : prefix + text;
 }
 
+/** 练习纸上的一道题（纸面原样；打印页的「第 1 道印出来是这样」也用它，所以两处一模一样）。 */
+export function SheetItem(props: { item: PrintSnapshot['items'][number]; media: (name: string) => string }): ReactNode {
+  const { item, media } = props;
+  return (
+    <div className="item">
+      <p className="item-head"><b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>{[item.subject, ...item.knowledgeTags].filter(Boolean).join('、')}</p>
+      {item.stemText ? <p className="stem">{item.stemText}</p> : null}
+      {item.mode === 'crop' ? <p className="note">AI 对这题没把握，文字和截图不一致时以截图为准</p> : null}
+      {item.mode === 'crop' && item.cropMedia ? <img src={media(item.cropMedia)} alt="题目截图" /> : null}
+      {item.diagramMedia.map(name => <img key={name} src={media(name)} alt="图示" />)}
+      <p>{item.keyStepPrompt}</p>
+      <div className="blank" />
+      <p className="boxes">{item.checkboxes.map(box => <span key={box}>□ {box}</span>)}<span>做题日期：________</span></p>
+    </div>
+  );
+}
+
 /** A4 练习纸：封面 + 题目页 + 可撕的答案页（与 iOS PracticeLayout 同样的内容与说法）。浏览器打印成纸或 PDF。 */
 export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
   const { snapshot } = props;
@@ -292,18 +327,7 @@ export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
         <p style={{ marginTop: '8mm' }}>做题日期：________</p>
       </section>
       <section className="page">
-        {snapshot.items.map(item => (
-          <div className="item" key={item.itemId}>
-            <p className="item-head"><b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>{[item.subject, ...item.knowledgeTags].filter(Boolean).join('、')}</p>
-            {item.stemText ? <p className="stem">{item.stemText}</p> : null}
-            {item.mode === 'crop' ? <p className="note">AI 对这题没把握，文字和截图不一致时以截图为准</p> : null}
-            {item.mode === 'crop' && item.cropMedia ? <img src={media(item.cropMedia)} alt="题目截图" /> : null}
-            {item.diagramMedia.map(name => <img key={name} src={media(name)} alt="图示" />)}
-            <p>{item.keyStepPrompt}</p>
-            <div className="blank" />
-            <p className="boxes">{item.checkboxes.map(box => <span key={box}>□ {box}</span>)}<span>做题日期：________</span></p>
-          </div>
-        ))}
+        {snapshot.items.map(item => <SheetItem key={item.itemId} item={item} media={media} />)}
       </section>
       <section className="page answers">
         <h3>做完再看</h3>
@@ -328,7 +352,64 @@ export type PrintState =
   | { status: 'failed'; error: string | null }
   | { status: 'ready'; snapshot: PrintSnapshot };
 
-export function PrintPage(props: { practiceId: string; state: PrintState; caption: string }): ReactNode {
+/**
+ * 打印页与练习纸单独页的首屏（纸面本身不变，只改它周围的网页）：
+ * ① 第 1 道题按纸上的原样、原大小排出来（字号、作答空白都和打出来一样），看得清；
+ * ② 这张纸上的几道题，手机字号的清单；
+ * ③ 整张 A4 先是一张缩略图，点开看整张（关掉脚本时直接整张显示）。打印时只印 ③ 里的纸。
+ */
+export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
+  const { snapshot } = props;
+  const first = snapshot.items[0];
+  // 手机上看的那一道用按显示宽度缩小的图（纸面上的图仍是原图，打印清晰度不变）。
+  const media = (name: string): string => `/s/img/print/${snapshot.packetId}/${name}?s=big`;
+  return (
+    <>
+      {first ? (
+        <section className="card peek" data-testid="print-peek" aria-labelledby="peek-title">
+          <h2 className="card-title" id="peek-title"><Phrased text="第 1 道印出来是这样" /></h2>
+          <p className="small muted"><Phrased text={`和纸上一样大，作答的空白也一样。整张纸上一共 ${snapshot.items.length} 道题，答案在最后一页。`} /></p>
+          <div className="sheet sheet-peek"><div className="peek-page"><SheetItem item={first} media={media} /></div></div>
+        </section>
+      ) : null}
+      <section className="card" data-testid="print-summary">
+        <h2 className="card-title"><Phrased text={`这张练习纸上有 ${snapshot.items.length} 道题`} /></h2>
+        <ul className="list">
+          {snapshot.items.map(item => (
+            <li key={item.itemId} className="row qrow">
+              <img className="thumb" src={`/s/img/item/${item.itemId}?s=thumb`} alt="" loading="lazy" />
+              <span className="row-text">
+                <b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>
+                <span className="meta-line muted">{[item.subject, ...item.knowledgeTags].filter(Boolean).join(' · ') || '错题'}</span>
+                {item.stemText ? <span className="meta-line excerpt">{item.stemText}</span> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="small muted"><Phrased text={`什么时候做：${snapshot.cover.practiceSlot}。答案在最后一页，做完再看。`} /></p>
+      </section>
+      <section className="print-root sheet-box" data-open="false" data-testid="sheet-box" aria-labelledby="sheet-box-title">
+        <p className="sheet-box-text">
+          <b id="sheet-box-title">整张练习纸（A4）</b>
+          <span className="meta-line muted">封面、题目页，最后一页是答案</span>
+        </p>
+        <button type="button" className="link-btn sheet-toggle js-only" aria-expanded="false" aria-controls="sheet-frame" data-key="sheet-open" data-testid="sheet-toggle">
+          <span className="when-closed"><Phrased text="展开看整张" max={3} /></span><span className="when-open">收起整张</span>
+        </button>
+        <div className="sheet-frame" id="sheet-frame"><div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={snapshot} /></div></div></div>
+      </section>
+    </>
+  );
+}
+
+/** 准备练习纸还要多久：服务器给了进度（第几道 / 共几道），按已经用掉的时间平均推算；还没做完一道时按「大约 1 分钟」。 */
+export function printExpect(done: number, total: number, elapsedSeconds: number | null): string {
+  if (!elapsedSeconds || done <= 0 || total <= done) return 'AI 给每道题写提示和答案，一般 1 分钟左右';
+  const remaining = (elapsedSeconds / done) * (total - done);
+  return remaining < 60 ? `照现在的速度，还要大约 ${Math.max(10, Math.ceil(remaining / 10) * 10)} 秒` : `照现在的速度，还要大约 ${Math.ceil(remaining / 60)} 分钟`;
+}
+
+export function PrintPage(props: { practiceId: string; state: PrintState; caption: string; since?: string | null; now?: Date }): ReactNode {
   const { state, practiceId } = props;
   let bar: BarModel;
   let body: ReactNode;
@@ -336,13 +417,16 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
     bar = { caption: props.caption, primary: { title: '准备练习纸', key: 'prepare', post: `/s/print/${practiceId}`, wait: '正在准备练习纸…' }, secondary: [] };
     body = <section className="card"><p>先把练习纸准备好：AI 给每道题写好提示和答案，大约 1 分钟。</p></section>;
   } else if (state.status === 'preparing') {
-    bar = { caption: '大约 1 分钟。可以先离开，回来接着准备。', primary: { title: '正在准备…', key: 'waiting', disabled: true, waiting: true }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
+    // 要多久写在等待行里（按进度推算），底栏只说可以先离开。
+    bar = { caption: '可以先离开，回来接着准备', primary: { title: '正在准备…', key: 'waiting', disabled: true, waiting: true }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
     const percent = state.total ? Math.round(state.done * 100 / state.total) : 0;
+    const now = props.now ?? new Date();
+    const elapsed = props.since ? Math.max(0, Math.floor((now.getTime() - Date.parse(props.since)) / 1000)) : null;
     body = (
       <section className="card" data-testid="print-preparing">
-        <p role="status">正在准备练习纸… 第 {state.done}/{state.total} 道</p>
-        <div className="progress" role="progressbar" aria-label="准备进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></div>
-        <p className="hint">AI 在给每道题写提示和答案。可以先离开，回来接着准备。</p>
+        <p data-row="print-progress">正在准备练习纸… 第 {state.done}/{state.total} 道</p>
+        <div className="progress" role="progressbar" aria-label="准备进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ transform: `scaleX(${percent / 100})` }} /></div>
+        <WaitLine since={props.since ?? null} now={now} expect={printExpect(state.done, state.total, elapsed)} />
       </section>
     );
   } else if (state.status === 'failed') {
@@ -361,37 +445,17 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
       <>
         {glance.length > 0 ? (
           <section className="card" data-testid="glance">
-            <h2 className="card-title">打印前看一眼这 {glance.length} 道</h2>
+            <h2 className="card-title"><Phrased text={`打印前看一眼这 ${glance.length} 道`} /></h2>
             {glance.map(item => (
               <details key={item.itemId}>
                 <summary data-key="print-glance">{item.shortId ?? `第 ${item.position + 1} 题`}：{plainGlance(item.glanceReason)}</summary>
-                {item.cropMedia ? <img className="crop big" src={`/s/img/print/${practiceId}/${item.cropMedia}`} alt="截图" /> : null}
+                {item.cropMedia ? <img className="crop big" src={`/s/img/print/${practiceId}/${item.cropMedia}?s=big`} alt="截图" /> : null}
               </details>
             ))}
           </section>
         ) : null}
-        {/* 首屏先用手机字号列出这张纸上的题（A4 预览缩小后看不清）；预览和纸面本身不变。 */}
-        <section className="card" data-testid="print-summary">
-          <h2 className="card-title">这张练习纸上有 {state.snapshot.items.length} 道题</h2>
-          <ul className="list">
-            {state.snapshot.items.map(item => (
-              <li key={item.itemId} className="row qrow">
-                <img className="thumb" src={`/s/img/item/${item.itemId}`} alt="" loading="lazy" />
-                <span className="row-text">
-                  <b>{item.shortId ?? `第 ${item.position + 1} 题`}</b>
-                  <span className="meta-line muted">{[item.subject, ...item.knowledgeTags].filter(Boolean).join(' · ') || '错题'}</span>
-                  {item.stemText ? <span className="meta-line excerpt">{item.stemText}</span> : null}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="small muted"><Phrased text={`什么时候做：${state.snapshot.cover.practiceSlot}。答案在最后一页，做完再看。`} /></p>
-        </section>
-        <h2 className="section-label out">整张练习纸（A4 预览）</h2>
-        <div className="print-root">
-          <div className="sheet-frame"><div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={state.snapshot} /></div></div></div>
-        </div>
-        <a className="more" href={`/s/print/${practiceId}/sheet`} data-testid="sheet-link">单独打开练习纸<span aria-hidden="true">›</span></a>
+        <PrintOverview snapshot={state.snapshot} />
+        <a className="more" href={`/s/print/${practiceId}/sheet`} data-testid="sheet-link" data-key="sheet-link"><Phrased text="单独打开练习纸" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
         <p className="hint">{quoted('单独打开以后，可以在打印预览里「存储到文件」存成 PDF。')}</p>
       </>
     );
@@ -404,25 +468,41 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
     </div>
   ) : null;
   return (
-    <Page title="打印练习纸" bar={bar} barExtra={afterPrint} refreshSeconds={state.status === 'preparing' ? 3 : undefined} bodyClass={state.status === 'ready' ? 'print-page' : undefined}>
+    <Page title="打印练习纸" bar={bar} barExtra={afterPrint} pollSeconds={state.status === 'preparing' ? 2 : undefined}>
       <h1>打印练习纸</h1>
-      {body}
+      <div data-live="print" data-announce={state.status === 'ready' ? '练习纸准备好了' : state.status === 'failed' ? '练习纸没准备好' : undefined}>{body}</div>
     </Page>
   );
 }
 
-/** 单独的练习纸页：没开脚本时用 Safari 的「分享 → 打印」；打印预览里可以「存储到文件」存成 PDF。 */
+/**
+ * 单独的练习纸页：首屏和打印页一样（第 1 道原大小、题目清单、整张 A4 的缩略图）。
+ * 开着脚本：主按钮是「打印」，打印回来以后才换成「打印好了，回到今天」（他自己说打好了，手机不替他说）。
+ * 关掉脚本：网页没法替他打开打印，说明用 Safari 的「分享」→「打印」，主按钮是「打印好了，回到今天」（在 <noscript> 里，开着脚本时不存在）。
+ */
 export function SheetPage(props: { snapshot: PrintSnapshot }): ReactNode {
-  const bar: BarModel = {
-    caption: '用 Safari 的「分享」→「打印」打出来；打印预览里也能「存储到文件」',
-    primary: { title: '打印好了，回到今天', key: 'printed', href: '/s/?printed=1' },
-    secondary: [{ title: '打印', key: 'print', href: '#', print: true }],
-  };
+  const after = '打印机没反应？可以再点一次「再打印」，或者在打印预览里用「存储到文件」发给家里人打印。';
+  const bar = (
+    <nav className="next-bar" data-testid="next-step-bar" aria-label="下一步" data-live="bar">
+      <div className="inner">
+        <p className="caption bar-caption" data-testid="next-step-caption" data-after={after}>打出来，带回学校；打印预览里也能「存储到文件」</p>
+        <div className="bar-after hidden" data-after-print="">
+          <div className="bar-alt"><a className="btn alt" href="#" data-print="" data-testid="reprint" data-key="reprint">再打印</a></div>
+          <div className="bar-main"><a className="btn primary" href="/s/?printed=1" data-print-done="" data-testid="print-done" data-key="printed">打印好了，回到今天</a></div>
+        </div>
+        <div className="js-only"><div className="bar-main"><a className="btn primary" href="#" data-print="" data-js-primary="" data-testid="sheet-print" data-key="print">打印</a></div></div>
+        <noscript>
+          <p className="caption">{quoted('用 Safari 的「分享」→「打印」打出来，再点下面的按钮')}</p>
+          <div className="bar-main"><a className="btn primary" href="/s/?printed=1" data-testid="next-step-primary" data-key="printed">打印好了，回到今天</a></div>
+        </noscript>
+      </div>
+    </nav>
+  );
   return (
-    <Page title="练习纸" back={{ href: `/s/print/${props.snapshot.packetId}`, label: '打印练习纸' }} bar={bar}>
+    <Page title="练习纸" back={{ href: `/s/print/${props.snapshot.packetId}`, label: '打印练习纸' }} bar={null} barExtra={null} after={bar}>
       <h1>练习纸</h1>
-      <h2 className="visually-hidden">练习纸预览</h2>
-      <div className="print-root"><div className="sheet-frame"><div className="sheet-wrap"><div className="sheet-scale"><PracticeSheet snapshot={props.snapshot} /></div></div></div></div>
+      <PrintOverview snapshot={props.snapshot} />
+      <p className="caption-flow small muted" data-caption-flow="" data-after={after}>打出来，带回学校；打印预览里也能「存储到文件」</p>
     </Page>
   );
 }
@@ -482,14 +562,14 @@ export function RecordItemPage(props: { practiceId: string; card: PracticeCard; 
     <Page title="录练习纸的结果" bar={bar}>
       <h1>这道你是怎么做的？</h1>
       {props.error ? <Problem title={props.error} /> : null}
-      <img className="crop big" src={`/s/img/item/${card.id}`} alt={card.shortId ?? '题目裁图'} />
+      <img className="crop big" src={`/s/img/item/${card.id}?s=big`} alt={card.shortId ?? '题目裁图'} />
       <p className="excerpt">{card.questionExcerpt ?? ''}</p>
       <form method="post" action={`/s/record/${props.practiceId}`} id="record-form" data-record-item="">
         <Hidden state={keep} />
         <input type="hidden" name="at" value={String(props.index + 1)} />
         <input type="hidden" name="item" value={card.id} />
         {COMPLETIONS.map(([value, label]) => (
-          <label key={value} className="choice" data-testid={`completion-${value}`}><input type="radio" name="completion" value={value} defaultChecked={props.answer.completion === value} /><span>{label}</span></label>
+          <label key={value} className="choice" data-testid={`completion-${value}`}><input type="radio" name="completion" value={value} defaultChecked={props.answer.completion === value} /><ChoiceText text={label} /></label>
         ))}
         <fieldset data-correct="">
           <legend>做对了吗？对照练习纸最后一页的答案</legend>
@@ -528,24 +608,26 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
   return (
     <Page title="这次的结果" bar={bar}>
       <h1>这次的结果</h1>
+      {/* 结果出来：头一句和下面几组依次浮上来（减少动态效果时直接显示） */}
+      <div className="m-stagger">
       <p className="lead card-title" data-testid="results-head">{head}</p>
       {summary.masteredNow.length > 0 ? (
         <section className="card">
-          <h2 className="card-title tone-green">真会了 ✓（{summary.masteredNow.length} 道）</h2>
+          <h2 className="card-title tone-green"><Phrased text={`真会了 ✓（${summary.masteredNow.length} 道）`} /></h2>
           <p className="small muted">隔了几天还能独立做对。{confirm ? `${confirm} 前后会再考你一次，再对就算稳了。` : ''}</p>
           <ul className="list">{summary.masteredNow.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
       ) : null}
       {summary.pending.length > 0 ? (
         <section className="card">
-          <h2 className="card-title">做对了，过几天再确认（{summary.pending.length} 道）</h2>
+          <h2 className="card-title"><Phrased text={`做对了，过几天再确认（${summary.pending.length} 道）`} /></h2>
           <p className="small muted">做题那天离练习纸生成太近，过几天再做对才算数。</p>
           <ul className="list">{summary.pending.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
       ) : null}
       {summary.again.length > 0 ? (
         <section className="card">
-          <h2 className="card-title tone-orange">下次再练（{summary.again.length} 道）</h2>
+          <h2 className="card-title tone-orange"><Phrased text={`下次再练（${summary.again.length} 道）`} /></h2>
           <p className="small muted">这几道会自动放进下次的练习。</p>
           <ul className="list">{summary.again.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
@@ -557,6 +639,7 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
         </section>
       ) : null}
       {nothing ? <section className="card"><p>这次的结果记下了</p></section> : null}
+      </div>
     </Page>
   );
 }
@@ -621,7 +704,7 @@ export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
 
 // ---------- 设置（§4.12） ----------
 
-export function SettingsPage(props: { practiceSlot: string; paperLocation: string; saved: boolean; error?: string | null; studentHostWorker?: boolean }): ReactNode {
+export function SettingsPage(props: { practiceSlot: string; paperLocation: string; saved: boolean; error?: string | null; studentHostWorker?: boolean; accountRole?: AccountRole | null }): ReactNode {
   const bar: BarModel = { caption: '', primary: { title: '保存', key: 'save', form: 'settings-form' }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] };
   const places: Array<[string, string]> = [['school', '学校'], ['home', '家'], ['varies', '不固定']];
   return (
@@ -641,10 +724,17 @@ export function SettingsPage(props: { practiceSlot: string; paperLocation: strin
           <p className="hint">{quoted('决定答案页写「对照原卷第几题」还是「回家后对照原卷」')}</p>
         </fieldset>
       </form>
+      {props.accountRole ? (
+        <section className="card" data-testid="account-role">
+          <h2 className="card-title">账号身份</h2>
+          <p>{ACCOUNT_ROLE_LABELS[props.accountRole]}</p>
+          {props.accountRole !== 'student' ? <p className="hint">当前使用错题本学习功能，专属功能后续开放。</p> : null}
+        </section>
+      ) : null}
       <section className="card">
         <h2 className="card-title">连接</h2>
         <p className="tone-green" data-testid="connection-ok">已连上服务器 ✓</p>
-        <a className="more" href="/s/install" data-key="settings-install">怎么放到主屏幕<span aria-hidden="true">›</span></a>
+        <a className="more" href="/s/install" data-key="settings-install"><Phrased text="怎么放到主屏幕" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
         {props.studentHostWorker ? (
           <form method="post" action="/s/logout" className="inline-form">
             <button className="link-btn" type="submit" data-testid="logout" data-key="logout">退出登录</button>

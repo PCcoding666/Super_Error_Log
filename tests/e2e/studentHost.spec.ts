@@ -32,6 +32,17 @@ test('mobile invitation login, student settings separation, logout, and offline 
   await page.goto(base + '/s/');
   await expect(page.getByRole('heading', { name: '输入邀请码' })).toBeVisible();
   await page.screenshot({ path: info.outputPath('invite-login.png'), fullPage: true });
+  // 未登录也必须能拿到真正的带指纹 CSS/JS；不能把登录 HTML 当作资源缓存。
+  const assets = await page.locator('link[rel=stylesheet],script[src]').evaluateAll(nodes => nodes.map(n => n.getAttribute('href') ?? n.getAttribute('src')!));
+  expect(assets).toHaveLength(2);
+  for (const asset of assets) {
+    expect(asset).toMatch(/\/s\/assets\/app\.[0-9a-f]{10}\.(css|js)$/);
+    const response = await page.request.get(base + asset);
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type']).toContain(asset.endsWith('.css') ? 'text/css' : 'javascript');
+    expect(response.headers()['cache-control']).toContain('immutable');
+  }
+  await expect(page.locator('html')).toHaveClass(/js/);
   await page.getByLabel('12 位邀请码').fill('wrong');
   await page.getByRole('button', { name: '进入我的错题本' }).click();
   await expect(page.getByText('这个邀请码进不去')).toBeVisible();

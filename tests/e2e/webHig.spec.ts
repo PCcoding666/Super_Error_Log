@@ -40,7 +40,9 @@ test('根导航切换页面；本周安排支持模态焦点、关闭和窄屏�
   await expect(opener).toBeFocused();
 
   await opener.click();
-  const grabber = await dialog.getByRole('button', { name: '下拉收起本周安排' }).boundingBox();
+  await expect(dialog).toHaveClass(/sheet-visible/);
+  await dialog.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+  let grabber = await dialog.getByRole('button', { name: '下拉收起本周安排' }).boundingBox();
   expect(grabber).not.toBeNull();
   // A small drag cancels; the synthetic click after pointerup must not dismiss it.
   await page.mouse.move(grabber!.x + grabber!.width / 2, grabber!.y + grabber!.height / 2);
@@ -49,6 +51,8 @@ test('根导航切换页面；本周安排支持模态焦点、关闭和窄屏�
   await page.mouse.up();
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveClass(/sheet-visible/);
+  await dialog.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+  grabber = await dialog.getByRole('button', { name: '下拉收起本周安排' }).boundingBox();
   await page.mouse.move(grabber!.x + grabber!.width / 2, grabber!.y + grabber!.height / 2);
   await page.mouse.down();
   await page.mouse.move(grabber!.x + grabber!.width / 2, grabber!.y + 110, { steps: 8 });

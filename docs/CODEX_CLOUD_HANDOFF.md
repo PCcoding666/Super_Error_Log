@@ -5,11 +5,12 @@
 ## 1. 从哪个版本继续
 
 - 仓库：`PCcoding666/Super_Error_Log`（私有）。
-- 接手分支：**`codex/student-invite-web`**。用户已明确授权把当前状态同步到GitHub，后续由Codex Cloud继续开发。
-- 现有集成分支：`codex/ai-error-review-mvp`；本轮基于`5436a44`。GitHub默认`main`仍是早期版本，不是当前产品。
-- 生产版本：**0.5.0-r2**，2026-10-15 13:48 UTC+8发布；运行代码提交`a006f0a`，随后`602323a`补充发布记录。接手说明的后续提交不代表额外上线。
+- 唯一主分支：**`main`**。从最新 `origin/main` 新建 `codex/<任务>`，PR 目标也选 `main`。
+- 2026-10-15 用户授权统一分支：此前发布分支 `codex/ai-error-review-mvp` 的完整历史（含 PR #11）归入 `main`，旧分支退役。不要继续从旧任务分支开发。
+- 最近人工发布基线：**0.5.0-r2**，2026-10-15 13:48 UTC+8发布；运行代码提交`a006f0a`，随后`602323a`补充发布记录。自动发布启用后，当前版本以 [Actions 发布摘要](https://github.com/PCcoding666/Super_Error_Log/actions) 和服务器 `current/deploy/ci-release.json` 为准，不要把这条历史基线当成实时版本。
 - 学生入口：https://study.pccoding666.com/s/ 。生产资料/凭证不在仓库；不要为开发去创建或清空真实学生数据。
-- 本轮只同步分支并建立PR，不自动合并或修改GitHub默认分支，也不因同步再次部署。
+- 发布授权（2026-10-15）：用户选择“合并后自动上线”，并授权主分支整理。只有 `main` push 的 CI 全绿才会调用 production；PR 和其他分支不发布。发布规则见 [自动发布说明](../deploy/ci/README.md)。
+- R2 的 27 条提交在 PR #13 中逐项审查整合，取舍和验收见 [审查记录](quality/2026-10-15-pr13-review.md)；实际合并/发布状态查看 PR 和 Actions。历史界面设计已存入 docs，详见 [分支说明](BRANCHES.md)。
 
 ## 2. 产品实际做到哪里
 
@@ -27,10 +28,13 @@
 
 注意：当天做对不算掌握。当前实现以练习包生成日到实际做题日的天数判断，`MIN_DELAY_DAYS=3`；不是自动验证学生确实独立完成，也不是语义上证明知识点已掌握。新题生成、变式题、答题卡自动配对、家长独立看板均未接入当前流程。
 
+账号身份标签（2026-10-15）：注册表给每个账号存 student/parent/teacher/admin 标签，缺省及老账号迁移后均为 student。只是元数据——设置页只读展示，不参与任何鉴权，各账号空间/会话/数据完全不变。只能由管理员本机 `admin-cli set-role` 修改（create 也可指定），网页/浏览器没有改身份的入口；家长/老师/管理员的专属权限与账号关系未实现。
+
 ## 3. 最近完成与证据
 
 | 项目 | 当前证据 | 尚未证明 |
 | --- | --- | --- |
+| 相册批量上传（开发分支，未合并） | 多选自动串行上传、逐张/整批进度；5 张中 1 张失败仍保留其余 4 张，重试只补传失败项；重复点击与成功响应丢失的幂等验收 | 真实手机多选与生产验收；详见[批量上传验收](quality/2026-10-15-album-batch-upload.md) |
 | 每学生独立空间 | 独立目录/SQLite/worker，双学生隔离、重启会话、撤销、路径攻击等测试；线上合成账号交叉资源404 | 大规模多人使用；目前上限3个空间 |
 | 邀请码 | 12位随机码、7天有效、单次兑换，浏览器会话30天；管理员可给同一学生补码 | 自助找回、开放注册 |
 | 语音 | `qwen-audio-3.1-asr-flash`，百炼原生接口；合成M4A/WebM真实转写通过 | 用户手机真人录音的端到端验收 |
@@ -38,7 +42,7 @@
 | 用户手机上传 | **用户于2026-10-15明确说“我现在上传成功了”**，截图显示“已拍1张 · AI正在找题” | 此截图不代表这张真实卷子所有题目识别正确或整周使用已完成 |
 | 主屏幕/纸张 | 网页已可用 | 添加主屏幕、真人录音、实际打印、真实学生一周闭环仍待确认 |
 
-最近完整验收（2026-10-15，热修复代码）：`npm run verify`，typecheck/build通过，Vitest **745通过/2既有跳过**，Playwright **23通过**。这是macOS本地等内容副本的结果，不等于GitHub/Linux CI结果。Linux会按代码条件跳过依赖macOS HEIC/sips或未配置Caddy的用例。
+历史热修复验收（2026-10-15；PR #13 的新一轮结果见审查记录）：`npm run verify`，typecheck/build通过，Vitest **745通过/2既有跳过**，Playwright **23通过**。这是macOS本地等内容副本的结果，不等于GitHub/Linux CI结果。Linux会按代码条件跳过依赖macOS HEIC/sips或未配置Caddy的用例。
 
 线上热修复验收：独立合成账号、真实HTTPS、WebKit上传HEIC，返回200并登记；真实模型完成识别，1题ready且进入错题本。没有把用户原图作为线上测试再发给AI。
 
@@ -57,7 +61,7 @@
 | `src/bridge/recognitionToItems.ts` | 已选/自动识别的题桥接为学习记录，避免重复 |
 | `src/v2/` | 周数据、练习选择、追问、修正、打印快照、回传和总结 |
 | `src/web/router.ts` / `views/` | 当前手机网页路由与SSR页面，无React hydration |
-| `src/web/assets.ts` / `photoUpload.ts` | 少量浏览器脚本、PWA缓存、图片准备/上传；资源版本目前3 |
+| `src/web/assets.ts` / `clientScript.ts` / `photoUpload.ts` | 静态壳与浏览器渐进增强、图片转换/上传；CSS/JS 内容指纹自动更新缓存 |
 | `src/web/weekPlan.ts` | 今天页和本周各步骤的下一步指引 |
 | `src/ai/asr.ts` | Qwen ASR；密钥留在服务端，转写结果可编辑再提交 |
 | `src/domain/stateMachine.ts` | 延迟重做/掌握规则 |
@@ -96,7 +100,7 @@ npx playwright test tests/e2e/studentHost.spec.ts tests/e2e/photoUpload.spec.ts
 
 `tests/e2e/studentHostServer.ts`由测试fork启动，以IPC传本机地址和测试邀请码；不要直接运行它等终端打印网址。浏览器测试自动清理临时学生目录。`tests/fixtures/photo-upload.heic`是1994字节的纯色合成图片，不是用户照片。
 
-CI：`.github/workflows/ci.yml`在每个PR以及集成分支/main推送时验证，**不会部署**。详见[CI说明](ci.md)。Cloud的实现报告要区分本地测试、Actions检查、线上运行和用户验收。
+CI：`.github/workflows/ci.yml`在每个PR以及 `main` 推送时验证；**仅 `main` push 全绿后自动发布**。详见[CI说明](ci.md)和[发布说明](../deploy/ci/README.md)。Cloud的实现报告要区分本地测试、Actions检查、线上运行和用户验收。
 
 已知开发限制：旧本地PDF下载使用Express默认dotfiles策略，工作树位于隐藏路径（例如`.codex`）时可能404；上次在非隐藏目录的等内容副本验收通过。不要因此改宽整个生产静态文件访问权限。
 
@@ -109,7 +113,7 @@ CI：`.github/workflows/ci.yml`在每个PR以及集成分支/main推送时验证
 - 分别确认主屏幕安装、真人录音、纸张打印，不能把浏览器截图算作全部完成。
 - 后续候选：答题卡与卷子关联、针对知识点的变式题/新题、主动复习建议、家长汇总、Liquid Glass视觉调整；都不在本次已交付范围。
 
-交付新修改时：给出改动、运行过的检查、未验证项和PR。生产部署、清理真实学习记录、撤销邀请码/会话等操作按用户当次授权执行。不要重置学生数据来让测试通过。
+交付新修改时：给出改动、运行过的检查、未验证项和PR。合并后的常规自动发布已经授权；清理真实学习记录、撤销邀请码/会话、破坏性数据库迁移等仍需单独授权。不要重置学生数据来让测试通过。
 
 ## 7. 上下文与保密边界
 

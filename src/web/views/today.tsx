@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { weekRangeText } from '../format.js';
 import { actionHref, type PhotoView, type TodayState } from '../state.js';
 import { actionKey, header, type Choice, type ConnectReason, type NextStepModel, type Step } from '../weekPlan.js';
-import { NextBar, Page, Phrased, Problem, quoted, type BarButton, type BarModel } from './layout.js';
+import { NextBar, Page, Phrased, Problem, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
 /** 与练习纸封面三条规则同一说法（printService.ts 55 行）。 */
 export const PAPER_RULES = '做的时候：不看答案，独立做；卡住先看一级提示，再看二级；做完打勾，写上做题日期。';
@@ -38,7 +38,7 @@ function StepRow(props: { step: Step; index: number; current: boolean }): ReactN
     <>
       <span className="dot" aria-hidden="true">{step.isDone ? '✓' : index + 1}</span>
       <span className="step-body">
-        <span className="step-title">{step.title}</span>
+        <span className="step-title"><Phrased text={step.title} /></span>
         {step.isOptional && !step.isDone ? <span className="chip">可跳过</span> : null}
         {current ? <span className="chip now">现在做这个</span> : null}
         <span className="step-detail"><span className={`tone-${step.tone}`}><Phrased text={step.detail} /></span> <span className="step-min">· 约 {step.minutes} 分钟</span></span>
@@ -48,11 +48,13 @@ function StepRow(props: { step: Step; index: number; current: boolean }): ReactN
     </>
   );
   const label = `第 ${index + 1} 步，${step.title}${current ? '，现在做这个' : ''}${step.isDone ? '，做完了' : ''}`;
+  // data-step / data-done / data-current：页面脚本拿来和上一次看到的清单比，放「打勾」「挪到下一步」的动效（不影响内容）。
+  const marks = { 'data-step': step.kind, 'data-done': step.isDone ? '1' : '0', 'data-current': current ? '1' : '0' };
   return (
     <li>
       {step.action
-        ? <a className={cls} href={actionHref(step.action)} data-testid={`today-step-${step.kind}`} aria-label={label}>{inner}</a>
-        : <div className={`row ${cls}`} data-testid={`today-step-${step.kind}`} aria-label={label} role="group">{inner}</div>}
+        ? <a className={cls} href={actionHref(step.action)} data-testid={`today-step-${step.kind}`} aria-label={label} {...marks}>{inner}</a>
+        : <div className={`row ${cls}`} data-testid={`today-step-${step.kind}`} aria-label={label} role="group" {...marks}>{inner}</div>}
     </li>
   );
 }
@@ -62,7 +64,7 @@ function Rhythm(props: { active: number }): ReactNode {
   return (
     <ol className="rhythm" aria-label="一周的节奏">
       {parts.map(([when, what], index) => (
-        <li key={when} className={index === props.active ? 'on' : ''} aria-current={index === props.active ? 'step' : undefined}><b>{when}</b>{what}</li>
+        <li key={when} className={index === props.active ? 'on' : ''} aria-current={index === props.active ? 'step' : undefined}><b><Phrased text={when} max={2} /></b><Phrased text={what} max={2} /></li>
       ))}
     </ol>
   );
@@ -133,22 +135,27 @@ function NewPhotosNote(props: { photos: PhotoView[] }): ReactNode {
   return (
     <div data-testid="today-new-photos">
       <p className="small"><Phrased text={`${needsPick ? `新拍的第 ${needsPick.number} 张要你勾出做错的题。` : '新拍的卷子：AI 正在找题。'}找到的题会进错题本，下个周末再选进练习。`} /></p>
-      <a className="more" href={needsPick ? `/s/photos/${needsPick.jobId}` : '/s/photos'} data-key="today-new-photos">{needsPick ? `勾第 ${needsPick.number} 张` : '看看新拍的卷子'}<span aria-hidden="true">›</span></a>
+      <a className="more" href={needsPick ? `/s/photos/${needsPick.jobId}` : '/s/photos'} data-key="today-new-photos"><Phrased text={needsPick ? `勾第 ${needsPick.number} 张` : '看看新拍的卷子'} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
     </div>
   );
 }
 
-export function TodayPage(props: { state: TodayState; practiceSlot: string; flash?: { ok?: string | null; err?: string | null }; showInstallHint: boolean }): ReactNode {
+/** 「今天」在等什么（AI 找题 / 准备练习纸）：等的时候局部轮询，清单下面写已经等了多久。 */
+export interface TodayWait { since: string | null; expect: string }
+
+export function TodayPage(props: { state: TodayState; practiceSlot: string; flash?: { ok?: string | null; err?: string | null }; showInstallHint: boolean; wait?: TodayWait | null; now?: Date }): ReactNode {
   const { plan, week } = props.state;
   const slot = plan.practice?.practiceSlot ?? props.practiceSlot;
   const bar = barFromPlan(plan.next);
+  const finding = props.state.photos.some(photo => photo.state === 'finding');
+  const waiting = finding || plan.next?.isWaiting === true;
   let content: ReactNode;
   if (plan.stage === 'done') {
     content = (
-      <section className="today-focus" data-testid="today-done">
+      <section className="today-focus" data-testid="today-done" data-steps="" data-stage="done">
         <TaskIcon kind="complete" />
         <p className="focus-eyebrow">准备好了</p>
-        <h2 className="focus-title" data-testid="today-done-title">这周的事做完了</h2>
+        <h2 className="focus-title" data-testid="today-done-title"><Phrased text="这一份练习纸已准备好" /></h2>
         <p>把练习纸带回学校，<b>{slot}</b>在纸上做。</p>
         <p><Phrased text={PAPER_RULES} /></p>
         <p className="muted">下个周末打开错题本，录一下做的结果。</p>
@@ -158,10 +165,10 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
     );
   } else if (plan.stage === 'midweek') {
     content = (
-      <section className="today-focus" data-testid="today-midweek">
+      <section className="today-focus" data-testid="today-midweek" data-steps="" data-stage="midweek">
         <TaskIcon kind="paper" />
         <p className="focus-eyebrow">纸上练习</p>
-        <h2 className="focus-title" data-testid="today-midweek-title">现在是在纸上做练习的时候</h2>
+        <h2 className="focus-title" data-testid="today-midweek-title"><Phrased text="现在是在纸上做练习的时候" /></h2>
         {plan.practice ? <p className="focus-meta">{[`练习纸：${plan.practice.itemCount} 道`, slot].join(' · ')}</p> : null}
         <p><Phrased text={PAPER_RULES} /></p>
         <p className="muted"><Phrased text="没做完也没关系，周末回来再录。当天做对不算真会，隔几天再做对才算，所以别急着对答案。" /></p>
@@ -175,24 +182,32 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
       <section className="today-focus" data-testid="today-card">
         <TaskIcon kind={current?.kind ?? 'complete'} />
         <p className="focus-eyebrow">{plan.next?.isWaiting ? '正在准备' : '接下来'}</p>
-        <h2 className="focus-title">{current?.title ?? (plan.stage === 'loading' ? '正在读取本周安排' : '这周的步骤都做完了')}</h2>
+        <h2 className="focus-title"><Phrased text={current?.title ?? (plan.stage === 'loading' ? '正在读取本周安排' : '这周的步骤都做完了')} /></h2>
         {current ? <p className={`focus-detail tone-${current.tone}`}><Phrased text={current.detail} /></p> : null}
         {current?.warning ? <p className="focus-detail tone-orange"><Phrased text={current.warning} /></p> : null}
         {bar ? <NextBar model={bar} inline /> : null}
+        {props.wait ? <WaitLine since={props.wait.since} now={props.now ?? new Date()} expect={props.wait.expect} /> : null}
       </section>
     );
   }
   return (
-    <Page title="今天" back={null} tab="today" flash={props.flash}>
+    <Page title="今天" back={null} tab="today" flash={props.flash} pollSeconds={waiting || props.wait ? 4 : undefined}>
       <div className="today-heading">
         <p className="today-date">本周 · {weekRangeText(week.week)}</p>
         <h1>今天</h1>
       </div>
-      {content}
-      <WeekOverview state={props.state} slot={slot} />
+      <div data-live="today" data-steps="" data-stage={plan.stage} data-announce={bar?.primary?.title ?? (plan.stage === 'done' ? '这一份练习纸已准备好' : plan.stage === 'midweek' ? '现在是在纸上做练习的时候' : '本周安排已更新')}>
+        {content}
+        {finding ? <p className="small muted" data-testid="today-processing">照片已保存，正在处理。你可以先离开，回来会接着显示进度。<a href="/s/photos" data-key="today-progress">查看处理进度</a></p> : null}
+        <WeekOverview state={props.state} slot={slot} />
+      </div>
+      <section className="today-supplement">
+        <a className="btn" href="/s/capture" data-testid="today-add-mistakes" aria-describedby="add-mistakes-hint">＋补充错题</a>
+        <p className="small muted" id="add-mistakes-hint">拍照或从相册选图，随时添加。</p>
+      </section>
       <section className="today-library" aria-labelledby="anytime-title">
         <h2 className="section-label" id="anytime-title">学习记录</h2>
-        <ul className="list">
+        <ul className="list" data-live="anytime">
           <li><a className="row library-row" href="/s/items" data-testid="today-items"><span className="library-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" focusable="false"><rect x="5" y="3" width="15" height="18" rx="2" /><path d="M3 7h4m-4 5h4m-4 5h4m4-9h5m-5 4h5" /></svg></span><span className="row-text">这周的错题<span className="meta-line muted">{week.items.length} 道题</span></span><span className="chev" aria-hidden="true">›</span></a></li>
           <li><a className="row library-row" href="/s/practices" data-testid="today-practices"><span className="library-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" focusable="false"><path d="M5 4h10l4 4v13H5ZM15 4v5h4M9 13h6m-6 4h6" /></svg></span><span className="row-text">以前的练习<span className="meta-line muted">练习纸和做题结果</span></span><span className="chev" aria-hidden="true">›</span></a></li>
           {props.showInstallHint ? null : <li className="a2hs-row"><a className="row" href="/s/install" data-testid="today-install"><span className="row-text">放到主屏幕</span><span className="chev" aria-hidden="true">›</span></a></li>}
@@ -302,15 +317,27 @@ export function OfflinePage(): ReactNode {
   );
 }
 
-/** 服务器忙（429）。还没连上（或连接失效）的人看不到也没传过东西，不说「照片和错题都在」。 */
-export function BusyPage(props: { retryAfterSeconds: number; connected: boolean }): ReactNode {
+/**
+ * 服务器忙（429）。按这台手机现在的连接情况分三种说法：
+ * - connected：已经连着（请求太频繁）——照片和错题都在。
+ * - unpaired：还没连上（连接失败太多次才会到这里，手里的链接多半已经用过或过期）——等一会儿再试，还是不行就要一个新的。
+ * - expired：以前连上过、连接失效了（cookie 无效）——不说「还没连上」；要一个新的二维码或链接重新连，照片和错题都还在。
+ */
+export type BusyReason = 'connected' | 'unpaired' | 'expired';
+const BUSY_NOTES: Record<BusyReason, string> = {
+  connected: '已经传上去的照片和错题都在服务器上，不会丢。',
+  unpaired: '还没连上服务器。等一会儿再试；还是不行，请大人给一个新的二维码或链接。',
+  expired: '连接过期了，要请大人给一个新的二维码或链接。照片和错题都还在服务器上。',
+};
+
+export function BusyPage(props: { retryAfterSeconds: number; reason: BusyReason }): ReactNode {
   const bar: BarModel = { caption: `大约 ${Math.max(1, Math.ceil(props.retryAfterSeconds / 60))} 分钟后再试`, primary: { title: '过一会儿再试', key: 'retry', href: '/s/' }, secondary: [] };
   return (
-    <Page title="服务器有点忙" back={null} showSettings={props.connected} bar={bar}>
+    <Page title="服务器有点忙" back={null} showSettings={props.reason === 'connected'} bar={bar}>
       <h1>服务器有点忙</h1>
       <section className="card">
         <p>现在来的请求太多了，过一会儿再点下面的按钮。</p>
-        <p className="muted small" data-testid="busy-note">{props.connected ? '已经传上去的照片和错题都在服务器上，不会丢。' : '还没连上服务器。等一会儿，再用同一个二维码或链接试一次。'}</p>
+        <p className="muted small" data-testid="busy-note"><Phrased text={BUSY_NOTES[props.reason]} /></p>
       </section>
     </Page>
   );

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { APP_NAME, APP_SHORT_NAME, ASSET_VERSION, THEME_COLOR, THEME_COLOR_DARK } from '../assets.js';
+import { APP_NAME, APP_SHORT_NAME, CSS_PATH, JS_PATH, THEME_COLOR, THEME_COLOR_DARK } from '../assets.js';
+import { phrasePieces } from '../phrases.js';
 
 /** 底部下一步按钮里的一个按钮：链接、表单提交、页面里表单的提交按钮、拍照的 label、或不可点。 */
 export type BarButton = { title: string; key: string } & (
@@ -25,30 +26,30 @@ export function ButtonView(props: { button: BarButton; primary: boolean; look?: 
   const testId = primary ? 'next-step-primary' : `next-step-secondary-${button.key}`;
   const cls = `btn${look === 'primary' ? ' primary' : look === 'alt' ? ' alt' : ''}`;
   if ('href' in button) {
-    return <a className={cls} href={button.href} data-testid={testId} data-key={button.key} data-print={button.print ? '' : undefined}>{button.title}</a>;
+    return <a className={cls} href={button.href} aria-label={button.title} data-testid={testId} data-key={button.key} data-print={button.print ? '' : undefined}><Phrased text={button.title} /></a>;
   }
   if ('post' in button) {
     const formId = `bar-${button.key}`;
     return (
       <form method="post" action={button.post} id={formId} data-wait={button.wait}>
         {Object.entries(button.fields ?? {}).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
-        <button className={cls} type="submit" data-testid={testId} data-key={button.key}>{button.title}</button>
+        <button className={cls} type="submit" aria-label={button.title} data-testid={testId} data-key={button.key}><Phrased text={button.title} /></button>
       </form>
     );
   }
   if ('form' in button) {
     return (
-      <button className={`${cls}${button.disabled ? ' disabled' : ''}`} type="submit" form={button.form} name={button.name} value={button.value} data-testid={testId} data-key={button.key}
+      <button className={`${cls}${button.disabled ? ' disabled' : ''}`} type="submit" form={button.form} name={button.name} value={button.value} aria-label={button.title} data-testid={testId} data-key={button.key}
         disabled={button.disabled} data-main="" data-count-label={button.countTemplate ? '' : undefined} data-template={button.countTemplate} data-empty={button.emptyTitle}>
-        {button.title}
+        <Phrased text={button.title} />
       </button>
     );
   }
   if ('labelFor' in button) {
     // 拍照 / 从相册选：label 直接打开系统相机或相册（不靠脚本）。键盘焦点落在被它指向的文件输入上，焦点环画在这个 label 上（见样式）。
-    return <label className={cls} htmlFor={button.labelFor} data-testid={testId} data-key={button.key}>{button.title}</label>;
+    return <label className={cls} htmlFor={button.labelFor} aria-label={button.title} data-testid={testId} data-key={button.key}><Phrased text={button.title} /></label>;
   }
-  return <button className={`${cls}${button.waiting ? ' waiting' : ''}`} type="button" disabled data-testid={testId} data-key={button.key}>{button.title}</button>;
+  return <button className={`${cls}${button.waiting ? ' waiting' : ''}`} type="button" disabled aria-label={button.title} data-testid={testId} data-key={button.key}><Phrased text={button.title} /></button>;
 }
 
 /** 当前任务操作。任务页固定在底部；根页面内联到任务内容，避免与全局导航竞争。 */
@@ -56,10 +57,10 @@ export function NextBar(props: { model: BarModel; extra?: ReactNode; inline?: bo
   const { model } = props;
   const hasPrimary = model.primary !== null;
   return (
-    <nav className={`next-bar${props.inline ? ' next-bar-inline' : ''}`} data-testid="next-step-bar" aria-label="下一步">
+    <nav className={`next-bar${props.inline ? ' next-bar-inline' : ''}`} data-testid="next-step-bar" aria-label="下一步" data-live={props.inline ? undefined : "bar"}>
       <div className="inner">
         {model.caption || model.captionAfterPrint ? (
-          <p className="caption" data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
+          <p className="caption bar-caption" data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
         ) : null}
         {hasPrimary && model.secondary.length > 0 ? (
           <div className="bar-alt">{model.secondary.map(button => <ButtonView key={button.key} button={button} primary={false} look="alt" />)}</div>
@@ -84,7 +85,10 @@ export interface PageProps {
   showSettings?: boolean;
   bar?: BarModel | null;
   barExtra?: ReactNode;
-  refreshSeconds?: number;
+  /** 自己写的底栏（练习纸单独页：开着 / 关掉脚本时主按钮不同），代替 bar。 */
+  after?: ReactNode;
+  /** 等 AI 的页面：开着脚本时每隔几秒取一次这一页，只换掉标了 data-live 的区域（状态、底栏）；关掉脚本时退回 meta refresh。 */
+  pollSeconds?: number;
   flash?: { ok?: string | null; err?: string | null };
   bodyClass?: string;
   children: ReactNode;
@@ -113,12 +117,13 @@ export function Page(props: PageProps): ReactNode {
         <link rel="manifest" href="/s/manifest.webmanifest" />
         <link rel="apple-touch-icon" href="/s/assets/apple-touch-icon.png" />
         <link rel="icon" type="image/png" href="/s/assets/icon-192.png" />
-        {/* 等 AI 的页面：开着脚本时由脚本按 data-refresh 刷新（看不见、正在输入时不刷）；关掉脚本时退回 meta refresh。 */}
-        {props.refreshSeconds ? <noscript><meta httpEquiv="refresh" content={String(props.refreshSeconds)} /></noscript> : null}
-        <link rel="stylesheet" href={`/s/assets/app.css?v=${ASSET_VERSION}`} />
-        <script src={`/s/assets/app.js?v=${ASSET_VERSION}`}></script>
+        {/* 等 AI 的页面：开着脚本时由脚本按 data-poll 局部更新（看不见、正在输入时不换）；关掉脚本时退回 meta refresh。 */}
+        {props.pollSeconds ? <noscript><meta httpEquiv="refresh" content={String(props.pollSeconds)} /></noscript> : null}
+        <link rel="stylesheet" href={CSS_PATH} />
+        {/* defer：不挡首屏；只在有 / 没有脚本时出现的东西由样式的 scripting 媒体特性决定，不等脚本 */}
+        <script src={JS_PATH} defer></script>
       </head>
-      <body className={bodyClass} data-refresh={props.refreshSeconds ? String(props.refreshSeconds) : undefined}>
+      <body className={bodyClass} data-poll={props.pollSeconds ? String(props.pollSeconds) : undefined}>
         <header className={`top${back ? '' : ' top-root'}`}>
           {back ? <a href={back.href} data-testid="back-link" data-key="back"><svg className="nav-icon chev-left" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m14 5-7 7 7 7" /></svg>{back.label}</a> : null}
           {props.showSettings === false ? <span /> : <a href="/s/settings" data-testid="settings-link" data-key="settings"><svg className="nav-icon settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 3-.7 2.4-2 .9-2.2-.6-2 3.4 1.6 1.8v2.2l-1.6 1.8 2 3.4 2.2-.6 2 .9L9 21h4l.7-2.4 2-.9 2.2.6 2-3.4-1.6-1.8v-2.2l1.6-1.8-2-3.4-2.2.6-2-.9L13 3Z" /><circle cx="11" cy="12" r="3" /></svg>设置</a>}
@@ -128,8 +133,10 @@ export function Page(props: PageProps): ReactNode {
           {props.flash?.err ? <div className="flash err" role="alert" data-testid="flash-err">{props.flash.err}</div> : null}
           {props.children}
           {props.tab && props.bar ? <NextBar model={props.bar} extra={props.barExtra} inline /> : null}
+          {!props.tab && props.bar ? <p className="caption-flow small muted" data-caption-flow="" data-live="caption" data-after={props.bar.captionAfterPrint}>{props.bar.caption}</p> : null}
+          {props.pollSeconds ? <p className="visually-hidden" aria-live="polite" data-announcer="" /> : null}
         </main>
-        {!props.tab && props.bar ? <NextBar model={props.bar} extra={props.barExtra} /> : null}
+        {!props.tab && props.bar ? <NextBar model={props.bar} extra={props.barExtra} /> : props.after ?? null}
         {props.tab ? <TabBar selected={props.tab} /> : null}
       </body>
     </html>
@@ -161,6 +168,51 @@ export function Problem(props: { title: string; detail?: string; reason?: string
   );
 }
 
+/** 等了多久：「已经等了 40 秒」「已经等了 1 分 5 秒」（页面脚本每秒按同一个写法更新）。 */
+export function elapsedText(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  return s < 60 ? `已经等了 ${s} 秒` : `已经等了 ${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+}
+
+/**
+ * 等 AI 时的一行：等了多久（data-elapsed = 服务器出这一页时已经等了几秒，脚本接着往上数）+ 大概还要多久。
+ * 网络断了的时候脚本在后面补一句（data-wait-net）。
+ */
+export function WaitLine(props: { since: string | null; now: Date; expect: string }): ReactNode {
+  const seconds = props.since ? Math.max(0, Math.floor((props.now.getTime() - Date.parse(props.since)) / 1000)) : null;
+  return (
+    <p className="wait-line small" data-testid="wait-line">
+      {seconds !== null && Number.isFinite(seconds) ? <><span className="ph" data-elapsed={String(seconds)}>{elapsedText(seconds)}</span>{' · '}</> : null}
+      <Phrased text={props.expect} />
+      <span className="wait-net hidden" data-wait-net="">{' · 暂时没拿到最新进度，正在重试'}</span>
+    </p>
+  );
+}
+
+/**
+ * 「点一下开始说」（说说为什么错的回答、改一下的说明共用）：开着麦克风时有音量条和计时，按钮变成「说完了」；
+ * 转写时说已经转了几秒；转写失败时刚才那段录音留在页面里，可以「再转一次」，也可以直接打字。没有麦克风时整块不出现。
+ */
+export function VoiceBox(props: { target: string; testIds?: boolean }): ReactNode {
+  const t = (id: string): string | undefined => (props.testIds ? id : undefined);
+  return (
+    <div className="voice hidden" data-voice-for={props.target} data-endpoint="/s/voice" data-testid={t('voice')}>
+      <button type="button" data-voice-btn="" data-testid={t('voice-button')} data-key={props.testIds ? undefined : 'voice'}>点一下开始说</button>
+      <button type="button" className="voice-retry hidden" data-voice-retry="" data-key="voice-retry" data-testid={t('voice-retry')}>再转一次</button>
+      <span className="voice-live hidden" data-voice-live="" data-testid={t('voice-live')}>
+        <span className="meter" data-voice-meter="" data-level="0" data-testid={t('voice-meter')} aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></span>
+        <span className="voice-time" data-voice-time="" data-testid={t('voice-timer')} role="timer" aria-label="录了多久">0:00</span>
+        <span className="heard small" data-voice-heard="" aria-hidden="true" />
+        <span className="small muted">最多 60 秒</span>
+      </span>
+      <span className="small muted voice-note" data-voice-note="" data-testid={t('voice-note')} aria-live="polite" />
+      <button type="button" className="voice-cancel hidden" data-voice-cancel="" data-key="voice-cancel" data-testid={t('voice-cancel')}>取消，改用打字</button>
+      <span className="small muted voice-wait" data-voice-wait="" data-testid={t('voice-wait')} />
+      <span className="small muted" data-testid={t('voice-privacy')}>录音会发给通义千问转文字，本应用不保存录音；最多 60 秒，也可以直接打字</span>
+    </div>
+  );
+}
+
 /** 「」里的短引语（≤ 12 个字，按钮名、菜单名）保持在同一行，不被拆成「「相 / 机」」。其余文字原样。 */
 export function quoted(text: string): ReactNode {
   const parts = text.split(/(「[^「」]{1,12}」)/u);
@@ -169,12 +221,23 @@ export function quoted(text: string): ReactNode {
 }
 
 /**
- * 中文短句的断行：在标点（，；。：、！？）后面分成不可拆的小段（inline-block），换行只落在小段之间，
- * 不会把一个词拆到两行（例如「没 / 批改」「正 / 好」）。小段比一行还长时照常在段内换行。
- * 只用于一两行的短句（清单说明行、照片状态行、小字提示）；长段落照常按字换行（中文排版的惯例）。文字内容不变。
+ * 中文短句的断行：分成不可拆的小段（inline-block），换行只落在小段之间，不会把一个词拆到两行（「没 / 批改」），
+ * 也不会剩一个字单独一行（「第 1 / 道印出来是这 / 样」）、标点落到行首。小段比一行还长时照常在段内换行（样式里 line-break: strict）。
+ * - 18 个字以内的短句（标题、按钮、清单行、说明行）：按词组分段（phrasePieces，ICU 分词，见 phrases.ts）；
+ * - 更长的句子：在标点（，；。：、！？）后面分段（长段落照常按字换行，中文排版的惯例）；
+ * - 4 个字以内：原样（一行总放得下）。
+ * max：词组的最大字数（节奏条那种很窄的格子用 2）。suffix：贴在最后一段里的尾巴（例如链接后面的「›」，不单独换到下一行）。文字内容不变。
  */
-export function Phrased(props: { text: string }): ReactNode {
-  const pieces = props.text.split(/(?<=[，；。：、！？])(?=\S)/u);
-  if (pieces.length < 2) return quoted(props.text);
-  return <>{pieces.map((piece, index) => <span key={index} className="ph">{quoted(piece)}</span>)}</>;
+export function Phrased(props: { text: string; max?: number; prefix?: ReactNode; suffix?: ReactNode }): ReactNode {
+  const count = (props.text.match(/[\p{L}\p{N}]/gu) ?? []).length;
+  if (count <= 4 && !props.suffix && !props.prefix && props.max === undefined) return quoted(props.text);
+  const pieces = count <= 18 ? phrasePieces(props.text, props.max ?? 4) : props.text.split(/(?<=[，；。：、！？])(?=\S)/u);
+  const last = pieces.length - 1;
+  return (
+    <span className="phr">
+      {pieces.map((piece, index) => (piece.trim() === ''
+        ? piece
+        : <span key={index} className="ph">{index === 0 ? props.prefix : null}{quoted(piece)}{index === last ? props.suffix : null}</span>))}
+    </span>
+  );
 }

@@ -7,17 +7,19 @@
  * - 转发：其余 /s/* 按会话找到学生，流式代理到该学生的独立 worker 进程。
  *   - 禁止旧 /s/pair（绕过新登录的口子）与任何含编码/穿越字符的路径，绝不转发到 /v1 /v2。
  *   - 请求头白名单重建：过滤用户带来的 sel_device、authorization 与转发头；注入只有父进程知道的内部
- *     sel_device 令牌与真实 IP（父进程可信 Caddy 规则）。原始 Host 保留。
+ *     sel_device 令牌、真实 IP 与账号身份标签 x-sel-internal-account-role（只是元数据，来自注册表，
+ *     浏览器带来的同名头一律丢弃）。原始 Host 保留。
  *   - 响应 Set-Cookie 只放行业务 cookie（sel_consent/sel_photos/sel_skip/sel_a2hs），
  *     绝不把内部 sel_device 或 sel_student 发给浏览器；含学生数据的响应一律 no-store。
  *   - 请求体流式转发（不解析 multipart）；有限超时；客户端断连取消上游请求（POST 不自动重放）。
  */
 import http from 'node:http';
+import crypto from 'node:crypto';
 import express, { Router, type Request, type Response } from 'express';
+import { isAccountRole } from './accountRole.js';
 import { RegistryError, StudentRegistry, resolveStudentHostDir } from './registry.js';
 import { StudentWorkerPool, WorkerStartError } from './workers.js';
-import { CLIENT_SCRIPT, SERVICE_WORKER, STYLES, iconPng, manifest } from '../web/assets.js';
-import { OfflinePage } from '../web/views/today.js';
+import { registerStaticAssets } from '../web/staticAssets.js';
 import { COOKIE, clearCookie, readCookies, setCookie } from '../web/session.js';
 import { TRAIL_COOKIE } from '../web/trail.js';
 import type { RateLimiter } from '../mobile/rateLimit.js';
@@ -141,24 +143,13 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
 
     r.use((_request, response, next) => {
       for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.setHeader(name, value);
-      // 网关直出的页面/资源也不进 HTTP 缓存（静态壳由 Service Worker 显式缓存，不靠 HTTP 缓存）。
+      // 默认禁止缓存；公开静态壳由共享注册函数单独设置缓存策略。
       response.setHeader('cache-control', 'private, no-store');
       next();
     });
 
     // ---------- 公开资源（无学生数据；与 worker 同一份静态壳） ----------
-    r.get('/manifest.webmanifest', (_request, response) => { response.type('application/manifest+json').send(JSON.stringify(manifest())); });
-    r.get('/sw.js', (_request, response) => { response.type('text/javascript').send(SERVICE_WORKER); });
-    r.get('/assets/app.css', (_request, response) => { response.type('text/css').send(STYLES); });
-    r.get('/assets/app.js', (_request, response) => { response.type('text/javascript').send(CLIENT_SCRIPT); });
-    const icon = (size: number, maskable = false) => async (_request: Request, response: Response): Promise<void> => {
-      response.type('image/png').send(await iconPng(size, maskable));
-    };
-    r.get('/assets/icon-192.png', icon(192));
-    r.get('/assets/icon-512.png', icon(512));
-    r.get('/assets/icon-maskable-512.png', icon(512, true));
-    r.get('/assets/apple-touch-icon.png', icon(180));
-    r.get('/offline', (_request, response) => { sendHtml(response, OfflinePage()); });
+    registerStaticAssets(r);
     r.get('/login', (_request, response) => response.redirect(303, '/s/'));
 
     // ---------- 登录（兑换邀请码） ----------
@@ -230,6 +221,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         return;
       }
       response.locals.studentId = session.studentId;
+      // Bind a page's recording to this browser session without exposing the bearer token.
+      response.locals.voiceContext = crypto.createHash('sha256').update(token!).digest('hex');
+      // 账号身份标签：每请求从注册表现读，set-role 后下一个请求即生效，不用重新登录/重启。
+      // 只是元数据，不参与鉴权；浏览器/查询串/表单里的任何「role」都不会被采信。
+      response.locals.accountRole = registry.getAccountRole(session.studentId);
       next();
     });
 
@@ -238,6 +234,16 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       const studentId = String(response.locals.studentId);
       // 业务 POST 的同源校验在进 worker 之前完成（被拒不触达 worker）。
       if (request.method === 'POST' && isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      // Express routes accept case differences and a trailing slash. Check the same variants.
+      if (request.method === 'POST' && /^\/voice\/?$/i.test(request.path)) {
+        const context = request.headers['x-sel-voice-context'];
+        const expected = String(response.locals.voiceContext);
+        if (typeof context !== 'string' || !/^[0-9a-f]{64}$/.test(context)
+          || !crypto.timingSafeEqual(Buffer.from(context), Buffer.from(expected))) {
+          response.status(409).json({ error: { code: 'voice_context_mismatch', message: '登录状态已改变，请刷新页面后重新录音。' } });
+          return;
+        }
+      }
       const relUrl = safeRelativeUrl(request.url);
       if (relUrl === null) { response.status(404).type('text/plain').send('not found'); return; }
       void proxyToWorker(request, response, studentId, relUrl, deps);
@@ -267,6 +273,15 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     if (typeof request.headers['user-agent'] === 'string') headers['user-agent'] = request.headers['user-agent'];
     if (typeof request.headers['content-type'] === 'string') headers['content-type'] = request.headers['content-type'];
     if (typeof request.headers['content-length'] === 'string') headers['content-length'] = request.headers['content-length'];
+    if (request.headers['x-sel-poll'] === '1') headers['x-sel-poll'] = '1';
+    // Never forward a client-supplied internal context; only the authenticated gateway creates it.
+    // Form POSTs can render a page again after validation errors, including its VoiceBox.
+    if ((request.method === 'GET' || request.method === 'POST') && !/^\/voice\/?$/i.test(request.path)) {
+      headers['x-sel-internal-voice-context'] = String(response.locals.voiceContext);
+    }
+    // 账号身份标签：只由父进程按注册表下发（上面头白名单重建时浏览器带来的同名头已被丢弃）。
+    const accountRole = response.locals.accountRole;
+    if (isAccountRole(accountRole)) headers['x-sel-internal-account-role'] = accountRole;
     const clientCookies = readCookies(request);
     const cookieParts = [...BUSINESS_COOKIES]
       .filter(name => clientCookies[name] !== undefined)

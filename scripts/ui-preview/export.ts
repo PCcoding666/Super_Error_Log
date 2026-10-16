@@ -36,7 +36,7 @@ type Props = {
 };
 const scenes: { [K in keyof Props]: [ComponentType<Props[K]>, Props[K], string] } = {
   login: [login.LoginPage, {}, 'src/studentHost/loginView.tsx#LoginPage'],
-  today: [today.TodayPage, { state: { plan, week: { week: FIXTURE_WEEK, photos: [], items, backlog: [] }, photos: [photo], practices: [], latestDetail: null, marks: { pickDone: new Set(), dismissed: new Set() }, skips: { steps: new Set(), passedItems: new Set() } }, practiceSlot: '周三晚自习', showInstallHint: true }, 'src/web/views/today.tsx#TodayPage'],
+  today: [today.TodayPage, { state: { plan, week: { week: FIXTURE_WEEK, photos: [], items, backlog: [] }, photos: [photo], practices: [], latestDetail: null, preparingPrintID: null, marks: { pickDone: new Set(), dismissed: new Set() }, skips: { steps: new Set(), passedItems: new Set() } }, practiceSlot: '周三晚自习', showInstallHint: true }, 'src/web/views/today.tsx#TodayPage'],
   consent: [photos.ConsentPage, {}, 'src/web/views/photos.tsx#ConsentPage'],
   capture: [photos.CapturePage, { photos: [], next: { title: '勾出错题', href: '/s/photos' }, caption: '拍完以后，看看有哪些错题' }, 'src/web/views/photos.tsx#CapturePage'],
   photos: [photos.PhotosPage, { photos: [photo, { ...photo, jobId: 'demo-finding', number: 2, state: 'finding', job: null }], bar, refresh: true, itemCount: items.length }, 'src/web/views/photos.tsx#PhotosPage'],
@@ -70,9 +70,9 @@ for (const [id, title] of SCENARIOS) {
   const raw = '<!doctype html>' + renderToStaticMarkup(createElement(Component as ComponentType<object>, props));
   let html = raw.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<noscript>[\s\S]*?<\/noscript>/gi, '')
     .replace(/<link\b[^>]*rel="(?:manifest|apple-touch-icon|icon)"[^>]*>/gi, '')
-    .replace(/data-refresh="[^"]*"/g, '').replace(/data-endpoint="[^"]*"/g, '')
+    .replace(/data-(?:refresh|poll)="[^"]*"/g, '').replace(/data-endpoint="[^"]*"/g, '')
     .replace(/<link rel="preload" as="image"[^>]*>/g, '')
-    .replace(/href="\/s\/assets\/app\.css[^\"]*"/g, 'href="assets/app.css" id="demo-app-style"')
+    .replace(/href="\/s\/assets\/app(?:\.[a-f\d]+)?\.css[^\"]*"/g, 'href="assets/app.css" id="demo-app-style"')
     .replace(/src="\/s\/img\/(?:photo\/[^"?]+)(?:\?[^\"]*)?"/g, 'src="../assets/photo.svg"')
     .replace(/src="\/s\/img\/(?:item\/([^"?]+)|cand\/[^/]+\/([^"?]+))(?:\?[^\"]*)?"/g, (_: string, item: string, candidate: string) => `src="../assets/${items.some(i => i.id === (item || candidate)) ? (item || candidate) : items[0]!.id}.svg"`)
     .replace(/href="([^\"]*)"/g, (original: string, href: string) => {
