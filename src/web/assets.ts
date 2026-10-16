@@ -50,6 +50,12 @@ button,a,label,summary{touch-action:manipulation}
 .top a{display:inline-flex;align-items:center;gap:6px;min-height:var(--tap);min-width:var(--tap);justify-content:center;padding:0 var(--s-2);text-decoration:none;font-size:var(--fs-2);font-weight:600;border-radius:var(--r-pill)}
 .top .nav-icon{width:20px;height:20px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .top .settings-icon{width:19px;height:19px}
+.category-filter{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.category-filter select{width:auto;flex:1;min-width:88px;min-height:44px}
+.subject-tabs{display:flex;gap:8px;overflow:auto;margin:12px 0 20px;padding:4px 0}
+.subject-tabs a{flex:0 0 auto;display:flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:24px;text-decoration:none;background:var(--card)}
+.subject-tabs a[aria-current=page]{color:var(--accent);background:var(--mint);font-weight:600}
+.chapter-group>.choice{margin:0}.chapter-group details{margin:0}.chapter-group summary{min-height:44px;padding-top:12px}
 main{padding:var(--s-2) var(--page-inset) 0;max-width:576px;margin:0 auto;overflow-wrap:anywhere}
 h1{font-size:var(--fs-5);font-weight:700;letter-spacing:-.025em;line-height:1.25;margin:0 0 var(--s-4);text-wrap:balance}
 h2{font-size:var(--fs-4);font-weight:650;line-height:var(--lh-tight);margin:var(--s-6) 0 var(--s-3);text-wrap:balance}
@@ -395,6 +401,7 @@ body.sheet-is-open{overflow:hidden}
 @supports (corner-shape:squircle){.today-focus,.today-library .list,.week-sheet,.card,.btn{corner-shape:squircle}}
 @media (min-width:720px){.week-sheet{inset:0;max-height:min(82dvh,780px);height:fit-content;margin:auto;border-radius:28px}.week-sheet .sheet-toolbar{border-radius:28px 28px 0 0}}
 @media (max-width:360px){.today-focus{padding:20px}.week-sheet [data-sheet-content]{padding-left:20px;padding-right:20px}.week-overview>summary{gap:8px}}
+@media (max-width:240px){.week-overview>summary{flex-wrap:wrap}.week-overview-label{flex-basis:100%}.week-overview-meta{flex:1;text-align:left}}
 @media (prefers-reduced-motion:reduce){.week-sheet{transform:none!important;opacity:1;transition:none}}
 .demo-reduce-motion .week-sheet{transform:none!important;opacity:1;transition:none}
 @media (prefers-reduced-transparency:reduce){.tab-bar{background:var(--bar-solid);-webkit-backdrop-filter:none;backdrop-filter:none}}

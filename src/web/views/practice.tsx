@@ -1,3 +1,4 @@
+import { GRADES } from '../../classification/itemCategories.js';
 import type { ReactNode } from 'react';
 import type { PracticeCard, PracticeDetail, PracticeSummary, RecommendResponse } from '../../v2/practiceService.js';
 import type { PrintSnapshot } from '../../v2/printService.js';
@@ -56,6 +57,7 @@ function ChooseRow(props: { card: PracticeCard; checked: boolean }): ReactNode {
       <span className="grow">
         <img className="crop" src={`/s/img/item/${card.id}?s=list`} alt={card.shortId ?? '题目裁图'} loading="lazy" />
         <span className="excerpt">{card.questionExcerpt ?? ''}</span>
+        <span className="meta-line muted">{[card.grade, card.subject, card.chapter].filter(Boolean).join(' · ')}</span>
         <span className="meta-line muted">为什么选它：{card.reason}</span>
         {card.badge === 'low' ? <span className="meta-line tone-orange">字可能认错了 · 点开看看</span> : null}
       </span>
@@ -75,33 +77,35 @@ export function plainNote(note: string): string {
   return note;
 }
 
-export function ChoosePage(props: { recommend: RecommendResponse; practiceSlot: string; caption: string; error?: string | null; reason?: string | null }): ReactNode {
+export function ChoosePage(props: { recommend: RecommendResponse; practiceSlot: string; caption: string; error?: string | null; reason?: string | null; selectedIds?: string[]; selectionNote?: string }): ReactNode {
   const { recommend } = props;
   const total = recommend.recommended.length + recommend.others.length;
-  const n = recommend.recommended.length;
+  const selected = props.selectedIds ? new Set(props.selectedIds) : null;
+  const n = selected ? [...recommend.recommended, ...recommend.others].filter(card => selected.has(card.id)).length : recommend.recommended.length;
   const bar: BarModel = total === 0
     ? { caption: props.caption, primary: { title: '去拍', key: 'capture', href: '/s/capture' }, secondary: [] }
     : {
       caption: props.caption,
-      primary: { title: n > 0 ? `就练这 ${n} 道` : '至少选 1 道', key: 'create', form: 'choose-form', disabled: n === 0, countTemplate: '就练这 {n} 道', emptyTitle: '至少选 1 道' },
+      primary: { title: n > 0 ? `就练这 ${n} 道` : '至少选 1 道', key: 'create', form: 'choose-form', disabled: n === 0 || n > recommend.limits.max, countTemplate: '就练这 {n} 道', emptyTitle: '至少选 1 道' },
       secondary: [],
     };
   return (
-    <Page title="选这周要练的题" bar={bar}>
+    <Page title="选这周要练的题" bar={bar} back={selected ? {href:'/s/items', label:'错题本'} : undefined}>
       <h1>选这周要练的题</h1>
+      {props.selectionNote ? <p role="status">{props.selectionNote}</p> : null}
       {props.error ? <Problem title={props.error} reason={props.reason} /> : null}
       {total === 0 ? (
         <section className="card"><p>现在没有可以练的题。先拍这周的卷子，或者等 AI 找完题。</p></section>
       ) : (
         <form method="post" action="/s/choose" id="choose-form" data-pick-count="" data-max={String(recommend.limits.max)} data-min="1" data-wait="正在建练习…">
-          <p className="lead">AI 先帮你选了 {n} 道，点一下可以去掉或加上。建议 {recommend.limits.min}–{recommend.limits.max} 道，最多 {recommend.limits.max} 道。</p>
-          <p className="tone-orange hidden" data-max-warning="" role="status">最多 {recommend.limits.max} 道。想加这道，先去掉一道。</p>
+          <p className="lead">{selected ? `已选中 ${n} 道，点一下可以去掉或加上。` : `AI 先帮你选了 ${n} 道，点一下可以去掉或加上。`}建议 {recommend.limits.min}–{recommend.limits.max} 道，最多 {recommend.limits.max} 道。</p>
+          <p className={`tone-orange${n > recommend.limits.max ? '' : ' hidden'}`} data-max-warning="" role="status">最多 {recommend.limits.max} 道。想加这道，先去掉一道。</p>
           {recommend.notes.length > 0 ? <div className="notes" data-testid="choose-notes">{recommend.notes.map(note => <p key={note}>{plainNote(note)}</p>)}</div> : null}
-          {recommend.recommended.map(card => <ChooseRow key={card.id} card={card} checked />)}
+          {recommend.recommended.map(card => <ChooseRow key={card.id} card={card} checked={selected ? selected.has(card.id) : true} />)}
           {recommend.others.length > 0 ? (
-            <details>
+            <details open={selected ? recommend.others.some(card => selected.has(card.id)) : undefined}>
               <summary data-key="choose-others">其他可以选的（{recommend.others.length}）</summary>
-              {recommend.others.map(card => <ChooseRow key={card.id} card={card} checked={false} />)}
+              {recommend.others.map(card => <ChooseRow key={card.id} card={card} checked={selected ? selected.has(card.id) : false} />)}
             </details>
           ) : null}
           <fieldset>
@@ -109,6 +113,7 @@ export function ChoosePage(props: { recommend: RecommendResponse; practiceSlot: 
             <SlotChoice current={props.practiceSlot} />
             <p className="hint">会显示在「今天」页，提醒你哪天做</p>
           </fieldset>
+          <noscript><button className="btn" type="submit">提交调整后的选择</button></noscript>
         </form>
       )}
     </Page>
@@ -703,10 +708,17 @@ export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
 
 // ---------- 设置（§4.12） ----------
 
-export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?: AccountRole | null }): ReactNode {
+export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?: AccountRole | null; grade?: string; error?: string }): ReactNode {
   return (
     <Page title="设置" showSettings={false} bodyClass="settings-page">
       <h1>设置</h1>
+      {props.error ? <Problem title="设置没有保存" detail={props.error} /> : null}
+      <form method="post" action="/s/settings/grade" className="category-filter">
+        <label htmlFor="student-grade">我的年级</label>
+        <select id="student-grade" name="grade" defaultValue={props.grade ?? '初三'}>{GRADES.map(grade => <option key={grade} value={grade}>{grade}</option>)}</select>
+        <button type="submit" className="link-btn">保存年级</button>
+      </form>
+      <p className="hint">新收录的题目默认使用这个年级。已有题目的年级可在题目详情里单独修改。</p>
       <dl className="settings-list">
         {props.accountRole ? (
           <div className="settings-row">

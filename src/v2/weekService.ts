@@ -5,6 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { categoryForItem } from '../classification/itemCategories.js';
 import { getDb, now } from '../db/connection.js';
 import { isoWeekKey } from '../domain/scheduling.js';
 import { bridgePending } from '../bridge/recognitionToItems.js';
@@ -21,6 +22,8 @@ export interface V2WeekItem {
   id: string;
   shortId: string | null;
   subject: string | null;
+  grade?: string;
+  chapter?: string;
   knowledgeTags: string[];
   questionExcerpt: string | null;
   badge: 'ok' | 'low';
@@ -78,8 +81,8 @@ function unselectedCountOf(mobileDataDir: string, jobId: string): number {
 
 const BACKLOG_STATUSES: readonly ItemStatus[] = ['ready_for_reflection', 'eligible_for_review', 'needs_recheck'];
 
-/** 本周错题卡片。先懒桥接（单个失败不影响返回），再按登记的 ISO 周划分 items / backlog。 */
-export function getWeek(mobileDataDir: string): V2WeekResponse {
+/** 本周错题卡片；includeHistory 用于完整错题本，包含历史已掌握/练习中的题，排除已归档题。 */
+export function getWeek(mobileDataDir: string, includeHistory = false): V2WeekResponse {
   try {
     bridgePending(mobileDataDir);
   } catch {
@@ -118,7 +121,7 @@ export function getWeek(mobileDataDir: string): V2WeekResponse {
   const toCard = (row: JoinedRow): V2WeekItem => ({
     id: row.id,
     shortId: row.short_id,
-    subject: row.subject,
+    ...categoryForItem(row.id),
     knowledgeTags: JSON.parse(row.knowledge_tags) as string[],
     questionExcerpt: row.text_excerpt,
     badge: row.confidence_badge === 'low' ? 'low' : 'ok',
@@ -130,12 +133,13 @@ export function getWeek(mobileDataDir: string): V2WeekResponse {
   const items: V2WeekItem[] = [];
   const backlog: V2WeekItem[] = [];
   for (const row of rows) {
+    if (includeHistory && row.status === 'archived_not_worth_review') continue;
     const thisWeek = isoWeekKey(new Date(row.registered_at)) === week;
     if (thisWeek) {
       // 本周登记照片桥接出的题，未被标"不是错题"。
       if (row.status === 'archived_not_worth_review' && row.archived_reason === 'not_a_mistake') continue;
       items.push(toCard(row));
-    } else if (BACKLOG_STATUSES.includes(row.status)) {
+    } else if (includeHistory || BACKLOG_STATUSES.includes(row.status)) {
       backlog.push(toCard(row));
     }
   }

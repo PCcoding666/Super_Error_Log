@@ -5,6 +5,9 @@
  *   不在视图里另写一份规则；页面只做「取数 → WeekPlan → 渲染」与表单提交。
  * - 只有拍照上传与录音用到脚本；关掉脚本时每屏照样能用（语音除外）。
  */
+import { editItemCategory, isGrade, updateStudentGrade } from '../classification/itemCategories.js';
+import { readCatalog } from '../classification/catalog.js';
+import { requireProfile } from '../services/studentService.js';
 import crypto from 'node:crypto';
 import express, { Router, type ErrorRequestHandler, type Request, type Response } from 'express';
 import multer from 'multer';
@@ -43,7 +46,7 @@ import { trailRecorder, trailTaps } from './trail.js';
 import { DEFAULT_TIME_ZONE, localDayOrdinal, localDayText, stepCaption, type StepKind } from './weekPlan.js';
 import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, PairPage, TodayPage, type BusyReason, type TodayWait } from './views/today.js';
 import { CapturePage, ConsentPage, PhotosPage, PickPage, findingSince } from './views/photos.js';
-import { EditPage, FixPage, ItemDetailPage, ItemsPage } from './views/items.js';
+import { CategoryEditPage, EditPage, FixPage, ItemDetailPage, ItemsPage } from './views/items.js';
 import {
   ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage, printExpect,
   WhyAskPage, WhyConfirmPage, WhyDonePage, WhyIntroPage, COMPLETIONS, type DayOption, type PrintState, type RecordAnswer,
@@ -517,7 +520,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const findItem = (itemId: string): V2WeekItem => {
     requireMatch(itemId, ITEM_ID);
     if (!isV2Item(itemId)) throw new NotFound();
-    const week = getWeek(ctx.mobileDataDir);
+    const week = getWeek(ctx.mobileDataDir, true);
     const item = [...week.items, ...week.backlog].find(entry => entry.id === itemId);
     if (item) return item;
     for (const summary of listPractices()) {
@@ -527,12 +530,43 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     throw new NotFound();
   };
 
-  r.get('/items', page(async (request, response) => {
+  const itemsPage = async (request: Request, error?: string): Promise<ReactNode> => {
     const state = await loadToday(ctx, request);
-    const removed = ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null;
-    const current = state.plan.currentIndex === null ? null : state.plan.steps[state.plan.currentIndex];
-    const bar = current?.kind === 'choose' ? nextStepBar(state, null) : { caption: '', primary: null, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] };
-    render(response, ItemsPage({ items: state.week.items, backlog: state.week.backlog, anyPhoto: state.week.photos.length > 0, finding: state.photos.some(photo => photo.state === 'finding'), bar, removed }));
+    const library = getWeek(ctx.mobileDataDir, true);
+    const all = [...library.items, ...library.backlog];
+    const gradeValue = str(request.method === 'POST' ? request.body?.grade : request.query.grade);
+    const grade = isGrade(gradeValue) ? gradeValue : requireProfile().grade;
+    const subjects = [...new Set([...readCatalog(getDb(), requireProfile().id).subjects.map(subject => subject.name), ...all.map(item => item.subject || '未分类')])];
+    const requested = str(request.method === 'POST' ? request.body?.subject : request.query.subject);
+    const remembered = readCookies(request)[COOKIE.itemsSubject] ?? '';
+    const subject = [requested, remembered, ...all.filter(item => item.grade === grade).map(item => item.subject), ...subjects].find(value => value && subjects.includes(value)) ?? '数学';
+    const matches = (item: V2WeekItem): boolean => item.grade === grade && item.subject === subject;
+    return ItemsPage({ items: library.items.filter(matches), backlog: library.backlog.filter(matches),
+      category: { grade, subject, subjects }, anyPhoto: state.week.photos.length > 0,
+      finding: state.photos.some(photo => photo.state === 'finding'),
+      bar: { caption: '', primary: null, secondary: [] }, removed: ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null,
+      flash: {err:error} });
+  };
+  r.get('/items', page(async (request, response) => {
+    const subject = str(request.query.subject);
+    if (subject && subject.length <= 100) setCookie(request, response, COOKIE.itemsSubject, subject, null);
+    render(response, await itemsPage(request));
+  }));
+
+  r.post('/items/select', form, page(async (request, response) => {
+    const grade = str(request.body?.grade), subject = str(request.body?.subject);
+    const chapters = new Set(list(request.body?.chapters));
+    const library = getWeek(ctx.mobileDataDir, true);
+    const selected = [...library.items, ...library.backlog].filter(item => item.grade === grade && item.subject === subject && chapters.has(item.chapter ?? '未分类'));
+    if (!isGrade(grade) || selected.length === 0) {
+      render(response, await itemsPage(request, '请至少选择一个有错题的章节。'), 400); return;
+    }
+    const recommend = recommendPractice(ctx.mobileDataDir);
+    const eligible = new Set([...recommend.recommended, ...recommend.others].map(item => item.id));
+    const ids = selected.filter(item => eligible.has(item.id)).map(item => item.id);
+    const excluded = selected.length - ids.length;
+    render(response, ChoosePage({ recommend, practiceSlot:getV2Settings().practiceSlot, caption:'按章节选题', selectedIds:ids,
+      selectionNote: excluded ? `所选章节共有 ${selected.length} 道，其中 ${excluded} 道已在练习中或尚未到复习时间，本次可选 ${ids.length} 道。` : undefined }));
   }));
 
   const detail = (itemId: string, error?: string | null): ReactNode => {
@@ -544,6 +578,18 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   };
 
   r.get('/items/:id', page((request, response) => render(response, detail(String(request.params.id)))));
+
+  r.get('/items/:id/category', page((request, response) => {
+    render(response, CategoryEditPage({item:findItem(String(request.params.id))}));
+  }));
+  r.post('/items/:id/category', form, page((request, response) => {
+    const item = findItem(String(request.params.id));
+    const values = {grade:str(request.body?.grade),subject:str(request.body?.subject),chapter:str(request.body?.chapter)};
+    const error = editItemCategory(getDb(), requireProfile().id, item.id, values);
+    if (error) { render(response, CategoryEditPage({item,values,error}), 400); return; }
+    audit('item_category_updated', 'item', item.id);
+    response.redirect(303, `/s/items/${item.id}`);
+  }));
 
   r.post('/items/:id/discard', page((request, response) => {
     const itemId = String(request.params.id);
@@ -611,7 +657,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // ---------- 选这周要练的题 ----------
   const choosePage = async (request: Request, error?: string | null, reason?: string | null): Promise<ReactNode> => {
     const state = await loadToday(ctx, request);
-    return ChoosePage({ recommend: recommendPractice(ctx.mobileDataDir), practiceSlot: getV2Settings().practiceSlot, caption: captionFor(state, 'choose'), error, reason });
+    return ChoosePage({ recommend: recommendPractice(ctx.mobileDataDir), practiceSlot: getV2Settings().practiceSlot, caption: captionFor(state, 'choose'), error, reason, ...(request.method === 'POST' ? { selectedIds: list(request.body?.itemIds) } : {}) });
   };
   r.get('/choose', page(async (request, response) => render(response, await choosePage(request))));
 
@@ -890,7 +936,15 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     options.studentHostWorker === true && isAccountRole(response.locals.accountRole) ? response.locals.accountRole : null;
 
   r.get('/settings', page((_request, response) => {
-    render(response, SettingsPage({ studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response) }));
+    render(response, SettingsPage({ studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response), grade: requireProfile().grade }));
+  }));
+
+  r.post('/settings/grade', form, page((request, response) => {
+    if (!updateStudentGrade(getDb(), requireProfile().id, request.body?.grade)) {
+      render(response, SettingsPage({studentHostWorker:options.studentHostWorker === true,accountRole:accountRoleOf(response),grade:requireProfile().grade,error:'请选择初一、初二或初三。'}), 400); return;
+    }
+    audit('student_grade_updated', 'student', requireProfile().id);
+    response.redirect(303, '/s/settings');
   }));
 
   // 兼容已打开的旧网页；新设置页不再提供做题时段与原卷位置表单。

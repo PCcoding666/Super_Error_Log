@@ -95,8 +95,8 @@ ${PHOTO_UPLOAD_SCRIPT}
 /* 选题：数字跟着变，最多 8 道 */
 within(scope,'form[data-pick-count]').forEach(function(pick){if(!once(pick,'count'))return;var max=Number(pick.getAttribute('data-max')||'8'),min=Number(pick.getAttribute('data-min')||'1'),btn=$('[data-count-label]'),warn=$('[data-max-warning]');
 function upd(e){var boxes=$$('input[type=checkbox][name=itemIds],input[type=checkbox][name=questionIds]',pick);var n=boxes.filter(function(b){return b.checked}).length;
-if(n>max&&e&&e.target&&e.target.checked){e.target.checked=false;n=max;if(warn)warn.classList.remove('hidden')}else if(warn&&n<max)warn.classList.add('hidden');
-if(btn){var t=n<min?btn.getAttribute('data-empty'):btn.getAttribute('data-template').replace('{n}',n);if(btn.textContent!==t)btn.textContent=t;btn.disabled=n<min;btn.classList.toggle('disabled',n<min)}}
+if(n>max&&e&&boxes.includes(e.target)&&e.target.checked){e.target.checked=false;n=boxes.filter(function(b){return b.checked}).length;if(warn)warn.classList.remove('hidden')}else if(warn)warn.classList.toggle('hidden',n<=max);
+if(btn){var t=n<min?btn.getAttribute('data-empty'):btn.getAttribute('data-template').replace('{n}',n);if(btn.textContent!==t)btn.textContent=t;btn.disabled=n<min||n>max;btn.classList.toggle('disabled',n<min||n>max)}}
 pick.addEventListener('change',upd);upd()});
 /* 「其他…」做练习的时间 */
 within(scope,'[data-slot-other]').forEach(function(box){if(!once(box,'slot'))return;var input=$('input[type=text]',box.parentNode);function upd(){var other=$('input[value="__other"]',box.parentNode);if(input&&other)input.closest('.choice').classList.toggle('hidden',!other.checked)}box.parentNode.addEventListener('change',upd);upd()});

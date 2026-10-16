@@ -3,6 +3,7 @@
  * 只处理 v2 来源（有 mobile_item_link）的题；推荐完全靠可解释规则，不调用任何模型。
  * 分层打分交给 selectWeeklyPlan 做 5–8 与"同知识点最多 2 道"；Web 的 computeRecommendations/createPacket 不动。
  */
+import { categoryForItem } from '../classification/itemCategories.js';
 import { getDb, newId, now } from '../db/connection.js';
 import { isoWeekKey, plannedDateForPacket, PLAN_MAX, PLAN_MIN, selectWeeklyPlan, type PlanCandidate } from '../domain/scheduling.js';
 import { bridgePending } from '../bridge/recognitionToItems.js';
@@ -15,6 +16,8 @@ export interface PracticeCard {
   id: string;
   shortId: string | null;
   subject: string | null;
+  grade?: string;
+  chapter?: string;
   knowledgeTags: string[];
   questionExcerpt: string | null;
   badge: 'ok' | 'low';
@@ -125,7 +128,7 @@ function scoreCandidates(): ScoredCandidate[] {
       card: {
         id: row.id,
         shortId: row.short_id,
-        subject: row.subject,
+        ...categoryForItem(row.id),
         knowledgeTags: tags,
         questionExcerpt: row.text_excerpt,
         badge: row.confidence_badge === 'low' ? 'low' : 'ok',
@@ -282,7 +285,7 @@ export function getPractice(packetId: string): PracticeDetail | null {
       return {
         id: row.id,
         shortId: row.short_id,
-        subject: row.subject,
+        ...categoryForItem(row.id),
         knowledgeTags: tags,
         questionExcerpt: row.text_excerpt,
         badge: row.confidence_badge === 'low' ? 'low' as const : 'ok' as const,
