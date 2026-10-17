@@ -401,7 +401,7 @@ describe('没联网 / 服务器忙 / 连不上', () => {
   it('周中没联网：只留手机上能做的', () => {
     const result = make(input({ connection: 'offline', practices: [lastWeekPractice(3)] }));
     expect(result.stage).toBe('midweek');
-    expect(titles(result.next?.secondary)).toEqual(['又发了卷子？现在拍']);
+    expect(titles(result.next?.secondary)).toEqual(['添加错题']);
     expect(result.next?.caption).toBe('没联网，连上后再继续');
   });
 
