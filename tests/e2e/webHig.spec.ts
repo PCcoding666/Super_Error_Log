@@ -122,3 +122,21 @@ test.describe('网页渐进增强', () => {
     await expect(page).toHaveURL(`${WEB}/s/items`);
   });
 });
+
+test('学科菜单可以按 Escape 或点击外部收起，Escape 返回触发控件', async ({ page, request }) => {
+  await connect(page, request);
+  await page.getByTestId('tab-items').click();
+  const switcher = page.getByTestId('subject-switch');
+  const menu = page.getByRole('navigation', { name: '选择学科' });
+  await switcher.click();
+  await menu.getByRole('link', { name: '物理', exact: true }).focus();
+  await page.keyboard.press('Escape');
+  await expect(menu).not.toBeVisible();
+  await expect(switcher).toBeFocused();
+  await switcher.click();
+  await page.mouse.click(380, 640); // Empty content outside the menu and bottom navigation.
+  await expect(menu).not.toBeVisible();
+  await switcher.click();
+  await menu.getByRole('link', { name: '物理', exact: true }).click();
+  await expect(switcher).toContainText('物理');
+});

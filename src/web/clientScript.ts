@@ -42,6 +42,10 @@ var key=el.getAttribute('data-key')||el.getAttribute('data-testid')||(el.tagName
 var href=el.getAttribute('href')||'';var nav=(el.tagName==='A'&&!el.hasAttribute('data-print')&&href.charAt(0)!=='#'&&el.target!=='_blank')||(el.tagName==='BUTTON'&&el.type==='submit');
 if(!nav)trailSend()},true);
 
+/* 学科切换保留原生 details；关闭菜单不改变当前学科。 */
+document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;var menu=$('.subject-switch[open]');if(!menu)return;e.preventDefault();menu.open=false;var trigger=$('summary',menu);if(trigger)trigger.focus({preventScroll:true})});
+document.addEventListener('click',function(e){$$('.subject-switch[open]').forEach(function(menu){if(!menu.contains(e.target))menu.open=false})});
+
 /* ---------- 动效：只在状态真的变了的时候放，说明刚发生了什么（样式里的 m-* 类；减少动态效果时样式把它们全关掉） ---------- */
 function play(el,cls){if(!el||!el.classList)return;el.classList.remove(cls);void el.offsetWidth;el.classList.add(cls);
 el.addEventListener('animationend',function h(e){if(e.target!==el)return;el.classList.remove(cls);el.removeEventListener('animationend',h)})}
