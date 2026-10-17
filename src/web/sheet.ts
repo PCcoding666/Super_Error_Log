@@ -13,9 +13,19 @@ var handle=document.createElement('button');handle.type='button';handle.classNam
 var close=document.createElement('button');close.type='button';close.className='sheet-close';close.textContent='关闭';close.setAttribute('aria-label','关闭本周安排');close.setAttribute('data-testid','week-plan-close');
 toolbar.appendChild(handle);toolbar.appendChild(close);dialog.appendChild(toolbar);
 var closing=false,frame=0,finishTimer=0;
-function restore(){cancelAnimationFrame(frame);clearTimeout(finishTimer);dialog.classList.remove('sheet-visible','sheet-dragging');dialog.style.removeProperty('--sheet-drag');if(dialog.open)dialog.close();details.appendChild(content);details.open=false;opener.setAttribute('aria-expanded','false');document.body.classList.remove('sheet-is-open');dialog.remove();closing=false;opener.focus({preventScroll:true})}
-function dismiss(){if(!dialog.open||closing)return;closing=true;cancelAnimationFrame(frame);dialog.classList.remove('sheet-visible');if(window.matchMedia('(prefers-reduced-motion: reduce)').matches||document.documentElement.classList.contains('demo-reduce-motion'))restore();else finishTimer=setTimeout(restore,180)}
-opener.addEventListener('click',function(e){e.preventDefault();if(dialog.open)return;details.open=false;closing=false;dialog.appendChild(content);document.body.appendChild(dialog);opener.setAttribute('aria-expanded','true');document.body.classList.add('sheet-is-open');dialog.showModal();close.focus({preventScroll:true});frame=requestAnimationFrame(function(){dialog.classList.add('sheet-visible')})});
+var historyId='week-'+Math.random().toString(36).slice(2),previousState=null;
+function ownsEntry(){return history.state&&history.state.__selWeekSheet===historyId}
+function onHistory(){if(dialog.open)hide()}
+function onPageHide(){if(ownsEntry())history.replaceState(previousState,'');restore(false)}
+function restore(focus){window.removeEventListener('popstate',onHistory);window.removeEventListener('pagehide',onPageHide);cancelAnimationFrame(frame);clearTimeout(finishTimer);dialog.classList.remove('sheet-visible','sheet-dragging');dialog.style.removeProperty('--sheet-drag');if(dialog.open)dialog.close();details.appendChild(content);details.open=false;opener.setAttribute('aria-expanded','false');document.body.classList.remove('sheet-is-open');dialog.remove();closing=false;if(focus!==false&&opener.isConnected)opener.focus({preventScroll:true})}
+function hide(){closing=true;cancelAnimationFrame(frame);dialog.classList.remove('sheet-visible');if(window.matchMedia('(prefers-reduced-motion: reduce)').matches||document.documentElement.classList.contains('demo-reduce-motion'))restore();else finishTimer=setTimeout(restore,180)}
+/* 仅弹层打开期间接管一次返回。显式关闭也退回原历史项，避免下次返回停在重复页面。 */
+function dismiss(){if(!dialog.open||closing)return;if(ownsEntry()){closing=true;history.replaceState(previousState,'');history.back()}else hide()}
+opener.addEventListener('click',function(e){e.preventDefault();if(dialog.open)return;details.open=false;closing=false;dialog.appendChild(content);document.body.appendChild(dialog);opener.setAttribute('aria-expanded','true');document.body.classList.add('sheet-is-open');dialog.showModal();
+/* 前进到已收起的弹层历史项后再次打开时，复用该项，不继续堆叠。 */
+if(!ownsEntry()){previousState=history.state;try{history.pushState(Object.assign({},previousState,{__selWeekSheet:historyId}),'')}catch(error){}}
+window.addEventListener('popstate',onHistory);window.addEventListener('pagehide',onPageHide);
+close.focus({preventScroll:true});frame=requestAnimationFrame(function(){dialog.classList.add('sheet-visible')})});
 close.addEventListener('click',dismiss);handle.addEventListener('click',function(e){if(dragged&&e.detail!==0){dragged=false;return}dismiss()});
 dialog.addEventListener('cancel',function(e){e.preventDefault();dismiss()});
 dialog.addEventListener('keydown',function(e){if(e.key!=='Tab')return;var focusable=Array.prototype.filter.call(dialog.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'),function(el){return el.getClientRects().length>0}),first=focusable[0],last=focusable[focusable.length-1];if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}});
