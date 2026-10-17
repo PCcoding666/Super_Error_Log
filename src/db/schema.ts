@@ -282,4 +282,31 @@ CREATE TABLE IF NOT EXISTS v2_print_snapshot (
   ready_at TEXT
 );
 ${CLASSIFICATION_SCHEMA_SQL}
+
+CREATE TABLE IF NOT EXISTS practice_progress (
+  packet_id TEXT PRIMARY KEY REFERENCES review_packet(id) ON DELETE CASCADE,
+  cursor_item TEXT
+);
+CREATE TABLE IF NOT EXISTS practice_question_progress (
+  packet_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  hint_level INTEGER NOT NULL DEFAULT 0 CHECK(hint_level BETWEEN 0 AND 2),
+  PRIMARY KEY(packet_id, item_id),
+  FOREIGN KEY(packet_id,item_id) REFERENCES review_packet_item(packet_id,item_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS practice_work (
+  id TEXT PRIMARY KEY,
+  packet_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  request_key TEXT NOT NULL UNIQUE,
+  source_hash TEXT NOT NULL,
+  image BLOB NOT NULL,
+  status TEXT NOT NULL,
+  text TEXT,
+  uncertain INTEGER NOT NULL DEFAULT 1,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(packet_id,item_id) REFERENCES review_packet_item(packet_id,item_id) ON DELETE CASCADE
+);
 `;

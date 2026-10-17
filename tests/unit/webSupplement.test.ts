@@ -70,7 +70,7 @@ describe('补充照片的反馈只以实际入库数量为准', () => {
     expect(html).toContain('已新增 2 道错题');
     expect(html).toContain('已保存到错题本，这次补充不会改变之前的练习纸。');
     expect(html).toContain('href="/s/items"');
-    expect(html.replace(/<[^>]+>/g, '')).toContain('查看这周的错题');
-    expect(html).toMatch(/href="\/s\/"[^>]*>回到今天/);
+    expect(html.replace(/<[^>]+>/g, '')).toContain('查看错题本');
+    expect(html).toMatch(/href="\/s\/"[^>]*>返回错题本/);
   });
 });

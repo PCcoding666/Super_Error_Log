@@ -4,10 +4,10 @@ import { pickMoreCount, unselectedQuestions } from '../photoPlan.js';
 import { Page, Phrased, Problem, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
 /** 上传前看一下（§4.3）。事实要素不删；按网页的实际情况改了两处：照片不进相册、上传前去掉位置信息。 */
-export function ConsentPage(): ReactNode {
+export function ConsentPage(props: {returnTo?: string} = {}): ReactNode {
   const bar: BarModel = {
     caption: '第一次上传前看一下',
-    primary: { title: '同意，上传', key: 'consent', post: '/s/consent' },
+    primary: { title: '同意，上传', key: 'consent', post: '/s/consent', fields: props.returnTo ? {returnTo:props.returnTo} : undefined },
     secondary: [{ title: '先不传', key: 'goHome', href: '/s/' }],
   };
   return (
@@ -37,15 +37,15 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
   const has = props.photos.length > 0;
   const secondary: BarButton[] = has
     ? [{ title: '从相册选', key: 'library', labelFor: 'library-input' }]
-    : [{ title: '这周没发卷子，跳过', key: 'skipShoot', post: '/s/skip', fields: { step: 'shoot' } }, { title: '从相册选', key: 'library', labelFor: 'library-input' }];
+    : [{ title: '从相册选', key: 'library', labelFor: 'library-input' }];
   const bar: BarModel = {
     caption: props.caption,
-    primary: has ? { title: '拍完了，下一步', key: 'next', href: props.next?.href ?? '/s/photos' } : { title: '拍第一页', key: 'capture', labelFor: 'camera-input' },
+    primary: has ? { title: '查看错题', key: 'next', href: props.next?.href ?? '/s/photos' } : { title: '拍照录入', key: 'capture', labelFor: 'camera-input' },
     secondary,
   };
   return (
-    <Page title="拍这周的卷子" bar={bar} flash={props.flash} pollSeconds={props.photos.some(photo => photo.state === 'finding') ? 4 : undefined}>
-      <h1>拍这周的卷子</h1>
+    <Page title="错题录入" tab="capture" bar={bar} flash={props.flash} pollSeconds={props.photos.some(photo => photo.state === 'finding') ? 4 : undefined}>
+      <h1>错题录入</h1><p><a className="btn" href="/s/photos">查看上传记录</a></p>
       <p className="lead">整页拍全，别裁边；题目和你写的答案都要拍进去。一页拍一张。</p>
       {has ? null : (
         <section className="card" data-testid="capture-tips">
@@ -141,7 +141,7 @@ function PhotoRow(props: { photo: PhotoView; isNew?: boolean; justAdded?: boolea
 
 /**
  * 这周的练习纸已经生成以后（做完了 / 周中）又拍了卷子：不再把他带去选题（这周的练习已经定了），
- * 而是说清楚新找到的题去了哪里（进错题本，下个周末「选这周要练的题」时会出现），并给「回到今天」。门槛 G3。
+ * 而是说清楚新找到的题去了哪里（进错题本，下个周末「选这周要练的题」时会出现），并给「返回错题本」。门槛 G3。
  */
 /** 还在找题的照片里，最早登记的那张是什么时候（等了多久从它算）。 */
 export function findingSince(photos: PhotoView[]): string | null {
@@ -176,7 +176,7 @@ export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh:
       {/* 找题的进度：开着脚本时这一块和底栏按需换掉（局部更新），页面别的地方不动。 */}
       <div data-live="photos">
         {props.photos.length === 0 ? (
-          <section className="card"><p>这周还没拍卷子</p><a className="btn" href="/s/capture" data-key="empty-capture">去拍</a></section>
+          <section className="card"><p>最近还没有上传卷子</p><a className="btn" href="/s/capture" data-key="empty-capture">去拍</a></section>
         ) : (
           <section className="card">
             <ul className="list">{props.photos.map(photo => <PhotoRow key={photo.jobId} photo={photo} isNew={isNew(photo)} justAdded={props.added?.number === photo.number} />)}</ul>
@@ -185,8 +185,8 @@ export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh:
         )}
       </div>
       <div data-live="more">
-        {props.itemCount > 0 ? <a className="more" href="/s/items" data-testid="photos-items"><Phrased text={`查看这周的错题（${props.itemCount} 道）`} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a> : null}
-        <a className="more" href="/s/" data-key="photos-home">回到今天<span aria-hidden="true">›</span></a>
+        {props.itemCount > 0 ? <a className="more" href="/s/items" data-testid="photos-items"><Phrased text={`查看错题本（${props.itemCount} 道）`} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a> : null}
+        <a className="more" href="/s/" data-key="photos-home">返回错题本<span aria-hidden="true">›</span></a>
       </div>
     </Page>
   );

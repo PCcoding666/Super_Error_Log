@@ -98,6 +98,11 @@ export function submitReturns(packetId: string, input: unknown): SubmitReturnRes
   for (const raw of results) {
     const entry = mapEntry(raw);
     if (!entry.ok) return { ok: false, httpStatus: 400, message: entry.message };
+    const exposed = getDb().prepare('SELECT hint_level FROM practice_question_progress WHERE packet_id = ? AND item_id = ?').get(packetId, entry.entry.itemId) as {hint_level:number} | undefined;
+    if (exposed && exposed.hint_level > 0 && ['independent','hint_used'].includes(entry.entry.input.completion)) {
+      entry.entry.input.completion = 'hint_used';
+      entry.entry.input.hintLevel = Math.max(exposed.hint_level, entry.entry.input.hintLevel ?? 0) as 1 | 2;
+    }
     mapped.push(entry.entry);
   }
   const out = mapped.map(({ itemId, input: attempt }) => ({

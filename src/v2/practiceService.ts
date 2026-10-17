@@ -302,15 +302,15 @@ export function getPractice(packetId: string): PracticeDetail | null {
 }
 
 /** 最近 8 个含 v2 题的练习包摘要，新的在前。 */
-export function listPractices(): PracticeSummary[] {
+export function listPractices(limit = 8): PracticeSummary[] {
   const rows = getDb().prepare(
     `SELECT rp.id, rp.week, rp.status, rp.practice_slot, rp.created_at, rp.generated_at,
             (SELECT COUNT(*) FROM review_packet_item rpi WHERE rpi.packet_id = rp.id) AS item_count
      FROM review_packet rp
      WHERE EXISTS (SELECT 1 FROM review_packet_item rpi JOIN mobile_item_link mil ON mil.item_id = rpi.item_id WHERE rpi.packet_id = rp.id)
      ORDER BY rp.created_at DESC, rp.rowid DESC
-     LIMIT 8`,
-  ).all() as Array<{ id: string; week: string; status: string; practice_slot: string | null; created_at: string; generated_at: string | null; item_count: number }>;
+     LIMIT ?`,
+  ).all(limit) as Array<{ id: string; week: string; status: string; practice_slot: string | null; created_at: string; generated_at: string | null; item_count: number }>;
   return rows.map(row => ({
     id: row.id,
     week: row.week,

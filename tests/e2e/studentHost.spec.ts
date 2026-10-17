@@ -55,7 +55,7 @@ test('mobile invitation login, compact settings, connection retry, logout, and o
   await expect(page.getByRole('radio')).toHaveCount(0);
   await expect(page.getByTestId('next-step-bar')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: '今天', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: '错题本', exact: true })).toBeVisible();
 
   await context.setOffline(true);
   await expect(page.getByTestId('connection-ok')).toHaveText('连接失败');

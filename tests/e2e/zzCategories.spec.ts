@@ -95,18 +95,16 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.getByRole('button',{name:'查看已选题目'}).click();
     await expect(page.locator('input[name=itemIds]:checked')).toHaveCount(9);
     await expect(page.getByTestId('next-step-primary')).toBeDisabled();
-    await page.getByRole('radio', {name:'周末',exact:true}).check();
-    await expect(page.getByRole('radio', {name:'周末',exact:true})).toBeChecked();
     await expect(page.locator('input[name=itemIds]:checked')).toHaveCount(9);
     await page.locator('input[name=itemIds]:checked').first().uncheck();
     if (javaScriptEnabled) {
       await expect(page.getByTestId('next-step-primary')).toBeEnabled();
       await page.getByTestId('next-step-primary').click();
-      await expect(page).toHaveURL(/\/s\/why\/pkt_/);
+      await expect(page).toHaveURL(/\/s\/practice\/pkt_/);
     } else {
       // No JS must still be able to submit adjusted choices; the server enforces the limit.
       await page.getByRole('button',{name:'提交调整后的选择'}).click();
-      await expect(page).toHaveURL(/\/s\/why\/pkt_/);
+      await expect(page).toHaveURL(/\/s\/practice\/pkt_/);
     }
     await page.request.post(`${WEB}/s/settings/grade`, {headers,form:{grade:'初三'}});
   });
