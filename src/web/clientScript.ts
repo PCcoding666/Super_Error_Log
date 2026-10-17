@@ -17,6 +17,9 @@ function $(s,el){return (el||document).querySelector(s)}function $$(s,el){return
 function within(scope,s){var list=$$(s,scope);if(scope&&scope.matches&&scope.matches(s))list.unshift(scope);return list}
 /* 每个元素的每个小功能只挂一次 */
 function once(el,name){var k='__sel_'+name;if(el[k])return false;el[k]=true;return true}
+/* 浏览器恢复缓存页面时，只还原本次提交临时修改过的控件。 */
+window.addEventListener('pageshow',function(){ $$('form[data-wait]').forEach(function(f){if(f.__sel_waitRestore)f.__sel_waitRestore()}) });
+
 /* 页面所属的语音会话在加载时固定；旧单学生页面没有这个 meta。重试也不能换成另一个页面的会话。 */
 var voiceMeta=$('meta[name="sel-voice-context"]');var voiceContext=voiceMeta?voiceMeta.getAttribute('content'):null;
 /* 超时覆盖 fetch 和整个响应正文；即使底层忽略 abort，超时/取消后的结果也不会再交给调用方。 */
@@ -41,9 +44,6 @@ var role=el.closest('.next-bar')?(el.getAttribute('data-testid')==='next-step-pr
 var key=el.getAttribute('data-key')||el.getAttribute('data-testid')||(el.tagName==='SUMMARY'?'summary':'unnamed');trailAdd(role,key);
 var href=el.getAttribute('href')||'';var nav=(el.tagName==='A'&&!el.hasAttribute('data-print')&&href.charAt(0)!=='#'&&el.target!=='_blank')||(el.tagName==='BUTTON'&&el.type==='submit');
 if(!nav)trailSend()},true);
-
-/* 浏览器恢复缓存页面时，只还原本次提交临时修改过的控件。 */
-window.addEventListener('pageshow',function(){ $$('form[data-wait]').forEach(function(f){if(f.__sel_waitRestore)f.__sel_waitRestore()}) });
 
 /* ---------- 动效：只在状态真的变了的时候放，说明刚发生了什么（样式里的 m-* 类；减少动态效果时样式把它们全关掉） ---------- */
 function play(el,cls){if(!el||!el.classList)return;el.classList.remove(cls);void el.offsetWidth;el.classList.add(cls);
