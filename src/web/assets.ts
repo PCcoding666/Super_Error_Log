@@ -276,7 +276,7 @@ border-top:1px solid var(--line);box-shadow:var(--bar-shadow);padding:var(--s-3)
 .bar-stack{display:flex;flex-direction:column;gap:var(--s-2)}
 .bar-after{display:flex;flex-direction:column;gap:var(--s-2)}
 .btn{font:inherit;font-size:var(--fs-3);font-weight:600;line-height:var(--lh-tight);display:flex;align-items:center;justify-content:center;gap:var(--s-2);text-align:center;text-decoration:none;text-wrap:balance;
-border-radius:var(--r-control);min-height:52px;min-width:0;padding:var(--s-3) var(--s-4);cursor:pointer;border:1px solid transparent;background:var(--mint);color:var(--teal);flex:1;-webkit-tap-highlight-color:transparent;touch-action:manipulation;transition:background-color .16s ease,box-shadow .16s ease,filter .16s ease}
+border-radius:var(--r-pill);min-height:52px;min-width:0;padding:var(--s-3) var(--s-5);cursor:pointer;border:1px solid transparent;background:var(--mint);color:var(--teal);flex:1;-webkit-tap-highlight-color:transparent;touch-action:manipulation;transition:background-color .16s ease,box-shadow .16s ease,filter .16s ease}
 .btn.primary{background:var(--teal);color:var(--on-teal);box-shadow:none}
 .btn.alt{flex:0 1 auto;border-color:transparent;background:transparent;min-height:var(--tap);padding:var(--s-2) var(--s-3)}
 .btn:active{filter:brightness(.92)}
@@ -402,7 +402,7 @@ body.sheet-is-open{overflow:hidden}
 .week-sheet .rhythm{margin:var(--s-5) 0 var(--s-3);background:var(--paper)}
 .week-sheet .steps{margin-top:var(--s-4)}
 .week-sheet .steps .current{background:var(--mint)}
-@supports (corner-shape:squircle){.today-focus,.today-library .list,.week-sheet,.card,.btn{corner-shape:squircle}}
+@supports (corner-shape:squircle){.today-focus,.today-library .list,.week-sheet,.card{corner-shape:squircle}}
 @media (min-width:720px){.week-sheet{inset:0;max-height:min(82dvh,780px);height:fit-content;margin:auto;border-radius:28px}.week-sheet .sheet-toolbar{border-radius:28px 28px 0 0}}
 @media (max-width:360px){.today-focus{padding:20px}.week-sheet [data-sheet-content]{padding-left:20px;padding-right:20px}.week-overview>summary{gap:8px}}
 @media (max-width:240px){.week-overview>summary{flex-wrap:wrap}.week-overview-label{flex-basis:100%}.week-overview-meta{flex:1;text-align:left}}
