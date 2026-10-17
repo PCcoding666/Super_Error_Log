@@ -284,8 +284,8 @@ function doneNext(p: Practice): NextStepModel {
 function midweekNext(p: Practice): NextStepModel {
   return model('', null, {
     secondary: [
-      choice('已经做完了？现在录结果', 'pencil', { kind: 'record', practiceID: p.id }),
-      choice('又发了卷子？现在拍', 'camera', { kind: 'capture' }),
+      choice('记录结果', 'pencil', { kind: 'record', practiceID: p.id }),
+      choice('添加错题', 'camera', { kind: 'capture' }),
     ],
   });
 }

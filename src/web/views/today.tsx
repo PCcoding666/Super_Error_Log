@@ -167,11 +167,12 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
     content = (
       <section className="today-focus" data-testid="today-midweek" data-steps="" data-stage="midweek">
         <TaskIcon kind="paper" />
-        <p className="focus-eyebrow">纸上练习</p>
-        <h2 className="focus-title" data-testid="today-midweek-title"><Phrased text="现在是在纸上做练习的时候" /></h2>
+        <p className="focus-eyebrow">本周练习</p>
+        <h2 className="focus-title" data-testid="today-midweek-title"><Phrased text="纸上练习" /></h2>
         {plan.practice ? <p className="focus-meta">{[`练习纸：${plan.practice.itemCount} 道`, slot].join(' · ')}</p> : null}
         <p><Phrased text={PAPER_RULES} /></p>
         <p className="muted"><Phrased text="没做完也没关系，周末回来再录。当天做对不算真会，隔几天再做对才算，所以别急着对答案。" /></p>
+        <p className="focus-meta">做完后记录结果；有新卷子也可以随时添加错题。</p>
         {bar ? <NextBar model={bar} inline /> : null}
         <NewPhotosNote photos={props.state.photos} />
       </section>
