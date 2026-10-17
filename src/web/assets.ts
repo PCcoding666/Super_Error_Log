@@ -48,6 +48,12 @@ button,a,label,summary{touch-action:manipulation}
 .top{display:flex;align-items:center;justify-content:space-between;gap:var(--s-2);padding:var(--s-1) var(--s-3);min-height:52px;max-width:576px;margin:0 auto}
 .top-root{justify-content:flex-end}
 .top a{display:inline-flex;align-items:center;gap:6px;min-height:var(--tap);min-width:var(--tap);justify-content:center;padding:0 var(--s-2);text-decoration:none;font-size:var(--fs-2);font-weight:600;border-radius:var(--r-pill)}
+/* 独立导航操作有自己的表面；符号与点击容器分离。 */
+.top a.toolbar-button{width:44px;height:44px;flex:0 0 44px;padding:0;border-radius:50%;color:var(--ink);background:var(--bar-solid);border:1px solid var(--line);box-shadow:var(--bar-shadow);transition:background-color var(--dur-1),filter var(--dur-1)}
+.top a.toolbar-button:active{filter:brightness(.88)}
+@supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){.top a.toolbar-button{background:var(--bar);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}}
+@media (prefers-reduced-transparency:reduce),(prefers-contrast:more){.top a.toolbar-button{background:var(--bar-solid);-webkit-backdrop-filter:none;backdrop-filter:none}}
+@media (forced-colors:active){.top a.toolbar-button{border:1px solid ButtonText;background:ButtonFace;color:ButtonText}}
 .top .nav-icon{width:20px;height:20px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .top .settings-icon{width:19px;height:19px}
 .category-filter{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
