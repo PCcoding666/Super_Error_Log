@@ -99,6 +99,8 @@ test('三栏：手机看题、跳过、直接核对、恢复进度与可选打�
   await page.getByRole('button',{name:'跳过，之后再做'}).click();
   await expect(page.getByTestId('practice-question')).not.toHaveAttribute('data-item',first!);
   await page.getByRole('link',{name:'做完了',exact:true}).click();
+  await expect(page.getByRole('link',{name:'拍照上传作答',exact:true})).toBeVisible();
+  await page.getByRole('link',{name:'不上传，直接核对'}).click();
   await expect(page.getByTestId('practice-answer')).toBeVisible();
   await page.getByRole('button',{name:'做对了',exact:true}).click();
   await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
@@ -108,6 +110,27 @@ test('三栏：手机看题、跳过、直接核对、恢复进度与可选打�
   await page.getByRole('link',{name:'打印练习',exact:true}).click();
   expect(errors).toEqual([]);
   await page.context().storageState({path:STATE});
+  await page.context().close();
+});
+
+test('手写拍照为可选步骤，上传后可回看照片和识别文字', async ({browser},testInfo) => {
+  const page = await pairedPage(browser);
+  await upload(page,'#f3b0b4');
+  await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
+  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await page.getByRole('link',{name:'做完了',exact:true}).click();
+  await page.getByRole('link',{name:'拍照上传作答',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'上传手写作答',exact:true})).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath('handwriting-upload.png'),fullPage:true});
+  await page.locator('#camera-input').setInputFiles({name:'work.jpg',mimeType:'image/jpeg',buffer:await synthetic('#fefefe',900)});
+  await expect(page.getByRole('heading',{name:'手写作答'})).toBeVisible({timeout:20000});
+  await expect(page.getByAltText('本次手写作答')).toBeVisible();
+  await expect(page.getByText('合成测试作答：x = 1')).toBeVisible();
+  await page.getByRole('button',{name:'做对了',exact:true}).click();
+  await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
   await page.context().close();
 });
 
@@ -122,6 +145,7 @@ test('无脚本：三栏入口、选题、逐题核对和打印选项仍然可�
   await page.waitForURL(/\/s\/practice\/pkt_/);
   await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
   await page.getByRole('link',{name:'做完了',exact:true}).click();
+  await page.getByRole('link',{name:'不上传，直接核对'}).click();
   await page.getByRole('button',{name:'做错了',exact:true}).click();
   await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
   await page.context().close();

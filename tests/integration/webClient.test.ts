@@ -78,7 +78,7 @@ async function photo(color: string, size = 600): Promise<Buffer> {
 
 interface Setup { base: string; manager: PairingManager; dataDir: string; vision: SyntheticVision; service: MobileRecognitionService }
 
-async function setup(options: { limiter?: RateLimiter; admission?: AdmissionController } = {}): Promise<Setup> {
+async function setup(options: { limiter?: RateLimiter; admission?: AdmissionController; handwriting?: import('../../src/ai/handwriting.js').HandwritingRecognizer } = {}): Promise<Setup> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-web-'));
   roots.push(dataDir);
   const manager = await PairingManager.open(dataDir, { pairingUrl: 'https://study.pccoding666.com' });
@@ -87,7 +87,7 @@ async function setup(options: { limiter?: RateLimiter; admission?: AdmissionCont
   const app = await createMobileApp({
     dataDir, vision, mode: 'cloud', pairing: manager, cloudProxy: true, rateLimiter: options.limiter, admission: options.admission ?? new AdmissionController({ diskProbe: async () => 100n * 1024n ** 3n, dataUsageProbe: async () => 0n }),
     v2Router: ({ limiter }) => createV2Router({ mobileDataDir: dataDir, transcriber, limiter }),
-    webClient: deps => createWebClientRouter({ ...deps, mobileDataDir: dataDir, transcriber }),
+    webClient: deps => createWebClientRouter({ ...deps, mobileDataDir: dataDir, transcriber, handwriting: options.handwriting }),
   });
   const service = app.locals.mobileRecognitionService as MobileRecognitionService;
   services.push(service);
@@ -612,6 +612,49 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect((await browser.post(`${url}/itm_0000000000000000/result`, { correct: 'yes', performedOn: day })).status).toBe(404);
   });
 
+  it('识别失败仍保留照片并能自行核对；重试不会重复保存', async () => {
+    let calls = 0;
+    const env = await setup({handwriting:{recognize:async () => {calls++; throw new Error('synthetic outage');}}});
+    const {browser,packetId,itemIds} = await chosen(env);
+    await waitFor(async () => (await browser.text(`/s/practice/${packetId}`)).includes('practice-question'));
+    const form = new FormData();form.append('key',crypto.randomUUID());form.append('photo',new Blob([new Uint8Array(await photo('#dddddd'))],{type:'image/jpeg'}),'work.jpg');
+    const url = `/s/practice/${packetId}/${itemIds[0]}`;
+    expect((await browser.request(`${url}/work`,{method:'POST',body:form,headers:{accept:'application/json'}})).status).toBe(200);
+    const check = await browser.text(`/s/practice/${packetId}?item=${itemIds[0]}&view=check`);
+    expect(check).toContain('照片已保存');expect(check).toContain('做对了');
+    await browser.post(`${url}/work/retry`);
+    expect(calls).toBe(2);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM practice_work').get()).toEqual({n:1});
+    const date = new Date().toLocaleDateString('en-CA');
+    expect((await browser.post(`${url}/result`,{correct:'yes',performedOn:date})).status).toBe(303);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({n:1});
+  });
+
+  it('作答照片绑定练习题、重复上传幂等，且不会新增错题', async () => {
+    const env = await setup();
+    const { browser, packetId, itemIds } = await chosen(env);
+    const url = `/s/practice/${packetId}`;
+    await waitFor(async () => (await browser.text(url)).includes('data-testid="practice-question"'));
+    const done = await browser.text(`${url}?item=${itemIds[0]}&view=done`);
+    expect(done).toContain('拍照上传作答');
+    expect(done).toContain('不上传，直接核对');
+    const key = crypto.randomUUID(), bytes = await photo('#f8f8f8');
+    const send = async (item: string) => {
+      const form = new FormData(); form.append('key', key); form.append('photo', new Blob([new Uint8Array(bytes)], {type:'image/jpeg'}), 'work.jpg');
+      return browser.request(`${url}/${item}/work`, {method:'POST', body:form, headers:{accept:'application/json'}});
+    };
+    expect((await send('itm_0000000000000000')).status).toBe(404);
+    const response = await send(itemIds[0]!);
+    expect(response.status).toBe(200);
+    const first = await response.json() as {jobId:string};
+    expect((await (await send(itemIds[0]!)).json() as {jobId:string}).jobId).toBe(first.jobId);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM practice_work').get()).toEqual({n:1});
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM error_item').get()).toEqual({n:3});
+    expect(await browser.text(`${url}?item=${itemIds[0]}&view=check`)).toContain('手写作答');
+    expect((await browser.get(`${url}/${itemIds[1]}/work/${first.jobId}/image`)).status).toBe(404);
+    expect((await browser.get(`${url}/${itemIds[0]}/work/${first.jobId}/image`)).headers.get('content-type')).toContain('image/jpeg');
+  });
+
   it('切换题号会保存位置，旧回录入口也必须保留已看提示，日期错误留在当前核对题', async () => {
     const env = await setup(); const {browser,packetId,itemIds} = await chosen(env);
     const url = `/s/practice/${packetId}`;
@@ -625,6 +668,17 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const {submitReturns} = await import('../../src/v2/returnService.js');
     submitReturns(packetId,{results:[{itemId:itemIds[0],completion:'independent',correct:true,performedOn:new Date().toLocaleDateString('en-CA')}]});
     expect(getDb().prepare('SELECT completion,hint_level FROM review_attempt WHERE packet_id = ?').get(packetId)).toEqual({completion:'hint_used',hint_level:2});
+  });
+
+  it('后发起的小图重拍不被较慢的旧上传覆盖，未同意上传说明时不接收作答', async () => {
+    const env = await setup(); const {browser,packetId,itemIds} = await chosen(env);
+    const {attachWork,latestWork} = await import('../../src/v2/practiceWork.js');
+    const large = await photo('#eeeeee',3900), small = await photo('#dddddd',32);
+    const [older,newer] = await Promise.all([attachWork(packetId,itemIds[0]!,crypto.randomUUID(),large),attachWork(packetId,itemIds[0]!,crypto.randomUUID(),small)]);
+    expect(older.id).not.toBe(newer.id);expect(latestWork(packetId,itemIds[0]!)?.id).toBe(newer.id);
+    browser.cookies.delete('sel_consent');
+    const form = new FormData(); form.append('key',crypto.randomUUID());form.append('photo',new Blob([new Uint8Array(small)],{type:'image/jpeg'}),'work.jpg');
+    expect((await browser.request(`/s/practice/${packetId}/${itemIds[0]}/work`,{method:'POST',body:form,headers:{accept:'application/json'}})).status).toBe(403);
   });
 
   it('AI 只问、只建议；没选把握不能提交；提交后才有复盘记录；跳过一道后去打印', async () => {

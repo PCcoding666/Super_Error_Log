@@ -11,7 +11,7 @@
 - No hydration or additional dependencies; all learning records remain server-owned.
 - Preserve photo normalization/retry/idempotency, classification navigation, evidence warnings and mastery rules.
 - No actual print required for completion; no photo required for completion; no automatic grading.
-- Start from current origin/main (6fb8971), use short-lived branches. Four dependent PRs target main and document merge order. Later branches include earlier commits so the diff shrinks after predecessors merge.
+- Start from current origin/main (6fb8971), use short-lived branches. Four dependent PRs target main and document merge order. Later branches include earlier commits; PR descriptions link to incremental comparisons.
 
 ## Review focus
 - Partial progress and skipped questions survive navigation and restart.
@@ -37,9 +37,9 @@ Interfaces: practice progress reads packet membership, review_attempt and v2_pri
 ### Task 3: Optional handwriting
 Files: src/v2/practiceWork.ts, src/ai/handwriting.ts, src/web/practiceRouter.ts, src/web/views/onlinePractice.tsx, src/web/photoUpload.ts, src/db/schema.ts; integration/unit tests.
 Interfaces: injectable HandwritingRecognizer; attachment identity includes packet/item and request key; images never enter mobile_item_link.
-- [ ] Test duplicate upload, failed recognition, membership validation and valid extraction.
-- [ ] Reuse normalized photo upload with preview and a dedicated attachment endpoint; retain photo on recognition failure.
-- [ ] Verify attachment access and optional self-check, then commit feat(practice): attach optional handwritten work.
+- [x] Test duplicate upload, failed recognition, membership validation and valid extraction.
+- [x] Reuse normalized photo upload with preview and a dedicated attachment endpoint; retain photo on recognition failure.
+- [x] Verify attachment access and optional self-check, then commit feat(practice): attach optional handwritten work.
 
 ### Task 4: Printing
 Files: src/web/views/practice.tsx, src/web/router.ts, src/web/views/onlinePractice.tsx; print/integration tests.

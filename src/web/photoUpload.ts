@@ -39,7 +39,7 @@ export const PHOTO_UPLOAD_SCRIPT = `
 var form=uploadForm;
 if(form){var bar=$('[data-upload-progress]',form),msg=$('[data-upload-message]',form),retry=$('[data-upload-retry]',form),uploadList=$('[data-upload-list]',form),uploadNext=$('[data-upload-next]',form),entries=[],busy=false,activeUploads=0;
 var inputs=$$('input[type=file]',form);
-var library=$('#library-input',form);if(library)library.multiple=true;
+var library=$('#library-input',form);if(library)library.multiple=!form.hasAttribute('data-work-upload');
 var photoCount=$('[data-testid="photo-count"]'),initialCount=Number(form.getAttribute('data-photo-count')||0);
 var MAX_EDGE=${MAX_UPLOAD_EDGE},MAX_BYTES=${MAX_UPLOAD_BYTES},PREPARE_MS=${PREPARE_TIMEOUT_MS},UPLOAD_MS=${UPLOAD_TIMEOUT_MS},QUALITIES=${JSON.stringify(JPEG_QUALITY_LADDER)};
 function setUploadBusy(on){busy=on;inputs.forEach(function(i){i.disabled=on});$$('label[for="camera-input"],label[for="library-input"]').forEach(function(l){if(l.control&&l.control.form===form)l.setAttribute('aria-disabled',String(on))});if(retry)retry.disabled=on}
@@ -63,6 +63,7 @@ if(uploadNext)uploadNext.classList.toggle('hidden',busy||!successes);
 if(photoCount&&successes){photoCount.textContent='已拍 '+(initialCount+successes)+' 张';photoCount.classList.remove('hidden')}
 }
 function appendUploadRow(entry){var row=document.createElement('li');row.className='upload-item';row.setAttribute('data-upload-item','');
+if(form.hasAttribute('data-work-upload')){var preview=document.createElement('img');preview.className='crop';preview.alt='作答照片预览';var previewUrl=URL.createObjectURL(entry.file);preview.src=previewUrl;preview.onload=preview.onerror=function(){URL.revokeObjectURL(previewUrl)};row.appendChild(preview)}
 var name=document.createElement('p');name.className='upload-name small';name.textContent='第 '+(entries.length+1)+' 张 · '+entry.name;
 entry.status=document.createElement('p');entry.progressBar=document.createElement('div');entry.progressBar.className='progress';
 entry.progressBar.setAttribute('role','progressbar');entry.progressBar.setAttribute('aria-label','第 '+(entries.length+1)+' 张上传进度');entry.progressBar.setAttribute('aria-valuemin','0');entry.progressBar.setAttribute('aria-valuemax','100');
@@ -109,7 +110,7 @@ xhr.send(data)}catch(e){finish(uploadFailure('upload_network','没传上去。�
 function processUpload(entry){entry.state='preparing';entry.message='正在准备照片…';renderUploads();
 var ready=entry.blob?Promise.resolve(entry.blob):prepare(entry.file);
 ready.then(function(blob){entry.blob=blob;return upload(entry)}).then(function(jobId){
-entry.jobId=jobId;entry.state='succeeded';entry.progress=100;entry.message='已上传 · AI 正在找题';entry.blob=null;entry.file=null;appendUploadedPhoto(entry)
+entry.jobId=jobId;entry.state='succeeded';entry.progress=100;entry.message=form.hasAttribute('data-work-upload')?'作答已保存':'已上传 · AI 正在找题';entry.blob=null;entry.file=null;appendUploadedPhoto(entry)
 }).catch(function(err){var failure;
 if(err&&err.kind)failure=err;
 else if(err&&err.message==='too_big')failure=uploadFailure('prepare_big','这张照片转出来还是太大，换一张试试。',false);
@@ -121,7 +122,7 @@ entry.state='failed';entry.progress=0;entry.message=failure.message;entry.retrya
 if(!entry.retryable){entry.file=null;entry.blob=null}trailAdd('error',failure.kind);trailSend()
 }).then(function(){activeUploads-=1;pumpUploads()})}
 function pumpUploads(){while(activeUploads<${UPLOAD_CONCURRENCY}){var entry=entries.find(function(e){return e.state==='queued'});if(!entry)break;activeUploads+=1;processUpload(entry)}
-if(!activeUploads){setUploadBusy(false);renderUploads();if(entries.length&&entries.every(function(e){return e.state==='succeeded'}))location.replace('/s/capture')}
+if(!activeUploads){setUploadBusy(false);renderUploads();if(entries.length&&entries.every(function(e){return e.state==='succeeded'}))location.replace(form.getAttribute('data-success-url')||'/s/capture')}
 else renderUploads()}
 inputs.forEach(function(input){input.addEventListener('change',function(){var files=Array.prototype.slice.call(input.files||[]);input.value='';if(!files.length||busy)return;
 form.setAttribute('data-upload-pending','');setUploadBusy(true);files.forEach(function(file){var entry={file:file,name:file.name||'照片',key:uuid(),blob:null,state:'queued',progress:0,message:'等待上传',retryable:false};appendUploadRow(entry);entries.push(entry)});pumpUploads()})});

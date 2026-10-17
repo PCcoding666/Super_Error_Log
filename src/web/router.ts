@@ -1,3 +1,4 @@
+import type { HandwritingRecognizer } from '../ai/handwriting.js';
 import { practiceRouter } from './practiceRouter.js';
 /**
  * 学生网页版（/s/）：云端移动服务同源挂载，SSR、表单驱动、不做 hydration。
@@ -65,6 +66,7 @@ export interface WebClientOptions {
   followupProvider?: FollowupProvider;
   correctionProvider?: CorrectionProvider;
   coachProvider?: CoachProvider;
+  handwriting?: HandwritingRecognizer;
   /** 学生邀请码网关的 worker 模式：设置页显示「退出登录」（POST /s/logout 由网关处理）。 */
   studentHostWorker?: boolean;
   /** 「距生成几天」、录结果的日期按哪个时区的日历算；缺省用进程时区（与回传校验、ISO 周一致）。 */
@@ -371,7 +373,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     render(response, CapturePage({ photos: state.photos, next, caption: '', flash: { err } }));
   }));
 
-  r.post('/consent', page((request, response) => { giveConsent(request, response); response.redirect(303, '/s/capture'); }));
+  r.post('/consent', form, page((request, response) => { giveConsent(request, response); const returnTo = str(request.body?.returnTo); response.redirect(303, /^\/s\/practice\/pkt_[0-9a-f]{16}\?item=itm_[0-9a-f]{16}&view=upload$/.test(returnTo) ? returnTo : '/s/capture'); }));
 
   r.post('/capture', async (request, response, next) => {
     const fail = (code: string, status: number): void => {
@@ -646,7 +648,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.redirect(303, `/s/items/${itemId}`);
   }));
 
-  r.use(practiceRouter({ coachProvider: options.coachProvider, limiter: options.limiter, timeZone: ctx.timeZone, now: ctx.now }));
+  r.use(practiceRouter({ coachProvider: options.coachProvider, limiter: options.limiter, handwriting: options.handwriting, timeZone: ctx.timeZone, now: ctx.now }));
 
   // ---------- 选这周要练的题 ----------
   const choosePage = async (request: Request, error?: string | null, reason?: string | null): Promise<ReactNode> => {
