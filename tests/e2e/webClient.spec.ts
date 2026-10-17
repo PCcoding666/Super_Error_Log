@@ -108,6 +108,15 @@ test('三栏：手机看题、跳过、直接核对、恢复进度与可选打�
   await page.getByTestId('practice-row').first().click();
   await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
   await page.getByRole('link',{name:'打印练习',exact:true}).click();
+  await expect(page.locator('.sheet .answers')).toHaveCount(0);
+  await page.getByLabel('附答案与解析').check();
+  await page.getByRole('button',{name:'更新打印预览'}).click();
+  await expect(page.locator('.sheet .answers')).toHaveCount(1);
+  await page.getByRole('link',{name:'记录纸上练习结果'}).click();
+  await expect(page.getByRole('heading',{name:'记录纸上练习结果'})).toBeVisible();
+  await page.getByRole('button',{name:'做错了',exact:true}).click();
+  await page.goto(practice);
+  await expect(page.getByText(/已完成 2 \/ /)).toBeVisible();
   expect(errors).toEqual([]);
   await page.context().storageState({path:STATE});
   await page.context().close();
@@ -503,7 +512,7 @@ test('页面缩放 200%（195×422 CSS px）：没有单字孤行或标点落行
   // 打印回来以后（底栏最高的时候）：说明挪到内容最后，底栏只留「再打印」和主按钮。
   await page.goto(`${WEB}/s/print/${printed}`);
   await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
-  await expect(page.getByTestId('next-step-primary')).toHaveText('打印好了，回到今天');
+  await expect(page.getByTestId('next-step-primary')).toHaveText('打印好了，记录结果');
   await expect(page.getByTestId('next-step-caption')).toBeHidden();
   await expect(page.locator('[data-caption-flow]')).toContainText('打印机没反应');
   const share = await page.evaluate(() => document.querySelector('.next-bar')!.getBoundingClientRect().height / innerHeight);

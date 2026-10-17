@@ -27,7 +27,7 @@ Files: src/web/views/{layout,photos,practice,items}.tsx, src/web/router.ts, test
 - [x] Commit feat(web): introduce three student workspaces.
 
 ### Task 2: Practice and self-check
-Files: src/v2/practiceProgress.ts, src/web/practiceRouter.ts, src/web/views/onlinePractice.tsx, src/web/router.ts, src/db/schema.ts, tests/integration/onlinePractice.test.ts.
+Files: src/v2/practiceProgress.ts, src/web/practiceRouter.ts, src/web/views/onlinePractice.tsx, src/web/router.ts, src/db/schema.ts, tests/integration/webClient.test.ts.
 Interfaces: practice progress reads packet membership, review_attempt and v2_print_snapshot; router mounted under authenticated /s, using existing coach provider.
 - [x] Test resume/skip, hidden answers, immediate partial results, duplicate submit and foreign membership.
 - [x] Add persistent cursor/hint tracking and online question/check/results screens; creation prepares the frozen content without requiring printing.
@@ -43,6 +43,6 @@ Interfaces: injectable HandwritingRecognizer; attachment identity includes packe
 
 ### Task 4: Printing
 Files: src/web/views/practice.tsx, src/web/router.ts, src/web/views/onlinePractice.tsx; print/integration tests.
-- [ ] Test optional answer section and unchanged progress after printing.
-- [ ] Add prominent print and paper-result links, default questions-only print, optional answer appendix.
-- [ ] Run SEL_AI_MODE=mock npm run verify; review entire change; commit feat(practice): integrate optional printing and paper results.
+- [x] Test optional answer section and unchanged progress after printing.
+- [x] Add prominent print and paper-result links, default questions-only print, optional answer appendix.
+- [x] Run SEL_AI_MODE=mock npm run verify; review entire change; commit feat(practice): integrate optional printing and paper results.

@@ -81,7 +81,7 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   const beforeSheet = paperMarkup(await (await page.request.get(gateway.base + sheetPath)).text());
   await page.getByTestId('next-step-primary').click();
   await page.getByTestId('next-step-primary').click();
-  await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
+  await expect(page.getByTestId('practice-question')).toBeVisible();
   await page.goto(gateway.base + '/s/');
   const add = page.getByTestId('tab-capture');
   await expect(add).toBeVisible();
@@ -119,7 +119,7 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   await expect(page.getByTestId('print-summary')).toContainText('这张练习纸上有 5 道题');
   expect(paperMarkup(await (await page.request.get(gateway.base + sheetPath)).text())).toBe(beforeSheet);
   await page.getByTestId('next-step-primary').click();
-  await expect(page.getByTestId('next-step-primary')).toHaveText('打印好了，回到今天');
+  await expect(page.getByTestId('next-step-primary')).toHaveText('打印好了，记录结果');
   // Existing result entry still contains exactly the original five questions.
   await page.goto(gateway.base + printPath.replace('/print/', '/record/'));
   await page.getByTestId('record-day').first().click();

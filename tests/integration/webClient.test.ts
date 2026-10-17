@@ -655,6 +655,24 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect((await browser.get(`${url}/${itemIds[0]}/work/${first.jobId}/image`)).headers.get('content-type')).toContain('image/jpeg');
   });
 
+  it('打印默认不附答案，可选答案页；打印与纸上回录使用同一进度', async () => {
+    const env = await setup();
+    const {browser,packetId,itemIds} = await chosen(env);
+    const url = `/s/practice/${packetId}`;
+    await waitFor(async () => (await browser.text(url)).includes('practice-question'));
+    const before = getDb().prepare('SELECT * FROM review_packet WHERE id = ?').get(packetId);
+    const paper = await browser.text(`/s/print/${packetId}/sheet`);
+    expect(paper).not.toContain('class="page answers"');
+    expect(await browser.text(`/s/print/${packetId}/sheet?answers=1`)).toContain('class="page answers"');
+    expect(getDb().prepare('SELECT * FROM review_packet WHERE id = ?').get(packetId)).toEqual(before);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({n:0});
+    const recorded = await browser.post(`${url}/${itemIds[0]}/result`,{correct:'no',performedOn:new Date().toLocaleDateString('en-CA'),mode:'paper'});
+    expect(recorded.headers.get('location')).toBe(`${url}?mode=paper&view=check`);
+    expect(await browser.text(url)).toContain('已完成 1 / 3');
+    await browser.get(`/s/print/${packetId}/sheet?answers=1`);
+    expect(await browser.text(url)).toContain('已完成 1 / 3');
+  });
+
   it('切换题号会保存位置，旧回录入口也必须保留已看提示，日期错误留在当前核对题', async () => {
     const env = await setup(); const {browser,packetId,itemIds} = await chosen(env);
     const url = `/s/practice/${packetId}`;
@@ -717,11 +735,11 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(skip.headers.get('location')).toBe(`/s/print/${packetId}`);
     await waitFor(async () => (await browser.text(`/s/print/${packetId}`)).includes('data-testid="sheet"'));
     const print = await browser.text(`/s/print/${packetId}`);
-    expect(print).toContain('做完再看');
+    expect(print).not.toContain('做完再看');
     expect(print).toContain('做题日期：________');
     expect(print).not.toContain('什么时候做：');
     expect(await browser.text(`/s/print/${packetId}?answers=1`)).toContain('对照原卷查看解析');
-    expect(print).toContain('打印好了，回到今天');
+    expect(print).toContain('打印好了，记录结果');
     const sheet = await browser.get(`/s/print/${packetId}/sheet`);
     expect(sheet.status).toBe(200);
     const css = await (await browser.get('/s/assets/app.css')).text();
@@ -1090,11 +1108,11 @@ describe('打印页与练习纸单独页的首屏（quality round 2；纸面本�
       expect(html).not.toContain('已打印');
     }
     const sheetPage = await browser.text(`/s/print/${packetId}/sheet`);
-    // 开着脚本：主按钮是「打印」（脚本把它标成主按钮）；「打印好了，回到今天」在打印回来以后才出现。
+    // 开着脚本：主按钮是「打印」（脚本把它标成主按钮）；「打印好了，记录结果」在打印回来以后才出现。
     expect(sheetPage).toMatch(/<a class="btn primary" href="#" data-print="" data-js-primary="" data-testid="sheet-print" data-key="print">打印<\/a>/);
-    expect(sheetPage).toMatch(/<div class="bar-after hidden" data-after-print="">[\s\S]*?打印好了，回到今天[\s\S]*?<\/div><\/div>/);
+    expect(sheetPage).toMatch(/<div class="bar-after hidden" data-after-print="">[\s\S]*?打印好了，记录结果[\s\S]*?<\/div><\/div>/);
     // 关掉脚本：说明用 Safari 的「分享」→「打印」，主按钮在 <noscript> 里（开着脚本时它不存在）。
-    expect(sheetPage).toMatch(/<noscript>[\s\S]*「分享」[\s\S]*data-testid="next-step-primary"[^>]*>打印好了，回到今天<\/a>[\s\S]*<\/noscript>/);
+    expect(sheetPage).toMatch(/<noscript>[\s\S]*「分享」[\s\S]*data-testid="next-step-primary"[^>]*>打印好了，记录结果<\/a>[\s\S]*<\/noscript>/);
     expect((sheetPage.match(/data-testid="next-step-primary"/g) ?? []).length).toBe(1);
     const css = await (await browser.get('/s/assets/app.css')).text();
     expect(css).toContain('.print-root>:not(.sheet-frame){display:none!important}');

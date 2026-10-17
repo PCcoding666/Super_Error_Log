@@ -269,7 +269,7 @@ export function WhyDonePage(props: { practice: PracticeDetail }): ReactNode {
       <section className="card">
         <p className="card-title" data-testid="why-done">{props.practice.items.length} 道里说了 {reflected} 道</p>
         <p className="muted">{reflected > 0 ? '你说的会记下来。下周录完结果，能看看当时的感觉准不准。' : '这次没说也没关系，下次可以再说。'}</p>
-        <p>{props.practice.generatedAt ? '下一步：把练习纸打出来，带回学校。' : '下一步：准备练习纸。AI 给每道题写好提示和答案，大约 1 分钟。'}</p>
+        <p>{props.practice.generatedAt ? '下一步：把练习纸打印或保存为 PDF。' : '下一步：准备练习纸。AI 给每道题写好提示和答案，大约 1 分钟。'}</p>
       </section>
       <section className="card">
         <h2 className="card-title"><Phrased text={`这次的 ${props.practice.items.length} 道`} /></h2>
@@ -312,7 +312,7 @@ export function SheetItem(props: { item: PrintSnapshot['items'][number]; media: 
 }
 
 /** A4 练习纸：封面 + 题目页 + 可撕的答案页（与 iOS PracticeLayout 同样的内容与说法）。浏览器打印成纸或 PDF。 */
-export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
+export function PracticeSheet(props: { snapshot: PrintSnapshot; includeAnswers?: boolean }): ReactNode {
   const { snapshot } = props;
   const media = (name: string): string => `/s/img/print/${snapshot.packetId}/${name}`;
   return (
@@ -329,7 +329,7 @@ export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
       <section className="page">
         {snapshot.items.map(item => <SheetItem key={item.itemId} item={item} media={media} />)}
       </section>
-      <section className="page answers">
+      {props.includeAnswers !== false ? <section className="page answers">
         <h3>做完再看</h3>
         <p>先独立做；卡住了按一级、二级提示的顺序看</p>
         {snapshot.answerSheet.map((entry, index) => (
@@ -341,7 +341,7 @@ export function PracticeSheet(props: { snapshot: PrintSnapshot }): ReactNode {
             <p>对照原卷查看解析</p>
           </div>
         ))}
-      </section>
+      </section> : null}
     </div>
   );
 }
@@ -358,7 +358,7 @@ export type PrintState =
  * ② 这张纸上的几道题，手机字号的清单；
  * ③ 整张 A4 先是一张缩略图，点开看整张（关掉脚本时直接整张显示）。打印时只印 ③ 里的纸。
  */
-export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
+export function PrintOverview(props: { snapshot: PrintSnapshot; includeAnswers?: boolean }): ReactNode {
   const { snapshot } = props;
   const first = snapshot.items[0];
   // 手机上看的那一道用按显示宽度缩小的图（纸面上的图仍是原图，打印清晰度不变）。
@@ -368,7 +368,7 @@ export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
       {first ? (
         <section className="card peek" data-testid="print-peek" aria-labelledby="peek-title">
           <h2 className="card-title" id="peek-title"><Phrased text="第 1 道印出来是这样" /></h2>
-          <p className="small muted"><Phrased text={`和纸上一样大，作答的空白也一样。整张纸上一共 ${snapshot.items.length} 道题，答案在最后一页。`} /></p>
+          <p className="small muted"><Phrased text={`和纸上一样大，作答的空白也一样。整张纸上一共 ${snapshot.items.length} 道题${props.includeAnswers !== false ? "，答案在最后一页。" : "。"}`} /></p>
           <div className="sheet sheet-peek"><div className="peek-page"><SheetItem item={first} media={media} /></div></div>
         </section>
       ) : null}
@@ -386,17 +386,17 @@ export function PrintOverview(props: { snapshot: PrintSnapshot }): ReactNode {
             </li>
           ))}
         </ul>
-        <p className="small muted"><Phrased text="答案在最后一页，做完再看。" /></p>
+        <p className="small muted"><Phrased text={props.includeAnswers !== false ? "答案在最后一页，做完再看。" : "仅打印题目和答题空间"} /></p>
       </section>
       <section className="print-root sheet-box" data-open="false" data-testid="sheet-box" aria-labelledby="sheet-box-title">
         <p className="sheet-box-text">
           <b id="sheet-box-title">整张练习纸（A4）</b>
-          <span className="meta-line muted">封面、题目页，最后一页是答案</span>
+          <span className="meta-line muted">{props.includeAnswers !== false ? "封面、题目页，最后一页是答案" : "封面与题目页"}</span>
         </p>
         <button type="button" className="link-btn sheet-toggle js-only" aria-expanded="false" aria-controls="sheet-frame" data-key="sheet-open" data-testid="sheet-toggle">
           <span className="when-closed"><Phrased text="展开看整张" max={3} /></span><span className="when-open">收起整张</span>
         </button>
-        <div className="sheet-frame" id="sheet-frame"><div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={snapshot} /></div></div></div>
+        <div className="sheet-frame" id="sheet-frame"><div className="sheet-wrap" data-testid="print-preview"><div className="sheet-scale"><PracticeSheet snapshot={snapshot} includeAnswers={props.includeAnswers} /></div></div></div>
       </section>
     </>
   );
@@ -409,7 +409,7 @@ export function printExpect(done: number, total: number, elapsedSeconds: number 
   return remaining < 60 ? `照现在的速度，还要大约 ${Math.max(10, Math.ceil(remaining / 10) * 10)} 秒` : `照现在的速度，还要大约 ${Math.ceil(remaining / 60)} 分钟`;
 }
 
-export function PrintPage(props: { practiceId: string; state: PrintState; caption: string; since?: string | null; now?: Date }): ReactNode {
+export function PrintPage(props: { practiceId: string; state: PrintState; caption: string; since?: string | null; now?: Date; includeAnswers?: boolean }): ReactNode {
   const { state, practiceId } = props;
   let bar: BarModel;
   let body: ReactNode;
@@ -418,7 +418,7 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
     body = <section className="card"><p>先把练习纸准备好：AI 给每道题写好提示和答案，大约 1 分钟。</p></section>;
   } else if (state.status === 'preparing') {
     // 要多久写在等待行里（按进度推算），底栏只说可以先离开。
-    bar = { caption: '可以先离开，回来接着准备', primary: { title: '正在准备…', key: 'waiting', disabled: true, waiting: true }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
+    bar = { caption: '可以先离开，回来接着准备', primary: { title: '正在准备…', key: 'waiting', disabled: true, waiting: true }, secondary: [{ title: '返回错题本', key: 'goHome', href: '/s/' }] };
     const percent = state.total ? Math.round(state.done * 100 / state.total) : 0;
     const now = props.now ?? new Date();
     const elapsed = props.since ? Math.max(0, Math.floor((now.getTime() - Date.parse(props.since)) / 1000)) : null;
@@ -430,13 +430,13 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
       </section>
     );
   } else if (state.status === 'failed') {
-    bar = { caption: '', primary: { title: '再试一次', key: 'retry', post: `/s/print/${practiceId}`, wait: '正在准备练习纸…' }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
+    bar = { caption: '', primary: { title: '再试一次', key: 'retry', post: `/s/print/${practiceId}`, wait: '正在准备练习纸…' }, secondary: [{ title: '返回错题本', key: 'goHome', href: '/s/' }] };
     body = <Problem title={`练习纸没准备好：${state.error ?? '服务器没说原因'}`} />;
   } else {
     const glance = state.snapshot.items.filter(item => item.needsGlance);
-    const printButton: BarButton = { title: '打印', key: 'print', href: `/s/print/${practiceId}/sheet`, print: true };
+    const printButton: BarButton = { title: '打印', key: 'print', href: `/s/print/${practiceId}/sheet?answers=${props.includeAnswers !== false ? 1 : 0}`, print: true };
     bar = {
-      caption: '打出来，带回学校',
+      caption: '打印或保存为 PDF',
       captionAfterPrint: '打印机没反应？可以再点一次「再打印」，或者在打印预览里用「存储到文件」发给家里人打印。',
       primary: printButton,
       secondary: [],
@@ -454,22 +454,25 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
             ))}
           </section>
         ) : null}
-        <PrintOverview snapshot={state.snapshot} />
-        <a className="more" href={`/s/print/${practiceId}/sheet`} data-testid="sheet-link" data-key="sheet-link"><Phrased text="单独打开练习纸" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
+        <PrintOverview snapshot={state.snapshot} includeAnswers={props.includeAnswers} />
+        <a className="more" href={`/s/print/${practiceId}/sheet?answers=${props.includeAnswers !== false ? 1 : 0}`} data-testid="sheet-link" data-key="sheet-link"><Phrased text="单独打开练习纸" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
         <p className="hint">{quoted('单独打开以后，可以在打印预览里「存储到文件」存成 PDF。')}</p>
       </>
     );
   }
-  // 打印回来以后：主按钮换成「打印好了，回到今天」（他自己说打好了，手机不替他说），上面一行「再打印」。
+  // 打印回来以后：主按钮换成「打印好了，记录结果」（他自己说打好了，手机不替他说），上面一行「再打印」。
   const afterPrint = state.status === 'ready' ? (
     <div className="bar-after hidden" data-after-print="">
-      <div className="bar-alt"><a className="btn alt" href={`/s/print/${practiceId}/sheet`} data-print="" data-testid="reprint" data-key="reprint">再打印</a></div>
-      <div className="bar-main"><a className="btn primary" href="/s/?printed=1" data-print-done="" data-testid="print-done" data-key="printed">打印好了，回到今天</a></div>
+      <div className="bar-alt"><a className="btn alt" href={`/s/print/${practiceId}/sheet?answers=${props.includeAnswers !== false ? 1 : 0}`} data-print="" data-testid="reprint" data-key="reprint">再打印</a></div>
+      <div className="bar-main"><a className="btn primary" href={`/s/practice/${practiceId}?mode=paper&view=check`} data-print-done="" data-testid="print-done" data-key="printed">打印好了，记录结果</a></div>
     </div>
   ) : null;
   return (
     <Page title="打印练习纸" bar={bar} barExtra={afterPrint} pollSeconds={state.status === 'preparing' ? 2 : undefined}>
       <h1>打印练习纸</h1>
+      <form method="get" action={`/s/print/${practiceId}`}><label className="choice"><input type="checkbox" name="answers" value="1" defaultChecked={props.includeAnswers !== false} />附答案与解析</label><button className="btn" type="submit">更新打印预览</button></form>
+      <p><a className="btn" href={`/s/practice/${practiceId}`}>返回在线练习</a></p>
+      <p><a className="btn" href={`/s/practice/${practiceId}?mode=paper&view=check`}>记录纸上练习结果</a></p>
       <div data-live="print" data-announce={state.status === 'ready' ? '练习纸准备好了' : state.status === 'failed' ? '练习纸没准备好' : undefined}>{body}</div>
     </Page>
   );
@@ -477,23 +480,23 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
 
 /**
  * 单独的练习纸页：首屏和打印页一样（第 1 道原大小、题目清单、整张 A4 的缩略图）。
- * 开着脚本：主按钮是「打印」，打印回来以后才换成「打印好了，回到今天」（他自己说打好了，手机不替他说）。
- * 关掉脚本：网页没法替他打开打印，说明用 Safari 的「分享」→「打印」，主按钮是「打印好了，回到今天」（在 <noscript> 里，开着脚本时不存在）。
+ * 开着脚本：主按钮是「打印」，打印回来以后才换成「打印好了，记录结果」（他自己说打好了，手机不替他说）。
+ * 关掉脚本：网页没法替他打开打印，说明用 Safari 的「分享」→「打印」，主按钮是「打印好了，记录结果」（在 <noscript> 里，开着脚本时不存在）。
  */
-export function SheetPage(props: { snapshot: PrintSnapshot }): ReactNode {
+export function SheetPage(props: { snapshot: PrintSnapshot; includeAnswers?: boolean }): ReactNode {
   const after = '打印机没反应？可以再点一次「再打印」，或者在打印预览里用「存储到文件」发给家里人打印。';
   const bar = (
     <nav className="next-bar" data-testid="next-step-bar" aria-label="下一步" data-live="bar">
       <div className="inner">
-        <p className="caption bar-caption" data-testid="next-step-caption" data-after={after}>打出来，带回学校；打印预览里也能「存储到文件」</p>
+        <p className="caption bar-caption" data-testid="next-step-caption" data-after={after}>打印或保存为 PDF；打印预览里也能「存储到文件」</p>
         <div className="bar-after hidden" data-after-print="">
           <div className="bar-alt"><a className="btn alt" href="#" data-print="" data-testid="reprint" data-key="reprint">再打印</a></div>
-          <div className="bar-main"><a className="btn primary" href="/s/?printed=1" data-print-done="" data-testid="print-done" data-key="printed">打印好了，回到今天</a></div>
+          <div className="bar-main"><a className="btn primary" href={`/s/practice/${props.snapshot.packetId}?mode=paper&view=check`} data-print-done="" data-testid="print-done" data-key="printed">打印好了，记录结果</a></div>
         </div>
         <div className="js-only"><div className="bar-main"><a className="btn primary" href="#" data-print="" data-js-primary="" data-testid="sheet-print" data-key="print">打印</a></div></div>
         <noscript>
           <p className="caption">{quoted('用 Safari 的「分享」→「打印」打出来，再点下面的按钮')}</p>
-          <div className="bar-main"><a className="btn primary" href="/s/?printed=1" data-testid="next-step-primary" data-key="printed">打印好了，回到今天</a></div>
+          <div className="bar-main"><a className="btn primary" href={`/s/practice/${props.snapshot.packetId}?mode=paper&view=check`} data-testid="next-step-primary" data-key="printed">打印好了，记录结果</a></div>
         </noscript>
       </div>
     </nav>
@@ -501,8 +504,8 @@ export function SheetPage(props: { snapshot: PrintSnapshot }): ReactNode {
   return (
     <Page title="练习纸" back={{ href: `/s/print/${props.snapshot.packetId}`, label: '打印练习纸' }} bar={null} barExtra={null} after={bar}>
       <h1>练习纸</h1>
-      <PrintOverview snapshot={props.snapshot} />
-      <p className="caption-flow small muted" data-caption-flow="" data-after={after}>打出来，带回学校；打印预览里也能「存储到文件」</p>
+      <PrintOverview snapshot={props.snapshot} includeAnswers={props.includeAnswers} />
+      <p className="caption-flow small muted" data-caption-flow="" data-after={after}>打印或保存为 PDF；打印预览里也能「存储到文件」</p>
     </Page>
   );
 }

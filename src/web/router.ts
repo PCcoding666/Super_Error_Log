@@ -802,14 +802,14 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const practice = practiceOf(String(request.params.pid));
     const state = await loadToday(ctx, request);
     const print = printState(practice.id);
-    render(response, PrintPage({ practiceId: practice.id, state: print, caption: captionFor(state, 'print'), since: print.status === 'preparing' ? printStartedAt(practice.id) : null, now: ctx.now() }));
+    render(response, PrintPage({ practiceId: practice.id, state: print, includeAnswers: request.query.answers === '1', caption: captionFor(state, 'print'), since: print.status === 'preparing' ? printStartedAt(practice.id) : null, now: ctx.now() }));
   }));
 
   r.get('/print/:pid/sheet', page((request, response) => {
     const practice = practiceOf(String(request.params.pid));
     const state = printState(practice.id);
     if (state.status !== 'ready') { response.redirect(303, `/s/print/${practice.id}`); return; }
-    render(response, SheetPage({ snapshot: state.snapshot }));
+    render(response, SheetPage({ snapshot: state.snapshot, includeAnswers: request.query.answers === '1' }));
   }));
 
   // ---------- 录练习纸的结果（一题一屏，答案放在隐藏字段里一路带着，最后一次提交） ----------
