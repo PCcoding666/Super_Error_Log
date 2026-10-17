@@ -6,7 +6,7 @@ import type { PrintSnapshot } from '../../v2/printService.js';
 import type { PracticeProgress } from '../../v2/practiceProgress.js';
 import { Page } from './layout.js';
 
-export function OnlinePracticePage(props: { practice: PracticeDetail; progress: PracticeProgress; snapshot?: PrintSnapshot; state: string; itemId?: string; view?: string; paper?: boolean; today: string; works?: Record<string, PracticeWork | null>; error?: string }): ReactNode {
+export function OnlinePracticePage(props: { practice: PracticeDetail; progress: PracticeProgress; snapshot?: PrintSnapshot; state: string; itemId?: string; view?: string; paper?: boolean; today: string; earliestDay: string; works?: Record<string, PracticeWork | null>; error?: string }): ReactNode {
   const { practice: p, progress, snapshot } = props;
   const base = `/s/practice/${p.id}`;
   const pending = p.items.filter(item => !progress.answers[item.id]);
@@ -62,7 +62,7 @@ export function OnlinePracticePage(props: { practice: PracticeDetail; progress: 
           <h2>{props.paper ? '记录纸上练习结果' : '答案与解析'}</h2><p className="pre">{answer?.answer.text ?? '暂无参考答案，请对照原卷核对。'}</p>
           {answer?.answer.label ? <p className="hint">{answer.answer.label}</p> : null}
           {saved ? <p>已记录：{saved.correct ? '做对了' : '做错了'} · {saved.performed_at}</p> : <form method="post" action={`${itemUrl}/result`}>
-            <input type="hidden" name="mode" value={props.paper ? "paper" : "online"} /><label>做题日期 <input type="date" name="performedOn" defaultValue={props.today} min={(p.generatedAt ?? p.createdAt).slice(0,10)} max={props.today} required /></label>
+            <input type="hidden" name="mode" value={props.paper ? "paper" : "online"} /><label>做题日期 <input type="date" name="performedOn" defaultValue={props.today} min={props.earliestDay} max={props.today} required /></label>
             <label className="choice"><input type="checkbox" name="usedHint" value="yes" defaultChecked={hint > 0} />用过提示或参考帮助</label>
             <p><button className="btn primary" name="correct" value="yes" type="submit">做对了</button> <button className="btn" name="correct" value="no" type="submit">做错了</button></p>
           </form>}

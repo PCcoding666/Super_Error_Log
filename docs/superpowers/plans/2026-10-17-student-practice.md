@@ -11,7 +11,7 @@
 - No hydration or additional dependencies; all learning records remain server-owned.
 - Preserve photo normalization/retry/idempotency, classification navigation, evidence warnings and mastery rules.
 - No actual print required for completion; no photo required for completion; no automatic grading.
-- Start from current origin/main (6fb8971), use short-lived branches. Four dependent PRs target main and document merge order. Later branches include earlier commits; PR descriptions link to incremental comparisons.
+- Start from current origin/main (6fb8971), use short-lived branches. Four cumulative PRs target main; review incremental comparisons in order (#30, #31, #32, #33), then merge only #33 using a merge commit so the complete flow reaches main together.
 
 ## Review focus
 - Partial progress and skipped questions survive navigation and restart.
@@ -46,3 +46,11 @@ Files: src/web/views/practice.tsx, src/web/router.ts, src/web/views/onlinePracti
 - [x] Test optional answer section and unchanged progress after printing.
 - [x] Add prominent print and paper-result links, default questions-only print, optional answer appendix.
 - [x] Run SEL_AI_MODE=mock npm run verify; review entire change; commit feat(practice): integrate optional printing and paper results.
+
+## Integration and release
+
+- Final integration PR: #33, including the commits from #30–32 and fixes for the three automatic review findings (shared upload admission/image semaphore, local-date minimum, and replacement-photo navigation).
+- Run `npm run verify` and require green CI on the final PR head before merging. A merge commit preserves the earlier branch ancestry; confirm #30–32 are marked merged afterward.
+- This release adds `practice_progress`, `practice_question_progress`, and `practice_work` with `CREATE TABLE IF NOT EXISTS`; it does not alter or delete existing learning records.
+- The existing production guard in `deploy/ci/sel-ci-deploy.py::check_migrations` rejects changes under `dist/db`. Therefore this merge requires a separately planned manual production release; green CI and a merged PR do not establish deployment success. Keep the guard in place and confirm the actual production Action result.
+- Manual release must use the existing administrator deployment procedure: verify a consistent backup, start the new version so the additive schema is applied, check login/assets/anonymous API refusal, then verify the student flow with an authorized test account. Code rollback must preserve the database and any newly written records.

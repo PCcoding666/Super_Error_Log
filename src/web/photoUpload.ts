@@ -125,6 +125,7 @@ function pumpUploads(){while(activeUploads<${UPLOAD_CONCURRENCY}){var entry=entr
 if(!activeUploads){setUploadBusy(false);renderUploads();if(entries.length&&entries.every(function(e){return e.state==='succeeded'}))location.replace(form.getAttribute('data-success-url')||'/s/capture')}
 else renderUploads()}
 inputs.forEach(function(input){input.addEventListener('change',function(){var files=Array.prototype.slice.call(input.files||[]);input.value='';if(!files.length||busy)return;
+if(form.hasAttribute('data-work-upload')){entries=[];if(uploadList)uploadList.textContent='';files=files.slice(0,1)}
 form.setAttribute('data-upload-pending','');setUploadBusy(true);files.forEach(function(file){var entry={file:file,name:file.name||'照片',key:uuid(),blob:null,state:'queued',progress:0,message:'等待上传',retryable:false};appendUploadRow(entry);entries.push(entry)});pumpUploads()})});
 document.addEventListener('click',function(e){var label=e.target&&e.target.closest&&e.target.closest('label[for="camera-input"],label[for="library-input"]');if(busy&&label&&label.control&&label.control.form===form)e.preventDefault()});
 form.addEventListener('submit',function(e){e.preventDefault()});

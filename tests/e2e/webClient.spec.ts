@@ -134,6 +134,8 @@ test('手写拍照为可选步骤，上传后可回看照片和识别文字', as
   await page.getByRole('link',{name:'拍照上传作答',exact:true}).click();
   await expect(page.getByRole('heading',{name:'上传手写作答',exact:true})).toBeVisible();
   await page.screenshot({path:testInfo.outputPath('handwriting-upload.png'),fullPage:true});
+  await page.locator('#camera-input').setInputFiles({name:'broken.jpg',mimeType:'image/jpeg',buffer:Buffer.from('broken image')});
+  await expect(page.locator('[data-upload-message]')).toContainText('读不了');
   await page.locator('#camera-input').setInputFiles({name:'work.jpg',mimeType:'image/jpeg',buffer:await synthetic('#fefefe',900)});
   await expect(page.getByRole('heading',{name:'手写作答'})).toBeVisible({timeout:20000});
   await expect(page.getByAltText('本次手写作答')).toBeVisible();

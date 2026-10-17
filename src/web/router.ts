@@ -648,7 +648,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.redirect(303, `/s/items/${itemId}`);
   }));
 
-  r.use(practiceRouter({ coachProvider: options.coachProvider, limiter: options.limiter, handwriting: options.handwriting, timeZone: ctx.timeZone, now: ctx.now }));
+  r.use(practiceRouter({ coachProvider: options.coachProvider, limiter: options.limiter, admission: options.admission, handwriting: options.handwriting, timeZone: ctx.timeZone, now: ctx.now }));
 
   // ---------- 选这周要练的题 ----------
   const choosePage = async (request: Request, error?: string | null, reason?: string | null): Promise<ReactNode> => {

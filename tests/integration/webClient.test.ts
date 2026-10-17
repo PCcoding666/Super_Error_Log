@@ -78,7 +78,7 @@ async function photo(color: string, size = 600): Promise<Buffer> {
 
 interface Setup { base: string; manager: PairingManager; dataDir: string; vision: SyntheticVision; service: MobileRecognitionService }
 
-async function setup(options: { limiter?: RateLimiter; admission?: AdmissionController; handwriting?: import('../../src/ai/handwriting.js').HandwritingRecognizer } = {}): Promise<Setup> {
+async function setup(options: { limiter?: RateLimiter; admission?: AdmissionController; timeZone?: string; now?: () => Date; handwriting?: import('../../src/ai/handwriting.js').HandwritingRecognizer } = {}): Promise<Setup> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-web-'));
   roots.push(dataDir);
   const manager = await PairingManager.open(dataDir, { pairingUrl: 'https://study.pccoding666.com' });
@@ -87,7 +87,7 @@ async function setup(options: { limiter?: RateLimiter; admission?: AdmissionCont
   const app = await createMobileApp({
     dataDir, vision, mode: 'cloud', pairing: manager, cloudProxy: true, rateLimiter: options.limiter, admission: options.admission ?? new AdmissionController({ diskProbe: async () => 100n * 1024n ** 3n, dataUsageProbe: async () => 0n }),
     v2Router: ({ limiter }) => createV2Router({ mobileDataDir: dataDir, transcriber, limiter }),
-    webClient: deps => createWebClientRouter({ ...deps, mobileDataDir: dataDir, transcriber, handwriting: options.handwriting }),
+    webClient: deps => createWebClientRouter({ ...deps, mobileDataDir: dataDir, transcriber, handwriting: options.handwriting, timeZone: options.timeZone, now: options.now }),
   });
   const service = app.locals.mobileRecognitionService as MobileRecognitionService;
   services.push(service);
@@ -610,6 +610,63 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     await browser.post(`${url}/${first}/result`, { correct: 'yes', performedOn: day });
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({ n: 1 });
     expect((await browser.post(`${url}/itm_0000000000000000/result`, { correct: 'yes', performedOn: day })).status).toBe(404);
+  });
+
+  it('练习日期下限使用学生时区，与当天上限一致', async () => {
+    const env = await setup({timeZone:'Asia/Shanghai',now:() => new Date('2026-10-18T01:00:00Z')});
+    const {browser,packetId,itemIds} = await chosen(env);
+    await waitFor(async () => (await browser.text(`/s/practice/${packetId}`)).includes('practice-question'));
+    getDb().prepare('UPDATE review_packet SET generated_at = ? WHERE id = ?').run('2026-10-17T16:30:00Z',packetId);
+    const html = await browser.text(`/s/practice/${packetId}?item=${itemIds[0]}&view=check`);
+    expect(html).toMatch(/min="2026-10-18"/);
+    expect(html).toMatch(/max="2026-10-18"/);
+  });
+
+  it('作答照片遵守磁盘、容量和上传准入，失败后释放预约', async () => {
+    let used = 0n;
+    const admission = new AdmissionController({jobCapacity:1,diskProbe:async () => 100n * 1024n ** 3n,dataUsageProbe:async () => used});
+    let calls = 0;
+    const env = await setup({admission,handwriting:{recognize:async () => {calls++;return {text:'x = 1',uncertain:false};}}});
+    const {browser,packetId,itemIds} = await chosen(env);
+    const send = async (bytes: Buffer) => {
+      const form = new FormData(); form.append('key',crypto.randomUUID());
+      form.append('photo',new Blob([new Uint8Array(bytes)],{type:'image/jpeg'}),'work.jpg');
+      return browser.request(`/s/practice/${packetId}/${itemIds[0]}/work`,{method:'POST',body:form,headers:{accept:'application/json'}});
+    };
+    const bytes = await photo('#ffffff');
+    used = 11n * 1024n ** 3n;
+    expect((await send(bytes)).status).toBe(503);
+    used = 0n;
+    expect(admission.tryAcquireUploadSlot('test').accepted).toBe(true);
+    try { expect((await send(bytes)).status).toBe(429); } finally { admission.releaseUploadSlot('test'); }
+    expect(admission.tryAcquireJobCapacity().accepted).toBe(true);
+    try { expect((await send(bytes)).status).toBe(429); } finally { admission.releaseJobCapacity(); }
+    expect((await send(Buffer.from('broken image'))).status).toBe(400);
+    expect(calls).toBe(0);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM practice_work').get()).toEqual({n:0});
+    expect((await send(bytes)).status).toBe(200);
+    expect(calls).toBe(1);
+    expect(admission.tryAcquireUploadSlot('test').accepted).toBe(true);
+    admission.releaseUploadSlot('test');
+    expect(admission.tryAcquireJobCapacity().accepted).toBe(true);
+    admission.releaseJobCapacity();
+  });
+
+  it('作答照片等待共享图像槽位后才解码保存', async () => {
+    const admission = new AdmissionController({diskProbe:async () => 100n * 1024n ** 3n,dataUsageProbe:async () => 0n});
+    const env = await setup({admission});
+    const {browser,packetId,itemIds} = await chosen(env);
+    const release = await admission.acquireImage();
+    const form = new FormData(); form.append('key',crypto.randomUUID());
+    form.append('photo',new Blob([new Uint8Array(await photo('#fafafa'))],{type:'image/jpeg'}),'work.jpg');
+    let completed = false;
+    const response = browser.request(`/s/practice/${packetId}/${itemIds[0]}/work`,{method:'POST',body:form,headers:{accept:'application/json'}}).then(r => {completed = true;return r;});
+    try {
+      await new Promise(resolve => setTimeout(resolve,150));
+      expect(completed).toBe(false);
+      expect(getDb().prepare('SELECT COUNT(*) AS n FROM practice_work').get()).toEqual({n:0});
+    } finally { release(); await response; }
+    expect((await response).status).toBe(200);
   });
 
   it('识别失败仍保留照片并能自行核对；重试不会重复保存', async () => {
