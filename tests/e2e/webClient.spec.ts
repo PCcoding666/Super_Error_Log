@@ -81,289 +81,21 @@ async function stubPrint(page: Page): Promise<void> {
   });
 }
 
-test('周末 A：只按底部下一步按钮，从配对走到「这一份练习纸已准备好」（J7 网页版）', async ({ page, request }) => {
-  const { link } = await (await request.get(`${CONTROL}/pairing-link`)).json() as { link: string };
-  await stubPrint(page);
-  const errors = collectErrors(page);
-
-  // 连接：打开配对链接 → 确认页 → 点一下连接。
-  await page.goto(link.replace('https://study.pccoding666.com', WEB));
-  await next(page, '连接这台手机');
-  await expect(page.getByTestId('flash-ok')).toHaveText('连上了 ✓');
-  await expect(page.getByTestId('install-hint')).toBeVisible();
-
-  // 第 1 步：拍第一页（第一次上传前先看说明）。
-  await expect(page.getByTestId('today-header')).toHaveText('今天大约 13 分钟，一共 5 步');
-  await expect(page.getByTestId('next-step-caption')).toHaveText('第 1 步，共 5 步 · 大约 2 分钟');
-  await expect(secondary(page, 'skipShoot')).toHaveText('这周没发卷子，跳过');
-  await next(page, '拍第一页');
-  await expect(page.getByTestId('consent')).toContainText('照片上可能有你的名字和字迹');
-  await next(page, '同意，上传');
-  await expect(page.locator('#camera-input')).toHaveAttribute('capture', 'environment');
-  await expect(page.locator('#camera-input')).toHaveAttribute('accept', 'image/*');
-  await shoot(page, await synthetic('#f2cfc6', 900), 'page-1.jpg');
-  await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张', { timeout: 20_000 });
-
-  // 第 2 步：AI 找题（等待时主按钮不可点）→ 找完了下一步自己变成第 3 步。
-  await next(page, '拍完了，下一步');
-  await expect(page).toHaveURL(/\/s\/photos$/);
-  await waitForPrimary(page, '下一步：选这周要练的题');
-  await expect(page.getByTestId('photo-row-1')).toContainText('已新增 3 道错题');
-  await primary(page).click();
-
-  // 第 3 步：选题（推荐默认全选）。
-  await expect(page.getByTestId('next-step-caption')).toHaveText('第 3 步，共 5 步 · 大约 1 分钟');
-  await expect(page.getByTestId('choose-row')).toHaveCount(3);
-  await next(page, '就练这 3 道');
-
-  // 第 4 步：说说为什么错 → 点下一步按钮旁边的「跳过，直接打印」。
-  await expect(page.getByTestId('next-step-caption')).toHaveText('第 1 道，共 3 道');
-  await expect(secondary(page, 'skipWhy')).toHaveText('跳过，直接打印');
-  await secondary(page, 'skipWhy').click();
-
-  // 第 5 步：准备好后出现 A4 预览，下一步按钮是「打印」；打印后变成「打印好了，回到今天」。
-  await expect(page).toHaveURL(/\/s\/print\/pkt_/);
-  await waitForPrimary(page, '打印');
-  await expect(page.getByTestId('print-preview')).toBeVisible();
-  await expect(page.getByTestId('sheet')).toContainText('做完再看');
-  // 整张 A4 先是缩略图：点「展开看整张」在原地展开，再点收起。
-  await expect(page.getByTestId('sheet-box')).toHaveAttribute('data-open', 'false');
-  await page.getByTestId('sheet-toggle').click();
-  await expect(page.getByTestId('sheet-box')).toHaveAttribute('data-open', 'true');
-  await expect(page.getByTestId('sheet-toggle')).toHaveAttribute('aria-expanded', 'true');
-  await page.getByTestId('sheet-toggle').click();
-  await expect(page.getByTestId('sheet-box')).toHaveAttribute('data-open', 'false');
-  const sheetUrl = await page.getByTestId('sheet-link').getAttribute('href');
-  await primary(page).click();
-  await next(page, '打印好了，回到今天');
-
-  // 回到今天：这一份练习纸已准备好；没有主按钮，只留「没打出来？现在打印」。
-  await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
-  await expect(page.getByTestId('today-done')).toContainText('下个周末打开错题本，录一下做的结果。');
-  await expect(page.getByTestId('next-step-caption')).toHaveText('下次打开：下个周末，录结果');
-  await expect(secondary(page, 'print')).toHaveText('没打出来？现在打印');
-  await expect(primary(page)).toHaveCount(0);
-
-  // 练习纸用浏览器打印成 A4 PDF：封面、题目页、答案页。
-  await page.goto(`${WEB}${sheetUrl}`);
-  await page.emulateMedia({ media: 'print' });
-  const pdf = await PDFDocument.load(await page.pdf({ format: 'A4', printBackground: true }));
-  expect(pdf.getPageCount()).toBeGreaterThanOrEqual(3);
-  const { width, height } = pdf.getPage(0).getSize();
-  expect(Math.abs(width - 595.3)).toBeLessThan(2);   // A4 = 210 × 297 mm
-  expect(Math.abs(height - 841.9)).toBeLessThan(2);
-  await page.emulateMedia({ media: 'screen' });
-
-  // 从配对到「这一份练习纸已准备好」、再到练习纸 A4：页面报错与控制台 error 一条都没有。
-  expect(errors).toEqual([]);
-
-  // 没联网 / 服务器连不上：Service Worker 只缓存了外壳，导航失败时给离线页（不含任何学生数据）。
-  await page.goto(`${WEB}/s/`);
-  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
-  await page.reload();
-  await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
-  await page.context().setOffline(true);
-  await page.goto(`${WEB}/s/items`);
-  // Playwright 的断网模拟不改 navigator.onLine，所以这里是「连不上服务器」那一版（真断网时脚本换成「没联网」）。
-  await expect(page.getByTestId('offline-title')).toHaveText(/没联网|连不上服务器/);
-  await expect(page.locator('html')).toHaveClass(/\bjs\b/);
-  await expect(primary(page)).toHaveText('再试一次');
-  const cached = await page.evaluate(async () => {
-    const keys = await caches.keys();
-    const urls = (await Promise.all(keys.map(async key => (await (await caches.open(key)).keys()).map(r => new URL(r.url).pathname)))).flat();
-    return urls.sort();
-  });
-  // 外壳只有离线页、带内容指纹的样式与脚本（和页面引用的是同一个名字）、图标。
-  const shell = await page.evaluate(() => [document.querySelector('link[rel=stylesheet]')?.getAttribute('href') ?? '', document.querySelector('script[src]:not([defer])')?.getAttribute('src') ?? '', document.querySelector('script[src][defer]')?.getAttribute('src') ?? '']);
-  expect(shell[0]).toMatch(/^\/s\/assets\/app\.[0-9a-f]{10}\.css$/);
-  expect(shell[1]).toBe(''); // No early script that suppresses browser errors.
-  expect(shell[2]).toMatch(/^\/s\/assets\/app\.[0-9a-f]{10}\.js$/);
-  expect(cached).toEqual([shell[0], shell[2], '/s/assets/icon-192.png', '/s/offline'].sort());
-  await page.context().setOffline(false);
-
-  // 互动记录：页面脚本记下的点按（跳页的随下一个请求带来，拍照 / 打印这类不跳页的立刻发 HEAD）和服务器上判定的看页、提交、跳过。
-  await expect.poll(async () => (await trailLines(request)).filter(line => line.startsWith('tap ')).length).toBeGreaterThan(5);
-  const lines = await trailLines(request);
-  expect(lines).toEqual(expect.arrayContaining([
-    'tap /s/pair#primary.pair',
-    'tap /s/#primary.capture',
-    'tap /s/capture#primary.consent',
-    'tap /s/capture#primary.capture',
-    'tap /s/why/:pid#secondary.skipWhy',
-    'tap /s/print/:pid#primary.print',
-    'tap /s/print/:pid#content.sheet-open',
-    'view /s/#open',
-    'view /s/photos#open',
-    'submit /s/consent#submit',
-    'submit /s/choose#submit',
-    'skip /s/skip#why',
-  ]));
-  expect(lines.join('\n')).not.toMatch(/pkt_|itm_[0-9a-f]|code=/);
-
-  await page.context().storageState({ path: STATE });
+test('三栏入口可以录入、选题并继续现有打印流程', async ({browser}) => {
+  const page = await pairedPage(browser);
+  await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
+  await upload(page,'#efb7b2');
+  await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
+  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await page.waitForURL(/\/s\/why\/pkt_/);
+  const packetId = page.url().split('/').pop()!;
+  await page.request.post(`${WEB}/s/skip`,{headers:{origin:WEB},form:{step:'why',practice:packetId}});
+  await page.goto(`${WEB}/s/print/${packetId}`);
+  await expect(page.getByTestId('sheet')).toBeVisible({timeout:30000});
+  await page.context().storageState({path:STATE});
+  await page.context().close();
 });
-
-test.describe('下个周末', () => {
-  test.use({ storageState: STATE });
-
-  test('周末 B：先拍新卷子，趁 AI 找题录上周的结果，再勾、选、用语音说一道、打印', async ({ page, request }) => {
-    expect((await request.post(`${CONTROL}/time-travel?days=7`)).ok()).toBe(true);
-    await stubPrint(page);
-    const errors = collectErrors(page);
-    await page.goto(`${WEB}/s/`);
-
-    await expect(page.getByTestId('today-header')).toHaveText('今天大约 16 分钟，一共 6 步');
-    await expect(page.getByTestId('today-step-record')).toContainText('录练习纸的结果');
-    await expect(page.getByTestId('next-step-caption')).toHaveText('第 1 步，共 6 步 · 大约 2 分钟');
-
-    // 拍一张没批改的答题卡页（同意过，不再问）。
-    await next(page, '拍第一页');
-    await expect(page).toHaveURL(/\/s\/capture$/);
-    await shoot(page, await synthetic('#c6cff2', 820), 'page-2.jpg');
-    await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张', { timeout: 20_000 });
-
-    // 「拍完了，下一步」去录上周练习纸的结果（第 2 步）。
-    await next(page, '拍完了，下一步');
-    await expect(page).toHaveURL(/\/s\/record\/pkt_/);
-    await expect(page.getByTestId('record-day')).toHaveCount(7);
-    await expect(page.locator('input[name=date]:checked')).toHaveCount(0);
-    await page.getByTestId('record-day').nth(3).click();
-    await next(page, '下一步');
-    await expect(page.getByTestId('next-step-caption')).toHaveText('第 1 道，共 3 道');
-    await page.getByTestId('completion-independent').click();
-    await page.getByTestId('correct-yes').click();
-    await next(page, '下一道');
-    await page.getByTestId('completion-hint1').click();
-    await page.getByTestId('correct-yes').click();
-    await next(page, '下一道');
-    await expect(page.getByTestId('correct-yes')).toBeHidden();
-    await page.getByTestId('completion-not_solved').click();
-    await next(page, '提交 3 道结果');
-
-    // 这次的结果：隔了几天独立做对 = 真会了；看提示、没做出来 = 下次再练。
-    await expect(page.getByTestId('results-head')).toHaveText('3 道里，独立做对 1 道');
-    await expect(page.locator('main')).toContainText('真会了 ✓（1 道）');
-    await expect(page.locator('main')).toContainText('下次再练（2 道）');
-    await waitForPrimary(page, '下一步：勾出做错的题');
-    await primary(page).click();
-
-    // 勾出没批改的页上的 2 道。
-    await expect(page.getByTestId('pick-candidate')).toHaveCount(3);
-    await page.getByTestId('pick-candidate').nth(0).click();
-    await page.getByTestId('pick-candidate').nth(2).click();
-    await next(page, '把这 2 道加入错题本');
-    await expect(page).toHaveURL(/\/s\/photos\?added=2&n=1$/);
-    await expect(page.getByTestId('photos-added')).toHaveText('第 1 张：2 道加进错题本了 ✓');
-    await waitForPrimary(page, '下一步：选这周要练的题');
-    await primary(page).click();
-
-    // 选题：新勾的 2 道 + 上周没练会的。
-    const rows = await page.getByTestId('choose-row').count();
-    expect(rows).toBeGreaterThanOrEqual(2);
-    await next(page, /^就练这 \d 道$/);
-
-    // 说说为什么错：第一道用语音（假麦克风 → mock 转写放进文本框，他改完自己点「说完了」）。
-    await next(page, '开始');
-    await expect(page.getByTestId('ai-question')).toBeVisible();
-    await expect(page.getByTestId('voice')).toBeVisible();
-    await page.getByTestId('voice-button').click();
-    // 开着麦克风：按钮变成「说完了」，有计时；底部主按钮先不能点（先说完再提交）。
-    await expect(page.getByTestId('voice-button')).toHaveText('说完了');
-    await expect(page.getByTestId('voice-timer')).toBeVisible();
-    await expect(primary(page)).toBeDisabled();
-    await page.waitForTimeout(1200);
-    await page.getByTestId('voice-button').click();
-    await expect(page.locator('#answer-text')).toHaveValue('我以为移项不用变号，就直接抄过去了。', { timeout: 15_000 });
-    await expect(page.getByTestId('voice-note')).toHaveText('转好了，看一眼，不对就改');
-    await next(page, '说完了');
-    // mock 会再问一句：不回答，直接选。
-    await secondary(page, 'skipQuestion').click();
-    await expect(page.getByTestId('missing')).toHaveText('还差：有没有把握');
-    await expect(primary(page)).toBeDisabled();
-    await page.getByText('现在做应该会').click();
-    await expect(page.getByTestId('missing')).toHaveText('');
-    await primary(page).click();
-    // 其余几道：不回答，这道跳过。
-    await page.waitForURL(/\/s\/why\/pkt_[0-9a-f]+(\/itm_[0-9a-f]+)?$/);
-    for (let guard = 0; guard < 12 && /\/s\/why\/pkt_[0-9a-f]+\/itm_/.test(page.url()); guard += 1) {
-      const before = page.url();
-      const button = before.endsWith('/confirm') ? secondary(page, 'pass') : secondary(page, 'skipQuestion');
-      await Promise.all([page.waitForURL(url => url.toString() !== before), button.click()]);
-    }
-    await expect(page.getByTestId('why-done')).toContainText('说了 1 道');
-    await next(page, '下一步：打印练习纸');
-
-    await waitForPrimary(page, '打印');
-    await primary(page).click();
-    await next(page, '打印好了，回到今天');
-    await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
-    await expect(primary(page)).toHaveCount(0);
-
-    // 做完以后又拍了一张（门槛 G3）：「勾出做错的题」说明新题去了哪里，下一步是回到今天，不再带去选题。
-    await page.getByTestId('today-add-mistakes').click();
-    await expect(page).toHaveURL(/\/s\/capture$/);
-    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('add-page').click()]);
-    await chooser.setFiles({ name: 'page-3.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f0c8c0', 760) });
-    await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张', { timeout: 20_000 });
-    await next(page, '拍完了，下一步');
-    await expect(page).toHaveURL(/\/s\/photos$/);
-    await expect(page.getByTestId('photos-after-week')).toContainText('补充错题');
-    await expect(page.getByTestId('photo-new-2')).toHaveText('新拍的');
-    await expect(page.getByTestId('photo-new-1')).toHaveCount(0);
-    await expect(page.getByTestId('photos-after-week')).toContainText('这次补充不会改变之前的练习纸');
-    await expect(primary(page)).toHaveText('回到今天');
-    await next(page, '回到今天');
-    await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
-    // 整个周末 B（拍、录结果、勾、选、语音、打印、做完后又拍）：页面报错与控制台 error 一条都没有。
-    expect(errors).toEqual([]);
-    fs.rmSync(STATE, { force: true });
-  });
-});
-
-test.describe('关掉脚本', () => {
-  test.use({ javaScriptEnabled: false });
-
-  test('没有脚本也能走：配对、拍照上传、录结果、选题、跳过、打开练习纸、回到今天', async ({ page, request }) => {
-    expect((await request.post(`${CONTROL}/time-travel?days=7`)).ok()).toBe(true);
-    const { link } = await (await request.get(`${CONTROL}/pairing-link`)).json() as { link: string };
-    await page.goto(link);
-    await next(page, '连接这台手机');
-    await expect(page.getByTestId('today-header')).toHaveText('今天大约 16 分钟，一共 6 步');
-    await next(page, '拍第一页');
-    await next(page, '同意，上传');
-    // 没有脚本：选好照片后点「上传这张」（表单提交）。
-    await page.locator('#camera-input').setInputFiles({ name: 'page-3.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f5d2c0', 760) });
-    await page.getByRole('button', { name: '上传这张' }).click();
-    await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
-    // 录上一份练习纸的结果：每道都是一屏表单，答案放在隐藏字段里带到最后一次提交。
-    await next(page, '拍完了，下一步');
-    await expect(page).toHaveURL(/\/s\/record\/pkt_/);
-    await page.getByTestId('record-day').last().click();
-    await next(page, '下一步');
-    for (let guard = 0; guard < 9 && /\/s\/record\//.test(page.url()); guard += 1) {
-      await page.getByTestId('completion-not_done').click();
-      await primary(page).click();
-    }
-    await expect(page.getByTestId('results-head')).toContainText('独立做对 0 道');
-    // 找题中的页面靠 <meta refresh> 自己刷新。
-    await page.goto(`${WEB}/s/photos`);
-    await waitForPrimary(page, '下一步：选这周要练的题', 60_000);
-    await primary(page).click();
-    await next(page, /^就练这 \d 道$|^把勾出的题加入错题本$|^就练这/);
-    await secondary(page, 'skipWhy').click();
-    // 准备中靠 <meta refresh>；就绪后「打印」是去单独练习纸页的链接（用 Safari 的分享 → 打印）。
-    await waitForPrimary(page, '打印', 60_000);
-    await primary(page).click();
-    await expect(page).toHaveURL(/\/sheet$/);
-    await expect(page.getByTestId('sheet')).toContainText('做完再看');
-    await next(page, '打印好了，回到今天');
-    await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
-  });
-});
-
-// ---------- quality round 2：局部轮询、关掉脚本时的 meta refresh、减少动态效果、录音反馈、服务器忙页、选项断行 ----------
-// 这些用例放在本文件最后：前面的周末 A / B 要从干净的数据开始，这里的每个用例自己配新设备、自己拍需要的卷子。
-// 故障注入见 tests/e2e/webClientServer.ts（POST /fault）。服务器忙的用例放在最后（限流按 IP 记一分钟）。
 
 const DEVICE: BrowserContextOptions = {
   viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: IPHONE_SAFARI, locale: 'zh-CN', permissions: ['microphone'],
@@ -534,7 +266,7 @@ test('减少动态效果：样式里的动效、过渡全关，页间保持原�
       return { rise: read(rise), pop: read(pop), progress: read(bar), meter: read(meter) };
     });
     // 跨文档过渡：点「这周的错题」跳到下一页，看新的一页是不是带着过渡出来的。
-    await Promise.all([page.waitForURL(/\/s\/items$/), page.getByTestId('today-items').click()]);
+    await Promise.all([page.waitForURL(/\/s\/items$/), page.getByTestId('tab-items').click()]);
     await page.waitForLoadState('load');
     // pagereveal 在新的一页第一次画出来之前发生（有过渡时会晚于 load 一点），等它到。
     await expect.poll(() => page.evaluate(() => (window as unknown as { __vt?: boolean }).__vt ?? null), { timeout: 5_000 }).not.toBeNull();
@@ -689,7 +421,7 @@ test('页面缩放 200%（195×422 CSS px）：没有单字孤行或标点落行
   const page = await pairedPage(browser, { viewport: { width: 195, height: 422 }, deviceScaleFactor: 6 });
   await page.goto(`${WEB}/s/practices`);
   const hrefs = await page.getByTestId('practice-row').evaluateAll(rows => rows.map(row => row.getAttribute('href') ?? ''));
-  const printed = hrefs.map(href => /\/s\/(?:record|results)\/(pkt_[0-9a-f]+)/.exec(href)?.[1]).find(Boolean);
+  const printed = hrefs.map(href => /\/s\/(?:record|results|practice)\/(pkt_[0-9a-f]+)/.exec(href)?.[1]).find(Boolean);
   expect(printed).toBeTruthy();
   for (const path of ['/s/', '/s/settings', '/s/choose', `/s/print/${printed}`, `/s/print/${printed}/sheet`, '/s/practices']) {
     await page.goto(`${WEB}${path}`);

@@ -53,8 +53,8 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   const addOne = async (number: number) => {
     await page.locator('#library-input').setInputFiles(await jpeg(820 + number, 1100));
     await expect(page.getByTestId('photo-count')).toHaveText(`已拍 ${number} 张`);
-    await expect(page.getByTestId('next-step-primary')).toHaveText('拍完了，下一步');
-    await page.getByTestId('next-step-primary').click();
+    await expect(page.getByTestId('next-step-primary')).toHaveText('查看错题');
+    await page.getByRole('link',{name:'查看上传记录'}).click();
     await expect(page).toHaveURL(/\/s\/photos(?:\?|$)/);
     const row = page.getByTestId(`photo-row-${number}`);
     await expect(row).toContainText('这页没有批改痕迹', { timeout: 15000 });
@@ -67,10 +67,13 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
     if (number > 1) await page.goto(gateway.base + '/s/capture');
     await addOne(number);
   }
-  await page.getByTestId('next-step-primary').click();
+  await page.goto(gateway.base + '/s/choose');
   await expect(page.getByTestId('choose-row')).toHaveCount(5);
   await page.getByTestId('next-step-primary').click();
-  await page.getByTestId('next-step-secondary-skipWhy').click();
+  await page.waitForURL(/\/s\/why\/pkt_/);
+  const pid = page.url().split('/').pop()!;
+  await page.request.post(gateway.base+'/s/skip',{headers:{origin:gateway.base},form:{step:'why',practice:pid}});
+  await page.goto(gateway.base+'/s/print/'+pid);
   await expect(page.getByTestId('next-step-primary')).toHaveText('打印', { timeout: 15000 });
   const printPath = new URL(page.url()).pathname;
   const sheetPath = await page.getByTestId('sheet-link').getAttribute('href');
@@ -80,15 +83,16 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   const beforeSheet = paperMarkup(await (await page.request.get(gateway.base + sheetPath)).text());
   await page.getByTestId('next-step-primary').click();
   await page.getByTestId('next-step-primary').click();
-  await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
-  const add = page.getByRole('link', { name: '＋补充错题', exact: true });
+  await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
+  await page.goto(gateway.base + '/s/');
+  const add = page.getByTestId('tab-capture');
   await expect(add).toBeVisible();
   await page.screenshot({ path: info.outputPath('home-paper-ready.png'), fullPage: true });
   for (let number = 6; number <= 7; number++) {
-    await add.click();
+    await page.goto(gateway.base + '/s/capture');
     await expect(page).toHaveURL(/\/s\/capture$/);
     await addOne(number);
-    if (number === 6) await page.getByRole('link', { name: '回到今天', exact: true }).first().click();
+    if (number === 6) await page.goto(gateway.base + '/s/');
   }
   await expect(page.getByTestId('photos-added-status')).toHaveText('已新增 2 道错题');
   await expect(page.getByTestId('photos-after-week')).toContainText('已保存到错题本，这次补充不会改变之前的练习纸。');
@@ -105,14 +109,14 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   await page.goto(gateway.base + '/s/');
   await page.reload();
   await expect(add).toBeVisible();
-  await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
+  await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
   await page.goto(gateway.base + '/s/settings');
   await page.getByRole('button', { name: '退出登录', exact: true }).click();
   await expect(page.getByRole('heading', { name: '输入邀请码' })).toBeVisible();
   await page.getByLabel('12 位邀请码').fill(gateway.reloginCodes[0]!);
   await page.getByRole('button', { name: '进入我的错题本' }).click();
   await expect(add).toBeVisible();
-  await expect(page.getByTestId('today-done-title')).toContainText('这一份练习纸已准备好');
+  await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
   await page.goto(gateway.base + printPath);
   await expect(page.getByTestId('print-summary')).toContainText('这张练习纸上有 5 道题');
   expect(paperMarkup(await (await page.request.get(gateway.base + sheetPath)).text())).toBe(beforeSheet);

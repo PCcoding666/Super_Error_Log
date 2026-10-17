@@ -164,7 +164,7 @@ function nextStepBar(state: TodayState, ownKind: StepKind | null): BarModel {
 }
 
 function homeBar(): BarModel {
-  return { caption: '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
+  return { caption: '', primary: { title: '返回错题本', key: 'goHome', href: '/s/' }, secondary: [] };
 }
 
 function captionFor(state: TodayState, kind: StepKind): string {
@@ -324,11 +324,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       try { await handler(request, response); } catch (error) { next(error); }
     };
 
-  // ---------- 今天 ----------
+  // 默认进入错题本，保留根地址作为主屏幕入口。
   r.get('/', page(async (request, response) => {
-    const state = await loadToday(ctx, request);
-    const flash = request.query.paired === '1' ? { ok: '连上了 ✓' } : undefined;
-    render(response, TodayPage({ state, practiceSlot: getV2Settings().practiceSlot, flash, showInstallHint: !sawInstallHint(request), wait: todayWait(state), now: ctx.now() }));
+    render(response, await itemsPage(request, response));
   }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
   r.get('/install', page((_request, response) => render(response, InstallPage())));
@@ -367,12 +365,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.get('/capture', page(async (request, response) => {
     if (!hasConsent(request)) { render(response, ConsentPage()); return; }
     const state = await loadToday(ctx, request);
-    const current = state.plan.currentIndex === null ? null : state.plan.steps[state.plan.currentIndex] ?? null;
-    const next = current && current.kind !== 'shoot'
-      ? { title: current.title, href: current.kind === 'pick' ? '/s/photos' : current.action ? actionHref(current.action) : '/s/' }
-      : { title: '勾出做错的题', href: '/s/photos' };
+    const next = { title: '查看错题', href: '/s/items' };
     const err = UPLOAD_ERRORS[str(request.query.err)] ?? null;
-    render(response, CapturePage({ photos: state.photos, next, caption: captionFor(state, 'shoot'), flash: { err } }));
+    render(response, CapturePage({ photos: state.photos, next, caption: '', flash: { err } }));
   }));
 
   r.post('/consent', page((request, response) => { giveConsent(request, response); response.redirect(303, '/s/capture'); }));
@@ -451,18 +446,14 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const addedPhoto = state.photos.find(photo => photo.number === Number(str(request.query.n)));
     const added = /^[1-9]\d?$/.test(str(request.query.added)) && addedPhoto && addedPhoto.itemCount > 0 ? { count: addedPhoto.itemCount, number: addedPhoto.number } : null;
     const photos = state.photos.filter(photo => !(photo.dismissed && photo.failure));
-    // 这周的练习纸已经生成（做完了 / 周中）以后又拍了卷子：这周的练习已经定了，不再带他去选题；
-    // 说清楚新找到的题去了哪（进错题本，下个周末再选），下一步是「回到今天」（门槛 G3）。
-    if (state.plan.stage === 'done' || state.plan.stage === 'midweek') {
-      const needsPick = photos.find(photo => photo.state === 'needsPick');
-      const bar: BarModel = needsPick
-        ? { caption: '', primary: { title: `勾第 ${needsPick.number} 张`, key: 'openPick', href: `/s/photos/${needsPick.jobId}` }, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] }
-        : { caption: refresh ? 'AI 在后台找题，可以先回去' : '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
-      render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, afterWeek: true, newSince: state.latestDetail?.generatedAt ?? null, added, now: ctx.now(), flash: { err } }));
-      return;
-    }
-    const bar = nextStepBar(state, 'pick');
-    render(response, PhotosPage({ photos, bar: { ...bar, caption: bar.caption || captionFor(state, 'pick') }, refresh, itemCount: state.week.items.length, newSince: state.latestDetail?.generatedAt ?? null, added, now: ctx.now(), flash: { err } }));
+    const needsPick = photos.find(photo => photo.state === 'needsPick');
+    const bar: BarModel = {
+      caption: '', primary: needsPick
+        ? {title: `勾第 ${needsPick.number} 张`, key:'openPick', href:`/s/photos/${needsPick.jobId}`}
+        : {title:'查看错题', key:'items', href:'/s/items'},
+      secondary: [{title:'继续录入',key:'capture',href:'/s/capture'}],
+    };
+    render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, newSince: state.latestDetail?.generatedAt ?? null, added, now: ctx.now(), flash: { err } }));
   }));
 
   const weekPhoto = async (request: Request, jobId: string) => {
@@ -546,7 +537,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       category: { grade, subject, subjects }, anyPhoto: state.week.photos.length > 0,
       finding: state.photos.some(photo => photo.state === 'finding'),
       bar: { caption: '', primary: null, secondary: [] }, removed: ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null,
-      flash: {err:error} });
+      flash: {err:error, ok:request.query.paired === '1' ? '连上了 ✓' : null} });
   };
   r.get('/items', page(async (request, response) => {
     render(response, await itemsPage(request, response));
@@ -653,10 +644,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.redirect(303, `/s/items/${itemId}`);
   }));
 
+
   // ---------- 选这周要练的题 ----------
   const choosePage = async (request: Request, error?: string | null, reason?: string | null): Promise<ReactNode> => {
     const state = await loadToday(ctx, request);
-    return ChoosePage({ recommend: recommendPractice(ctx.mobileDataDir), practiceSlot: getV2Settings().practiceSlot, caption: captionFor(state, 'choose'), error, reason, ...(request.method === 'POST' ? { selectedIds: list(request.body?.itemIds) } : {}) });
+    return ChoosePage({ recommend: recommendPractice(ctx.mobileDataDir), practiceSlot: getV2Settings().practiceSlot, caption: '', error, reason, ...(request.method === 'POST' ? { selectedIds: list(request.body?.itemIds) } : {}) });
   };
   r.get('/choose', page(async (request, response) => render(response, await choosePage(request))));
 
@@ -914,12 +906,12 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     if (!summary) throw new NotFound();
     const state = await loadToday(ctx, request);
     const bar = nextStepBar(state, null);
-    const next: BarButton = bar.primary && !('disabled' in bar.primary && bar.primary.disabled) ? bar.primary : { title: '回到今天', key: 'goHome', href: '/s/' };
+    const next: BarButton = bar.primary && !('disabled' in bar.primary && bar.primary.disabled) ? bar.primary : { title: '返回错题本', key: 'goHome', href: '/s/' };
     render(response, ResultsPage({ practice, summary, next }));
   }));
 
   r.get('/practices', page((_request, response) => {
-    const practices = listPractices().map((p, index) => {
+    const practices = listPractices(-1).map((p, index) => {
       const summary = p.generatedAt ? getReturnSummary(p.id) : null;
       const items = getPractice(p.id)?.items ?? [];
       const shortIds = items.map(item => item.shortId).filter((id): id is string => Boolean(id));

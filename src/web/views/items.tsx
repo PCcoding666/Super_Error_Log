@@ -7,8 +7,8 @@ import { Page, Phrased, Problem, VoiceBox, quoted, type BarModel } from './layou
 
 /** 卡片只显示对他有意义的状态（§4.5）。 */
 export function cardStatus(status: string): string | null {
-  if (status === 'scheduled' || status === 'packet_generated') return '在这周的练习里';
-  if (status === 'temporarily_mastered' || status === 'stably_mastered') return '真会了';
+  if (status === 'scheduled' || status === 'packet_generated') return '已加入练习';
+  if (status === 'temporarily_mastered' || status === 'stably_mastered') return '已多次做对';
   if (status === 'needs_recheck') return '下次再练';
   return null;
 }
@@ -62,7 +62,7 @@ export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; a
         })}
         <button className="btn" type="submit">查看已选题目</button>
         <p className="hint">下一步可逐题调整，再加入练习；每次练习最多 8 道。</p>
-      </form> : <section className="card"><p>这个年级还没有{subject}错题</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="btn" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '去勾' : '去拍'}</a></section>}
+      </form> : <section className="card"><p>这个年级还没有{subject}错题</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="btn" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '去勾' : '录入第一道错题'}</a></section>}
     </Page>;
 }
 
@@ -72,14 +72,14 @@ export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView
   const { item, evidence } = props;
   const bar: BarModel = {
     caption: '',
-    primary: evidence ? { title: '字认错了？改一下', key: 'fix', href: `/s/items/${item.id}/fix` } : { title: '回到今天', key: 'goHome', href: '/s/' },
+    primary: evidence ? { title: '字认错了？改一下', key: 'fix', href: `/s/items/${item.id}/fix` } : { title: '返回错题本', key: 'goHome', href: '/s/' },
     secondary: props.canDiscard ? [{ title: '这不是错题', key: 'discard', post: `/s/items/${item.id}/discard` }] : [],
   };
   const groups = Object.entries(KIND_TITLE)
     .map(([kind, title]) => ({ title, notes: (evidence?.observations ?? []).filter(o => o.kind === kind) }))
     .filter(group => group.notes.length > 0);
   return (
-    <Page title={item.shortId ?? '题目'} back={{ href: `/s/items?${new URLSearchParams({ ...(item.grade ? {grade:item.grade} : {}), ...(item.subject ? {subject:item.subject} : {}) })}#item-${item.id}`, label: '这周的错题' }} bar={bar}>
+    <Page title={item.shortId ?? '题目'} back={{ href: `/s/items?${new URLSearchParams({ ...(item.grade ? {grade:item.grade} : {}), ...(item.subject ? {subject:item.subject} : {}) })}#item-${item.id}`, label: '错题本' }} bar={bar}>
       <p className="eyebrow">练习纸编号</p>
       <h1>{item.shortId ?? '题目'}</h1>
       {props.error ? <Problem title="没成功" detail={props.error} /> : null}

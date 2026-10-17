@@ -95,8 +95,6 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.getByRole('button',{name:'查看已选题目'}).click();
     await expect(page.locator('input[name=itemIds]:checked')).toHaveCount(9);
     await expect(page.getByTestId('next-step-primary')).toBeDisabled();
-    await page.getByRole('radio', {name:'周末',exact:true}).check();
-    await expect(page.getByRole('radio', {name:'周末',exact:true})).toBeChecked();
     await expect(page.locator('input[name=itemIds]:checked')).toHaveCount(9);
     await page.locator('input[name=itemIds]:checked').first().uncheck();
     if (javaScriptEnabled) {

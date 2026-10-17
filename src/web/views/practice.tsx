@@ -29,7 +29,7 @@ export function ChoiceText(props: { text: string }): ReactNode {
   return <span className="choice-text">{pieces.map((piece, index) => <span key={index} className="ph">{piece}</span>)}</span>;
 }
 
-// ---------- 选这周要练的题（§4.6） ----------
+// ---------- 选择练习题目（§4.6） ----------
 
 export const SLOT_PRESETS = ['周三晚自习', '周末', '本周内'] as const;
 
@@ -70,7 +70,7 @@ function ChooseRow(props: { card: PracticeCard; checked: boolean }): ReactNode {
  */
 export function plainNote(note: string): string {
   const few = /^本周可安排题目仅 (\d+) 道，不足 (\d+) 道，已全部纳入$/.exec(note);
-  if (few) return `这周能练的题只有 ${few[1]} 道，不到建议的 ${few[2]} 道，都帮你选上了。`;
+  if (few) return `当前可练的题只有 ${few[1]} 道，不到建议的 ${few[2]} 道，都帮你选上了。`;
   if (note.startsWith('候选知识点较集中')) return '这几道题的知识点比较集中，为了凑够题数，同一个知识点选了不止 2 道。';
   const conflict = /^其中 (\d+) 道存在「学生认为没必要但有复发证据」的冲突，建议保留$/.exec(note);
   if (conflict) return `其中 ${conflict[1]} 道你觉得没必要练，但最近又错过，建议留着。`;
@@ -83,19 +83,19 @@ export function ChoosePage(props: { recommend: RecommendResponse; practiceSlot: 
   const selected = props.selectedIds ? new Set(props.selectedIds) : null;
   const n = selected ? [...recommend.recommended, ...recommend.others].filter(card => selected.has(card.id)).length : recommend.recommended.length;
   const bar: BarModel = total === 0
-    ? { caption: props.caption, primary: { title: '去拍', key: 'capture', href: '/s/capture' }, secondary: [] }
+    ? { caption: '', primary: { title: '去拍', key: 'capture', href: '/s/capture' }, secondary: [] }
     : {
-      caption: props.caption,
+      caption: '',
       primary: { title: n > 0 ? `就练这 ${n} 道` : '至少选 1 道', key: 'create', form: 'choose-form', disabled: n === 0 || n > recommend.limits.max, countTemplate: '就练这 {n} 道', emptyTitle: '至少选 1 道' },
       secondary: [],
     };
   return (
-    <Page title="选这周要练的题" bar={bar} back={selected ? {href:'/s/items', label:'错题本'} : undefined}>
-      <h1>选这周要练的题</h1>
+    <Page title="选择练习题目" bar={bar} back={selected ? {href:'/s/items', label:'错题本'} : undefined}>
+      <h1>选择练习题目</h1>
       {props.selectionNote ? <p role="status">{props.selectionNote}</p> : null}
       {props.error ? <Problem title={props.error} reason={props.reason} /> : null}
       {total === 0 ? (
-        <section className="card"><p>现在没有可以练的题。先拍这周的卷子，或者等 AI 找完题。</p></section>
+        <section className="card"><p>现在没有可以练的题。先录入错题，或者等 AI 找完题。</p></section>
       ) : (
         <form method="post" action="/s/choose" id="choose-form" data-pick-count="" data-max={String(recommend.limits.max)} data-min="1" data-wait="正在建练习…">
           <p className="lead">{selected ? `已选中 ${n} 道，点一下可以去掉或加上。` : `AI 先帮你选了 ${n} 道，点一下可以去掉或加上。`}建议 {recommend.limits.min}–{recommend.limits.max} 道，最多 {recommend.limits.max} 道。</p>
@@ -108,11 +108,7 @@ export function ChoosePage(props: { recommend: RecommendResponse; practiceSlot: 
               {recommend.others.map(card => <ChooseRow key={card.id} card={card} checked={selected ? selected.has(card.id) : false} />)}
             </details>
           ) : null}
-          <fieldset>
-            <legend>什么时候做？</legend>
-            <SlotChoice current={props.practiceSlot} />
-            <p className="hint">会显示在「今天」页，提醒你哪天做</p>
-          </fieldset>
+
           <noscript><button className="btn" type="submit">提交调整后的选择</button></noscript>
         </form>
       )}
@@ -683,11 +679,11 @@ function PracticeLink(props: { practice: PracticeRow; showIds: boolean }): React
 export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
   const [latest, ...older] = props.practices;
   return (
-    <Page title="以前的练习" tab="practices">
-      <h1>以前的练习</h1>
+    <Page title="练习" tab="practices">
+      <h1>练习</h1><a className="btn primary" href="/s/choose">新建练习</a>
       {!latest ? <section className="card"><p>还没有练习。选了题就会出现在这里。</p></section> : (
         <>
-          <p className="lead">每个周末一份练习纸。没录的点开可以录结果，录过的点开能看这次的结果。</p>
+          <p className="lead">选择一份练习继续，或新建练习。</p>
           <section className="card" data-testid="practice-latest">
             <h2 className="section-label">最近一份</h2>
             <ul className="list"><li><PracticeLink practice={latest} showIds={!latest.items?.length} /></li></ul>
@@ -699,7 +695,7 @@ export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
               <ul className="list">{older.map(p => <li key={p.id}><PracticeLink practice={p} showIds /></li>)}</ul>
             </section>
           ) : null}
-          <p className="hint">当天做对不算真会，隔 3 天以上独立做对才算。</p>
+
         </>
       )}
     </Page>
