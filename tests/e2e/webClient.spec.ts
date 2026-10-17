@@ -81,19 +81,49 @@ async function stubPrint(page: Page): Promise<void> {
   });
 }
 
-test('三栏入口可以录入、选题并继续现有打印流程', async ({browser}) => {
+test('三栏：手机看题、跳过、直接核对、恢复进度与可选打印', async ({browser}) => {
   const page = await pairedPage(browser);
-  await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
+  const errors = collectErrors(page);
+  await expect(page.getByRole('heading', {name:'错题本',exact:true})).toBeVisible();
+  await expect(page.getByTestId('root-tabs')).toContainText('错题录入');
   await upload(page,'#efb7b2');
   await page.goto(`${WEB}/s/photos`);
   await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
-  await page.goto(`${WEB}/s/choose`);await primary(page).click();
-  await page.waitForURL(/\/s\/why\/pkt_/);
-  const packetId = page.url().split('/').pop()!;
-  await page.request.post(`${WEB}/s/skip`,{headers:{origin:WEB},form:{step:'why',practice:packetId}});
-  await page.goto(`${WEB}/s/print/${packetId}`);
-  await expect(page.getByTestId('sheet')).toBeVisible({timeout:30000});
+  await page.goto(`${WEB}/s/choose`);
+  await primary(page).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  const practice = page.url();
+  await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await expect(page.getByTestId('practice-answer')).toHaveCount(0);
+  const first = await page.getByTestId('practice-question').getAttribute('data-item');
+  await page.getByRole('button',{name:'跳过，之后再做'}).click();
+  await expect(page.getByTestId('practice-question')).not.toHaveAttribute('data-item',first!);
+  await page.getByRole('link',{name:'做完了',exact:true}).click();
+  await expect(page.getByTestId('practice-answer')).toBeVisible();
+  await page.getByRole('button',{name:'做对了',exact:true}).click();
+  await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
+  await page.goto(`${WEB}/s/practices`);
+  await page.getByTestId('practice-row').first().click();
+  await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
+  await page.getByRole('link',{name:'打印练习',exact:true}).click();
+  expect(errors).toEqual([]);
   await page.context().storageState({path:STATE});
+  await page.context().close();
+});
+
+test('无脚本：三栏入口、选题、逐题核对和打印选项仍然可用', async ({browser}) => {
+  const page = await pairedPage(browser,{javaScriptEnabled:false});
+  await page.getByTestId('tab-capture').click();
+  await page.locator('#camera-input').setInputFiles({name:'plain.jpg',mimeType:'image/jpeg',buffer:await synthetic('#f5acaf',920)});
+  await page.getByRole('button',{name:'上传这张'}).click();
+  await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
+  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await page.getByRole('link',{name:'做完了',exact:true}).click();
+  await page.getByRole('button',{name:'做错了',exact:true}).click();
+  await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
   await page.context().close();
 });
 
@@ -312,7 +342,8 @@ test.describe('说说为什么错：录音时的反馈，选项断行', () => {
     await page.goto(`${WEB}/s/choose`);
     await expect(primary(page)).toHaveText(/^就练这 \d 道$/);
     await primary(page).click();
-    await page.waitForURL(/\/s\/why\/pkt_[0-9a-f]+$/);
+    await page.waitForURL(/\/s\/practice\/pkt_[0-9a-f]+$/);
+    await page.goto(page.url().replace('/s/practice/', '/s/why/'));
     await primary(page).click();
     await page.waitForURL(/\/s\/why\/pkt_[0-9a-f]+\/itm_[0-9a-f]+$/);
     await expect(page.getByTestId('voice')).toBeVisible();

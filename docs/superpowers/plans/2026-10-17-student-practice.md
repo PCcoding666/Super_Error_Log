@@ -29,10 +29,10 @@ Files: src/web/views/{layout,photos,practice,items}.tsx, src/web/router.ts, test
 ### Task 2: Practice and self-check
 Files: src/v2/practiceProgress.ts, src/web/practiceRouter.ts, src/web/views/onlinePractice.tsx, src/web/router.ts, src/db/schema.ts, tests/integration/onlinePractice.test.ts.
 Interfaces: practice progress reads packet membership, review_attempt and v2_print_snapshot; router mounted under authenticated /s, using existing coach provider.
-- [ ] Test resume/skip, hidden answers, immediate partial results, duplicate submit and foreign membership.
-- [ ] Add persistent cursor/hint tracking and online question/check/results screens; creation prepares the frozen content without requiring printing.
-- [ ] Use existing submitReturns for date validation and mastery; validate focused integration tests and typecheck.
-- [ ] Commit feat(practice): support resumable online self-check.
+- [x] Test resume/skip, hidden answers, immediate partial results, duplicate submit and foreign membership.
+- [x] Add persistent cursor/hint tracking and online question/check/results screens; creation prepares the frozen content without requiring printing.
+- [x] Use existing submitReturns for date validation and mastery; validate focused integration tests and typecheck.
+- [x] Commit feat(practice): support resumable online self-check.
 
 ### Task 3: Optional handwriting
 Files: src/v2/practiceWork.ts, src/ai/handwriting.ts, src/web/practiceRouter.ts, src/web/views/onlinePractice.tsx, src/web/photoUpload.ts, src/db/schema.ts; integration/unit tests.

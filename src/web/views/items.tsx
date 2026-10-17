@@ -68,7 +68,7 @@ export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; a
 
 const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
 
-export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView | null; canDiscard: boolean; reflected: boolean; error?: string | null }): ReactNode {
+export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView | null; canDiscard: boolean; reflected: boolean; practiceHistory?: Array<{id:string;correct:number|null;performed_at:string|null}>; error?: string | null }): ReactNode {
   const { item, evidence } = props;
   const bar: BarModel = {
     caption: '',
@@ -100,6 +100,7 @@ export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView
         ))}
         <p className="small muted">{props.reflected ? '说过了' : '还没说为什么错'}</p>
       </section>
+      {props.practiceHistory?.length ? <section className="card"><h2>练习记录</h2><ul className="list">{props.practiceHistory.map(record => <li key={record.id}><a className="row" href={`/s/practice/${record.id}?item=${item.id}${record.correct === null ? '' : '&view=check'}`}>{record.correct === null ? '继续练习' : `${record.performed_at} · ${record.correct ? '做对了' : '做错了'}`} · 查看作答</a></li>)}</ul></section> : null}
     </Page>
   );
 }

@@ -1,3 +1,4 @@
+import { practiceRouter } from './practiceRouter.js';
 /**
  * 学生网页版（/s/）：云端移动服务同源挂载，SSR、表单驱动、不做 hydration。
  * - 鉴权：配对兑换得到的设备令牌放在 httpOnly cookie（Path=/s），每个请求按 /v1 /v2 同一规则鉴权与限流。
@@ -564,6 +565,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     return ItemDetailPage({
       item, evidence: getEvidenceView(itemId), canDiscard: item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
       reflected: getV2Reflection(itemId)?.reflection != null, error,
+      practiceHistory: getDb().prepare(`SELECT rp.id, ra.correct, ra.performed_at FROM review_packet_item rpi JOIN review_packet rp ON rp.id = rpi.packet_id LEFT JOIN review_attempt ra ON ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id WHERE rpi.item_id = ? ORDER BY rp.created_at DESC LIMIT 20`).all(itemId) as Array<{id:string;correct:number|null;performed_at:string|null}>,
     });
   };
 
@@ -644,6 +646,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.redirect(303, `/s/items/${itemId}`);
   }));
 
+  r.use(practiceRouter({ coachProvider: options.coachProvider, limiter: options.limiter, timeZone: ctx.timeZone, now: ctx.now }));
 
   // ---------- 选这周要练的题 ----------
   const choosePage = async (request: Request, error?: string | null, reason?: string | null): Promise<ReactNode> => {
@@ -665,7 +668,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       render(response, await choosePage(request, message, result.httpStatus === 409 ? result.message : null), result.httpStatus);
       return;
     }
-    response.redirect(303, `/s/why/${result.detail.id}`);
+    requestPrint(result.detail.id, options.coachProvider);
+    response.redirect(303, `/s/practice/${result.detail.id}`);
   }));
 
   // ---------- 说说为什么错 ----------

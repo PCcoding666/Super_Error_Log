@@ -659,14 +659,12 @@ export interface PracticeRow extends PracticeSummary {
 function PracticeLink(props: { practice: PracticeRow; showIds: boolean }): ReactNode {
   const p = props.practice;
   const recorded = p.answered !== null && p.answered >= p.itemCount;
-  const status = p.generatedAt === null ? '还没生成练习纸'
-    : recorded ? `录完了${p.independentCorrect !== null ? ` · 独立做对 ${p.independentCorrect} 道` : ''}`
-      : p.answered ? `录了 ${p.answered}/${p.itemCount} 道` : '练习纸已生成 · 做完回来录结果';
-  const href = p.generatedAt === null ? `/s/why/${p.id}` : p.answered ? `/s/results/${p.id}` : `/s/record/${p.id}`;
+  const status = recorded ? `已完成 · ${p.answered}/${p.itemCount} 道` : `继续练习 · ${p.answered ?? 0}/${p.itemCount} 道`;
+  const href = `/s/practice/${p.id}`;
   return (
     <a className="row" href={href} data-testid="practice-row">
       <span className="row-text">
-        <b>{weekRangeText(p.week, 'short')}</b> · {p.itemCount} 道{p.practiceSlot ? ` · ${p.practiceSlot}` : ''}
+        <b>{weekRangeText(p.week, 'short')}</b> · {p.itemCount} 道
         {props.showIds && p.shortIds.length > 0 ? <span className="meta-line muted">{p.shortIds.join('、')}</span> : null}
         <span className={`meta-line${recorded ? ' tone-green' : ' muted'}`}>{status}</span>
       </span>

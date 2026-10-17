@@ -70,10 +70,8 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   await page.goto(gateway.base + '/s/choose');
   await expect(page.getByTestId('choose-row')).toHaveCount(5);
   await page.getByTestId('next-step-primary').click();
-  await page.waitForURL(/\/s\/why\/pkt_/);
-  const pid = page.url().split('/').pop()!;
-  await page.request.post(gateway.base+'/s/skip',{headers:{origin:gateway.base},form:{step:'why',practice:pid}});
-  await page.goto(gateway.base+'/s/print/'+pid);
+  await expect(page.getByTestId('practice-question')).toBeVisible({timeout:15000});
+  await page.getByRole('link',{name:'打印练习',exact:true}).click();
   await expect(page.getByTestId('next-step-primary')).toHaveText('打印', { timeout: 15000 });
   const printPath = new URL(page.url()).pathname;
   const sheetPath = await page.getByTestId('sheet-link').getAttribute('href');

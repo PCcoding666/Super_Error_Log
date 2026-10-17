@@ -588,6 +588,45 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     return { browser, packetId, itemIds };
   }
 
+  it('在线练习逐题保存、跳过后恢复、提示记录、重复提交不增加结果', async () => {
+    const env = await setup();
+    const { browser, packetId, itemIds } = await chosen(env);
+    const url = `/s/practice/${packetId}`;
+    expect((await browser.get(url)).status).toBe(200);
+    await waitFor(async () => (await browser.text(url)).includes('data-testid="practice-question"'));
+    const html = await browser.text(url);
+    expect(html).toContain('打印练习');
+    expect(html).not.toContain('data-testid="practice-answer"');
+    const first = itemIds[0]!;
+    await browser.post(`${url}/${first}/skip`);
+    expect(await browser.text(url)).toContain(`data-item="${itemIds[1]}"`);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({ n: 0 });
+    await browser.post(`${url}/${first}/hint`, { level: '1' });
+    const day = new Date().toLocaleDateString('en-CA');
+    const result = await browser.post(`${url}/${first}/result`, { correct: 'yes', performedOn: day });
+    expect(result.status).toBe(303);
+    expect(getDb().prepare('SELECT completion, hint_level FROM review_attempt WHERE packet_id = ?').get(packetId)).toEqual({ completion: 'hint_used', hint_level: 1 });
+    expect(await browser.text(url)).toContain('已完成 1 / 3');
+    await browser.post(`${url}/${first}/result`, { correct: 'yes', performedOn: day });
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({ n: 1 });
+    expect((await browser.post(`${url}/itm_0000000000000000/result`, { correct: 'yes', performedOn: day })).status).toBe(404);
+  });
+
+  it('切换题号会保存位置，旧回录入口也必须保留已看提示，日期错误留在当前核对题', async () => {
+    const env = await setup(); const {browser,packetId,itemIds} = await chosen(env);
+    const url = `/s/practice/${packetId}`;
+    await waitFor(async () => (await browser.text(url)).includes('practice-question'));
+    await browser.get(`${url}?item=${itemIds[2]}`);
+    expect(await browser.text(url)).toContain(`data-item="${itemIds[2]}"`);
+    const invalid = await browser.post(`${url}/${itemIds[1]}/result`,{correct:'yes',performedOn:'2999-01-01'});
+    expect(invalid.status).toBe(400);
+    const error = await invalid.text(); expect(error).toContain(`data-item="${itemIds[1]}"`); expect(error).toContain('practice-answer');
+    await browser.post(`${url}/${itemIds[0]}/hint`,{level:'2'});
+    const {submitReturns} = await import('../../src/v2/returnService.js');
+    submitReturns(packetId,{results:[{itemId:itemIds[0],completion:'independent',correct:true,performedOn:new Date().toLocaleDateString('en-CA')}]});
+    expect(getDb().prepare('SELECT completion,hint_level FROM review_attempt WHERE packet_id = ?').get(packetId)).toEqual({completion:'hint_used',hint_level:2});
+  });
+
   it('AI 只问、只建议；没选把握不能提交；提交后才有复盘记录；跳过一道后去打印', async () => {
     const env = await setup();
     const { browser, packetId, itemIds } = await chosen(env);
@@ -633,8 +672,10 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(sheet.status).toBe(200);
     const css = await (await browser.get('/s/assets/app.css')).text();
     expect(css).toContain('@page{size:A4');
-    const today = await browser.visibleText('/s/');
-    expect(today).toContain('错题本');
+    const today = await browser.visibleText(`/s/practice/${packetId}`);
+    expect(today).toContain('打印练习');
+    expect(today).toContain('已完成 0 /');
+    expect(today).toContain('做完了');
     // 录结果：日期不预选；一题一屏；最后一次提交。
     const dateScreen = await browser.text(`/s/record/${packetId}`);
     expect(dateScreen).toContain('练习纸是哪天做的？');
@@ -955,9 +996,9 @@ describe('等 AI 的页面：局部轮询代替整页刷新（quality round 2）
     // 40 秒做了 1 道，还剩 2 道 → 大约 80 秒 → 「还要大约 2 分钟」。
     expect(preparing.replace(/<[^>]+>/g, '')).toContain('照现在的速度，还要大约 2 分钟');
     expect(preparing).toContain('style="transform:scaleX(0.33)"');
-    const online = await browser.text(`/s/print/${packetId}`);
+    const online = await browser.text(`/s/practice/${packetId}`);
     expect(online).toMatch(/<body[^>]* data-poll="2"/);
-    expect(online.replace(/<[^>]+>/g, '')).toContain('照现在的速度，还要大约 2 分钟');
+    expect(online).toContain('data-live="practice"');
   });
 });
 
