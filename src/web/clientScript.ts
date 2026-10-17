@@ -42,6 +42,9 @@ var key=el.getAttribute('data-key')||el.getAttribute('data-testid')||(el.tagName
 var href=el.getAttribute('href')||'';var nav=(el.tagName==='A'&&!el.hasAttribute('data-print')&&href.charAt(0)!=='#'&&el.target!=='_blank')||(el.tagName==='BUTTON'&&el.type==='submit');
 if(!nav)trailSend()},true);
 
+/* 浏览器恢复缓存页面时，只还原本次提交临时修改过的控件。 */
+window.addEventListener('pageshow',function(){ $$('form[data-wait]').forEach(function(f){if(f.__sel_waitRestore)f.__sel_waitRestore()}) });
+
 /* ---------- 动效：只在状态真的变了的时候放，说明刚发生了什么（样式里的 m-* 类；减少动态效果时样式把它们全关掉） ---------- */
 function play(el,cls){if(!el||!el.classList)return;el.classList.remove(cls);void el.offsetWidth;el.classList.add(cls);
 el.addEventListener('animationend',function h(e){if(e.target!==el)return;el.classList.remove(cls);el.removeEventListener('animationend',h)})}
@@ -113,7 +116,16 @@ within(scope,'textarea[data-single-line]').forEach(function(t){if(!once(t,'singl
 /* 字数 */
 within(scope,'textarea[data-count]').forEach(function(t){if(!once(t,'count'))return;var out=$(t.getAttribute('data-count'));function upd(){if(out)out.textContent='还能写 '+Math.max(0,Number(t.getAttribute('maxlength'))-t.value.length)+' 字'}t.addEventListener('input',upd);upd()});
 /* 等待提示：提交后按钮换字，防止连点 */
-within(scope,'form[data-wait]').forEach(function(f){if(!once(f,'wait'))return;f.addEventListener('submit',function(){var b=document.querySelector('button[form="'+f.id+'"]')||$('button[type=submit]',f);if(b){b.textContent=f.getAttribute('data-wait');b.setAttribute('aria-label',b.textContent);b.classList.add('waiting');setTimeout(function(){b.disabled=true},0)}})});
+within(scope,'form[data-wait]').forEach(function(f){if(!once(f,'wait'))return;var busy=false;
+f.addEventListener('submit',function(e){if(busy){e.preventDefault();return}if(e.defaultPrevented)return;
+var b=e.submitter||document.querySelector('button[form="'+f.id+'"]')||$('button[type=submit]',f);if(!b)return;
+busy=true;var saved={html:b.innerHTML,label:b.getAttribute('aria-label'),disabled:b.disabled,waiting:b.classList.contains('waiting'),busy:f.getAttribute('aria-busy')};
+function attr(el,name,value){if(value===null)el.removeAttribute(name);else el.setAttribute(name,value)}
+f.__sel_waitRestore=function(){clearTimeout(timer);b.innerHTML=saved.html;attr(b,'aria-label',saved.label);b.disabled=saved.disabled;b.classList.toggle('waiting',saved.waiting);attr(f,'aria-busy',saved.busy);busy=false;f.__sel_waitRestore=null};
+b.textContent=f.getAttribute('data-wait');b.setAttribute('aria-label',b.textContent);b.classList.add('waiting');f.setAttribute('aria-busy','true');
+/* 留到原生表单收集 name/value 之后再禁用，当前事件内的重复提交已由 busy 阻止。 */
+var timer=setTimeout(function(){b.disabled=true},0)
+})});
 /* 练习纸预览缩放到容器宽（容器变宽变窄时跟着重算） */
 within(scope,'.sheet-wrap').forEach(function(w){if(!once(w,'fit'))return;var s=$('.sheet-scale',w);if(!s)return;function fit(){var k=w.clientWidth/s.scrollWidth;if(k<1){s.style.transform='scale('+k+')';w.style.height=(s.scrollHeight*k)+'px'}}fit();if(window.ResizeObserver)new ResizeObserver(fit).observe(w);else window.addEventListener('resize',fit)});
 /* 语音：点一下开始，「说完了」结束；转出来的字放进文本框，他改完自己提交（AI 只转写，不替他提交）。
