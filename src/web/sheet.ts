@@ -30,6 +30,8 @@ close.addEventListener('click',dismiss);handle.addEventListener('click',function
 dialog.addEventListener('cancel',function(e){e.preventDefault();dismiss()});
 dialog.addEventListener('keydown',function(e){if(e.key!=='Tab')return;var focusable=Array.prototype.filter.call(dialog.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'),function(el){return el.getClientRects().length>0}),first=focusable[0],last=focusable[focusable.length-1];if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}});
 dialog.addEventListener('click',function(e){if(e.target!==dialog)return;var rect=dialog.getBoundingClientRect();if(e.clientX<rect.left||e.clientX>rect.right||e.clientY<rect.top||e.clientY>rect.bottom)dismiss()});
+/* 任务跳转替换临时弹层历史项，保留真正的来源页；新标签/下载仍由浏览器处理。 */
+dialog.addEventListener('click',function(e){var link=e.target&&e.target.closest&&e.target.closest('a[href]');if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||!link||link.hasAttribute('download')||(link.target&&link.target!=='_self')||!ownsEntry())return;var url=new URL(link.href,location.href);if(url.origin!==location.origin||url.hash)return;e.preventDefault();location.replace(url.href)});
 dialog.addEventListener('close',function(){if(!dialog.open&&content.parentNode===dialog)restore()});
 var startY=null,delta=0,dragged=false;
 handle.addEventListener('pointerdown',function(e){if(e.button!==0)return;startY=e.clientY;delta=0;dragged=false;handle.setPointerCapture(e.pointerId);dialog.classList.add('sheet-dragging')});
