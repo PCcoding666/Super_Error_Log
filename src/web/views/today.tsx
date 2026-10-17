@@ -134,8 +134,11 @@ function NewPhotosNote(props: { photos: PhotoView[] }): ReactNode {
   if (!needsPick && !finding) return null;
   return (
     <div data-testid="today-new-photos">
-      <p className="small"><Phrased text={`${needsPick ? `新拍的第 ${needsPick.number} 张要你勾出做错的题。` : '新拍的卷子：AI 正在找题。'}找到的题会进错题本，下个周末再选进练习。`} /></p>
-      <a className="more" href={needsPick ? `/s/photos/${needsPick.jobId}` : '/s/photos'} data-key="today-new-photos"><Phrased text={needsPick ? `勾第 ${needsPick.number} 张` : '看看新拍的卷子'} suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
+      <a className="pending-photo-row" href={needsPick ? `/s/photos/${needsPick.jobId}` : '/s/photos'} data-key="today-new-photos">
+        <span><span className="pending-photo-title">{needsPick ? `第 ${needsPick.number} 张卷子` : '新拍的卷子'}</span><span className="meta-line muted">{needsPick ? '待勾出错题' : 'AI 正在找题 · 查看进度'}</span></span>
+        <span className="chev" aria-hidden="true">›</span>
+      </a>
+      <p className="small muted">找到的题会进错题本，下个周末再选进练习。</p>
     </div>
   );
 }

@@ -375,6 +375,10 @@ html:has(body.has-tabbar){scroll-padding-bottom:calc(106px + env(safe-area-inset
 .week-overview-meta{font-size:var(--fs-1);font-weight:400;color:var(--muted);text-align:right}
 .week-overview [data-sheet-content]{padding:var(--s-2) 0 var(--s-4)}
 .week-overview [data-sheet-content] h2{margin-top:0}
+.pending-photo-row{display:flex;align-items:center;justify-content:space-between;gap:var(--s-3);min-height:64px;margin-top:var(--s-4);padding:var(--s-3) 0;border-top:1px solid var(--line);color:var(--ink);text-decoration:none;border-radius:var(--r-1)}
+.pending-photo-row>span:first-child{min-width:0;flex:1}
+.pending-photo-title{font-weight:600}
+.pending-photo-row:active{background:var(--mint)}
 .today-library{margin:0 0 var(--s-5)}
 .today-library>.section-label{font-size:var(--fs-4);font-weight:700;color:var(--ink);margin:0 0 var(--s-3)}
 .today-library .list{border-radius:var(--r-2);background:var(--card);padding:0 var(--s-4)}
