@@ -28,7 +28,7 @@ export function ItemCard(props: { item: V2WeekItem; href?: string; extra?: React
     </span>
   );
   return props.href
-    ? <a className="row" href={props.href} data-testid="item-card">{body}<span className="chev" aria-hidden="true">›</span></a>
+    ? <a id={`item-${item.id}`} className="row" href={props.href} data-testid="item-card">{body}<span className="chev" aria-hidden="true">›</span></a>
     : <div className="row" data-testid="item-card">{body}</div>;
 }
 
@@ -79,7 +79,7 @@ export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView
     .map(([kind, title]) => ({ title, notes: (evidence?.observations ?? []).filter(o => o.kind === kind) }))
     .filter(group => group.notes.length > 0);
   return (
-    <Page title={item.shortId ?? '题目'} back={{ href: '/s/items', label: '这周的错题' }} bar={bar}>
+    <Page title={item.shortId ?? '题目'} back={{ href: `/s/items?${new URLSearchParams({ ...(item.grade ? {grade:item.grade} : {}), ...(item.subject ? {subject:item.subject} : {}) })}#item-${item.id}`, label: '这周的错题' }} bar={bar}>
       <p className="eyebrow">练习纸编号</p>
       <h1>{item.shortId ?? '题目'}</h1>
       {props.error ? <Problem title="没成功" detail={props.error} /> : null}

@@ -78,6 +78,17 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
 
     await page.goto(`${WEB}/s/items?${new URLSearchParams({grade:'初二',subject})}`);
     await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
+    // Returning from a question must preserve its grade, subject and chapter position,
+    // even when the student's default grade differs. This also runs without JavaScript.
+    await page.request.post(`${WEB}/s/settings/grade`, {headers,form:{grade:'初三'}});
+    await page.getByText('查看这 5 道题', {exact:true}).click();
+    await page.locator(`a[href="/s/items/${ids[0]}"]`).click();
+    await page.getByTestId('back-link').click();
+    await expect(page.getByLabel('年级', {exact:true})).toHaveValue('初二');
+    await expect(page.getByTestId('subject-switch')).toContainText(subject);
+    const returnedItem = page.locator(`a[href="/s/items/${ids[0]}"]`);
+    await expect(returnedItem).toBeInViewport();
+    await expect(returnedItem.locator('xpath=ancestor::details')).toHaveAttribute('open', '');
     await page.getByRole('checkbox',{name:'一元二次方程 （5 道）'}).check();
     await page.getByRole('checkbox',{name:'二次函数 （4 道）'}).check();
     await page.screenshot({path:testInfo.outputPath('chapters.png'),fullPage:true});
