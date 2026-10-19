@@ -5,7 +5,7 @@ export const NOTEBOOK_STATUSES: Record<string, string> = {
   captured: '已采集', needs_review: '待检查',
   ready_for_reflection: '待练习', eligible_for_review: '可复习', needs_recheck: '下次再练',
   scheduled: '已加入练习', packet_generated: '已生成练习纸', attempted: '已记录作答',
-  temporarily_mastered: '已多次做对', stably_mastered: '已多次做对（稳定）',
+  temporarily_mastered: '已延迟做对', stably_mastered: '已多次延迟做对',
 };
 export interface NotebookFilters { grade: string; subject: string; chapter: string; status: string; q: string }
 export function notebookUrl(filters: Partial<NotebookFilters>, itemId?: string): string {

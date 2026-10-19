@@ -109,7 +109,8 @@ pick.addEventListener('change',upd);upd()});
 within(scope,'form[data-notebook-selection]').forEach(function(form){if(!once(form,'notebook'))return;
 function update(){var n=$$('input[name=itemIds]:checked',form).length;var count=$('[data-testid=next-step-caption]'),limit=$('[data-notebook-limit]');
 var button=$('[data-testid=next-step-primary]');if(button){button.disabled=n===0||n>8;button.classList.toggle('disabled',button.disabled)}
-if(count)count.textContent='已选 '+n+' 道 / 最多 8 道';if(limit)limit.textContent=n>8?'超过 8 道了，请取消几道后继续。':n===0?'至少选 1 道题':'可逐题取消'}
+var countText='已选 '+n+' 道 / 最多 8 道',limitText=n>8?'超过 8 道了，请取消几道后继续。':n===0?'至少选 1 道题':'可逐题取消';
+if(count&&count.textContent!==countText)count.textContent=countText;if(limit&&limit.textContent!==limitText)limit.textContent=limitText}
 form.addEventListener('change',update);window.addEventListener('pageshow',update);update()});
 /* 「其他…」做练习的时间 */
 within(scope,'[data-slot-other]').forEach(function(box){if(!once(box,'slot'))return;var input=$('input[type=text]',box.parentNode);function upd(){var other=$('input[value="__other"]',box.parentNode);if(input&&other)input.closest('.choice').classList.toggle('hidden',!other.checked)}box.parentNode.addEventListener('change',upd);upd()});

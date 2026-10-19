@@ -169,6 +169,13 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.getByRole('link',{name:'查看全部数学错题',exact:true}).click();
     await expect(cards).toHaveCount(3);
     await page.getByRole('link',{name:'选题练习',exact:true}).click();
+    const countStatus=page.getByTestId('next-step-caption');
+    await expect(countStatus).toHaveAttribute('role','status');
+    await expect(countStatus).toHaveAttribute('aria-live','polite');
+    await expect(countStatus).toHaveAttribute('aria-atomic','true');
+    await expect(page.getByTestId('next-step-primary')).toHaveAttribute('aria-describedby','notebook-selection-count notebook-selection-hint');
+    await expect(page.getByTestId('next-step-primary')).toHaveAccessibleDescription('已选 0 道 / 最多 8 道 至少选 1 道题');
+    await expect(page.getByTestId('next-step-bar').locator('[aria-live]')).toHaveCount(1);
     if(javaScriptEnabled) await expect(page.getByTestId('next-step-primary')).toBeDisabled();
     else {
       await page.getByTestId('next-step-primary').click();
@@ -178,6 +185,19 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     if(javaScriptEnabled) {
       await expect(page.getByTestId('next-step-caption')).toHaveText('已选 1 道 / 最多 8 道');
       await expect(page.getByTestId('next-step-primary')).toBeEnabled();
+      await page.locator('input[name=itemIds]').nth(1).check();
+      await expect(countStatus).toHaveText('已选 2 道 / 最多 8 道');
+      await expect(page.getByTestId('next-step-primary')).toHaveAccessibleDescription('已选 2 道 / 最多 8 道 可逐题取消');
+      await page.locator('input[name=itemIds]').nth(1).uncheck();
+      await expect(countStatus).toHaveText('已选 1 道 / 最多 8 道');
+      expect(await countStatus.evaluate(el=>{
+        const observer=new MutationObserver(()=>{});
+        observer.observe(el,{childList:true,characterData:true,subtree:true});
+        document.querySelector('#notebook-selection')!.dispatchEvent(new Event('change',{bubbles:true}));
+        window.dispatchEvent(new Event('pageshow'));
+        const mutations=observer.takeRecords().length;
+        observer.disconnect();return mutations;
+      })).toBe(0);
       await cards.first().click();
       await page.goBack();
       await expect(page.locator('input[name=itemIds]:checked')).toHaveCount(1);

@@ -56,9 +56,9 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
   </li>;
   const recovery = props.recoveryItems ?? [];
   const known = new Set([...all,...recovery].map(item=>item.id));
-  const selectionBar: BarModel = {caption:`已选 ${selected.size} 道 / 最多 8 道`,primary:{title:'加入练习',key:'notebook-create',form:'notebook-selection'},secondary:[]};
+  const selectionBar: BarModel = {caption:`已选 ${selected.size} 道 / 最多 8 道`,captionStatusId:'notebook-selection-count',primary:{title:'加入练习',key:'notebook-create',form:'notebook-selection',describedBy:'notebook-selection-count notebook-selection-hint'},secondary:[]};
   return <Page title="错题本" tab={props.selection ? undefined : 'items'} back={null} bodyClass={`notebook-page${props.selection ? ' notebook-selection-page' : ''}`} bar={props.selection ? selectionBar : props.bar} flash={props.flash} topLeading={subjectSwitch}
-    barExtra={props.selection ? <p className="hint notebook-bar-hint" data-notebook-limit="" role="status" aria-live="polite">{selected.size > 8 ? '超过 8 道了，请取消几道后继续。' : selected.size === 0 ? '至少选 1 道题' : '可逐题取消'}</p> : undefined}>
+    barExtra={props.selection ? <p className="hint notebook-bar-hint" data-notebook-limit="" id="notebook-selection-hint">{selected.size > 8 ? '超过 8 道了，请取消几道后继续。' : selected.size === 0 ? '至少选 1 道题' : '可逐题取消'}</p> : undefined}>
     <div className="notebook-title"><h1>错题本</h1>{props.selection ? <a className="link-btn" href={context}>取消选题</a> : <a className="link-btn" href={selectionUrl}>选题练习</a>}</div>
     {props.selection ? <p className="hint">选 1–8 道题加入练习。更改筛选或学科会结束本次选题；已建练习不受影响。</p> : null}
     <form method="get" action="/s/items" className="notebook-filters" role="search" aria-label="搜索错题">

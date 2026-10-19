@@ -23,7 +23,7 @@
 | “选题练习”、“取消选题”与范围说明 | [Buttons](https://developer.apple.com/design/human-interface-guidelines/buttons)、[Feedback](https://developer.apple.com/design/human-interface-guidelines/feedback)：显式进入/退出模式；说明筛选/学科变化结束本次选择；筛选表单与创建表单分开 | 浏览器选择后提交筛选回到浏览、再次进入零选择；取消按钮尺寸检查 |
 | 单题复选框与不可选状态 | [Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility)：原生 label 包裹 checkbox，点击整行；未选且无资格的题禁用并说明；资格变化后已选题保持可取消 | 浏览器 JS 开/关逐题取消；复选行尺寸/键盘焦点；集成 stale 409 保留确切 ID、无练习创建 |
 | “添加 [章节]”分组按钮 | [Buttons](https://developer.apple.com/design/human-interface-guidelines/buttons)：只添加当前结果中该章可练习的题，不创建练习；跨章可添加，单题可取消 | 集成搜索条件 1x 只选一题；浏览器连续添加两章得到九题；无脚本相同流程 |
-| 已选数量、上限提示 | [Feedback](https://developer.apple.com/design/human-interface-guidelines/feedback)：固定操作栏文字 `已选 n 道 / 最多 8 道`、超过时说明恢复；脚本只更新计数，不取消第九个选择；无脚本提交后服务器更新 | 有脚本即时 9→8，0/9 禁用创建、8 启用；无脚本超过八题错误仍九个选中；不依赖颜色；浏览器后退恢复勾选/计数/可提交状态 |
+| 已选数量、上限提示 | [Feedback](https://developer.apple.com/design/human-interface-guidelines/feedback)：固定操作栏文字 `已选 n 道 / 最多 8 道` 是唯一 polite、atomic 实时状态；创建按钮通过 aria-describedby 关联计数与恢复说明；超过时说明恢复；脚本只更新计数，不取消第九个选择；无脚本提交后服务器更新 | 有脚本即时 9→8，0/9 禁用创建、8 启用；无脚本超过八题错误仍九个选中；不依赖颜色；浏览器后退恢复勾选/计数/可提交状态 |
 | “加入练习”与无脚本说明 | [Buttons](https://developer.apple.com/design/human-interface-guidelines/buttons)：唯一创建动作，复用既有固定 NextBar，以选题数/上限和恢复提示替换底部导航；服务端原样校验 ID、重复、资格及 1–8 上限 | 精确选一题只创建一题练习；0/9/错误 ID/资格变化都失败并保留选择；320px/200% 创建按钮持续可达，最后原图入口可滚到操作栏上方，不与导航叠加 |
 | 无结果、尚无错题、仍在找题 | [Feedback](https://developer.apple.com/design/human-interface-guidelines/feedback)：区分空库/无匹配；明确旧题/未分类也收录；恢复全部题目/查看照片/录入入口 | 集成历史和未分类过滤；浏览器无匹配恢复；既有等待和空学科检查 |
 | 错误提示、保留的选择、移除撤销 | [Feedback](https://developer.apple.com/design/human-interface-guidelines/feedback)：复用 role=alert/status；不可用/移出筛选的已选题仍可明确取消，不暗中排除 | 集成 invalid/stale/超过八题保留；既有移除/撤销集成测试继续通过 |
@@ -46,7 +46,11 @@
 - 聚焦 helper + webClient 集成：61 通过；首轮全量 Vitest 870 通过/5 项既有跳过。
 - 最终紧凑布局的 Chromium 选题专项：4 通过（JS 开/关各两例，26.5 秒；含最终按钮资格增强）。按精确标签操作，真实键盘焦点，照片完整比例，组合筛选，返回/后退，零题/九题恢复，0/9 脚本禁用与 8 启用、后退恢复，所有新控件目标尺寸，浅/深色 320/390/1200px 与 200% 字号，图片失败，最终内容不遮挡均检查。
 - 创建按钮增强 RED/GREEN：新增浏览器断言先发现九题时仍可点；改为仅脚本禁用 0/超过 8 题，保留无脚本服务器校验。最终选题专项四项通过。
-- 最终完整 `npm run verify`：退出码 0。typecheck / build 通过；Vitest **73 个文件通过、870 通过 / 5 项既有跳过**；Playwright **46 通过 / 6 项既有跳过**（3.4 分钟）。Vitest 跳过为 macOS sips/HEIC 三项和无 Caddy 的两项；浏览器跳过为 macOS WebKit/HEIC 一项及五项按需证据包测试，均与基线相同。没有未解决测试失败。
+- 基础实现 `b928557` 的完整 `npm run verify`：退出码 0。typecheck / build 通过；Vitest **73 个文件通过、870 通过 / 5 项既有跳过**；Playwright **46 通过 / 6 项既有跳过**（3.4 分钟）。Vitest 跳过为 macOS sips/HEIC 三项和无 Caddy 的两项；浏览器跳过为 macOS WebKit/HEIC 一项及五项按需证据包测试，均与基线相同。没有未解决测试失败。
+
+复审补充：计数原为普通段落，而实时区域只更新通用提示。两个新增浏览器断言先因缺少 `role=status` 失败；改为仅错题本选题启用的 `aria-live=polite` / `aria-atomic=true` 计数区域，恢复提示不再单独广播。脚本仅在文本变化时写 DOM，重复 change/pageshow 不触发相同计数的 DOM 更新。针对性 typecheck 通过，helper/浏览器生命周期/网页路由集成共 **83 项通过**，错题本 Chromium **4 项通过**（33.2 秒）；真实 accessible description 补充检查在 JS 开/关 **2 项通过**（19.0 秒）。此次按复审范围仅跑覆盖检查，未重跑完整 verify。浏览器自动断言证明 ARIA 关系与更新机制，未验证真人 VoiceOver 播报时机。
+
+状态文案同时纠正：首次延迟独立做对即可进入 temporarily_mastered，因此显示“已延迟做对”；stably_mastered 显示“已多次延迟做对”。未改状态机或延迟规则。
 
 对比度按 WCAG 相对亮度公式对实际复用 CSS 语义色计算：浅色正文/页面 15.25:1，次要文字/页面 5.33:1，交互/页面 4.86:1，按钮前景/背景 5.42:1；深色分别为 19.29:1、9.52:1、8.74:1、7.05:1。输入边界/卡片浅色 3.66:1，深色 5.10:1。上述正文均超过 4.5:1，边界超过 3:1。这是所使用颜色配对的计算，不声称完整 WCAG 审计。
 
