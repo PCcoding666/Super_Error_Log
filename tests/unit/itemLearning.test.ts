@@ -7,6 +7,13 @@ const reflection = { id: 'diag_test', attemptState: '方法基本正确但步骤
 const render = (extra = {}) => renderToStaticMarkup(ItemDetailPage({ item, evidence: null, canDiscard: true, reflected: false, ...extra }));
 
 describe('single-question learning', () => {
+  it.each([
+    ['Asia/Shanghai','2026-10-18T16:30:00.000Z','2026-10-19'],
+    ['America/Los_Angeles','2026-10-19T00:30:00.000Z','2026-10-18'],
+  ])('reflection confirmation date uses %s across UTC midnight', (timeZone,createdAt,displayDay) => {
+    const html = render({reflection:{...reflection,createdAt},timeZone});
+    expect(html).toContain(`<time dateTime="${createdAt}">${displayDay}</time>`);
+  });
   it('reads the student-confirmed reflection and confidence, instead of a boolean status', () => {
     const html = render({ reflection });
     expect(html).toContain('移项忘了变号');

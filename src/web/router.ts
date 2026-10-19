@@ -581,7 +581,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const reflection = getV2Reflection(itemId)?.reflection ?? null;
     return ItemDetailPage({
       item, evidence: getEvidenceView(itemId), canDiscard: item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
-      reflected: reflection != null, reflection, error, returnTo,
+      reflected: reflection != null, reflection, error, returnTo, timeZone:ctx.timeZone,
       eligible: [...recommend.recommended,...recommend.others].some(candidate => candidate.id === itemId),
       resumePracticeId: unfinishedPractice(itemId), reflectionPracticeId: history[0]?.id,
       // recordAttempt uses the process calendar; UI time-zone overrides must not relabel its delay evidence.

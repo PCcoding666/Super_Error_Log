@@ -1371,6 +1371,17 @@ describe('single-question learning detail', () => {
     expect(text).toContain('当天独立做对');
     expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(id)).toEqual({status:'needs_recheck'});
   });
+  it.each([
+    ['Asia/Shanghai','2026-10-18T16:30:00.000Z','2026-10-19'],
+    ['America/Los_Angeles','2026-10-19T00:30:00.000Z','2026-10-18'],
+  ])('reflection confirmation date follows router UI timezone %s', async (timeZone,createdAt,displayDay) => {
+    const {browser,id} = await fixture({timeZone});
+    const {submitV2Reflection} = await import('../../src/v2/reflectionService.js');
+    const confirmed = submitV2Reflection(id,{attemptState:'方法基本正确但步骤出错',cause:'计算',masteryFeeling:2,summary:'确认日期应按我的页面时区显示'});
+    expect(confirmed.ok).toBe(true);
+    getDb().prepare('UPDATE error_diagnosis SET created_at=? WHERE item_id=?').run(createdAt,id);
+    expect(await browser.text(`/s/items/${id}`)).toContain(`<time dateTime="${createdAt}">${displayDay}</time>`);
+  });
   it('history uses the actual domain calendar for delayed correctness across a UI time-zone boundary', async () => {
     const {localDayText} = await import('../../src/web/weekPlan.js');
     const generated = new Date();

@@ -4,6 +4,7 @@ import type { V2WeekItem } from '../../v2/weekService.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
 import type { ReflectionView } from '../../v2/reflectionService.js';
 import { attemptLabel, itemNotebookReturn, type ItemPracticeRecord } from '../itemLearning.js';
+import { localDayText } from '../weekPlan.js';
 import { Page, Problem, quoted, type BarModel } from './layout.js';
 
 const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
@@ -20,6 +21,8 @@ export interface ItemDetailProps {
   resumePracticeId?: string | null;
   reflectionPracticeId?: string | null;
   returnTo?: string;
+  /** Confirmation event dates follow the page timezone; old callers use the process timezone. */
+  timeZone?: string;
   error?: string | null;
 }
 
@@ -55,7 +58,7 @@ export function ItemDetailPage(props: ItemDetailProps): ReactNode {
     <section className="card" aria-labelledby="learning-reflection" data-testid="item-reflection">
       <h2 id="learning-reflection" className="card-title">我的错因与提醒</h2>
       {reflection ? <>
-        <p className="small muted">我确认的记录 · <time dateTime={reflection.createdAt}>{reflection.createdAt.slice(0,10)}</time></p>
+        <p className="small muted">我确认的记录 · <time dateTime={reflection.createdAt}>{localDayText(new Date(reflection.createdAt),props.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)}</time></p>
         {reflection.summary ? <p className="pre reflection-summary">{reflection.summary}</p> : <p className="muted">这次没有填写文字提醒。</p>}
         <dl className="learning-reflection"><dt>当时怎么了</dt><dd>{reflection.attemptState}</dd><dt>错在哪</dt><dd>{reflection.cause}</dd><dt>当时的把握</dt><dd>{MASTERY_FEELING_LABEL[reflection.masteryFeeling]}</dd></dl>
       </> : <p className="muted">还没有已确认的错因记录。可以先重做，之后再记下自己的发现。</p>}
