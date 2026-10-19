@@ -181,7 +181,21 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
       await page.getByTestId('next-step-primary').click();
       await expect(page.getByRole('alert')).toContainText('至少选 1 道');
     }
+    await page.setViewportSize({width:844,height:390});
     await page.locator('input[name=itemIds]').first().check();
+    if(!javaScriptEnabled) await page.getByRole('button',{name:'添加 阅读定位',exact:true}).click();
+    await expect(countStatus).toBeVisible();
+    await expect(countStatus).toHaveText('已选 1 道 / 最多 8 道');
+    await expect(page.locator('[data-caption-flow]')).not.toBeVisible();
+    await expect(page.getByTestId('next-step-primary')).toHaveAccessibleDescription('已选 1 道 / 最多 8 道 可逐题取消');
+    await expect(page.getByTestId('next-step-bar').locator('[aria-live]')).toHaveCount(1);
+    const landscapeOriginal=page.getByRole('link',{name:/查看原图/}).last();
+    await landscapeOriginal.scrollIntoViewIfNeeded();
+    const landscapeFinalBox=(await landscapeOriginal.boundingBox())!,landscapeBar=(await page.getByTestId('next-step-bar').boundingBox())!;
+    expect(landscapeFinalBox.y+landscapeFinalBox.height).toBeLessThanOrEqual(landscapeBar.y);
+    await expect(page.getByTestId('next-step-primary')).toBeInViewport();
+    await page.screenshot({path:testInfo.outputPath('selection-landscape-count.png')});
+    await page.setViewportSize({width:390,height:844});
     if(javaScriptEnabled) {
       await expect(page.getByTestId('next-step-caption')).toHaveText('已选 1 道 / 最多 8 道');
       await expect(page.getByTestId('next-step-primary')).toBeEnabled();
