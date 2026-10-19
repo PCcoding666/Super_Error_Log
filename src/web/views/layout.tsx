@@ -6,7 +6,7 @@ import { phrasePieces } from '../phrases.js';
 export type BarButton = { title: string; key: string } & (
   | { href: string; print?: boolean }
   | { post: string; fields?: Record<string, string>; wait?: string }
-  | { form: string; name?: string; value?: string; disabled?: boolean; countTemplate?: string; emptyTitle?: string }
+  | { form: string; name?: string; value?: string; disabled?: boolean; countTemplate?: string; emptyTitle?: string; describedBy?: string }
   | { labelFor: string }
   | { disabled: true; waiting?: boolean }
 );
@@ -15,6 +15,8 @@ export interface BarModel {
   caption: string;
   /** 打印后换成的说明（只在打印页用）。 */
   captionAfterPrint?: string;
+  /** Opt-in live count feedback; other page captions retain their existing behavior. */
+  captionStatusId?: string;
   primary: BarButton | null;
   secondary: BarButton[];
 }
@@ -39,7 +41,7 @@ export function ButtonView(props: { button: BarButton; primary: boolean; look?: 
   }
   if ('form' in button) {
     return (
-      <button className={`${cls}${button.disabled ? ' disabled' : ''}`} type="submit" form={button.form} name={button.name} value={button.value} aria-label={button.title} data-testid={testId} data-key={button.key}
+      <button className={`${cls}${button.disabled ? ' disabled' : ''}`} type="submit" form={button.form} name={button.name} value={button.value} aria-label={button.title} aria-describedby={button.describedBy} data-testid={testId} data-key={button.key}
         disabled={button.disabled} data-main="" data-count-label={button.countTemplate ? '' : undefined} data-template={button.countTemplate} data-empty={button.emptyTitle}>
         <Phrased text={button.title} />
       </button>
@@ -60,7 +62,7 @@ export function NextBar(props: { model: BarModel; extra?: ReactNode; inline?: bo
     <nav className={`next-bar${props.inline ? ' next-bar-inline' : ''}`} data-testid="next-step-bar" aria-label="下一步" data-live={props.inline ? undefined : "bar"}>
       <div className="inner">
         {model.caption || model.captionAfterPrint ? (
-          <p className="caption bar-caption" data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
+          <p className="caption bar-caption" id={model.captionStatusId} role={model.captionStatusId ? 'status' : undefined} aria-live={model.captionStatusId ? 'polite' : undefined} aria-atomic={model.captionStatusId ? true : undefined} data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
         ) : null}
         {hasPrimary && model.secondary.length > 0 ? (
           <div className="bar-alt">{model.secondary.map(button => <ButtonView key={button.key} button={button} primary={false} look="alt" />)}</div>
