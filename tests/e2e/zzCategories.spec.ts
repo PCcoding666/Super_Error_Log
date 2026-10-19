@@ -105,6 +105,13 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
       await expect(page.getByRole('alert')).toContainText('最多 8 道');
     }
     await expect(page.locator('input[name=itemIds]:checked')).toHaveCount(9);
+    const nineSelected=await page.locator('input[name=itemIds]:checked').evaluateAll(nodes=>nodes.map(node=>(node as HTMLInputElement).value));
+    await page.getByTestId('item-card').first().click();
+    await page.getByTestId('back-link').click();
+    await expect(page).toHaveURL(/mode=select/);
+    expect(await page.locator('input[name=itemIds]:checked').evaluateAll(nodes=>nodes.map(node=>(node as HTMLInputElement).value))).toEqual(nineSelected);
+    await expect(page.getByTestId('next-step-caption')).toHaveText('已选 9 道 / 最多 8 道');
+    await expect(page.locator(`#item-${ids[0]}`)).toBeInViewport();
     await page.locator('input[name=itemIds]:checked').first().uncheck();
     if (javaScriptEnabled) {
       await expect(page.getByTestId('next-step-caption')).toHaveText('已选 8 道 / 最多 8 道');
@@ -158,7 +165,7 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await cards.click();
     await expect(page.getByTestId('next-step-primary')).toHaveText('重做这题');
     await expect(page.getByTestId('item-reflection')).toContainText('还没有已确认的错因记录');
-    await expect(page.locator('input[name=returnTo]')).toHaveValue(expected.slice(WEB.length));
+    await expect(page.locator('#bar-redo input[name=returnTo]')).toHaveValue(expected.slice(WEB.length));
     await page.getByTestId('back-link').click();
     await expect(page).toHaveURL(expected);
     await expect(cards).toBeInViewport();
@@ -282,6 +289,31 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.reload();
     await expect(page.getByTestId('item-card').first().locator('.excerpt')).not.toBeEmpty();
     await expect(page.getByRole('link',{name:/查看原图/}).first()).toBeVisible();
+    await page.unroute('**/s/img/item/**');
+    const questionIds=await cards.evaluateAll(nodes=>nodes.map(node=>node.id.slice('item-'.length)));
+    for(const questionId of questionIds) await page.request.post(`${WEB}/s/items/${questionId}/category`,{headers,form:{grade:'初三',subject:'数学',chapter:'往返定位'}});
+    const selectionFilters={grade:'初三',subject:'数学',chapter:'往返定位',status:'ready_for_reflection',q:'x'};
+    await page.goto(`${WEB}/s/items?${new URLSearchParams(selectionFilters)}`);
+    await expect(cards).toHaveCount(2);
+    await page.getByRole('link',{name:'选题练习',exact:true}).click();
+    await cards.first().click();
+    await page.getByTestId('back-link').click();
+    await expect(page).toHaveURL(/mode=select/);
+    await expect(page.locator('input[name=itemIds]:checked')).toHaveCount(0);
+    await expect(page.getByTestId('next-step-caption')).toHaveText('已选 0 道 / 最多 8 道');
+    for(const input of await page.locator('input[name=itemIds]').all()) await input.check();
+    const selectedPair=await page.locator('input[name=itemIds]:checked').evaluateAll(nodes=>nodes.map(node=>(node as HTMLInputElement).value));
+    await cards.first().click();
+    await page.getByTestId('back-link').click();
+    const restoredContext=new URL(page.url());
+    expect(restoredContext.searchParams.get('mode')).toBe('select');
+    expect(restoredContext.searchParams.getAll('itemIds')).toEqual(selectedPair);
+    for(const [key,value] of Object.entries(selectionFilters)) expect(restoredContext.searchParams.get(key)).toBe(value);
+    expect(restoredContext.hash).toBe(`#item-${selectedPair[0]}`);
+    expect(await page.locator('input[name=itemIds]:checked').evaluateAll(nodes=>nodes.map(node=>(node as HTMLInputElement).value))).toEqual(selectedPair);
+    await expect(page.getByTestId('next-step-caption')).toHaveText('已选 2 道 / 最多 8 道');
+    await expect(page.getByTestId('next-step-primary')).toHaveAccessibleDescription('已选 2 道 / 最多 8 道 可逐题取消');
+
   });
 
 });

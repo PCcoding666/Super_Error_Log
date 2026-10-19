@@ -1,4 +1,4 @@
-import { NOTEBOOK_STATUSES, matchesNotebook, type NotebookFilters } from './notebook.js';
+import { NOTEBOOK_STATUSES, matchesNotebook, notebookUrl, safeNotebookReturn, validNotebookSelection, type NotebookFilters } from './notebook.js';
 import type { NotebookPageProps } from './views/items.js';
 import type { HandwritingRecognizer } from '../ai/handwriting.js';
 import { practiceRouter } from './practiceRouter.js';
@@ -9,7 +9,7 @@ import { practiceRouter } from './practiceRouter.js';
  *   不在视图里另写一份规则；页面只做「取数 → WeekPlan → 渲染」与表单提交。
  * - 只有拍照上传与录音用到脚本；关掉脚本时每屏照样能用（语音除外）。
  */
-import { editItemCategory, isGrade, updateStudentGrade } from '../classification/itemCategories.js';
+import { categoryForItem, editItemCategory, isGrade, updateStudentGrade } from '../classification/itemCategories.js';
 import { readCatalog } from '../classification/catalog.js';
 import { requireProfile } from '../services/studentService.js';
 import crypto from 'node:crypto';
@@ -56,7 +56,7 @@ import {
   WhyAskPage, WhyConfirmPage, WhyDonePage, WhyIntroPage, COMPLETIONS, type DayOption, type PrintState, type RecordAnswer,
 } from './views/practice.js';
 import type { BarButton, BarModel } from './views/layout.js';
-import { itemNotebookReturn, type ItemPracticeRecord } from './itemLearning.js';
+import { itemNotebookReturn, itemContextUrl, removedNotebookUrl, type ItemPracticeRecord } from './itemLearning.js';
 
 export interface WebClientOptions {
   mobileDataDir: string;
@@ -536,7 +536,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const gradeValue = str(input?.grade);
     const grade = isGrade(gradeValue) ? gradeValue : isGrade(cookies[COOKIE.itemsGrade]) ? cookies[COOKIE.itemsGrade]! : requireProfile().grade;
     const subjects = [...new Set([...readCatalog(getDb(), requireProfile().id).subjects.map(subject => subject.name), ...all.map(item => item.subject || '未分类')])];
-    const requested = str(input?.subject);
+    const requested = str(input?.subject).trim().slice(0,100);
+    // An edit/removal can empty a former subject; keep the explicit scope rather than broadening it.
+    if (requested && !subjects.includes(requested)) subjects.push(requested);
     const subject = [requested, cookies[COOKIE.itemsSubject], ...all.filter(item => item.grade === grade).map(item => item.subject), ...subjects].find(value => value && subjects.includes(value)) ?? '数学';
     setCookie(request, response, COOKIE.itemsSubject, subject, null);
     setCookie(request, response, COOKIE.itemsGrade, grade, null);
@@ -549,17 +551,23 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const filters: NotebookFilters = {grade,subject,chapter,status:Object.hasOwn(NOTEBOOK_STATUSES,status) ? status : '',q:str(input?.q).trim().slice(0,200)};
     const matches = (item: V2WeekItem): boolean => matchesNotebook(item,filters,filters.q ? getEvidenceView(item.id)?.questionText : '');
     const items = library.items.filter(matches), backlog = library.backlog.filter(matches);
-    const selectedIds = request.method === 'POST' ? list(request.body?.itemIds) : [];
+    const requestedSelection = request.method === 'POST' || request.query.mode === 'select' ? list(input?.itemIds) : [];
+    const validReturnSelection = validNotebookSelection(requestedSelection) && !!safeNotebookReturn(notebookUrl(filters,undefined,requestedSelection),'');
+    const selectedIds = request.method === 'POST' || validReturnSelection ? requestedSelection : [];
     const visibleIds = new Set([...items,...backlog].map(item=>item.id));
     const recommend = recommendPractice(ctx.mobileDataDir);
+    const removed = ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null;
+    const returnItem = ITEM_ID.test(str(request.query.returnItem)) ? str(request.query.returnItem) : removed;
+    const selecting = request.method === 'POST' || request.query.mode === 'select';
     return {items,backlog,filters,chapters,total:scope.length,selectedIds,
+      undoReturnTo: removed ? notebookUrl(filters,returnItem ?? undefined,selecting ? selectedIds : undefined) : undefined,
       eligibleIds:[...recommend.recommended,...recommend.others].map(item=>item.id),
       recoveryItems:all.filter(item=>selectedIds.includes(item.id) && !visibleIds.has(item.id)),
-      selection:request.method === 'POST' || request.query.mode === 'select',
+      selection:selecting,
       category:{grade,subject,subjects},anyPhoto:state.week.photos.length > 0,
       finding:state.photos.some(photo=>photo.state === 'finding'),
-      bar:{caption:'',primary:null,secondary:[]},removed:ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null,
-      flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null}};
+      bar:{caption:'',primary:null,secondary:[]},removed,
+      flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null,err:!validReturnSelection && request.method !== 'POST' ? '返回的选题信息不可用，请重新选择。' : null}};
   };
   const itemsPage = async (request: Request, response: Response): Promise<ReactNode> => ItemsPage(await notebookData(request,response));
   r.get('/items', page(async (request, response) => render(response, await itemsPage(request,response))));
@@ -567,6 +575,15 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.post('/items/select', form, page(async (request,response) => {
     const data = await notebookData(request,response);
     const ids = data.selectedIds ?? [];
+    const openItem = str(request.body?.openItem);
+    if (openItem) {
+      const item = findItem(openItem);
+      const returnTo = notebookUrl(data.filters ?? data.category,item.id,ids);
+      if (!validNotebookSelection(ids) || !safeNotebookReturn(returnTo,'')) {
+        render(response,ItemsPage({...data,flash:{err:'选题信息过多或含不可用编号。已保留选择，请减少待选题或取消不可用编号后再查看。'}}),400); return;
+      }
+      response.redirect(303,`/s/items/${item.id}?${new URLSearchParams({returnTo})}`); return;
+    }
     const chapter = str(request.body?.addChapter);
     if (chapter) {
       const eligible = new Set(data.eligibleIds);
@@ -642,58 +659,65 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
 
   r.get('/items/:id/category', page((request, response) => {
-    render(response, CategoryEditPage({item:findItem(String(request.params.id))}));
+    const item = findItem(String(request.params.id));
+    render(response, CategoryEditPage({item,returnTo:itemNotebookReturn(request.query.returnTo,item)}));
   }));
   r.post('/items/:id/category', form, page((request, response) => {
     const item = findItem(String(request.params.id));
+    const returnTo = itemNotebookReturn(request.body?.returnTo,item);
     const values = {grade:str(request.body?.grade),subject:str(request.body?.subject),chapter:str(request.body?.chapter)};
     const error = editItemCategory(getDb(), requireProfile().id, item.id, values);
-    if (error) { render(response, CategoryEditPage({item,values,error}), 400); return; }
+    if (error) { render(response, CategoryEditPage({item,values,error,returnTo}), 400); return; }
     audit('item_category_updated', 'item', item.id);
-    response.redirect(303, `/s/items/${item.id}`);
+    response.redirect(303, itemContextUrl(item,returnTo));
   }));
 
-  r.post('/items/:id/discard', page((request, response) => {
+  r.post('/items/:id/discard', form, page((request, response) => {
     const itemId = String(request.params.id);
-    findItem(itemId);
+    const item = findItem(itemId);
+    const returnTo = itemNotebookReturn(request.body?.returnTo,item);
     const result = discardV2Item(itemId);
-    if (!result.ok) { failed(response, 'discard_refused'); render(response, detail(itemId, result.message), result.httpStatus); return; }
-    response.redirect(303, `/s/items?removed=${itemId}`);
+    if (!result.ok) { failed(response, 'discard_refused'); render(response, detail(itemId, result.message,returnTo), result.httpStatus); return; }
+    response.redirect(303, removedNotebookUrl(returnTo,itemId));
   }));
 
-  r.post('/items/:id/restore', page((request, response) => {
+  r.post('/items/:id/restore', form, page((request, response) => {
     const itemId = requireMatch(String(request.params.id), ITEM_ID);
+    if (!isV2Item(itemId)) throw new NotFound();
+    const returnTo = itemNotebookReturn(request.body?.returnTo,{id:itemId,...categoryForItem(itemId)});
     restoreV2Item(itemId);
-    response.redirect(303, '/s/items');
+    response.redirect(303, returnTo);
   }));
 
-  const fixPage = (itemId: string, extra: { error?: string | null; instruction?: string; proposal?: Parameters<typeof FixPage>[0]['proposal'] } = {}): ReactNode => {
+  const fixPage = (itemId: string, extra: { error?: string | null; instruction?: string; proposal?: Parameters<typeof FixPage>[0]['proposal']; returnTo?: string } = {}): ReactNode => {
     const item = findItem(itemId);
     const evidence = getEvidenceView(itemId);
     if (!evidence) throw new NotFound();
     return FixPage({ item, revision: evidence.revision, clientRequestId: crypto.randomUUID(), ...extra });
   };
 
-  r.get('/items/:id/fix', page((request, response) => render(response, fixPage(String(request.params.id)))));
+  r.get('/items/:id/fix', page((request, response) => render(response, fixPage(String(request.params.id),{returnTo:str(request.query.returnTo)}))));
 
   r.post('/items/:id/fix', form, page(async (request, response) => {
     const itemId = String(request.params.id);
-    findItem(itemId);
+    const item = findItem(itemId);
+    const returnTo = itemNotebookReturn(request.body?.returnTo,item);
     const instruction = str(request.body?.instruction);
     const method = str(request.body?.method) === 'voice' ? 'voice' : 'keyboard';
     const result = await proposeCorrection(itemId, {
       instruction, method, revision: Number(str(request.body?.revision)), clientRequestId: str(request.body?.clientRequestId),
     }, options.correctionProvider);
-    if (!result.ok) { failed(response, 'fix_failed'); render(response, fixPage(itemId, { error: result.message, instruction }), result.httpStatus); return; }
-    render(response, fixPage(itemId, { instruction, proposal: { proposalId: result.proposalId, revision: result.revision, changes: result.changes, clarify: result.clarify } }));
+    if (!result.ok) { failed(response, 'fix_failed'); render(response, fixPage(itemId, { error: result.message, instruction, returnTo }), result.httpStatus); return; }
+    render(response, fixPage(itemId, { instruction, returnTo, proposal: { proposalId: result.proposalId, revision: result.revision, changes: result.changes, clarify: result.clarify } }));
   }));
 
   r.post('/items/:id/fix/accept', form, page((request, response) => {
     const itemId = String(request.params.id);
-    findItem(itemId);
+    const item = findItem(itemId);
+    const returnTo = itemNotebookReturn(request.body?.returnTo,item);
     const result = acceptCorrection(itemId, { proposalId: str(request.body?.proposalId), revision: Number(str(request.body?.revision)) });
-    if (!result.ok) { failed(response, 'fix_accept_failed'); render(response, fixPage(itemId, { error: result.message }), result.httpStatus); return; }
-    response.redirect(303, `/s/items/${itemId}`);
+    if (!result.ok) { failed(response, 'fix_accept_failed'); render(response, fixPage(itemId, { error: result.message, returnTo }), result.httpStatus); return; }
+    response.redirect(303, itemContextUrl(item,returnTo));
   }));
 
   r.get('/items/:id/edit', page((request, response) => {
@@ -701,7 +725,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const item = findItem(itemId);
     const evidence = getEvidenceView(itemId);
     if (!evidence) throw new NotFound();
-    render(response, EditPage({ item, evidence }));
+    render(response, EditPage({ item, evidence, returnTo:itemNotebookReturn(request.query.returnTo,item) }));
   }));
 
   r.post('/items/:id/edit', form, page((request, response) => {
@@ -709,11 +733,12 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const item = findItem(itemId);
     const evidence = getEvidenceView(itemId);
     if (!evidence) throw new NotFound();
+    const returnTo = itemNotebookReturn(request.body?.returnTo,item);
     const after = str(request.body?.questionText).replace(/\r\n/g, '\n');
-    if (after.trim() === '' || after === evidence.questionText) { response.redirect(303, `/s/items/${itemId}`); return; }
+    if (after.trim() === '' || after === evidence.questionText) { response.redirect(303, itemContextUrl(item,returnTo)); return; }
     const result = directCorrection(itemId, { revision: Number(str(request.body?.revision)), changes: [{ field: 'questionText', before: evidence.questionText, after }] });
-    if (!result.ok) { failed(response, 'edit_failed'); render(response, EditPage({ item, evidence: getEvidenceView(itemId) ?? evidence, error: result.message }), result.httpStatus); return; }
-    response.redirect(303, `/s/items/${itemId}`);
+    if (!result.ok) { failed(response, 'edit_failed'); render(response, EditPage({ item, evidence: getEvidenceView(itemId) ?? evidence, error: result.message, returnTo }), result.httpStatus); return; }
+    response.redirect(303, itemContextUrl(item,returnTo));
   }));
 
   r.use(practiceRouter({ coachProvider: options.coachProvider, limiter: options.limiter, admission: options.admission, handwriting: options.handwriting, timeZone: ctx.timeZone, now: ctx.now }));

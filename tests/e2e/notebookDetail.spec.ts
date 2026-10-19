@@ -149,4 +149,59 @@ for (const scripting of [true,false]) test.describe(`single-question learning ${
     await expect(page.getByTestId('question-text')).toContainText('解方程');
     await expect(page.getByRole('link',{name:'打开整题原图（新窗口）'})).toHaveAttribute('href',`/s/img/item/${id}?scope=full`);
   });
+  test('native management actions preserve filtered selection through errors, saves, cancel and undo',async({page,request,detailServer:{WEB,CONTROL}})=>{
+    const id=await fixture(page,request,{WEB,CONTROL});
+    await page.goto(`${WEB}/s/items`);
+    const ids=await page.getByTestId('item-card').evaluateAll(nodes=>nodes.slice(0,2).map(node=>node.id.slice('item-'.length)));
+    for(const itemId of ids) await page.request.post(`${WEB}/s/items/${itemId}/category`,{headers:{origin:WEB},form:{grade:'初三',subject:'数学',chapter:'管理往返'}});
+    const filters={grade:'初三',subject:'数学',chapter:'管理往返',status:'ready_for_reflection',q:'x',mode:'select'};
+    await page.goto(`${WEB}/s/items?${new URLSearchParams(filters)}`);
+    for(const checkbox of await page.locator('input[name=itemIds]').all()) await checkbox.check();
+    await page.locator(`#item-${id}`).click();
+    let detailUrl=page.url(),returnTo=new URL(detailUrl).searchParams.get('returnTo')!;
+    const checkSelection=async()=>{
+      expect(await page.locator('input[name=itemIds]:checked').evaluateAll(nodes=>nodes.map(node=>(node as HTMLInputElement).value).sort())).toEqual([...ids].sort());
+      await expect(page.getByTestId('next-step-caption')).toHaveText('已选 2 道 / 最多 8 道');
+      expect(new URL(page.url()).searchParams.get('chapter')).toBe('管理往返');
+    };
+    const backRoundtrip=async()=>{
+      await expect(page).toHaveURL(detailUrl);
+      await page.getByTestId('back-link').click();await expect(page).toHaveURL(`${WEB}${returnTo}`);
+      await checkSelection();await page.locator(`#item-${id}`).click();
+      // Native resubmission follows current DOM order (a reclassified item is a recovery row).
+      const reopened=new URL(page.url()).searchParams.get('returnTo')!;
+      const canonical=(value:string)=>{const url=new URL(value,WEB);const ids=url.searchParams.getAll('itemIds').sort();url.searchParams.delete('itemIds');for(const itemId of ids) url.searchParams.append('itemIds',itemId);url.searchParams.sort();return url.pathname+url.search+url.hash;};
+      expect(canonical(reopened)).toBe(canonical(returnTo));
+      detailUrl=page.url();returnTo=reopened;
+    };
+    const manage=async(name:string)=>{await page.getByText('题目信息与管理',{exact:true}).click();await page.getByRole('link',{name,exact:true}).click();};
+    const manual=async()=>{await manage('字认错了？改一下');await page.getByRole('link',{name:/^自己\s*动手改/}).click();};
+    await manage('修改分类');
+    await expect(page.locator('input[name=returnTo]')).toHaveValue(returnTo);
+    await page.getByLabel('章节或知识主题',{exact:true}).fill(' ');
+    await page.getByTestId('next-step-primary').click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.locator('input[name=returnTo]')).toHaveValue(returnTo);
+    await page.getByTestId('back-link').click();await backRoundtrip();
+    await manage('修改分类');
+    await page.getByLabel('章节或知识主题',{exact:true}).fill('改后章节');
+    await page.getByTestId('next-step-primary').click();await backRoundtrip();
+    await manual();await page.getByTestId('next-step-secondary-cancel').click();await backRoundtrip();
+    await manual();await page.getByTestId('next-step-primary').click();await backRoundtrip();
+    await manual();const original=await page.locator('#edit-text').inputValue();
+    await page.locator('#edit-text').fill(original+'（改）');
+    await page.getByTestId('next-step-primary').click();await backRoundtrip();
+    await manage('字认错了？改一下');
+    await page.locator('#fix-instruction').fill(' ');await page.getByTestId('next-step-primary').click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.locator('input[name=returnTo]')).toHaveValue(returnTo);
+    await page.locator('#fix-instruction').fill('题干末尾补上记号');await page.getByTestId('next-step-primary').click();
+    await expect(page.getByTestId('proposal')).toBeVisible();await page.getByTestId('next-step-primary').click();await backRoundtrip();
+    await page.getByText('题目信息与管理',{exact:true}).click();
+    await page.getByRole('button',{name:'这不是错题',exact:true}).click();
+    await expect(page.getByTestId('removed')).toBeVisible();
+    await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(page).toHaveURL(`${WEB}${returnTo}`);
+    await checkSelection();
+  });
+
 });

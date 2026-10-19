@@ -3,7 +3,7 @@ import { MASTERY_FEELING_LABEL } from '../../domain/types.js';
 import type { V2WeekItem } from '../../v2/weekService.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
 import type { ReflectionView } from '../../v2/reflectionService.js';
-import { attemptLabel, itemNotebookReturn, type ItemPracticeRecord } from '../itemLearning.js';
+import { attemptLabel, itemNotebookReturn, itemContextUrl, type ItemPracticeRecord } from '../itemLearning.js';
 import { localDayText } from '../weekPlan.js';
 import { Page, Problem, quoted, type BarModel } from './layout.js';
 
@@ -69,9 +69,9 @@ export function ItemDetailPage(props: ItemDetailProps): ReactNode {
       {props.practiceHistory?.length ? <><p className="small muted">最近的在前 · 日期是你记录的实际作答日</p><ol className="list learning-history">{props.practiceHistory.map(record => <li key={record.id}><a className="row" href={`/s/practice/${record.id}?item=${item.id}${record.correct === null ? '' : '&view=check'}`}><span className="row-text"><span>{attemptLabel(record)}</span><span className="meta-line muted">{record.performed_at ? <time dateTime={record.performed_at}>{record.performed_at}</time> : '尚未记录作答日期'} · {record.correct === null ? '继续练习' : '查看作答'}</span></span><span className="chev" aria-hidden="true">›</span></a></li>)}</ol></> : <p className="muted">还没有练习记录。重做后，实际结果会留在这里。</p>}
     </section>
     <details className="card learning-management"><summary>题目信息与管理</summary>
-      {evidence ? <a className="more" href={`/s/items/${item.id}/fix`} data-key="fix">字认错了？改一下</a> : null}
-      <a className="more" href={`/s/items/${item.id}/category`}>修改分类</a>
-      {props.canDiscard ? <form method="post" action={`/s/items/${item.id}/discard`}><button className="link-btn" type="submit" data-testid="next-step-secondary-discard" data-key="discard">这不是错题</button></form> : null}
+      {evidence ? <a className="more" href={itemContextUrl(item,returnTo,'/fix')} data-key="fix">字认错了？改一下</a> : null}
+      <a className="more" href={itemContextUrl(item,returnTo,'/category')}>修改分类</a>
+      {props.canDiscard ? <form method="post" action={`/s/items/${item.id}/discard`}><input type="hidden" name="returnTo" value={returnTo} /><button className="link-btn" type="submit" data-testid="next-step-secondary-discard" data-key="discard">这不是错题</button></form> : null}
     </details>
   </Page>;
 }

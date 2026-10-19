@@ -86,6 +86,7 @@ button,a,label,summary{touch-action:manipulation}
 .notebook-list{display:grid;gap:20px}.notebook-page .notebook-list>li{max-width:none}
 .notebook-entry{background:var(--card);border:1px solid var(--line);border-radius:var(--r-2);overflow:visible;min-width:0}
 .notebook-page .notebook-list .notebook-card{padding:16px;color:var(--ink);border:0;border-radius:var(--r-2);text-decoration:none;scroll-margin-top:16px}
+.notebook-page button.notebook-card{width:100%;background:transparent;font:inherit;text-align:left;cursor:pointer}
 .notebook-card .row-text{min-width:0;width:100%}
 .notebook-card-heading{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-weight:600}
 .notebook-open{color:var(--accent);font-size:var(--fs-2)}

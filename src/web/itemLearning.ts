@@ -36,3 +36,16 @@ export function itemNotebookReturn(value: unknown, item: {id:string;grade?:strin
   const destination = safeNotebookReturn(value,fallback);
   return destination.includes('#') ? destination : `${destination}#item-${item.id}`;
 }
+
+/** Local management destinations carry only a normalized notebook return context. */
+export function itemContextUrl(item: {id:string;grade?:string;subject:string|null}, value: unknown, suffix: ''|'/category'|'/fix'|'/edit' = ''): string {
+  return `/s/items/${item.id}${suffix}?${new URLSearchParams({returnTo:itemNotebookReturn(value,item)})}`;
+}
+
+/** Flash metadata carries an anchor ID, never an arbitrary redirect URL. */
+export function removedNotebookUrl(value: string, itemId: string): string {
+  const destination = new URL(safeNotebookReturn(value,`/s/items#item-${itemId}`),'https://notebook.invalid');
+  destination.searchParams.set('removed',itemId);
+  destination.searchParams.set('returnItem',destination.hash.slice('#item-'.length));
+  return destination.pathname+destination.search+destination.hash;
+}

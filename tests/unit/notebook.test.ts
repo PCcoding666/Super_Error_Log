@@ -9,6 +9,15 @@ describe('notebook filters and safe return context',()=>{
     for (const q of ['完整题目末尾','m-01','方程','判别式']) expect(matchesNotebook(item,{...filters,q},'完整题目末尾')).toBe(true);
     for (const changed of [{grade:'初三'},{subject:'物理'},{chapter:'函数'},{status:'scheduled'},{q:'没有这个词'}]) expect(matchesNotebook(item,{...filters,...changed})).toBe(false);
   });
+  it('preserves a bounded exact selection, including nine questions and an empty selection',()=>{
+    const ids=Array.from({length:9},(_,i)=>`itm_${i.toString(16).padStart(16,'0')}`);
+    const context=`${notebookUrl(filters)}&mode=select&${new URLSearchParams(ids.map(id=>['itemIds',id]))}#item-${item.id}`;
+    expect(safeNotebookReturn(context,'/fallback')).toBe(context);
+    const empty=`${notebookUrl(filters)}&mode=select#item-${item.id}`;
+    expect(safeNotebookReturn(empty,'/fallback')).toBe(empty);
+    for(const query of ['mode=wrong','itemIds=itm_0123456789abcdef','mode=select&itemIds=bad','mode=select&itemIds=itm_0123456789abcdef&itemIds=itm_0123456789abcdef']) expect(safeNotebookReturn(`/s/items?${query}`,'/fallback')).toBe('/fallback');
+    expect(safeNotebookReturn(`/s/items?mode=select&${new URLSearchParams(Array.from({length:300},(_,i)=>['itemIds',`itm_${i.toString(16).padStart(16,'0')}`]))}`,'/fallback')).toBe('/fallback');
+  });
   it('matches unclassified subjects and chapters without hiding them',()=>{
     expect(matchesNotebook({...item,subject:null,chapter:undefined},{...filters,subject:'未分类',chapter:'未分类'})).toBe(true);
   });

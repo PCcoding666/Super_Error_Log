@@ -43,6 +43,12 @@ describe('single-question learning', () => {
     expect(html).not.toContain('status=toString');
     expect(html).toContain(`q=%E6%96%B9%E7%A8%8B#item-${item.id}`);
   });
+  it('carries validated notebook and selection context into management links and discard',()=>{
+    const returnTo=`/s/items?${new URLSearchParams({grade:'初三',subject:'数学',chapter:'方程',q:'x',mode:'select',itemIds:item.id})}#item-${item.id}`;
+    const html=render({returnTo,evidence:{questionText:'题目',badge:'ok',observations:[]}});
+    for(const action of ['fix','category']) expect(html).toContain(`/s/items/${item.id}/${action}?${new URLSearchParams({returnTo})}`);
+    expect(html).toContain(`name="returnTo" value="${returnTo.replaceAll('&','&amp;')}"`);
+  });
   it('resumes an existing unfinished practice as the primary action', () => {
     const html = render({ resumePracticeId: 'pkt_0123456789abcdef', eligible: false });
     expect(html).toMatch(/aria-label="继续练习" data-testid="next-step-primary"/);
