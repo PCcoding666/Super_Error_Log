@@ -71,4 +71,12 @@
 
 ## 与单题学习 PR2 的最终组合
 
-独立阅读分支 `e88f1b5` 已合入 PR2 分支，以保留已解决冲突且可完整验证的列表/详情组合。两份 PR 仍目标 main，PR2 显式依赖 [PR #34](https://github.com/PCcoding666/Super_Error_Log/pull/34)，按 #34→PR2 顺序；没有合并 main 或部署。返回白名单统一复用本 PR 的 `safeNotebookReturn` / `notebookUrl`，详情薄封装仅补充题目锚点。联合筛选→新学习详情→返回与过期单题 POST 的真实上下文均有集成覆盖；组合提交 `e30e85a` 完整门禁退出 0：typecheck/build 通过，Vitest 886 通过/5 项既有跳过，Playwright 48 通过/6 项既有跳过；精确结果见[详情验收](2026-10-19-notebook-detail.md)。独立广审随后发现短横屏正文旧 caption 与固定栏实时计数可矛盾的 P3，仍待下一次专项修复；此处的门禁结果不表示该未覆盖场景已解决。
+独立阅读分支 `e88f1b5` 已合入 PR2 分支，以保留已解决冲突且可完整验证的列表/详情组合。两份 PR 仍目标 main，PR2 显式依赖 [PR #34](https://github.com/PCcoding666/Super_Error_Log/pull/34)，按 #34→PR2 顺序；没有合并 main 或部署。返回白名单统一复用本 PR 的 `safeNotebookReturn` / `notebookUrl`，详情薄封装仅补充题目锚点。联合筛选→新学习详情→返回与过期单题 POST 的真实上下文均有集成覆盖；组合提交 `e30e85a` 完整门禁退出 0：typecheck/build 通过，Vitest 886 通过/5 项既有跳过，Playwright 48 通过/6 项既有跳过；精确结果见[详情验收](2026-10-19-notebook-detail.md)。独立广审随后发现短横屏正文旧 caption 与固定栏实时计数可矛盾的 P3，现已通过下方的窄范围修正处理；此处更早的门禁结果不冒称运行在后续 CSS head。
+
+## 最终广审：短横屏的唯一选题计数
+
+844×390 下通用 `.caption-flow` 会显示正文中的服务端旧计数，而错题本固定栏始终显示实时计数。新增 JS/无脚本回归均先失败；只对 `.notebook-selection-page .caption-flow` 添加隐藏规则，继续使用原来的唯一 polite/atomic 固定栏计数及按钮 `aria-describedby`，其他页面的短屏行为不变。
+
+选择一题后，JS 即时更新和无脚本章节 POST 回传均显示“已选 1 道 / 最多 8 道”，重复正文计数不可见，按钮可访问描述同步；最后原图入口在固定栏上方、主操作仍可达。原有竖屏、200% 字号、键盘、选题恢复检查保留。首轮 RED 2/2 失败，修正后完整错题本浏览器 **4/4 通过（33.9s）**，typecheck/diffcheck 通过。合成横屏截图由用例输出为 `selection-landscape-count.png`。
+
+此项按最终复审范围执行专项验证，不把更早的完整门禁当作此 CSS 提交的门禁；最终 PR head 的完整 GitHub CI 由根任务另行等待。无真人 VoiceOver/真机验证。

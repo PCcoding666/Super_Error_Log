@@ -77,6 +77,7 @@ button,a,label,summary{touch-action:manipulation}
 .notebook-search{display:flex;align-items:center;gap:12px}.notebook-search .link-btn{flex-shrink:0}
 .notebook-filter-details{margin:4px 0}.notebook-filter-details>summary{min-height:44px;padding:8px 0;color:var(--muted);font-size:var(--fs-2);cursor:pointer}
 .notebook-selection-page{padding-bottom:calc(max(var(--bar-h,0px),12rem) + env(safe-area-inset-bottom))}
+.notebook-selection-page .caption-flow{display:none}
 .notebook-selection-page .next-bar .bar-caption{display:block}.notebook-bar-hint{text-align:center;margin:0}
 .notebook-search input{width:100%;min-width:0;min-height:44px;font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--field);border-radius:var(--r-1);padding:8px 12px}
 .notebook-filter-row{display:flex;flex-wrap:wrap;align-items:end;gap:8px 12px;margin-top:8px}

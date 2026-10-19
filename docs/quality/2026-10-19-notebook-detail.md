@@ -77,4 +77,11 @@ NOTEBOOK_DETAIL_EVIDENCE=docs/quality/assets/notebook-detail npx playwright test
 
 组合实现提交 `e30e85a6a2c99f640bda3240b44af92f94f18266` 保留双方父提交；在提交并通知独立审查后，执行一次 `SEL_AI_MODE=mock npm run verify`，退出 **0**：typecheck/build 通过，Vitest **74 个文件、886 通过 / 5 项既有跳过**（53.74s），Playwright **48 通过 / 6 项既有跳过**（3.8 分钟）。日志：`/workspace/work/notebook-integration-verify.log`。整合专项先通过 helper/SSR/HTTP **77/77**（20.35s）与 JS/无脚本浏览器 **6/6**（39.6s）。该完整门禁覆盖先前中断的旧练习旅程，并消除了旧分类测试入口的失败；没有新增跳过或未解决的测试失败。
 
-现有门禁全绿后，独立广审另发现一项尚未覆盖的 P3：短横屏下通用正文 caption 与错题本固定栏计数同时显示，而脚本只更新后者，可能出现旧/新计数矛盾。根任务安排下一次专项修复先更新 PR1，再合回 PR2；本记录不把全绿门禁当作此项已解决。这里的证据提交只更新文档，未修改已验证的实现。PR 安排已同步至[设计约束](../superpowers/specs/2026-10-19-notebook-reading-detail-design.md)。
+现有门禁全绿后，独立广审另发现一项尚未覆盖的 P3：短横屏下通用正文 caption 与错题本固定栏计数同时显示，而脚本只更新后者，可能出现旧/新计数矛盾。根任务随后安排一次专项修复，先更新 PR1 `944a516` 再合回 PR2；更早的全绿门禁不冒称运行在后续 CSS head，最终窄范围检查与 CI 状态见下方。此前 `8871dca` 证据提交仅更新文档，未修改已验证的实现。PR 安排已同步至[设计约束](../superpowers/specs/2026-10-19-notebook-reading-detail-design.md)。
+
+
+## 最终横屏反馈窄范围修正
+
+阅读分支 `944a5165de6fa8d97eb204ed7ecb50d25dc14ca8` 先修复唯一 P3，再合入详情分支。仅增加 `.notebook-selection-page .caption-flow{display:none}`，隐藏重复的正文服务端计数；错题本固定栏原有 polite/atomic 实时计数、按钮可访问描述及其他页面短视口行为不变。两种脚本模式的 844×390 回归先失败，再通过选择一题/原生章节 POST，核对唯一可见计数、当前按钮描述、唯一 live region、最终原图入口与主操作可达。既有竖屏、200% 字号、键盘与无脚本行为检查保留。
+
+PR1 读库浏览器专项 **4/4 通过（33.9s）**，typecheck/diffcheck 通过。合入后组合详情+阅读浏览器专项 **6/6 通过（41.5s）**，typecheck/diffcheck 通过；不重复完整本地门禁。此前 `e30e85a` 完整门禁 **886 单元/集成通过、48 浏览器通过、5/6 既有跳过**是精确的更早快照证据；根任务将等待两份最终 PR head 的完整 GitHub CI，不能将旧门禁宣称为后续 CSS head 的全量结果。无新增真人读屏或真机验收声明。
