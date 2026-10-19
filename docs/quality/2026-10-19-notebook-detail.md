@@ -75,4 +75,6 @@ NOTEBOOK_DETAIL_EVIDENCE=docs/quality/assets/notebook-detail npx playwright test
 
 详情返回统一复用 PR1 `safeNotebookReturn` / `notebookUrl`；新增继承属性状态 `toString` 的详情返回回归先失败，再消除重复白名单使其通过，仍为无锚点的合法返回补上本题锚点。真实 HTTP 过期 POST 用例现在先从联合筛选列表取得实际详情链接、再取得表单隐藏返回值并提交，证明 grade/subject/chapter/status/q/anchor 全链保留。已有 JS/无脚本浏览器的过滤列表→详情→返回用例增加了新详情主操作、确认错因空态和隐藏表单上下文断言。
 
-最终组合完整验证将在集成提交之后执行；尚未记录为全绿。PR 安排已同步至[设计约束](../superpowers/specs/2026-10-19-notebook-reading-detail-design.md)。
+组合实现提交 `e30e85a6a2c99f640bda3240b44af92f94f18266` 保留双方父提交；在提交并通知独立审查后，执行一次 `SEL_AI_MODE=mock npm run verify`，退出 **0**：typecheck/build 通过，Vitest **74 个文件、886 通过 / 5 项既有跳过**（53.74s），Playwright **48 通过 / 6 项既有跳过**（3.8 分钟）。日志：`/workspace/work/notebook-integration-verify.log`。整合专项先通过 helper/SSR/HTTP **77/77**（20.35s）与 JS/无脚本浏览器 **6/6**（39.6s）。该完整门禁覆盖先前中断的旧练习旅程，并消除了旧分类测试入口的失败；没有新增跳过或未解决的测试失败。
+
+现有门禁全绿后，独立广审另发现一项尚未覆盖的 P3：短横屏下通用正文 caption 与错题本固定栏计数同时显示，而脚本只更新后者，可能出现旧/新计数矛盾。根任务安排下一次专项修复先更新 PR1，再合回 PR2；本记录不把全绿门禁当作此项已解决。这里的证据提交只更新文档，未修改已验证的实现。PR 安排已同步至[设计约束](../superpowers/specs/2026-10-19-notebook-reading-detail-design.md)。

@@ -71,4 +71,4 @@
 
 ## 与单题学习 PR2 的最终组合
 
-独立阅读分支 `e88f1b5` 已合入 PR2 分支，以保留已解决冲突且可完整验证的列表/详情组合。两份 PR 仍目标 main，PR2 显式依赖 [PR #34](https://github.com/PCcoding666/Super_Error_Log/pull/34)，按 #34→PR2 顺序；没有合并 main 或部署。返回白名单统一复用本 PR 的 `safeNotebookReturn` / `notebookUrl`，详情薄封装仅补充题目锚点。联合筛选→新学习详情→返回与过期单题 POST 的真实上下文均有集成覆盖；完整组合门禁在集成提交后执行，结果同步在[详情验收](2026-10-19-notebook-detail.md)。
+独立阅读分支 `e88f1b5` 已合入 PR2 分支，以保留已解决冲突且可完整验证的列表/详情组合。两份 PR 仍目标 main，PR2 显式依赖 [PR #34](https://github.com/PCcoding666/Super_Error_Log/pull/34)，按 #34→PR2 顺序；没有合并 main 或部署。返回白名单统一复用本 PR 的 `safeNotebookReturn` / `notebookUrl`，详情薄封装仅补充题目锚点。联合筛选→新学习详情→返回与过期单题 POST 的真实上下文均有集成覆盖；组合提交 `e30e85a` 完整门禁退出 0：typecheck/build 通过，Vitest 886 通过/5 项既有跳过，Playwright 48 通过/6 项既有跳过；精确结果见[详情验收](2026-10-19-notebook-detail.md)。独立广审随后发现短横屏正文旧 caption 与固定栏实时计数可矛盾的 P3，仍待下一次专项修复；此处的门禁结果不表示该未覆盖场景已解决。
