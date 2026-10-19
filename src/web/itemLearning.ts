@@ -1,4 +1,4 @@
-import { isGrade } from '../classification/itemCategories.js';
+import { notebookUrl, safeNotebookReturn } from './notebook.js';
 import { MIN_DELAY_DAYS } from '../domain/stateMachine.js';
 
 /** History describes this attempt, never infers mastery from the item's current status. */
@@ -30,19 +30,9 @@ export function attemptLabel(record: ItemPracticeRecord): string {
   return `隔 ${days} 天独立做对`;
 }
 
-/** Standalone detail also works before the notebook filtering PR is integrated. */
+/** Detail shares notebook normalization, retaining the current item's fallback position. */
 export function itemNotebookReturn(value: unknown, item: {id:string;grade?:string;subject:string|null}): string {
-  const fallbackQuery = new URLSearchParams();
-  if (isGrade(item.grade)) fallbackQuery.set('grade',item.grade);
-  if (item.subject) fallbackQuery.set('subject',item.subject);
-  const fallback = `/s/items${fallbackQuery.size ? `?${fallbackQuery}` : ''}#item-${item.id}`;
-  if (typeof value !== 'string' || !/^\/s\/items(?:\?[^#]*)?(?:#item-itm_[0-9a-f]{16})?$/.test(value) || /[\\\r\n\t]/.test(value)) return fallback;
-  const url = new URL(value,'https://notebook.invalid');
-  if ([...url.searchParams.keys()].some(key => !['grade','subject','chapter','status','q'].includes(key))) return fallback;
-  const query = new URLSearchParams();
-  for (const key of ['grade','subject','chapter','status','q']) {
-    const part = url.searchParams.get(key)?.trim();
-    if (part && (key !== 'grade' || isGrade(part))) query.set(key,part.slice(0,key === 'q' ? 200 : 100));
-  }
-  return `/s/items${query.size ? `?${query}` : ''}${url.hash || `#item-${item.id}`}`;
+  const fallback = notebookUrl({grade:item.grade,subject:item.subject ?? undefined},item.id);
+  const destination = safeNotebookReturn(value,fallback);
+  return destination.includes('#') ? destination : `${destination}#item-${item.id}`;
 }

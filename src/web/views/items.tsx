@@ -1,3 +1,4 @@
+import { NOTEBOOK_STATUSES, notebookUrl, type NotebookFilters } from '../notebook.js';
 import { GRADES } from '../../classification/itemCategories.js';
 import { JUNIOR_CATALOG } from '../../classification/juniorCatalog.js';
 import type { ReactNode } from 'react';
@@ -16,55 +17,78 @@ export function cardStatus(status: string): string | null {
 
 export function ItemCard(props: { item: V2WeekItem; href?: string; extra?: ReactNode }): ReactNode {
   const { item } = props;
-  const meta = [item.grade, item.subject, item.chapter].filter(Boolean).join(' · ');
-  const status = cardStatus(item.status);
-  const body = (
-    <span className="row-text">
-      <img className="crop" src={`/s/img/item/${item.id}?s=list`} alt={item.shortId ?? '题目裁图'} loading="lazy" />
-      <span className="excerpt">{item.questionExcerpt ?? ''}</span>
-      <span className="meta-line muted">{[meta, item.shortId ? `练习纸编号 ${item.shortId}` : ''].filter(Boolean).join(' · ')}</span>
-      {item.badge === 'low' ? <span className="meta-line tone-orange">字可能认错了 · 点开看看</span> : null}
-      {status ? <span className="meta-line tone-green">{status}</span> : null}
-      {props.extra}
-    </span>
-  );
+  const meta = [item.grade, item.subject || '未分类', item.chapter || '未分类'].filter(Boolean).join(' · ');
+  const body = <span className="row-text">
+    <span className="notebook-card-heading">{item.shortId ?? '题目'}{props.href ? <span className="notebook-open">查看题目 ›</span> : null}</span>
+    <img className="crop big notebook-crop" src={`/s/img/item/${item.id}?scope=full&s=big`} alt={`${item.shortId ?? '题目'} · 整题照片`} loading="lazy" />
+    <span className="excerpt">{item.questionExcerpt || '题目文字暂不可用，可查看原图。'}</span>
+    <span className="meta-line muted">{[meta,item.shortId ? `练习纸编号 ${item.shortId}` : null].filter(Boolean).join(' · ')}</span>
+    <span className="meta-line muted">{NOTEBOOK_STATUSES[item.status] ?? '待练习'}</span>
+    {props.extra}
+  </span>;
   return props.href
-    ? <a id={`item-${item.id}`} className="row" href={props.href} data-testid="item-card">{body}<span className="chev" aria-hidden="true">›</span></a>
-    : <div className="row" data-testid="item-card">{body}</div>;
+    ? <a id={`item-${item.id}`} className="row notebook-card" href={props.href} data-testid="item-card">{body}</a>
+    : <div id={`item-${item.id}`} className="row notebook-card" data-testid="item-card">{body}</div>;
 }
 
-export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel; category: { grade: string; subject: string; subjects: string[] }; removed?: string | null; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
-    const { grade, subject, subjects } = props.category;
-    const all = [...props.items, ...props.backlog];
-    const chapters = [...new Set(all.map(item => item.chapter ?? '未分类'))];
-    const subjectSwitch = <details className="subject-switch">
-      <summary aria-label={`切换学科，当前${subject}`} data-testid="subject-switch"><span>{subject}</span><svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary>
-      <nav className="subject-options" aria-label="选择学科">{subjects.map(name => <a key={name} href={`/s/items?${new URLSearchParams({grade, subject:name})}`} aria-current={name === subject ? 'page' : undefined}><span>{name}</span>{name === subject ? <span aria-hidden="true">✓</span> : null}</a>)}</nav>
-    </details>;
-    return <Page title="错题本" tab="items" bar={props.bar} flash={props.flash} topLeading={subjectSwitch}>
-      <h1>错题本</h1>
-      <form method="get" action="/s/items" className="category-filter">
-        <label htmlFor="library-grade">年级</label>
-        <select id="library-grade" name="grade" defaultValue={grade}>{GRADES.map(value => <option key={value}>{value}</option>)}</select>
-        <input type="hidden" name="subject" value={subject} />
-        <button className="link-btn" type="submit">查看</button>
-      </form>
-      {props.removed ? <div className="flash flash-row" role="status" data-testid="removed"><span>已移出这道题</span><form method="post" action={`/s/items/${props.removed}/restore`}><button className="link-btn" type="submit">撤销</button></form></div> : null}
-      <p className="lead muted">{grade} · {subject} · {all.length} 道</p>
-      {all.length ? <form method="post" action="/s/items/select" id="chapter-form">
-        <input type="hidden" name="grade" value={grade} /><input type="hidden" name="subject" value={subject} />
-        <p className="hint">勾选章节，选中其中的全部错题；可以同时选多个章节，包含以前收录的题。</p>
-        {chapters.map(chapter => {
-          const items = all.filter(item => (item.chapter ?? '未分类') === chapter);
-          return <section key={chapter} className="card chapter-group">
-            <label className="choice"><input type="checkbox" name="chapters" value={chapter} /><span>{chapter} <span className="muted">（{items.length} 道）</span></span></label>
-            <details><summary>查看这 {items.length} 道题</summary><ul className="list">{items.map(item => <li key={item.id}><ItemCard item={item} href={`/s/items/${item.id}`} /></li>)}</ul></details>
-          </section>;
-        })}
-        <button className="btn" type="submit">查看已选题目</button>
-        <p className="hint">下一步可逐题调整，再加入练习；每次练习最多 8 道。</p>
-      </form> : <section className="card"><p>这个年级还没有{subject}错题</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="btn" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '去勾' : '录入第一道错题'}</a></section>}
-    </Page>;
+export interface NotebookPageProps {
+  items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel;
+  category: { grade: string; subject: string; subjects: string[] };
+  filters?: NotebookFilters; chapters?: string[]; total?: number; selection?: boolean; selectedIds?: string[];
+  eligibleIds?: string[]; recoveryItems?: V2WeekItem[]; removed?: string | null;
+  flash?: { ok?: string | null; err?: string | null };
+}
+export function ItemsPage(props: NotebookPageProps): ReactNode {
+  const { grade, subject, subjects } = props.category;
+  const filters = props.filters ?? {grade,subject,chapter:'',status:'',q:''};
+  const all = [...props.items, ...props.backlog];
+  const selected = new Set(props.selectedIds ?? []);
+  const eligible = new Set(props.eligibleIds ?? []);
+  const context = notebookUrl(filters);
+  const selectionUrl = `${context}${context.includes('?') ? '&' : '?'}mode=select`;
+  const subjectSwitch = <details className="subject-switch">
+    <summary aria-label={`切换学科，当前${subject}`} data-testid="subject-switch"><span>{subject}</span><svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary>
+    <nav className="subject-options" aria-label="选择学科">{subjects.map(name => <a key={name} href={notebookUrl({grade,subject:name})} aria-current={name === subject ? 'page' : undefined}><span>{name}</span>{name === subject ? <span aria-hidden="true">✓</span> : null}</a>)}</nav>
+  </details>;
+  const card = (item: V2WeekItem) => <li key={item.id} className="notebook-entry">
+    {props.selection ? <label className="choice notebook-choice"><input type="checkbox" name="itemIds" value={item.id} defaultChecked={selected.has(item.id)} disabled={!eligible.has(item.id) && !selected.has(item.id)} /><span>选择 {item.shortId ?? '这道题'}{!eligible.has(item.id) ? <span className="meta-line muted">{selected.has(item.id) ? '当前不可加入，请取消选择后继续' : '已在练习中或暂不可练习'}</span> : null}</span></label> : null}
+    <ItemCard item={item} href={`/s/items/${item.id}?${new URLSearchParams({returnTo:notebookUrl(filters,item.id)})}`} />
+    <a className="notebook-original" href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer">查看原图<span className="visually-hidden"> {item.shortId ?? '这道题'}（新窗口）</span></a>
+  </li>;
+  const recovery = props.recoveryItems ?? [];
+  const known = new Set([...all,...recovery].map(item=>item.id));
+  const selectionBar: BarModel = {caption:`已选 ${selected.size} 道 / 最多 8 道`,captionStatusId:'notebook-selection-count',primary:{title:'加入练习',key:'notebook-create',form:'notebook-selection',describedBy:'notebook-selection-count notebook-selection-hint'},secondary:[]};
+  return <Page title="错题本" tab={props.selection ? undefined : 'items'} back={null} bodyClass={`notebook-page${props.selection ? ' notebook-selection-page' : ''}`} bar={props.selection ? selectionBar : props.bar} flash={props.flash} topLeading={subjectSwitch}
+    barExtra={props.selection ? <p className="hint notebook-bar-hint" data-notebook-limit="" id="notebook-selection-hint">{selected.size > 8 ? '超过 8 道了，请取消几道后继续。' : selected.size === 0 ? '至少选 1 道题' : '可逐题取消'}</p> : undefined}>
+    <div className="notebook-title"><h1>错题本</h1>{props.selection ? <a className="link-btn" href={context}>取消选题</a> : <a className="link-btn" href={selectionUrl}>选题练习</a>}</div>
+    {props.selection ? <p className="hint">选 1–8 道题加入练习。更改筛选或学科会结束本次选题；已建练习不受影响。</p> : null}
+    <form method="get" action="/s/items" className="notebook-filters" role="search" aria-label="搜索错题">
+      <input type="hidden" name="subject" value={subject} />
+      <div className="notebook-search"><label className="visually-hidden" htmlFor="library-search">搜索题目</label><input id="library-search" name="q" type="search" maxLength={200} defaultValue={filters.q} placeholder="题干、编号、章节或知识点" /><button className="link-btn" type="submit">查看</button></div>
+      <details className="notebook-filter-details" data-testid="notebook-filters">
+        <summary>筛选 · {grade} · {filters.chapter || '全部章节'} · {filters.status ? NOTEBOOK_STATUSES[filters.status] : '全部状态'}</summary>
+        <div className="notebook-filter-row">
+          <div><label htmlFor="library-grade">年级</label><select id="library-grade" name="grade" defaultValue={grade}>{GRADES.map(value=><option key={value}>{value}</option>)}</select></div>
+          <div><label htmlFor="library-chapter">章节</label><select id="library-chapter" name="chapter" defaultValue={filters.chapter}><option value="">全部章节</option>{(props.chapters ?? []).map(value=><option key={value}>{value}</option>)}</select></div>
+          <div><label htmlFor="library-status">学习状态</label><select id="library-status" name="status" defaultValue={filters.status}><option value="">全部状态</option>{Object.entries(NOTEBOOK_STATUSES).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></div>
+          <button className="link-btn" type="submit">应用筛选</button>
+          <a className="link-btn" href={notebookUrl({grade,subject})}>清除筛选</a>
+        </div>
+      </details>
+    </form>
+    {props.removed ? <div className="flash flash-row" role="status" data-testid="removed"><span>已移出这道题</span><form method="post" action={`/s/items/${props.removed}/restore`}><button className="link-btn" type="submit">撤销</button></form></div> : null}
+    <p className="small muted" role="status">{grade} · {subject} · {all.length} 道{props.total !== undefined && props.total !== all.length ? `（共 ${props.total} 道）` : ''}</p>
+    {props.selection ? <form method="post" action="/s/items/select" id="notebook-selection" data-notebook-selection="">
+      {Object.entries(filters).map(([name,value])=><input key={name} type="hidden" name={name} value={value} />)}
+      <input type="hidden" name="mode" value="select" />
+      <fieldset className="notebook-chapters"><legend>按章节添加当前结果</legend>{[...new Set(all.map(item=>item.chapter || '未分类'))].map(chapter=><button key={chapter} className="link-btn" type="submit" name="addChapter" value={chapter}>添加 {chapter}</button>)}</fieldset>
+
+      <ul className="list notebook-list">{all.map(card)}</ul>
+      {recovery.length || [...selected].some(id=>!known.has(id)) ? <section aria-label="保留的选择"><h2>保留的选择</h2><p className="hint">这些题不在当前结果中或已不可用，请检查并取消后继续。</p><ul className="list notebook-list">{recovery.map(card)}</ul>{[...selected].filter(id=>!known.has(id)).map(id=><label key={id} className="choice"><input type="checkbox" name="itemIds" value={id} defaultChecked /><span>不可用的题目：{id} · 取消后重试</span></label>)}</section> : null}
+      <noscript><p className="hint">勾选后点“加入练习”提交；添加章节也会更新已选题数。超过 8 道时会保留选择，取消几道再提交。</p></noscript>
+    </form> : <ul className="list notebook-list">{all.map(card)}</ul>}
+    {!all.length ? <section className="card"><h2 className="card-title">{props.total ? '没有符合筛选的题目' : `这个年级还没有${subject}错题`}</h2><p>以前收录和未分类的题目也会出现在这里。</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="more" href={notebookUrl({grade,subject})}>查看全部{subject}错题</a><a className="more" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '查看已上传照片' : '录入第一道错题'}</a></section> : null}
+  </Page>;
 }
 
 export interface ProposalChange { field: string; before: string; after: string }

@@ -436,7 +436,7 @@ test('capture：每一屏、每个状态（含故障注入的状态矩阵）', a
   await snap(page, 'capture-one', '拍这周的卷子：已拍 1 张、找好了（缩略图 +「＋ 再拍一页」，主按钮「拍完了，下一步」）', { flow });
   await page.goto(`${WEB}/s/items`);
   await snap(page, 'items', '这周的错题：卡片列表（裁图按显示尺寸下发）', { flow: '随时可以看' });
-  const itemHref = (await page.getByTestId('item-card').first().getAttribute('href'))!;
+  const itemHref = (await page.getByTestId('item-card').first().getAttribute('href'))!.split('?')[0]!;
   await page.goto(`${WEB}${itemHref}`);
   await snap(page, 'item-detail', '题目详情', { flow: '随时可以看' });
   await page.goto(`${WEB}${itemHref}/fix`);

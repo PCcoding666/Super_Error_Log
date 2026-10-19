@@ -38,6 +38,11 @@ describe('single-question learning', () => {
     }
     expect(render({ returnTo: '/s/settings' })).toContain('#item-itm_0123456789abcdef');
   });
+  it('keeps canonical notebook status validation and the item anchor on detail returns', () => {
+    const html = render({returnTo:'/s/items?grade=初三&subject=数学&status=toString&q=方程'});
+    expect(html).not.toContain('status=toString');
+    expect(html).toContain(`q=%E6%96%B9%E7%A8%8B#item-${item.id}`);
+  });
   it('resumes an existing unfinished practice as the primary action', () => {
     const html = render({ resumePracticeId: 'pkt_0123456789abcdef', eligible: false });
     expect(html).toMatch(/aria-label="继续练习" data-testid="next-step-primary"/);
