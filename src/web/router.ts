@@ -1,3 +1,5 @@
+import { NOTEBOOK_STATUSES, matchesNotebook, type NotebookFilters } from './notebook.js';
+import type { NotebookPageProps } from './views/items.js';
 import type { HandwritingRecognizer } from '../ai/handwriting.js';
 import { practiceRouter } from './practiceRouter.js';
 /**
@@ -524,54 +526,80 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     throw new NotFound();
   };
 
-  const itemsPage = async (request: Request, response: Response, error?: string): Promise<ReactNode> => {
+  const notebookData = async (request: Request, response: Response): Promise<NotebookPageProps> => {
     const state = await loadToday(ctx, request);
     const library = getWeek(ctx.mobileDataDir, true);
     const all = [...library.items, ...library.backlog];
-    const gradeValue = str(request.method === 'POST' ? request.body?.grade : request.query.grade);
-    const grade = isGrade(gradeValue) ? gradeValue : requireProfile().grade;
+    const input = request.method === 'POST' ? request.body : request.query;
+    const cookies = readCookies(request);
+    const gradeValue = str(input?.grade);
+    const grade = isGrade(gradeValue) ? gradeValue : isGrade(cookies[COOKIE.itemsGrade]) ? cookies[COOKIE.itemsGrade]! : requireProfile().grade;
     const subjects = [...new Set([...readCatalog(getDb(), requireProfile().id).subjects.map(subject => subject.name), ...all.map(item => item.subject || '未分类')])];
-    const requested = str(request.method === 'POST' ? request.body?.subject : request.query.subject);
-    const remembered = readCookies(request)[COOKIE.itemsSubject] ?? '';
-    const subject = [requested, remembered, ...all.filter(item => item.grade === grade).map(item => item.subject), ...subjects].find(value => value && subjects.includes(value)) ?? '数学';
+    const requested = str(input?.subject);
+    const subject = [requested, cookies[COOKIE.itemsSubject], ...all.filter(item => item.grade === grade).map(item => item.subject), ...subjects].find(value => value && subjects.includes(value)) ?? '数学';
     setCookie(request, response, COOKIE.itemsSubject, subject, null);
-    const matches = (item: V2WeekItem): boolean => item.grade === grade && item.subject === subject;
-    return ItemsPage({ items: library.items.filter(matches), backlog: library.backlog.filter(matches),
-      category: { grade, subject, subjects }, anyPhoto: state.week.photos.length > 0,
-      finding: state.photos.some(photo => photo.state === 'finding'),
-      bar: { caption: '', primary: null, secondary: [] }, removed: ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null,
-      flash: {err:error, ok:request.query.paired === '1' ? '连上了 ✓' : null} });
-  };
-  r.get('/items', page(async (request, response) => {
-    render(response, await itemsPage(request, response));
-  }));
-
-  r.post('/items/select', form, page(async (request, response) => {
-    const grade = str(request.body?.grade), subject = str(request.body?.subject);
-    const chapters = new Set(list(request.body?.chapters));
-    const library = getWeek(ctx.mobileDataDir, true);
-    const selected = [...library.items, ...library.backlog].filter(item => item.grade === grade && item.subject === subject && chapters.has(item.chapter ?? '未分类'));
-    if (!isGrade(grade) || selected.length === 0) {
-      render(response, await itemsPage(request, response, '请至少选择一个有错题的章节。'), 400); return;
-    }
+    setCookie(request, response, COOKIE.itemsGrade, grade, null);
+    const scope = all.filter(item=>item.grade === grade && (item.subject || '未分类') === subject);
+    const chapters = [...new Set(scope.map(item=>item.chapter || '未分类'))];
+    const chapter = str(input?.chapter).trim().slice(0,100);
+    // Keep unavailable chapter filters visible so a changed category never silently broadens search.
+    if (chapter && !chapters.includes(chapter)) chapters.push(chapter);
+    const status = str(input?.status);
+    const filters: NotebookFilters = {grade,subject,chapter,status:Object.hasOwn(NOTEBOOK_STATUSES,status) ? status : '',q:str(input?.q).trim().slice(0,200)};
+    const matches = (item: V2WeekItem): boolean => matchesNotebook(item,filters,filters.q ? getEvidenceView(item.id)?.questionText : '');
+    const items = library.items.filter(matches), backlog = library.backlog.filter(matches);
+    const selectedIds = request.method === 'POST' ? list(request.body?.itemIds) : [];
+    const visibleIds = new Set([...items,...backlog].map(item=>item.id));
     const recommend = recommendPractice(ctx.mobileDataDir);
-    const eligible = new Set([...recommend.recommended, ...recommend.others].map(item => item.id));
-    const ids = selected.filter(item => eligible.has(item.id)).map(item => item.id);
-    const excluded = selected.length - ids.length;
-    render(response, ChoosePage({ recommend, practiceSlot:getV2Settings().practiceSlot, caption:'按章节选题', selectedIds:ids,
-      selectionNote: excluded ? `所选章节共有 ${selected.length} 道，其中 ${excluded} 道已在练习中或尚未到复习时间，本次可选 ${ids.length} 道。` : undefined }));
+    return {items,backlog,filters,chapters,total:scope.length,selectedIds,
+      eligibleIds:[...recommend.recommended,...recommend.others].map(item=>item.id),
+      recoveryItems:all.filter(item=>selectedIds.includes(item.id) && !visibleIds.has(item.id)),
+      selection:request.method === 'POST' || request.query.mode === 'select',
+      category:{grade,subject,subjects},anyPhoto:state.week.photos.length > 0,
+      finding:state.photos.some(photo=>photo.state === 'finding'),
+      bar:{caption:'',primary:null,secondary:[]},removed:ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null,
+      flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null}};
+  };
+  const itemsPage = async (request: Request, response: Response): Promise<ReactNode> => ItemsPage(await notebookData(request,response));
+  r.get('/items', page(async (request, response) => render(response, await itemsPage(request,response))));
+
+  r.post('/items/select', form, page(async (request,response) => {
+    const data = await notebookData(request,response);
+    const ids = data.selectedIds ?? [];
+    const chapter = str(request.body?.addChapter);
+    if (chapter) {
+      const eligible = new Set(data.eligibleIds);
+      data.selectedIds = [...new Set([...ids,...[...data.items,...data.backlog]
+        .filter(item=>(item.chapter || '未分类') === chapter && eligible.has(item.id)).map(item=>item.id)])];
+      render(response,ItemsPage(data)); return;
+    }
+    const reject = (message:string,status:number): void => {
+      failed(response,'notebook_selection');
+      render(response,ItemsPage({...data,flash:{err:message}}),status);
+    };
+    if (!ids.length) { reject('至少选 1 道题，再加入练习。',400); return; }
+    if (ids.length > 8) { reject('最多 8 道。已保留全部选择，请取消几道后继续。',400); return; }
+    if (ids.some(id=>!ITEM_ID.test(id)) || new Set(ids).size !== ids.length) {
+      reject('选择中有不可用或重复的题目。已保留选择，请取消不可用的题目后重试。',400); return;
+    }
+    const result = createPractice({itemIds:ids});
+    if (!result.ok) {
+      reject(result.httpStatus === 409 ? '有题目已在练习中或尚未到复习时间。已保留全部选择，请取消当前不可加入的题目后重试。' : result.message,result.httpStatus); return;
+    }
+    requestPrint(result.detail.id,options.coachProvider);
+    response.redirect(303,`/s/practice/${result.detail.id}`);
   }));
 
-  const detail = (itemId: string, error?: string | null): ReactNode => {
+  const detail = (itemId: string, error?: string | null, returnTo?: string): ReactNode => {
     const item = findItem(itemId);
     return ItemDetailPage({
       item, evidence: getEvidenceView(itemId), canDiscard: item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
-      reflected: getV2Reflection(itemId)?.reflection != null, error,
+      reflected: getV2Reflection(itemId)?.reflection != null, error, returnTo,
       practiceHistory: getDb().prepare(`SELECT rp.id, ra.correct, ra.performed_at FROM review_packet_item rpi JOIN review_packet rp ON rp.id = rpi.packet_id LEFT JOIN review_attempt ra ON ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id WHERE rpi.item_id = ? ORDER BY rp.created_at DESC LIMIT 20`).all(itemId) as Array<{id:string;correct:number|null;performed_at:string|null}>,
     });
   };
 
-  r.get('/items/:id', page((request, response) => render(response, detail(String(request.params.id)))));
+  r.get('/items/:id', page((request, response) => render(response, detail(String(request.params.id),null,str(request.query.returnTo)))));
 
   r.get('/items/:id/category', page((request, response) => {
     render(response, CategoryEditPage({item:findItem(String(request.params.id))}));

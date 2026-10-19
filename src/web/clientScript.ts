@@ -105,6 +105,12 @@ function upd(e){var boxes=$$('input[type=checkbox][name=itemIds],input[type=chec
 if(n>max&&e&&boxes.includes(e.target)&&e.target.checked){e.target.checked=false;n=boxes.filter(function(b){return b.checked}).length;if(warn)warn.classList.remove('hidden')}else if(warn)warn.classList.toggle('hidden',n<=max);
 if(btn){var t=n<min?btn.getAttribute('data-empty'):btn.getAttribute('data-template').replace('{n}',n);if(btn.textContent!==t)btn.textContent=t;btn.disabled=n<min||n>max;btn.classList.toggle('disabled',n<min||n>max)}}
 pick.addEventListener('change',upd);upd()});
+/* Notebook selection never discards checked questions; the server validates the exact set. */
+within(scope,'form[data-notebook-selection]').forEach(function(form){if(!once(form,'notebook'))return;
+function update(){var n=$$('input[name=itemIds]:checked',form).length;var count=$('[data-testid=next-step-caption]'),limit=$('[data-notebook-limit]');
+var button=$('[data-testid=next-step-primary]');if(button){button.disabled=n===0||n>8;button.classList.toggle('disabled',button.disabled)}
+if(count)count.textContent='已选 '+n+' 道 / 最多 8 道';if(limit)limit.textContent=n>8?'超过 8 道了，请取消几道后继续。':n===0?'至少选 1 道题':'可逐题取消'}
+form.addEventListener('change',update);window.addEventListener('pageshow',update);update()});
 /* 「其他…」做练习的时间 */
 within(scope,'[data-slot-other]').forEach(function(box){if(!once(box,'slot'))return;var input=$('input[type=text]',box.parentNode);function upd(){var other=$('input[value="__other"]',box.parentNode);if(input&&other)input.closest('.choice').classList.toggle('hidden',!other.checked)}box.parentNode.addEventListener('change',upd);upd()});
 /* 录结果：选了前三种才问对不对；没做出来才问卡在哪（新出现的那一组浮上来） */

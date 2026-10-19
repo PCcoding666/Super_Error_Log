@@ -485,7 +485,7 @@ describe('错题页学科切换', () => {
     await browser.get('/s/items?subject=' + encodeURIComponent('物理'));
     db.prepare('UPDATE v2_photo SET registered_at=?').run('2020-01-01T00:00:00Z');
     const backlog = await browser.text('/s/items');
-    expect(backlog).toContain('（1 道）');
+    expect(backlog).toContain('1 道');
     expect(backlog).toContain(`/s/items/${ids[1]}`);
     expect(backlog).not.toContain(`/s/items/${ids[0]}`);
     expect(backlog).not.toContain(`/s/items/${ids[2]}`);
@@ -1217,7 +1217,7 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
     const job = await (await uploadPhoto(browser, await photo('#f0d0c8', 2400))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
     const items = await browser.text('/s/items');
-    const itemId = /\/s\/img\/item\/(itm_[0-9a-f]+)\?s=list/.exec(items)![1]!;
+    const itemId = /\/s\/img\/item\/(itm_[0-9a-f]+)\?scope=full&amp;s=big/.exec(items)![1]!;
     const size = async (path: string): Promise<{ width: number; height: number; bytes: number; cache: string | null }> => {
       const response = await browser.get(path);
       const buffer = Buffer.from(await response.arrayBuffer());
@@ -1246,12 +1246,13 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
 });
 
 describe('年级、学科、章节分类', () => {
-  async function categoryFixture() {
+  async function categoryFixture(count = 3) {
     const env = await setup();
+    env.vision.questionCount = count;
     const browser = await pairBrowser(env);
     await browser.post('/s/consent');
     expect((await uploadPhoto(browser, await photo('#fa8080'))).status).toBe(200);
-    await waitFor(async () => { await browser.get('/s/items'); return (getDb().prepare('SELECT COUNT(*) AS n FROM error_item').get() as {n:number}).n === 3; });
+    await waitFor(async () => { await browser.get('/s/items'); return (getDb().prepare('SELECT COUNT(*) AS n FROM error_item').get() as {n:number}).n === count; });
     const rows = getDb().prepare('SELECT id FROM error_item ORDER BY item_index').all() as {id:string}[];
     return { browser, rows };
   }
@@ -1269,19 +1270,83 @@ describe('年级、学科、章节分类', () => {
     expect(await browser.visibleText(`/s/items/${id}`)).toContain('初二 · 物理 · 力与运动');
   });
 
-  it('selects the union of whole chapters including older items and hands the exact set to practice selection', async () => {
+  it('shows full readable questions directly and combines chapter, status and search across older records', async () => {
     const { browser, rows } = await categoryFixture();
-    for (const [index, row] of rows.entries()) {
-      expect((await browser.post(`/s/items/${row.id}/category`, { grade: '初三', subject: '数学', chapter: index < 2 ? '一元二次方程' : '二次函数' })).status).toBe(303);
-    }
     getDb().prepare("UPDATE v2_photo SET registered_at='2025-01-01T00:00:00Z'").run();
-    const response = await browser.post('/s/items/select', { grade: '初三', subject: '数学', chapters: ['一元二次方程', '二次函数'] });
+    for (const [i,row] of rows.entries()) {
+      await browser.post(`/s/items/${row.id}/category`, {grade:'初三',subject:'数学',chapter:i<2?'方程':'未分类'});
+    }
+    getDb().prepare("UPDATE error_item SET status='needs_recheck',text_excerpt='寻找完整题干 只匹配本题' WHERE id=?").run(rows[0]!.id);
+    const browse = await browser.text('/s/items?grade=初三&subject=数学');
+    expect(browse).not.toContain('type="checkbox"');
+    expect(browse).not.toContain('chapter-group');
+    expect(browse).toContain('data-testid="notebook-filters"');
+    expect(browse).toMatch(/<details[^>]*data-testid="notebook-filters"[^>]*>/);
+    expect(browse).not.toMatch(/<details[^>]*data-testid="notebook-filters"[^>]*open/);
+    expect(browse).toContain(`scope=full&amp;s=big`);
+    expect(browse).toContain(`id="item-${rows[0]!.id}"`);
+    const filtered = await browser.text('/s/items?grade=初三&subject=数学&chapter=方程&status=needs_recheck&q=完整题干');
+    expect(filtered).toContain(`id="item-${rows[0]!.id}"`);
+    expect(filtered).not.toContain(`id="item-${rows[1]!.id}"`);
+    expect(filtered).not.toContain(`id="item-${rows[2]!.id}"`);
+    const unknown = await browser.text('/s/items?grade=初三&subject=数学&chapter=未分类&q=相似三角形');
+    expect(unknown).toContain(`id="item-${rows[2]!.id}"`);
+    await browser.get('/s/items?grade=初二&subject=数学');
+    expect(await browser.text('/s/items')).toContain('<option selected="">初二</option>');
+  });
+
+  it('creates practice from the exact individual selection and keeps empty, over-limit and stale choices recoverable', async () => {
+    const { browser, rows } = await categoryFixture(9);
+    const fields = {grade:'初三',subject:'数学',mode:'select'};
+    const empty = await browser.post('/s/items/select', fields);
+    expect(empty.status).toBe(400);
+    const emptyHtml = await empty.text();
+    expect(emptyHtml).toContain('至少选 1 道');
+    expect(emptyHtml).not.toContain('data-testid="root-tabs"');
+    expect(emptyHtml).toContain('form="notebook-selection"');
+    expect(emptyHtml).toContain('data-testid="next-step-primary"');
+    const ids = rows.map(row => row.id);
+    const checked = (html:string) => [...html.matchAll(/<input[^>]*name="itemIds"[^>]*>/g)].filter(m=>/checked/.test(m[0])).map(m=>/value="([^"]+)"/.exec(m[0])![1]);
+    const many = await browser.post('/s/items/select', {...fields,itemIds:ids});
+    expect(many.status).toBe(400);
+    expect(checked(await many.text()).sort()).toEqual(ids.sort());
+    const invalid = await browser.post('/s/items/select', {...fields,itemIds:[ids[0]!, 'invalid-id']});
+    expect(invalid.status).toBe(400);
+    expect(checked(await invalid.text())).toContain('invalid-id');
+    getDb().prepare("UPDATE error_item SET status='scheduled' WHERE id=?").run(ids[0]!);
+    const stale = await browser.post('/s/items/select', {...fields,itemIds:ids.slice(0,2)});
+    expect(stale.status).toBe(409);
+    expect(checked(await stale.text()).sort()).toEqual(ids.slice(0,2).sort());
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get() as {n:number}).n).toBe(0);
+    const created = await browser.post('/s/items/select', {...fields,itemIds:[ids[1]!]});
+    expect(created.status).toBe(303);
+    expect(created.headers.get('location')).toMatch(/^\/s\/practice\/pkt_/);
+    expect(getDb().prepare('SELECT item_id FROM review_packet_item').all()).toEqual([{item_id:ids[1]}]);
+  });
+
+  it('chapter selection is explicit and only adds currently filtered eligible questions without creating practice', async () => {
+    const { browser, rows } = await categoryFixture();
+    for (const row of rows) await browser.post(`/s/items/${row.id}/category`, {grade:'初三',subject:'数学',chapter:'方程'});
+    const response = await browser.post('/s/items/select', {grade:'初三',subject:'数学',q:'1x',addChapter:'方程'});
     expect(response.status).toBe(200);
     const html = await response.text();
-    const selected = [...html.matchAll(/<input[^>]*name="itemIds"[^>]*>/g)].filter(match => /checked/.test(match[0])).map(match => /value="([^"]+)"/.exec(match[0])![1]);
-    expect(selected.sort()).toEqual(rows.map(row => row.id).sort());
-    const empty = await browser.post('/s/items/select', { grade: '初二', subject: '数学', chapters: ['一元二次方程'] });
-    expect(empty.status).toBe(400);
+    expect(html.match(/<input[^>]*name="itemIds"[^>]*>/g)?.filter(input=>input.includes('checked')).map(input=>/value="([^"]+)"/.exec(input)![1])).toEqual([rows[0]!.id]);
+    expect(html).not.toContain(`id="item-${rows[1]!.id}"`);
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get() as {n:number}).n).toBe(0);
+  });
+
+  it('preserves canonical filter and item-anchor context and rejects arbitrary return paths', async () => {
+    const { browser, rows } = await categoryFixture();
+    const id = rows[0]!.id;
+    const returnTo = `/s/items?${new URLSearchParams({grade:'初三',subject:'数学',chapter:'一元一次方程',status:'ready_for_reflection',q:'1x'})}#item-${id}`;
+    const html = await browser.text(`/s/items/${id}?${new URLSearchParams({returnTo})}`);
+    expect(html).toContain(`href="${returnTo.replaceAll('&','&amp;')}"`);
+    for (const bad of ['https://evil.example/s/items','//evil.example/s/items','/s/settings','/s/items/../settings','/s/items?returnTo=https://evil.example']) {
+      const detail = await browser.text(`/s/items/${id}?${new URLSearchParams({returnTo:bad})}`);
+      expect(detail).not.toContain('href="https://evil');
+      expect(detail).not.toContain('href="//evil');
+      expect(detail).toContain(`#item-${id}`);
+    }
   });
 
   it('settings saves the student grade for future questions without moving existing classifications', async () => {
