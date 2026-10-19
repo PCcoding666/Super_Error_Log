@@ -1,10 +1,12 @@
-import { NOTEBOOK_STATUSES, notebookUrl, safeNotebookReturn, type NotebookFilters } from '../notebook.js';
+import { itemContextUrl, itemNotebookReturn } from '../itemLearning.js';
+import { NOTEBOOK_STATUSES, notebookUrl, type NotebookFilters } from '../notebook.js';
 import { GRADES } from '../../classification/itemCategories.js';
 import { JUNIOR_CATALOG } from '../../classification/juniorCatalog.js';
 import type { ReactNode } from 'react';
 import type { V2WeekItem } from '../../v2/weekService.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
-import { Page, Phrased, Problem, VoiceBox, quoted, type BarModel } from './layout.js';
+export { ItemDetailPage } from './itemDetail.js';
+import { Page, Phrased, Problem, VoiceBox, type BarModel } from './layout.js';
 
 /** 卡片只显示对他有意义的状态（§4.5）。 */
 export function cardStatus(status: string): string | null {
@@ -35,7 +37,7 @@ export interface NotebookPageProps {
   items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel;
   category: { grade: string; subject: string; subjects: string[] };
   filters?: NotebookFilters; chapters?: string[]; total?: number; selection?: boolean; selectedIds?: string[];
-  eligibleIds?: string[]; recoveryItems?: V2WeekItem[]; removed?: string | null;
+  eligibleIds?: string[]; recoveryItems?: V2WeekItem[]; removed?: string | null; undoReturnTo?: string;
   flash?: { ok?: string | null; err?: string | null };
 }
 export function ItemsPage(props: NotebookPageProps): ReactNode {
@@ -76,7 +78,7 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
         </div>
       </details>
     </form>
-    {props.removed ? <div className="flash flash-row" role="status" data-testid="removed"><span>已移出这道题</span><form method="post" action={`/s/items/${props.removed}/restore`}><button className="link-btn" type="submit">撤销</button></form></div> : null}
+    {props.removed ? <div className="flash flash-row" role="status" data-testid="removed"><span>已移出这道题</span><form method="post" action={`/s/items/${props.removed}/restore`}><input type="hidden" name="returnTo" value={props.undoReturnTo ?? notebookUrl(filters,props.removed,props.selection ? [...selected] : undefined)} /><button className="link-btn" type="submit">撤销</button></form></div> : null}
     <p className="small muted" role="status">{grade} · {subject} · {all.length} 道{props.total !== undefined && props.total !== all.length ? `（共 ${props.total} 道）` : ''}</p>
     {props.selection ? <form method="post" action="/s/items/select" id="notebook-selection" data-notebook-selection="">
       {Object.entries(filters).map(([name,value])=><input key={name} type="hidden" name={name} value={value} />)}
@@ -91,61 +93,23 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
   </Page>;
 }
 
-const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
-
-export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView | null; canDiscard: boolean; reflected: boolean; practiceHistory?: Array<{id:string;correct:number|null;performed_at:string|null}>; returnTo?: string; error?: string | null }): ReactNode {
-  const { item, evidence } = props;
-  const bar: BarModel = {
-    caption: '',
-    primary: evidence ? { title: '字认错了？改一下', key: 'fix', href: `/s/items/${item.id}/fix` } : { title: '返回错题本', key: 'goHome', href: '/s/' },
-    secondary: props.canDiscard ? [{ title: '这不是错题', key: 'discard', post: `/s/items/${item.id}/discard` }] : [],
-  };
-  const groups = Object.entries(KIND_TITLE)
-    .map(([kind, title]) => ({ title, notes: (evidence?.observations ?? []).filter(o => o.kind === kind) }))
-    .filter(group => group.notes.length > 0);
-  return (
-    <Page title={item.shortId ?? '题目'} back={{ href: safeNotebookReturn(props.returnTo, notebookUrl({grade:item.grade,subject:item.subject ?? undefined},item.id)), label: '错题本' }} bar={bar}>
-      <p className="eyebrow">练习纸编号</p>
-      <h1>{item.shortId ?? '题目'}</h1>
-      {props.error ? <Problem title="没成功" detail={props.error} /> : null}
-      <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /></a>
-      <p className="hint">整题照片 · 点开可以两指放大</p>
-      {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">{quoted('字可能认错了：对照上面的照片看一眼，不对就点「改一下」。')}</p> : null}
-      <section className="card">
-        <h2 className="card-title">AI 认出的题目</h2>
-        <p className="pre" data-testid="question-text">{evidence?.questionText ?? item.questionExcerpt ?? ''}</p>
-        <p className="small muted" data-testid="item-category">{[item.grade, item.subject, item.chapter].filter(Boolean).join(' · ')}</p>
-        <a className="more" href={`/s/items/${item.id}/category`}>修改分类</a>
-        {item.knowledgeTags.length > 0 ? <p className="small muted">细知识点：{item.knowledgeTags.join('、')}</p> : null}
-        {groups.map(group => (
-          <div key={group.title}>
-            <h2 className="card-title sub">{group.title}</h2>
-            {group.notes.map(note => <p key={note.id} className="pre">{note.text}</p>)}
-          </div>
-        ))}
-        <p className="small muted">{props.reflected ? '说过了' : '还没说为什么错'}</p>
-      </section>
-      {props.practiceHistory?.length ? <section className="card"><h2>练习记录</h2><ul className="list">{props.practiceHistory.map(record => <li key={record.id}><a className="row" href={`/s/practice/${record.id}?item=${item.id}${record.correct === null ? '' : '&view=check'}`}>{record.correct === null ? '继续练习' : `${record.performed_at} · ${record.correct ? '做对了' : '做错了'}`} · 查看作答</a></li>)}</ul></section> : null}
-    </Page>
-  );
-}
-
 export interface ProposalChange { field: string; before: string; after: string }
 
 /** 改一下（§4.5）：说一句或写一句哪里不对 → 生成修改 → 改之前 / 改之后 → 就这样改。 */
-export function FixPage(props: { item: V2WeekItem; revision: number; clientRequestId: string; instruction?: string; error?: string | null;
+export function FixPage(props: { item: V2WeekItem; revision: number; clientRequestId: string; instruction?: string; error?: string | null; returnTo?: string;
   proposal?: { proposalId: string; revision: number; changes: ProposalChange[]; clarify: string | null } | null }): ReactNode {
   const { item, proposal } = props;
+  const returnTo = itemNotebookReturn(props.returnTo,item), detailHref = itemContextUrl(item,returnTo);
   const bar: BarModel = proposal && proposal.changes.length > 0
     ? {
       caption: '看一眼改之后的样子',
-      primary: { title: '就这样改', key: 'accept', post: `/s/items/${item.id}/fix/accept`, fields: { proposalId: proposal.proposalId, revision: String(proposal.revision) } },
-      secondary: [{ title: '不改了', key: 'cancel', href: `/s/items/${item.id}` }],
+      primary: { title: '就这样改', key: 'accept', post: `/s/items/${item.id}/fix/accept`, fields: { proposalId: proposal.proposalId, revision: String(proposal.revision), returnTo } },
+      secondary: [{ title: '不改了', key: 'cancel', href: detailHref }],
     }
-    : { caption: '', primary: { title: '生成修改', key: 'propose', form: 'fix-form' }, secondary: [{ title: '不改了', key: 'cancel', href: `/s/items/${item.id}` }] };
+    : { caption: '', primary: { title: '生成修改', key: 'propose', form: 'fix-form' }, secondary: [{ title: '不改了', key: 'cancel', href: detailHref }] };
   const label: Record<string, string> = { questionText: '题目', observation: '笔迹', subject: '科目', knowledgeTags: '知识点' };
   return (
-    <Page title="改一下" back={{ href: `/s/items/${item.id}`, label: '返回' }} bar={bar}>
+    <Page title="改一下" back={{ href: detailHref, label: '返回' }} bar={bar}>
       <h1>改一下</h1>
       {props.error ? <Problem title="没改成" detail={props.error} /> : null}
       {proposal ? (
@@ -162,26 +126,27 @@ export function FixPage(props: { item: V2WeekItem; revision: number; clientReque
         </section>
       ) : null}
       <form method="post" action={`/s/items/${item.id}/fix`} id="fix-form" data-wait="正在生成修改…">
-        <input type="hidden" name="revision" value={String(props.revision)} />
+        <input type="hidden" name="revision" value={String(props.revision)} /><input type="hidden" name="returnTo" value={returnTo} />
         <input type="hidden" name="clientRequestId" value={props.clientRequestId} />
         <input type="hidden" name="method" value="keyboard" />
         <label htmlFor="fix-instruction" className="field-label">哪里不对</label>
         <textarea id="fix-instruction" name="instruction" maxLength={200} required defaultValue={props.instruction ?? ''} placeholder="说一句或写一句哪里不对，比如：第二行的 16 应该是 13" />
         <VoiceBox target="fix-instruction" />
       </form>
-      <a className="more" href={`/s/items/${item.id}/edit`} data-key="fix-manual"><Phrased text="自己动手改" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
+      <a className="more" href={itemContextUrl(item,returnTo,'/edit')} data-key="fix-manual"><Phrased text="自己动手改" suffix={<span className="chev-i" aria-hidden="true">›</span>} /></a>
     </Page>
   );
 }
 
-export function EditPage(props: { item: V2WeekItem; evidence: EvidenceView; error?: string | null }): ReactNode {
-  const bar: BarModel = { caption: '只改题目的字；你写的错答案不要改对', primary: { title: '保存修改', key: 'save', form: 'edit-form' }, secondary: [{ title: '不改了', key: 'cancel', href: `/s/items/${props.item.id}` }] };
+export function EditPage(props: { item: V2WeekItem; evidence: EvidenceView; error?: string | null; returnTo?: string }): ReactNode {
+  const returnTo = itemNotebookReturn(props.returnTo,props.item), detailHref = itemContextUrl(props.item,returnTo);
+  const bar: BarModel = { caption: '只改题目的字；你写的错答案不要改对', primary: { title: '保存修改', key: 'save', form: 'edit-form' }, secondary: [{ title: '不改了', key: 'cancel', href: detailHref }] };
   return (
-    <Page title="自己动手改" back={{ href: `/s/items/${props.item.id}`, label: '返回' }} bar={bar}>
+    <Page title="自己动手改" back={{ href: detailHref, label: '返回' }} bar={bar}>
       <h1>自己动手改</h1>
       {props.error ? <Problem title="没改成" detail={props.error} /> : null}
       <form method="post" action={`/s/items/${props.item.id}/edit`} id="edit-form">
-        <input type="hidden" name="revision" value={String(props.evidence.revision)} />
+        <input type="hidden" name="revision" value={String(props.evidence.revision)} /><input type="hidden" name="returnTo" value={returnTo} />
         <label htmlFor="edit-text" className="field-label">AI 认出的题目</label>
         <textarea id="edit-text" name="questionText" defaultValue={props.evidence.questionText} maxLength={4000} />
       </form>
@@ -190,12 +155,13 @@ export function EditPage(props: { item: V2WeekItem; evidence: EvidenceView; erro
 }
 
 /** Direct classification edits never assert that the student has checked the question text. */
-export function CategoryEditPage(props: { item: V2WeekItem; error?: string; values?: {grade:string;subject:string;chapter:string} }): ReactNode {
+export function CategoryEditPage(props: { item: V2WeekItem; error?: string; values?: {grade:string;subject:string;chapter:string}; returnTo?: string }): ReactNode {
+  const returnTo = itemNotebookReturn(props.returnTo,props.item), detailHref = itemContextUrl(props.item,returnTo);
   const values = props.values ?? {grade:props.item.grade ?? '初三',subject:props.item.subject ?? '',chapter:props.item.chapter ?? ''};
-  return <Page title="修改分类" back={{href:`/s/items/${props.item.id}`,label:'返回题目'}} bar={{caption:'只修改这道题的分类', primary:{title:'保存分类',key:'save-category',form:'category-form'},secondary:[]}}>
+  return <Page title="修改分类" back={{href:detailHref,label:'返回题目'}} bar={{caption:'只修改这道题的分类', primary:{title:'保存分类',key:'save-category',form:'category-form'},secondary:[]}}>
     <h1>修改分类</h1>
     {props.error ? <Problem title="分类未保存" detail={props.error} /> : null}
-    <form id="category-form" method="post" action={`/s/items/${props.item.id}/category`}>
+    <form id="category-form" method="post" action={`/s/items/${props.item.id}/category`}><input type="hidden" name="returnTo" value={returnTo} />
       <label className="field-label" htmlFor="category-grade">年级</label>
       <select id="category-grade" name="grade" defaultValue={values.grade}>{GRADES.map(grade => <option key={grade}>{grade}</option>)}</select>
       <label className="field-label" htmlFor="category-subject">学科</label>

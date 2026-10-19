@@ -447,6 +447,7 @@ test('capture：每一屏、每个状态（含故障注入的状态矩阵）', a
   await page.goto(`${WEB}${itemHref}/edit`);
   await snap(page, 'item-edit', '自己动手改', { flow: '随时可以看' });
   await page.goto(`${WEB}${itemHref}`);
+  await page.getByText('题目信息与管理', { exact: true }).click();
   await clickNav(page, secondary(page, 'discard'));
   await snap(page, 'items-removed-undo', '这周的错题：「已移出这道题 撤销」', { flow: '随时可以看' });
   await clickNav(page, page.getByRole('button', { name: '撤销' }));

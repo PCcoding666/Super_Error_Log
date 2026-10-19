@@ -481,7 +481,11 @@ describe('错题页学科切换', () => {
     db.prepare('UPDATE error_item SET subject=? WHERE id=?').run('英语', ids[2]!);
     expect(await browser.text('/s/items?subject=' + encodeURIComponent('英语'))).toContain(`/s/items/${ids[2]}`);
     const invalid = await browser.text('/s/items?subject=not-a-subject');
-    expect(invalid).not.toContain('not-a-subject');
+    expect(invalid).toContain('name="subject" value="not-a-subject"');
+    expect(invalid).not.toContain('data-testid="item-card"');
+    expect(invalid).toContain('切换学科，当前not-a-subject');
+    expect(invalid).toContain('这个年级还没有not-a-subject错题');
+    expect(invalid).toContain('清除筛选');
     await browser.get('/s/items?subject=' + encodeURIComponent('物理'));
     db.prepare('UPDATE v2_photo SET registered_at=?').run('2020-01-01T00:00:00Z');
     const backlog = await browser.text('/s/items');
@@ -1383,5 +1387,203 @@ describe('年级、学科、章节分类', () => {
       expect(await browser.text('/s/settings')).toContain('value="初一" selected');
       expect(await browser.visibleText(`/s/items/${rows[0]!.id}`)).toContain('初三 · 数学');
     } finally { getDb().prepare("UPDATE student_profile SET grade='初三'").run(); }
+  });
+});
+
+describe('single-question learning detail', () => {
+  async function fixture(options: Parameters<typeof setup>[0] = {}) {
+    const env = await setup(options);
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const {jobId} = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as {jobId:string};
+    await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
+    await browser.get('/s/items');
+    const {id} = getDb().prepare('SELECT id FROM error_item ORDER BY item_index LIMIT 1').get() as {id:string};
+    return {env,browser,id};
+  }
+  it('GET reads reflection without creating a practice or presenting unconfirmed AI suggestions', async () => {
+    const {browser,id} = await fixture();
+    const {askFollowup,answerFollowup,getV2Reflection,submitV2Reflection} = await import('../../src/v2/reflectionService.js');
+    await askFollowup(id);
+    expect((await answerFollowup(id,{answer:'我跳过了检查符号这一步'})).ok).toBe(true);
+    const suggestion = getV2Reflection(id)?.suggestion?.summary;
+    expect(suggestion).toBeTruthy();
+    const neutral = await browser.visibleText(`/s/items/${id}`);
+    expect(neutral).toContain('还没有已确认的错因记录');
+    expect(neutral).not.toContain(suggestion);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
+    expect(submitV2Reflection(id,{attemptState:'方法基本正确但步骤出错',cause:'计算',masteryFeeling:2,summary:'移项忘了变号'}).ok).toBe(true);
+    expect(await browser.visibleText(`/s/items/${id}`)).toContain('移项忘了变号');
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
+  });
+  it('POST starts one item through current print/practice services and repeated POST resumes the same packet', async () => {
+    const {browser,id} = await fixture();
+    const first = await browser.post(`/s/items/${id}/practice`);
+    expect(first.status).toBe(303);
+    const destination = first.headers.get('location')!;
+    expect(destination).toMatch(new RegExp(`^/s/practice/pkt_[0-9a-f]{16}\\?item=${id}$`));
+    const second = await browser.post(`/s/items/${id}/practice`);
+    expect(second.headers.get('location')).toBe(destination);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:1});
+    expect(getDb().prepare('SELECT item_id FROM review_packet_item').all()).toEqual([{item_id:id}]);
+    const html = await browser.text(`/s/items/${id}`);
+    expect(html).toContain('aria-label="继续练习" data-testid="next-step-primary"');
+    await waitFor(async () => (await browser.text(destination)).includes('practice-question'));
+    expect((await browser.get(destination)).status).toBe(200);
+  });
+  it('stale eligibility stays on detail with recovery and safe return context, and missing items are 404', async () => {
+    const {browser,id} = await fixture();
+    getDb().prepare("UPDATE error_item SET status='needs_recheck' WHERE id=?").run(id);
+    const query = new URLSearchParams({grade:'初三',subject:'数学',chapter:'一元一次方程',status:'needs_recheck',q:'方程'});
+    const returnTo = `/s/items?${query}#item-${id}`;
+    const library = await browser.text(`/s/items?${query}`);
+    const href = new RegExp(`href="(/s/items/${id}\\?[^"]+)"`).exec(library)?.[1];
+    expect(href).toBeTruthy();
+    const detailHtml = await browser.text(href!);
+    expect(detailHtml).toContain('aria-label="重做这题" data-testid="next-step-primary"');
+    const preserved = /name="returnTo" value="([^"]+)"/.exec(detailHtml)?.[1]?.replaceAll('&amp;','&');
+    expect(preserved).toBe(returnTo);
+    getDb().prepare("UPDATE error_item SET status='temporarily_mastered', next_review_at='2999-01-01' WHERE id=?").run(id);
+    const result = await browser.post(`/s/items/${id}/practice`, {returnTo:preserved!});
+    expect(result.status).toBe(409);
+    const html = await result.text();
+    expect(html).toContain('尚未到复习时间');
+    expect(html).toContain('q=%E6%96%B9%E7%A8%8B');
+    expect(html).toContain('chapter=%E4%B8%80%E5%85%83%E4%B8%80%E6%AC%A1%E6%96%B9%E7%A8%8B');
+    expect(html).toContain('status=needs_recheck');
+    expect(html).toContain(`#item-${id}`);
+    expect(html).toContain('data-testid="question-text"');
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
+    expect((await browser.post('/s/items/itm_0000000000000000/practice')).status).toBe(404);
+  });
+  it('recorded hinted correctness and same-day independent correctness remain truthful on detail', async () => {
+    const {browser,id} = await fixture();
+    const started = await browser.post(`/s/items/${id}/practice`);
+    const destination = started.headers.get('location')!;
+    expect(destination).toMatch(/^\/s\/practice\/pkt_/);
+    await waitFor(async () => (await browser.text(destination)).includes('practice-question'));
+    const packet = destination.split('?')[0]!;
+    const date = new Date().toLocaleDateString('en-CA');
+    await browser.post(`${packet}/${id}/result`, {correct:'yes',performedOn:date});
+    expect(await browser.visibleText(`/s/items/${id}`)).toContain('当天独立做对');
+    const next = await browser.post(`/s/items/${id}/practice`);
+    const nextPath = next.headers.get('location')!.split('?')[0]!;
+    await waitFor(async () => (await browser.text(nextPath)).includes('practice-question'));
+    await browser.post(`${nextPath}/${id}/hint`,{level:'1'});
+    await browser.post(`${nextPath}/${id}/result`,{correct:'yes',performedOn:date});
+    const text = await browser.visibleText(`/s/items/${id}`);
+    expect(text).toContain('用了一级提示后做对');
+    expect(text).toContain('当天独立做对');
+    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(id)).toEqual({status:'needs_recheck'});
+  });
+  it.each([
+    ['Asia/Shanghai','2026-10-18T16:30:00.000Z','2026-10-19'],
+    ['America/Los_Angeles','2026-10-19T00:30:00.000Z','2026-10-18'],
+  ])('reflection confirmation date follows router UI timezone %s', async (timeZone,createdAt,displayDay) => {
+    const {browser,id} = await fixture({timeZone});
+    const {submitV2Reflection} = await import('../../src/v2/reflectionService.js');
+    const confirmed = submitV2Reflection(id,{attemptState:'方法基本正确但步骤出错',cause:'计算',masteryFeeling:2,summary:'确认日期应按我的页面时区显示'});
+    expect(confirmed.ok).toBe(true);
+    getDb().prepare('UPDATE error_diagnosis SET created_at=? WHERE item_id=?').run(createdAt,id);
+    expect(await browser.text(`/s/items/${id}`)).toContain(`<time dateTime="${createdAt}">${displayDay}</time>`);
+  });
+  async function managementFixture() {
+    const {browser,id}=await fixture();
+    const other=(getDb().prepare('SELECT id FROM error_item WHERE id!=? ORDER BY item_index LIMIT 1').get(id) as {id:string}).id;
+    await browser.post(`/s/items/${id}/category`,{grade:'初三',subject:'管理原学科',chapter:'管理原章节'});
+    const query=new URLSearchParams({grade:'初三',subject:'管理原学科',chapter:'管理原章节',status:'ready_for_reflection',q:'x',mode:'select'});
+    for(const itemId of [id,other]) query.append('itemIds',itemId);
+    const returnTo=`/s/items?${query}#item-${other}`;
+    const detailUrl=`/s/items/${id}?${new URLSearchParams({returnTo})}`;
+    const hidden=(html:string,name:string)=>new RegExp(`name="${name}" value="([^"]*)"`).exec(html)?.[1]?.replaceAll('&amp;','&');
+    const assertContext=(html:string)=>expect(hidden(html,'returnTo')).toBe(returnTo);
+    return {browser,id,other,returnTo,detailUrl,hidden,assertContext};
+  }
+  it('management category preserves context on link, cancel, validation error and successful reclassification',async()=>{
+    const {browser,id,returnTo,detailUrl,assertContext}=await managementFixture();
+    const detailHtml=await browser.text(detailUrl);
+    const category=`/s/items/${id}/category?${new URLSearchParams({returnTo})}`;
+    expect(detailHtml).toContain(`href="${category}"`);
+    const formHtml=await browser.text(category);assertContext(formHtml);
+    expect(formHtml).toContain(`href="${detailUrl}"`);
+    const invalid=await browser.post(`/s/items/${id}/category`,{returnTo,grade:'初三',subject:'新学科',chapter:' '});
+    expect(invalid.status).toBe(400);assertContext(await invalid.text());
+    const saved=await browser.post(`/s/items/${id}/category`,{returnTo,grade:'初二',subject:'新学科',chapter:'新章节'});
+    expect(saved.headers.get('location')).toBe(detailUrl);
+    expect(await browser.text(detailUrl)).toContain(returnTo.replaceAll('&','&amp;'));
+    const library=await browser.text(returnTo);
+    expect(library).toContain('管理原学科');
+    expect(library).toContain('管理原章节');
+    expect(library).toContain('name="subject" value="管理原学科"');
+    expect(library).toContain('这个年级还没有管理原学科错题');
+    expect(library).toContain('清除筛选');
+    expect(library).toContain('保留的选择');
+  });
+  it('management OCR correction retains context through proposal/error/accept and manual edit cancel/no-op/save/error',async()=>{
+    const {browser,id,returnTo,detailUrl,hidden,assertContext}=await managementFixture();
+    const fixUrl=`/s/items/${id}/fix?${new URLSearchParams({returnTo})}`;
+    const fix=await browser.text(fixUrl);assertContext(fix);
+    expect(fix).toContain(`href="${detailUrl}"`);
+    const invalid=await browser.post(`/s/items/${id}/fix`,{returnTo,revision:hidden(fix,'revision')!,clientRequestId:hidden(fix,'clientRequestId')!,instruction:' '});
+    expect(invalid.status).toBe(400);assertContext(await invalid.text());
+    const proposal=await browser.post(`/s/items/${id}/fix`,{returnTo,revision:hidden(fix,'revision')!,clientRequestId:hidden(fix,'clientRequestId')!,instruction:'题干末尾补上记号'});
+    expect(proposal.status).toBe(200);const proposed=await proposal.text();assertContext(proposed);
+    const proposalId=hidden(proposed,'proposalId')!;
+    const badAccept=await browser.post(`/s/items/${id}/fix/accept`,{returnTo,proposalId,revision:'999'});
+    expect(badAccept.status).toBe(409);assertContext(await badAccept.text());
+    const accepted=await browser.post(`/s/items/${id}/fix/accept`,{returnTo,proposalId,revision:hidden(proposed,'revision')!});
+    expect(accepted.headers.get('location')).toBe(detailUrl);
+    const editUrl=`/s/items/${id}/edit?${new URLSearchParams({returnTo})}`;
+    const edit=await browser.text(editUrl);assertContext(edit);expect(edit).toContain(`href="${detailUrl}"`);
+    const {getEvidenceView}=await import('../../src/v2/correctionService.js');
+    const evidence=getEvidenceView(id)!;
+    for(const questionText of ['',evidence.questionText]) expect((await browser.post(`/s/items/${id}/edit`,{returnTo,revision:String(evidence.revision),questionText})).headers.get('location')).toBe(detailUrl);
+    const error=await browser.post(`/s/items/${id}/edit`,{returnTo,revision:'999',questionText:evidence.questionText+'（改）'});
+    expect(error.status).toBe(409);assertContext(await error.text());
+    const saved=await browser.post(`/s/items/${id}/edit`,{returnTo,revision:String(evidence.revision),questionText:evidence.questionText+'（改）'});
+    expect(saved.headers.get('location')).toBe(detailUrl);
+  });
+  it('management discard and undo preserve exact filters, selection and original anchor with safe fallbacks',async()=>{
+    const {browser,id,returnTo,other,assertContext}=await managementFixture();
+    const discarded=await browser.post(`/s/items/${id}/discard`,{returnTo});
+    expect(discarded.status).toBe(303);
+    const target=new URL(discarded.headers.get('location')!,'http://notebook.invalid');
+    expect(target.searchParams.get('removed')).toBe(id);
+    target.searchParams.delete('removed');target.searchParams.delete('returnItem');
+    expect(target.pathname+target.search+target.hash).toBe(returnTo);
+    const flash=await browser.text(discarded.headers.get('location')!);assertContext(flash);
+    const restored=await browser.post(`/s/items/${id}/restore`,{returnTo});
+    expect(restored.headers.get('location')).toBe(returnTo);
+    const restoredPage=await browser.text(returnTo);
+    expect(restoredPage).toContain(`value="${id}"`);expect(restoredPage).toContain(`value="${other}"`);
+    getDb().prepare("UPDATE error_item SET status='scheduled' WHERE id=?").run(id);
+    const refused=await browser.post(`/s/items/${id}/discard`,{returnTo});
+    expect(refused.status).toBe(409);expect(await refused.text()).toContain(returnTo.replaceAll('&','&amp;'));
+    for(const malicious of ['https://evil.example/s/items','/s/settings','/s/items?redirect=https://evil.example']){
+      const pageHtml=await browser.text(`/s/items/${id}/category?${new URLSearchParams({returnTo:malicious})}`);
+      expect(pageHtml).not.toContain('evil.example');
+      const result=await browser.post(`/s/items/${id}/category`,{returnTo:malicious,grade:'初三',subject:'管理原学科',chapter:'管理原章节'});
+      const location=result.headers.get('location')!;
+      expect(location.startsWith(`/s/items/${id}?returnTo=`)).toBe(true);expect(location).not.toContain('evil.example');
+    }
+  });
+  it('history uses the actual domain calendar for delayed correctness across a UI time-zone boundary', async () => {
+    const {localDayText} = await import('../../src/web/weekPlan.js');
+    const generated = new Date();
+    generated.setDate(generated.getDate()-3);
+    generated.setHours(23,59,0,0);
+    const nativeDay = generated.toLocaleDateString('en-CA');
+    const timeZone = ['Pacific/Kiritimati','Etc/GMT+12','UTC'].find(zone => localDayText(generated,zone) !== nativeDay)!;
+    expect(timeZone).toBeTruthy();
+    const {browser,id} = await fixture({timeZone});
+    const started = await browser.post(`/s/items/${id}/practice`);
+    const destination = started.headers.get('location')!;
+    await waitFor(async () => (await browser.text(destination)).includes('practice-question'));
+    const packetPath = destination.split('?')[0]!;
+    const pid = packetPath.split('/').pop()!;
+    getDb().prepare('UPDATE review_packet SET generated_at=? WHERE id=?').run(generated.toISOString(),pid);
+    await browser.post(`${packetPath}/${id}/result`,{correct:'yes',performedOn:new Date().toLocaleDateString('en-CA')});
+    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(id)).toEqual({status:'temporarily_mastered'});
+    expect(await browser.visibleText(`/s/items/${id}`)).toContain('隔 3 天独立做对');
   });
 });

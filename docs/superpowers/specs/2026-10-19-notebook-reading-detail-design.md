@@ -27,4 +27,6 @@
 ## PR 边界
 1. codex/notebook-reading -> main：阅读优先列表、搜索/年级/学科/章节/学习状态、选择模式、响应布局、返回上下文、相关测试与HIG对照。
 2. codex/notebook-detail -> main：单题学习详情、已有学生反思、准确结果和提示使用记录、直接创建或续接现有单题练习、相关测试与HIG对照。
-两分支各自从 5d787e0 创建，独立验证。最终另外临时集成两分支验证组合，必要时解决共享文件的局部合并冲突并记录顺序。无需合并主分支。
+两分支最初各自从 `5d787e0` 创建并独立验证。最终把 `codex/notebook-reading`（`e88f1b5`）合入 `codex/notebook-detail`，在 PR2 分支保存已经解决冲突、可复现验证的组合实现；不会合并到主分支。
+
+两份 PR 均以 `main` 为目标，遵循仓库约定。**先合并 [PR #34](https://github.com/PCcoding666/Super_Error_Log/pull/34)（阅读列表），再合并依赖它的 PR2（单题学习）**。PR2 暂时包含 PR1 的提交，使审查者无需自行解决未验证的冲突；单题改动可按 `codex/notebook-reading..codex/notebook-detail` 对比；最终横屏修正先提交在阅读分支 `944a516`，再合入详情分支，保留最新 PR #34 head 为祖先。共享列表/详情路由保留双方行为，返回地址统一使用 `safeNotebookReturn` / `notebookUrl` 的白名单规范化，仍保留题目锚点。完整组合验证在 PR2 分支执行。本次提交 PR 不授权合并 main 或部署。

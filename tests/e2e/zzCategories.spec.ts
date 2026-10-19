@@ -67,11 +67,13 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
       expect(result.ok()).toBeTruthy();
     }
     await page.goto(`${WEB}/s/items/${ids[0]}`);
+    await page.getByText('题目信息与管理',{exact:true}).click();
     await page.getByRole('link',{name:'修改分类'}).click();
     await expect(page.getByLabel('年级',{exact:true})).toHaveValue('初二');
     await page.getByLabel('年级',{exact:true}).selectOption('初三');
     await page.getByTestId('next-step-primary').click();
     await expect(page.getByTestId('item-category')).toHaveText(`初三 · ${subject} · 一元二次方程`);
+    await page.getByText('题目信息与管理',{exact:true}).click();
     await page.getByRole('link',{name:'修改分类'}).click();
     await page.getByLabel('年级',{exact:true}).selectOption('初二');
     await page.getByTestId('next-step-primary').click();
@@ -161,6 +163,9 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     expect(dimensions.rendered).toBeCloseTo(dimensions.natural,1);
     expect((await photo.boundingBox())!.height).toBeGreaterThan(100);
     await cards.click();
+    await expect(page.getByTestId('next-step-primary')).toHaveText('重做这题');
+    await expect(page.getByTestId('item-reflection')).toContainText('还没有已确认的错因记录');
+    await expect(page.locator('#bar-redo input[name=returnTo]')).toHaveValue(expected.slice(WEB.length));
     await page.getByTestId('back-link').click();
     await expect(page).toHaveURL(expected);
     await expect(cards).toBeInViewport();
@@ -219,7 +224,10 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
         const mutations=observer.takeRecords().length;
         observer.disconnect();return mutations;
       })).toBe(0);
+      const openedId=(await cards.first().getAttribute('id'))!.slice('item-'.length);
       await cards.first().click();
+      await page.waitForURL(url=>url.pathname===`/s/items/${openedId}`,{waitUntil:'domcontentloaded'});
+      await expect(page.getByTestId('question-text')).toBeVisible();
       await page.goBack();
       await expect(page.locator('input[name=itemIds]:checked')).toHaveCount(1);
       await expect(page.getByTestId('next-step-caption')).toHaveText('已选 1 道 / 最多 8 道');
