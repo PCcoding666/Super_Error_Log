@@ -224,7 +224,10 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
         const mutations=observer.takeRecords().length;
         observer.disconnect();return mutations;
       })).toBe(0);
+      const openedId=(await cards.first().getAttribute('id'))!.slice('item-'.length);
       await cards.first().click();
+      await page.waitForURL(url=>url.pathname===`/s/items/${openedId}`,{waitUntil:'domcontentloaded'});
+      await expect(page.getByTestId('question-text')).toBeVisible();
       await page.goBack();
       await expect(page.locator('input[name=itemIds]:checked')).toHaveCount(1);
       await expect(page.getByTestId('next-step-caption')).toHaveText('已选 1 道 / 最多 8 道');
