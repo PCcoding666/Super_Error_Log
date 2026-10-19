@@ -1,4 +1,4 @@
-import { NOTEBOOK_STATUSES, matchesNotebook, type NotebookFilters } from './notebook.js';
+import { NOTEBOOK_STATUSES, matchesNotebook, notebookUrl, safeNotebookReturn, validNotebookSelection, type NotebookFilters } from './notebook.js';
 import type { NotebookPageProps } from './views/items.js';
 import type { HandwritingRecognizer } from '../ai/handwriting.js';
 import { practiceRouter } from './practiceRouter.js';
@@ -548,7 +548,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const filters: NotebookFilters = {grade,subject,chapter,status:Object.hasOwn(NOTEBOOK_STATUSES,status) ? status : '',q:str(input?.q).trim().slice(0,200)};
     const matches = (item: V2WeekItem): boolean => matchesNotebook(item,filters,filters.q ? getEvidenceView(item.id)?.questionText : '');
     const items = library.items.filter(matches), backlog = library.backlog.filter(matches);
-    const selectedIds = request.method === 'POST' ? list(request.body?.itemIds) : [];
+    const requestedSelection = request.method === 'POST' || request.query.mode === 'select' ? list(input?.itemIds) : [];
+    const validReturnSelection = validNotebookSelection(requestedSelection) && !!safeNotebookReturn(notebookUrl(filters,undefined,requestedSelection),'');
+    const selectedIds = request.method === 'POST' || validReturnSelection ? requestedSelection : [];
     const visibleIds = new Set([...items,...backlog].map(item=>item.id));
     const recommend = recommendPractice(ctx.mobileDataDir);
     return {items,backlog,filters,chapters,total:scope.length,selectedIds,
@@ -558,7 +560,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       category:{grade,subject,subjects},anyPhoto:state.week.photos.length > 0,
       finding:state.photos.some(photo=>photo.state === 'finding'),
       bar:{caption:'',primary:null,secondary:[]},removed:ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null,
-      flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null}};
+      flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null,err:!validReturnSelection && request.method !== 'POST' ? '返回的选题信息不可用，请重新选择。' : null}};
   };
   const itemsPage = async (request: Request, response: Response): Promise<ReactNode> => ItemsPage(await notebookData(request,response));
   r.get('/items', page(async (request, response) => render(response, await itemsPage(request,response))));
@@ -566,6 +568,15 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.post('/items/select', form, page(async (request,response) => {
     const data = await notebookData(request,response);
     const ids = data.selectedIds ?? [];
+    const openItem = str(request.body?.openItem);
+    if (openItem) {
+      const item = findItem(openItem);
+      const returnTo = notebookUrl(data.filters ?? data.category,item.id,ids);
+      if (!validNotebookSelection(ids) || !safeNotebookReturn(returnTo,'')) {
+        render(response,ItemsPage({...data,flash:{err:'选题信息过多或含不可用编号。已保留选择，请减少待选题或取消不可用编号后再查看。'}}),400); return;
+      }
+      response.redirect(303,`/s/items/${item.id}?${new URLSearchParams({returnTo})}`); return;
+    }
     const chapter = str(request.body?.addChapter);
     if (chapter) {
       const eligible = new Set(data.eligibleIds);

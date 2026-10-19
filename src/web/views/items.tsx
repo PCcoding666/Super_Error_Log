@@ -14,17 +14,18 @@ export function cardStatus(status: string): string | null {
   return null;
 }
 
-export function ItemCard(props: { item: V2WeekItem; href?: string; extra?: ReactNode }): ReactNode {
+export function ItemCard(props: { item: V2WeekItem; href?: string; open?: boolean; extra?: ReactNode }): ReactNode {
   const { item } = props;
   const meta = [item.grade, item.subject || '未分类', item.chapter || '未分类'].filter(Boolean).join(' · ');
   const body = <span className="row-text">
-    <span className="notebook-card-heading">{item.shortId ?? '题目'}{props.href ? <span className="notebook-open">查看题目 ›</span> : null}</span>
+    <span className="notebook-card-heading">{item.shortId ?? '题目'}{props.href || props.open ? <span className="notebook-open">查看题目 ›</span> : null}</span>
     <img className="crop big notebook-crop" src={`/s/img/item/${item.id}?scope=full&s=big`} alt={`${item.shortId ?? '题目'} · 整题照片`} loading="lazy" />
     <span className="excerpt">{item.questionExcerpt || '题目文字暂不可用，可查看原图。'}</span>
     <span className="meta-line muted">{[meta,item.shortId ? `练习纸编号 ${item.shortId}` : null].filter(Boolean).join(' · ')}</span>
     <span className="meta-line muted">{NOTEBOOK_STATUSES[item.status] ?? '待练习'}</span>
     {props.extra}
   </span>;
+  if (props.open) return <button type="submit" name="openItem" value={item.id} form="notebook-selection" id={`item-${item.id}`} className="row notebook-card" data-testid="item-card" aria-label={`查看题目 ${item.shortId ?? '这道题'}`}>{body}</button>;
   return props.href
     ? <a id={`item-${item.id}`} className="row notebook-card" href={props.href} data-testid="item-card">{body}</a>
     : <div id={`item-${item.id}`} className="row notebook-card" data-testid="item-card">{body}</div>;
@@ -44,14 +45,14 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
   const selected = new Set(props.selectedIds ?? []);
   const eligible = new Set(props.eligibleIds ?? []);
   const context = notebookUrl(filters);
-  const selectionUrl = `${context}${context.includes('?') ? '&' : '?'}mode=select`;
+  const selectionUrl = notebookUrl(filters,undefined,[]);
   const subjectSwitch = <details className="subject-switch">
     <summary aria-label={`切换学科，当前${subject}`} data-testid="subject-switch"><span>{subject}</span><svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary>
     <nav className="subject-options" aria-label="选择学科">{subjects.map(name => <a key={name} href={notebookUrl({grade,subject:name})} aria-current={name === subject ? 'page' : undefined}><span>{name}</span>{name === subject ? <span aria-hidden="true">✓</span> : null}</a>)}</nav>
   </details>;
   const card = (item: V2WeekItem) => <li key={item.id} className="notebook-entry">
     {props.selection ? <label className="choice notebook-choice"><input type="checkbox" name="itemIds" value={item.id} defaultChecked={selected.has(item.id)} disabled={!eligible.has(item.id) && !selected.has(item.id)} /><span>选择 {item.shortId ?? '这道题'}{!eligible.has(item.id) ? <span className="meta-line muted">{selected.has(item.id) ? '当前不可加入，请取消选择后继续' : '已在练习中或暂不可练习'}</span> : null}</span></label> : null}
-    <ItemCard item={item} href={`/s/items/${item.id}?${new URLSearchParams({returnTo:notebookUrl(filters,item.id)})}`} />
+    <ItemCard item={item} open={props.selection} href={props.selection ? undefined : `/s/items/${item.id}?${new URLSearchParams({returnTo:notebookUrl(filters,item.id)})}`} />
     <a className="notebook-original" href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer">查看原图<span className="visually-hidden"> {item.shortId ?? '这道题'}（新窗口）</span></a>
   </li>;
   const recovery = props.recoveryItems ?? [];

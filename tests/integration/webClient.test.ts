@@ -1324,6 +1324,33 @@ describe('年级、学科、章节分类', () => {
     expect(getDb().prepare('SELECT item_id FROM review_packet_item').all()).toEqual([{item_id:ids[1]}]);
   });
 
+  it('native question opening preserves exact selection on page-back without creating practice', async()=>{
+    const {browser,rows}=await categoryFixture(9);
+    const ids=rows.map(row=>row.id);
+    getDb().prepare("UPDATE error_item SET status='scheduled' WHERE id=?").run(ids[1]!);
+    await browser.post(`/s/items/${ids[2]}/category`,{grade:'初三',subject:'数学',chapter:'筛选外章节'});
+    const fields={grade:'初三',subject:'数学',chapter:'一元一次方程',status:'ready_for_reflection',q:'x',mode:'select'};
+    const checked=(html:string)=>[...html.matchAll(/<input[^>]*name="itemIds"[^>]*>/g)].filter(m=>/checked/.test(m[0])).map(m=>/value="([^"]+)"/.exec(m[0])![1]);
+    for(const selection of [ids.slice(0,2),ids,[],[ids[0]!, 'itm_ffffffffffffffff']]){
+      const opened=await browser.post('/s/items/select',{...fields,itemIds:selection,openItem:ids[0]!});
+      expect(opened.status).toBe(303);
+      expect(opened.headers.get('location')).toMatch(new RegExp(`^/s/items/${ids[0]}\\?returnTo=`));
+      const context=new URL(opened.headers.get('location')!,'http://notebook.invalid').searchParams.get('returnTo')!;
+      const restored=new URL(context,'http://notebook.invalid');
+      expect(restored.searchParams.get('mode')).toBe('select');
+      expect(restored.searchParams.getAll('itemIds')).toEqual(selection);
+      for(const key of ['grade','subject','chapter','status','q'] as const) expect(restored.searchParams.get(key)).toBe(fields[key]);
+      const detail=await browser.text(opened.headers.get('location')!);
+      expect(detail).toContain(`href="${context.replaceAll('&','&amp;')}"`);
+      const html=await browser.text(context);
+      expect(checked(html).sort()).toEqual([...selection].sort());
+      expect(html).toContain(`已选 ${selection.length} 道 / 最多 8 道`);
+      if(selection.includes(ids[1]!) || selection.includes('itm_ffffffffffffffff')) expect(html).toContain('保留的选择');
+      if(selection.includes(ids[1]!)) expect(html).toContain('当前不可加入，请取消选择后继续');
+      if(selection.includes(ids[2]!)) expect(html).toContain('筛选外章节');
+      expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
+    }
+  });
   it('chapter selection is explicit and only adds currently filtered eligible questions without creating practice', async () => {
     const { browser, rows } = await categoryFixture();
     for (const row of rows) await browser.post(`/s/items/${row.id}/category`, {grade:'初三',subject:'数学',chapter:'方程'});
