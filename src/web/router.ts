@@ -584,7 +584,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       reflected: reflection != null, reflection, error, returnTo,
       eligible: [...recommend.recommended,...recommend.others].some(candidate => candidate.id === itemId),
       resumePracticeId: unfinishedPractice(itemId), reflectionPracticeId: history[0]?.id,
-      practiceHistory: history.map(record => ({...record,generated_day:record.generated_at ? localDayText(new Date(record.generated_at),ctx.timeZone) : null})),
+      // recordAttempt uses the process calendar; UI time-zone overrides must not relabel its delay evidence.
+      practiceHistory: history.map(record => ({...record,generated_day:record.generated_at ? localDayText(new Date(record.generated_at),Intl.DateTimeFormat().resolvedOptions().timeZone) : null})),
     });
   };
 

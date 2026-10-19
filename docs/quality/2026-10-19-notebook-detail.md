@@ -54,6 +54,8 @@ NOTEBOOK_DETAIL_EVIDENCE=docs/quality/assets/notebook-detail npx playwright test
 - 后续 RED→GREEN：增加“页面时区与进程日历跨午夜”回归，初次复现数据库已按 3 天计入延迟证据、详情却按 2 天标注未计入。修正详情生成日转换以遵循 `recordAttempt` 的现有进程日历；不改变领域日期判定。最终完整 `webClient` + `itemLearning` **57/57 通过（28.12s）**，typecheck/build、最终 typecheck 与 diffcheck 通过。
 - 上述首轮全量命令启动于日期边界修正前；最终日期修正与测试入口更新后只运行受影响检查。根任务明确要求在后续 PR1+PR2 组合分支运行最终完整 `npm run verify`，本页不声称独立分支最终全量全绿。
 
+验证对应的提交：`09d8989` 保存单题功能实现（其生产页面代码对应首轮全量命令；后续浏览器夹具与导航适配另外按上述专项检查验证）；下一条日历修正提交仅改变详情日期转换及新增回归，最终 57 项专项、类型检查和构建结果适用于此修正后的代码。
+
 ## 边界与未验证项
 
 - 这是本地 Linux/Chromium 自动验收，不代表真实 iPhone/Safari、VoiceOver、真实学生题图、实际打印机或线上运行已验收。

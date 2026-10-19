@@ -1295,8 +1295,8 @@ describe('年级、学科、章节分类', () => {
 });
 
 describe('single-question learning detail', () => {
-  async function fixture() {
-    const env = await setup();
+  async function fixture(options: Parameters<typeof setup>[0] = {}) {
+    const env = await setup(options);
     const browser = await pairBrowser(env);
     await browser.post('/s/consent');
     const {jobId} = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as {jobId:string};
@@ -1370,5 +1370,24 @@ describe('single-question learning detail', () => {
     expect(text).toContain('用了一级提示后做对');
     expect(text).toContain('当天独立做对');
     expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(id)).toEqual({status:'needs_recheck'});
+  });
+  it('history uses the actual domain calendar for delayed correctness across a UI time-zone boundary', async () => {
+    const {localDayText} = await import('../../src/web/weekPlan.js');
+    const generated = new Date();
+    generated.setDate(generated.getDate()-3);
+    generated.setHours(23,59,0,0);
+    const nativeDay = generated.toLocaleDateString('en-CA');
+    const timeZone = ['Pacific/Kiritimati','Etc/GMT+12','UTC'].find(zone => localDayText(generated,zone) !== nativeDay)!;
+    expect(timeZone).toBeTruthy();
+    const {browser,id} = await fixture({timeZone});
+    const started = await browser.post(`/s/items/${id}/practice`);
+    const destination = started.headers.get('location')!;
+    await waitFor(async () => (await browser.text(destination)).includes('practice-question'));
+    const packetPath = destination.split('?')[0]!;
+    const pid = packetPath.split('/').pop()!;
+    getDb().prepare('UPDATE review_packet SET generated_at=? WHERE id=?').run(generated.toISOString(),pid);
+    await browser.post(`${packetPath}/${id}/result`,{correct:'yes',performedOn:new Date().toLocaleDateString('en-CA')});
+    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(id)).toEqual({status:'temporarily_mastered'});
+    expect(await browser.visibleText(`/s/items/${id}`)).toContain('隔 3 天独立做对');
   });
 });
