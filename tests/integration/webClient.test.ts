@@ -1293,3 +1293,82 @@ describe('年级、学科、章节分类', () => {
     } finally { getDb().prepare("UPDATE student_profile SET grade='初三'").run(); }
   });
 });
+
+describe('single-question learning detail', () => {
+  async function fixture() {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const {jobId} = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as {jobId:string};
+    await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
+    await browser.get('/s/items');
+    const {id} = getDb().prepare('SELECT id FROM error_item ORDER BY item_index LIMIT 1').get() as {id:string};
+    return {env,browser,id};
+  }
+  it('GET reads reflection without creating a practice or presenting unconfirmed AI suggestions', async () => {
+    const {browser,id} = await fixture();
+    const {askFollowup,answerFollowup,getV2Reflection,submitV2Reflection} = await import('../../src/v2/reflectionService.js');
+    await askFollowup(id);
+    expect((await answerFollowup(id,{answer:'我跳过了检查符号这一步'})).ok).toBe(true);
+    const suggestion = getV2Reflection(id)?.suggestion?.summary;
+    expect(suggestion).toBeTruthy();
+    const neutral = await browser.visibleText(`/s/items/${id}`);
+    expect(neutral).toContain('还没有已确认的错因记录');
+    expect(neutral).not.toContain(suggestion);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
+    expect(submitV2Reflection(id,{attemptState:'方法基本正确但步骤出错',cause:'计算',masteryFeeling:2,summary:'移项忘了变号'}).ok).toBe(true);
+    expect(await browser.visibleText(`/s/items/${id}`)).toContain('移项忘了变号');
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
+  });
+  it('POST starts one item through current print/practice services and repeated POST resumes the same packet', async () => {
+    const {browser,id} = await fixture();
+    const first = await browser.post(`/s/items/${id}/practice`);
+    expect(first.status).toBe(303);
+    const destination = first.headers.get('location')!;
+    expect(destination).toMatch(new RegExp(`^/s/practice/pkt_[0-9a-f]{16}\\?item=${id}$`));
+    const second = await browser.post(`/s/items/${id}/practice`);
+    expect(second.headers.get('location')).toBe(destination);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:1});
+    expect(getDb().prepare('SELECT item_id FROM review_packet_item').all()).toEqual([{item_id:id}]);
+    const html = await browser.text(`/s/items/${id}`);
+    expect(html).toContain('aria-label="继续练习" data-testid="next-step-primary"');
+    await waitFor(async () => (await browser.text(destination)).includes('practice-question'));
+    expect((await browser.get(destination)).status).toBe(200);
+  });
+  it('stale eligibility stays on detail with recovery and safe return context, and missing items are 404', async () => {
+    const {browser,id} = await fixture();
+    getDb().prepare("UPDATE error_item SET status='temporarily_mastered', next_review_at='2999-01-01' WHERE id=?").run(id);
+    const returnTo = `/s/items?grade=初三&subject=数学&chapter=一元一次方程&status=temporarily_mastered&q=方程#item-${id}`;
+    const result = await browser.post(`/s/items/${id}/practice`, {returnTo});
+    expect(result.status).toBe(409);
+    const html = await result.text();
+    expect(html).toContain('尚未到复习时间');
+    expect(html).toContain('q=%E6%96%B9%E7%A8%8B');
+    expect(html).toContain('chapter=%E4%B8%80%E5%85%83%E4%B8%80%E6%AC%A1%E6%96%B9%E7%A8%8B');
+    expect(html).toContain('status=temporarily_mastered');
+    expect(html).toContain(`#item-${id}`);
+    expect(html).toContain('data-testid="question-text"');
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
+    expect((await browser.post('/s/items/itm_0000000000000000/practice')).status).toBe(404);
+  });
+  it('recorded hinted correctness and same-day independent correctness remain truthful on detail', async () => {
+    const {browser,id} = await fixture();
+    const started = await browser.post(`/s/items/${id}/practice`);
+    const destination = started.headers.get('location')!;
+    expect(destination).toMatch(/^\/s\/practice\/pkt_/);
+    await waitFor(async () => (await browser.text(destination)).includes('practice-question'));
+    const packet = destination.split('?')[0]!;
+    const date = new Date().toLocaleDateString('en-CA');
+    await browser.post(`${packet}/${id}/result`, {correct:'yes',performedOn:date});
+    expect(await browser.visibleText(`/s/items/${id}`)).toContain('当天独立做对');
+    const next = await browser.post(`/s/items/${id}/practice`);
+    const nextPath = next.headers.get('location')!.split('?')[0]!;
+    await waitFor(async () => (await browser.text(nextPath)).includes('practice-question'));
+    await browser.post(`${nextPath}/${id}/hint`,{level:'1'});
+    await browser.post(`${nextPath}/${id}/result`,{correct:'yes',performedOn:date});
+    const text = await browser.visibleText(`/s/items/${id}`);
+    expect(text).toContain('用了一级提示后做对');
+    expect(text).toContain('当天独立做对');
+    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(id)).toEqual({status:'needs_recheck'});
+  });
+});

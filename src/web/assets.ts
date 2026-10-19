@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import sharp from 'sharp';
 import { CLIENT_SCRIPT } from './clientScript.js';
+import { ITEM_LEARNING_STYLES } from './itemLearningStyles.js';
 export { UI_SHEET_SCRIPT } from './sheet.js';
 
 export const APP_NAME = '超级错题本';
@@ -15,7 +16,8 @@ export const THEME_COLOR = '#F2F2F7';
 export const THEME_COLOR_DARK = '#000000';
 export const BACKGROUND_COLOR = '#F2F2F7';
 
-export const STYLES = `
+export const STYLES = `${ITEM_LEARNING_STYLES}
+
 /* ---------- HIG 网页适配：系统字体、中性分组底、蓝色交互、实色内容 ----------
    --line 只负责分组；--field 为需要辨认的输入边界。正文、次要和语义文字、
    输入边界与焦点的对比度由预览验收计算；材质只用于底部操作层。 */

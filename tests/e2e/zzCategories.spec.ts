@@ -67,11 +67,13 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
       expect(result.ok()).toBeTruthy();
     }
     await page.goto(`${WEB}/s/items/${ids[0]}`);
+    await page.getByText('题目信息与管理',{exact:true}).click();
     await page.getByRole('link',{name:'修改分类'}).click();
     await expect(page.getByLabel('年级',{exact:true})).toHaveValue('初二');
     await page.getByLabel('年级',{exact:true}).selectOption('初三');
     await page.getByTestId('next-step-primary').click();
     await expect(page.getByTestId('item-category')).toHaveText(`初三 · ${subject} · 一元二次方程`);
+    await page.getByText('题目信息与管理',{exact:true}).click();
     await page.getByRole('link',{name:'修改分类'}).click();
     await page.getByLabel('年级',{exact:true}).selectOption('初二');
     await page.getByTestId('next-step-primary').click();

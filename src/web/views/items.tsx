@@ -3,7 +3,8 @@ import { JUNIOR_CATALOG } from '../../classification/juniorCatalog.js';
 import type { ReactNode } from 'react';
 import type { V2WeekItem } from '../../v2/weekService.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
-import { Page, Phrased, Problem, VoiceBox, quoted, type BarModel } from './layout.js';
+export { ItemDetailPage } from './itemDetail.js';
+import { Page, Phrased, Problem, VoiceBox, type BarModel } from './layout.js';
 
 /** 卡片只显示对他有意义的状态（§4.5）。 */
 export function cardStatus(status: string): string | null {
@@ -64,45 +65,6 @@ export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; a
         <p className="hint">下一步可逐题调整，再加入练习；每次练习最多 8 道。</p>
       </form> : <section className="card"><p>这个年级还没有{subject}错题</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="btn" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '去勾' : '录入第一道错题'}</a></section>}
     </Page>;
-}
-
-const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
-
-export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView | null; canDiscard: boolean; reflected: boolean; practiceHistory?: Array<{id:string;correct:number|null;performed_at:string|null}>; error?: string | null }): ReactNode {
-  const { item, evidence } = props;
-  const bar: BarModel = {
-    caption: '',
-    primary: evidence ? { title: '字认错了？改一下', key: 'fix', href: `/s/items/${item.id}/fix` } : { title: '返回错题本', key: 'goHome', href: '/s/' },
-    secondary: props.canDiscard ? [{ title: '这不是错题', key: 'discard', post: `/s/items/${item.id}/discard` }] : [],
-  };
-  const groups = Object.entries(KIND_TITLE)
-    .map(([kind, title]) => ({ title, notes: (evidence?.observations ?? []).filter(o => o.kind === kind) }))
-    .filter(group => group.notes.length > 0);
-  return (
-    <Page title={item.shortId ?? '题目'} back={{ href: `/s/items?${new URLSearchParams({ ...(item.grade ? {grade:item.grade} : {}), ...(item.subject ? {subject:item.subject} : {}) })}#item-${item.id}`, label: '错题本' }} bar={bar}>
-      <p className="eyebrow">练习纸编号</p>
-      <h1>{item.shortId ?? '题目'}</h1>
-      {props.error ? <Problem title="没成功" detail={props.error} /> : null}
-      <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /></a>
-      <p className="hint">整题照片 · 点开可以两指放大</p>
-      {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">{quoted('字可能认错了：对照上面的照片看一眼，不对就点「改一下」。')}</p> : null}
-      <section className="card">
-        <h2 className="card-title">AI 认出的题目</h2>
-        <p className="pre" data-testid="question-text">{evidence?.questionText ?? item.questionExcerpt ?? ''}</p>
-        <p className="small muted" data-testid="item-category">{[item.grade, item.subject, item.chapter].filter(Boolean).join(' · ')}</p>
-        <a className="more" href={`/s/items/${item.id}/category`}>修改分类</a>
-        {item.knowledgeTags.length > 0 ? <p className="small muted">细知识点：{item.knowledgeTags.join('、')}</p> : null}
-        {groups.map(group => (
-          <div key={group.title}>
-            <h2 className="card-title sub">{group.title}</h2>
-            {group.notes.map(note => <p key={note.id} className="pre">{note.text}</p>)}
-          </div>
-        ))}
-        <p className="small muted">{props.reflected ? '说过了' : '还没说为什么错'}</p>
-      </section>
-      {props.practiceHistory?.length ? <section className="card"><h2>练习记录</h2><ul className="list">{props.practiceHistory.map(record => <li key={record.id}><a className="row" href={`/s/practice/${record.id}?item=${item.id}${record.correct === null ? '' : '&view=check'}`}>{record.correct === null ? '继续练习' : `${record.performed_at} · ${record.correct ? '做对了' : '做错了'}`} · 查看作答</a></li>)}</ul></section> : null}
-    </Page>
-  );
 }
 
 export interface ProposalChange { field: string; before: string; after: string }

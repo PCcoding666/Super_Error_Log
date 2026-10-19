@@ -54,6 +54,7 @@ import {
   WhyAskPage, WhyConfirmPage, WhyDonePage, WhyIntroPage, COMPLETIONS, type DayOption, type PrintState, type RecordAnswer,
 } from './views/practice.js';
 import type { BarButton, BarModel } from './views/layout.js';
+import { itemNotebookReturn, type ItemPracticeRecord } from './itemLearning.js';
 
 export interface WebClientOptions {
   mobileDataDir: string;
@@ -562,16 +563,54 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       selectionNote: excluded ? `所选章节共有 ${selected.length} 道，其中 ${excluded} 道已在练习中或尚未到复习时间，本次可选 ${ids.length} 道。` : undefined }));
   }));
 
-  const detail = (itemId: string, error?: string | null): ReactNode => {
+  const unfinishedPractice = (itemId: string): string | null => {
+    const row = getDb().prepare(`SELECT rpi.packet_id AS id FROM review_packet_item rpi
+      JOIN review_packet rp ON rp.id = rpi.packet_id
+      WHERE rpi.item_id = ? AND NOT EXISTS (
+        SELECT 1 FROM review_attempt ra WHERE ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id
+      ) ORDER BY rp.created_at DESC, rp.rowid DESC LIMIT 1`).get(itemId) as {id:string} | undefined;
+    return row?.id ?? null;
+  };
+  const detail = (itemId: string, error?: string | null, returnTo?: string): ReactNode => {
     const item = findItem(itemId);
+    const recommend = recommendPractice(ctx.mobileDataDir);
+    const history = getDb().prepare(`SELECT rp.id, rp.created_at, rp.generated_at, ra.correct, ra.completion, ra.hint_level, ra.performed_at
+      FROM review_packet_item rpi JOIN review_packet rp ON rp.id = rpi.packet_id
+      LEFT JOIN review_attempt ra ON ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id
+      WHERE rpi.item_id = ? ORDER BY COALESCE(ra.performed_at, rp.created_at) DESC, rp.created_at DESC, rp.rowid DESC`).all(itemId) as unknown as Array<ItemPracticeRecord & {generated_at:string|null}>;
+    const reflection = getV2Reflection(itemId)?.reflection ?? null;
     return ItemDetailPage({
       item, evidence: getEvidenceView(itemId), canDiscard: item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
-      reflected: getV2Reflection(itemId)?.reflection != null, error,
-      practiceHistory: getDb().prepare(`SELECT rp.id, ra.correct, ra.performed_at FROM review_packet_item rpi JOIN review_packet rp ON rp.id = rpi.packet_id LEFT JOIN review_attempt ra ON ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id WHERE rpi.item_id = ? ORDER BY rp.created_at DESC LIMIT 20`).all(itemId) as Array<{id:string;correct:number|null;performed_at:string|null}>,
+      reflected: reflection != null, reflection, error, returnTo,
+      eligible: [...recommend.recommended,...recommend.others].some(candidate => candidate.id === itemId),
+      resumePracticeId: unfinishedPractice(itemId), reflectionPracticeId: history[0]?.id,
+      practiceHistory: history.map(record => ({...record,generated_day:record.generated_at ? localDayText(new Date(record.generated_at),ctx.timeZone) : null})),
     });
   };
 
-  r.get('/items/:id', page((request, response) => render(response, detail(String(request.params.id)))));
+  r.get('/items/:id', page((request, response) => render(response, detail(String(request.params.id),null,str(request.query.returnTo)))));
+  r.post('/items/:id/practice', form, page((request,response) => {
+    const item = findItem(String(request.params.id)); // Same ownership / v2 checks as the reading route.
+    const returnTo = itemNotebookReturn(request.body?.returnTo,item);
+    const existing = unfinishedPractice(item.id);
+    if (existing) {
+      // A retried POST resumes the existing packet; GET detail never creates or prepares one.
+      requestPrint(existing,options.coachProvider);
+      response.redirect(303,`/s/practice/${existing}?item=${item.id}`);
+      return;
+    }
+    const result = createPractice({itemIds:[item.id]});
+    if (!result.ok) {
+      failed(response,'item_practice_ineligible');
+      const reason = item.status === 'temporarily_mastered'
+        ? '尚未到复习时间，先看看这题的订正和练习记录，或返回错题本选择其他题。'
+        : '这道题的练习资格已变化。请查看练习记录，或返回错题本选择其他题。';
+      render(response,detail(item.id,reason,returnTo),result.httpStatus);
+      return;
+    }
+    requestPrint(result.detail.id,options.coachProvider);
+    response.redirect(303,`/s/practice/${result.detail.id}?item=${item.id}`);
+  }));
 
   r.get('/items/:id/category', page((request, response) => {
     render(response, CategoryEditPage({item:findItem(String(request.params.id))}));
