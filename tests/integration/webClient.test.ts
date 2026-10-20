@@ -610,7 +610,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const result = await browser.post(`${url}/${first}/result`, { correct: 'yes', performedOn: day });
     expect(result.status).toBe(303);
     expect(getDb().prepare('SELECT completion, hint_level FROM review_attempt WHERE packet_id = ?').get(packetId)).toEqual({ completion: 'hint_used', hint_level: 1 });
-    expect(await browser.text(url)).toContain('已完成 1 / 3');
+    expect(await browser.text(url)).toContain('已记录 1 道结果，共 3 道');
     await browser.post(`${url}/${first}/result`, { correct: 'yes', performedOn: day });
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({ n: 1 });
     expect((await browser.post(`${url}/itm_0000000000000000/result`, { correct: 'yes', performedOn: day })).status).toBe(404);
@@ -638,6 +638,26 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(first.status).toBe(303);
     expect(second.headers.get('location')).toBe(first.headers.get('location'));
     expect(count()).toEqual({n:2});
+  });
+
+  it('纸上练习直接看题和交照片，取消后旧链接只读且不能记录结果', async()=>{
+    const env=await setup();
+    const {browser,packetId,itemIds}=await chosen(env);
+    const url=`/s/practice/${packetId}`;
+    await waitFor(async()=>(await browser.text(url)).includes('practice-question'));
+    const html=await browser.text(url);
+    expect(html).toContain('在白纸上写题号和过程');
+    expect(html).toContain(`href="${url}/submit"`);
+    expect(html).toContain('还没有记录作答结果');
+    expect(html).not.toContain('data-testid="practice-answer"');
+    expect(html).not.toContain('已完成 0');
+    await browser.post(`${url}/cancel`);
+    expect(await browser.text(url)).toContain('这份练习已取消');
+    expect((await browser.post(`${url}/${itemIds[0]}/result`,{correct:'yes',performedOn:'2026-10-20'})).status).toBe(409);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({n:0});
+    const restarted=await browser.post(`/s/items/${itemIds[0]}/practice`);
+    expect(restarted.status).toBe(303);
+    expect(restarted.headers.get('location')).not.toContain(packetId);
   });
 
   it('练习日期下限使用学生时区，与当天上限一致', async () => {
@@ -753,9 +773,9 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({n:0});
     const recorded = await browser.post(`${url}/${itemIds[0]}/result`,{correct:'no',performedOn:new Date().toLocaleDateString('en-CA'),mode:'paper'});
     expect(recorded.headers.get('location')).toBe(`${url}?mode=paper&view=check`);
-    expect(await browser.text(url)).toContain('已完成 1 / 3');
+    expect(await browser.text(url)).toContain('已记录 1 道结果，共 3 道');
     await browser.get(`/s/print/${packetId}/sheet?answers=1`);
-    expect(await browser.text(url)).toContain('已完成 1 / 3');
+    expect(await browser.text(url)).toContain('已记录 1 道结果，共 3 道');
   });
 
   it('切换题号会保存位置，旧回录入口也必须保留已看提示，日期错误留在当前核对题', async () => {
@@ -831,7 +851,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(css).toContain('@page{size:A4');
     const today = await browser.visibleText(`/s/practice/${packetId}`);
     expect(today).toContain('打印练习');
-    expect(today).toContain('已完成 0 /');
+    expect(today).toContain('还没有记录作答结果');
     expect(today).toContain('做完了');
     // 录结果：日期不预选；一题一屏；最后一次提交。
     const dateScreen = await browser.text(`/s/record/${packetId}`);

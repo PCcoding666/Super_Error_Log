@@ -235,6 +235,24 @@ function makeWebPacket(packetId: string): void {
 }
 
 describe('T5 打印快照', () => {
+  it('cancelling while preparing cannot advance a newly selected task or resurrect the cancelled packet',async()=>{
+    let release!:()=>void;
+    let entered=false;
+    const wait=new Promise<void>(resolve=>{release=resolve;});
+    const coach:CoachProvider={coachForPrint:async(e,d)=>{entered=true;await wait;return new CountingCoach().coachForPrint(e,d);}};
+    const {base,auth,dataDir}=await setupApp(coach);
+    const items=await bridgeItems(base,auth,dataDir,[{number:'1',tags:['方程']}]);
+    const first=await makePractice(base,auth,[items[0]!.id]);
+    await fetch(`${base}/v2/practice/${first.id}/print`,{method:'POST',headers:auth});
+    while(!entered)await new Promise(resolve=>setTimeout(resolve,10));
+    const {setTaskLifecycle}=await import('../../src/v2/practiceTasks.js');
+    setTaskLifecycle(first.id,'cancelled');
+    await makePractice(base,auth,[items[0]!.id]);
+    release();
+    await pollPrint(base,auth,first.id);
+    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(items[0]!.id)).toEqual({status:'scheduled'});
+    expect(getDb().prepare('SELECT generated_at FROM review_packet WHERE id=?').get(first.id)).toEqual({generated_at:null});
+  });
   it('RED1 POST 202 → 轮询 ready；快照形状正确；generated_at、包与题目状态流转', async () => {
     const { base, dataDir, auth } = await setupApp();
     const [withDiagram, , mastered] = await bridgeItems(base, auth, dataDir, [

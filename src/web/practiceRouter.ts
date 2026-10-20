@@ -15,6 +15,7 @@ import { submitReturns } from '../v2/returnService.js';
 import { sendHtml } from '../views/render.js';
 import { OnlinePracticePage } from './views/onlinePractice.js';
 import { localDayText } from './weekPlan.js';
+import { taskLifecycle } from '../v2/practiceTasks.js';
 
 /** Mounted only after the existing student authentication and same-origin guards. */
 export function practiceRouter(options: { coachProvider?: CoachProvider; handwriting?: HandwritingRecognizer; limiter: RateLimiter; admission: AdmissionController | null; timeZone: string; now: () => Date }): Router {
@@ -23,6 +24,9 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; handwri
   router.use('/practice/:pid', (req, res, next) => {
     const practice = getPractice(String(req.params.pid));
     if (!practice) { res.status(404).send('练习不存在'); return; }
+    if (req.method === 'POST' && taskLifecycle(practice.id) === 'cancelled') {
+      res.status(409).send('这份练习已取消，已记录的结果仍然保留。'); return;
+    }
     res.locals.practice = practice;
     next();
   });
@@ -36,7 +40,7 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; handwri
     if (itemId && !p.items.some(item => item.id === itemId)) { res.status(404).send('题目不在此练习中'); return; }
     if (itemId) savePracticeCursor(p.id,itemId);
     if (view === 'upload' && itemId && !hasConsent(req)) { sendHtml(res, ConsentPage({returnTo:`/s/practice/${p.id}?item=${itemId}&view=upload`})); return; }
-    sendHtml(res, OnlinePracticePage({ practice: p, progress: practiceProgress(p.id), state: String(body.status), snapshot: body.status === 'ready' ? body.snapshot as PrintSnapshot : undefined, itemId, view, paper: req.query.mode === 'paper', today: localDayText(options.now(), options.timeZone), earliestDay: localDayText(new Date(p.generatedAt ?? p.createdAt), options.timeZone), works: Object.fromEntries(p.items.map(item => [item.id, latestWork(p.id, item.id)])), error }));
+    sendHtml(res, OnlinePracticePage({ practice: p, lifecycle:taskLifecycle(p.id), progress: practiceProgress(p.id), state: String(body.status), snapshot: body.status === 'ready' ? body.snapshot as PrintSnapshot : undefined, itemId, view, paper: req.query.mode === 'paper', today: localDayText(options.now(), options.timeZone), earliestDay: localDayText(new Date(p.generatedAt ?? p.createdAt), options.timeZone), works: Object.fromEntries(p.items.map(item => [item.id, latestWork(p.id, item.id)])), error }));
   };
   router.get('/practice/:pid', (req, res) => show(req, res));
   router.post('/practice/:pid/prepare', (_req, res) => {

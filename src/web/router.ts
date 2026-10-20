@@ -614,7 +614,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const unfinishedPractice = (itemId: string): string | null => {
     const row = getDb().prepare(`SELECT rpi.packet_id AS id FROM review_packet_item rpi
       JOIN review_packet rp ON rp.id = rpi.packet_id
-      WHERE rpi.item_id = ? AND NOT EXISTS (
+      WHERE rpi.item_id = ?
+      AND NOT EXISTS (SELECT 1 FROM practice_task pt WHERE pt.packet_id = rpi.packet_id AND pt.lifecycle = 'cancelled')
+      AND NOT EXISTS (
         SELECT 1 FROM review_attempt ra WHERE ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id
       ) ORDER BY rp.created_at DESC, rp.rowid DESC LIMIT 1`).get(itemId) as {id:string} | undefined;
     return row?.id ?? null;
