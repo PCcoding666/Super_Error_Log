@@ -34,6 +34,7 @@ ReadWritePaths=/var/lib/super-error-log
 # deploy/systemd/super-error-log.service.d/small-box.conf（MemoryMax=1G、CPUQuota=150%），
 # 再把环境改成 SEL_SERVICE_MEMORY_MIB=1024、SEL_MAX_LIVE_WORKERS=3、
 # SEL_GLOBAL_AI_CONCURRENCY=1、SEL_GLOBAL_IMAGE_CONCURRENCY=1，然后才重启。
+# SEL_STUDENT_AI_CONCURRENCY 保持缺省 3，不必为小机改成 1。
 # 应用层 RSS 准入按 SEL_SERVICE_MEMORY_MIB / SEL_RSS_ADMISSION_MIB 计算，不再是固定 768MiB，也不等于这里的内核上限。
 MemoryMax=4G
 MemoryLimit=4G

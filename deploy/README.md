@@ -211,6 +211,8 @@ SEL_SERVICE_MEMORY_MIB=1024
 
 只换 4G 单元、不装 drop-in，会让 cgroup 上限高于物理内存。只改代码、不改环境，学生 worker 会按 4G 预算估算自己的准入阈值。
 
+小机档不用把 `SEL_STUDENT_AI_CONCURRENCY` 改成 1。缺省 3 只表示一个学生的多张照片可以一起进入识别；`SEL_GLOBAL_AI_CONCURRENCY=1` 和 `SEL_GLOBAL_IMAGE_CONCURRENCY=1` 仍让整台机器同时只有一次视觉调用、一次重图片处理。
+
 应用层 RSS 准入（超过后暂停接收新识别任务，内存回落再恢复）按下面计算，**不是内核节流，也不再是固定 768MiB**：
 
 - `SEL_RSS_ADMISSION_MIB` 若设置了，就用它（64–8192）。
@@ -227,6 +229,7 @@ SEL_SERVICE_MEMORY_MIB=1024
 | `SEL_MAX_LIVE_WORKERS` | 8 | 同时存活的学生进程。0 表示不限制。超出时先请最久没用且空闲的退出；都在忙则本次 503 |
 | `SEL_GLOBAL_AI_CONCURRENCY` | 2 | 所有学生加起来，同时进行的视觉模型调用 |
 | `SEL_GLOBAL_IMAGE_CONCURRENCY` | 2 | 所有学生加起来，同时进行的 sharp 等重图片处理 |
+| `SEL_STUDENT_AI_CONCURRENCY` | 3 | 一个学生同时处理的照片数。同一张照片里的题和阶段仍串行。同时打到模型的次数不会超过上面的全局上限 |
 | `SEL_SERVICE_MEMORY_MIB` | 4096 | 估算 RSS 准入用的服务预算，应与 cgroup 内存上限同一量级 |
 | `SEL_MOBILE_AI_TIMEOUT_MS` | 90000 | 单次移动端模型调用超时 |
 

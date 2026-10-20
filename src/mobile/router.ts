@@ -20,6 +20,8 @@ export interface CreateMobileAppOptions {
   rateLimiter?: RateLimiter;
   /** 入口容量控制（Task 3）：云端缺省构造默认容量；回环模式不启用。 */
   admission?: AdmissionController;
+  /** 本学生同时处理的照片数。缺省读 SEL_STUDENT_AI_CONCURRENCY。 */
+  studentAiConcurrency?: number;
   /** 单进程装配（v2.0 T2）：挂载 /v2 路由，与 /v1 共用鉴权与限流。云端模式把限流器交给 /v2（语音转写另有一档）。 */
   v2Router?: (deps: { limiter: RateLimiter | null }) => express.Router;
   /** 学生网页版（/s/，仅云端模式）：同源挂载，复用同一个识别 service、配对、限流与准入。 */
@@ -112,7 +114,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
   if (mode === 'cloud' && !options.pairing) throw new Error('云端模式必须提供 PairingManager');
   if (mode === 'loopback' && (!options.pairingToken || options.pairingToken.length < 16)) throw new Error('移动端配对令牌至少需要16个字符');
   const store = await MobileRecognitionStore.open(options.dataDir);
-  const service = new MobileRecognitionService(store, options.vision);
+  const service = new MobileRecognitionService(store, options.vision, { studentAiConcurrency: options.studentAiConcurrency });
   const limiter = options.rateLimiter ?? new RateLimiter();
   const admission = options.admission ?? (mode === 'cloud' ? new AdmissionController({ dataDir: options.dataDir }) : null);
   // Task 3：service 终态释放容量与图像信号量依赖注入（云端必须接通，否则容量永不归还）。

@@ -7,7 +7,7 @@ import { IdempotencyConflictError, MobileRecognitionStore, UnknownMediaError } f
 import { MobileVisionError, type InventoryCandidate, type MobileVisionBoundary } from './vision.js';
 import { expandCropMargin } from './modelBox.js';
 import type { AdmissionController } from './admission.js';
-import { rssAdmissionThresholdBytes } from '../studentHost/limits.js';
+import { rssAdmissionThresholdBytes, studentAiConcurrency } from '../studentHost/limits.js';
 
 export class MobileRequestError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) { super(message); this.name = 'MobileRequestError'; }
@@ -17,6 +17,10 @@ class MobileStorageError extends Error {
 }
 class WorkerStopped extends Error {}
 type Work = { jobId: string; kind: 'inventory' | 'question'; questionId?: string };
+
+function workKey(task: Work): string {
+  return `${task.jobId}:${task.kind}:${task.questionId ?? ''}`;
+}
 
 function failure(error: unknown, fallbackStage: string): RecognitionFailure {
   if (error instanceof MobileVisionError) return { code: error.code, message: error.message, stage: error.stage, retryable: error.retryable };
@@ -80,7 +84,11 @@ export class MobileRecognitionService {
   /** 看门狗周期：扫描持久化为非终态、但既不在内存队列也不在执行中的僵尸工作单元。 */
   watchdogIntervalMs = 60_000;
   private readonly shutdown = new AbortController();
-  private worker: Promise<void> | null = null;
+  /** 本学生同时处理的照片数（SEL_STUDENT_AI_CONCURRENCY，缺省 3）。同一张照片仍只占一条通道。 */
+  private readonly studentAiConcurrency: number;
+  /** 正在跑的识别通道。与 studentAiConcurrency 比较，不再用单飞的 running 把整队串成一张照片。 */
+  private lanes = 0;
+  private readonly lanePromises = new Set<Promise<void>>();
   private scanning: Promise<void> | null = null;
   private readonly ownedPersistence = new Set<Promise<unknown>>();
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -89,7 +97,11 @@ export class MobileRecognitionService {
   private readonly retryScheduled = new Set<string>();
   private watchdog: ReturnType<typeof setInterval> | null = null;
 
-  constructor(readonly store: MobileRecognitionStore, readonly vision: MobileVisionBoundary) {}
+  constructor(readonly store: MobileRecognitionStore, readonly vision: MobileVisionBoundary, options?: { studentAiConcurrency?: number }) {
+    const value = options?.studentAiConcurrency ?? studentAiConcurrency();
+    if (!Number.isSafeInteger(value) || value < 1 || value > 32) throw new Error('SEL_STUDENT_AI_CONCURRENCY 必须是 1 到 32 的整数');
+    this.studentAiConcurrency = value;
+  }
 
   /** 云端模式：接入入口容量控制（上传图像信号量 + 任务容量释放）。 */
   useAdmission(admission: AdmissionController): void { this.admission = admission; }
@@ -318,7 +330,9 @@ export class MobileRecognitionService {
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.retryTimers.clear(); this.retryScheduled.clear();
     this.shutdown.abort(new WorkerStopped('recognition worker stopped'));
-    await Promise.allSettled([this.worker, this.scanning]);
+    while (this.lanePromises.size > 0 || this.scanning) {
+      await Promise.allSettled([...this.lanePromises, ...(this.scanning ? [this.scanning] : [])]);
+    }
     // A generic boundary may settle via cancellation before its started storage
     // callback returns. No new callbacks can enter ownedStorage after stop.
     await Promise.allSettled([...this.ownedPersistence]);
@@ -405,29 +419,59 @@ export class MobileRecognitionService {
       console.warn(`[queue] 服务未在接收状态，任务未能入队：${task.jobId} ${task.kind} ${task.questionId ?? ''}（由看门狗在恢复后重新拾取）`);
       return;
     }
-    const key = `${task.jobId}:${task.kind}:${task.questionId ?? ''}`; if (this.queued.has(key) || (!scheduled && this.inflight.has(key))) return;
+    const key = workKey(task); if (this.queued.has(key) || (!scheduled && this.inflight.has(key))) return;
     this.queued.add(key); this.queue.push(task); this.kick();
   }
 
-  private kick(): void {
-    if (this.running || !this.accepting) return;
-    this.worker = this.drain();
+  /** 同一张照片已经有清单或逐题在跑时，不再开第二条通道，避免题序和结果写串。 */
+  private jobBusy(jobId: string): boolean {
+    for (const key of this.inflight) if (key.startsWith(`${jobId}:`)) return true;
+    return false;
   }
 
-  private async drain(): Promise<void> {
-    if (this.running) return; this.running = true;
-    try {
-      while (this.accepting && this.queue.length) {
-        const task = this.queue.shift()!; this.queued.delete(`${task.jobId}:${task.kind}:${task.questionId ?? ''}`);
-        const inflightKey = `${task.jobId}:${task.kind}:${task.questionId ?? ''}`;
-        this.inflight.add(inflightKey);
-        try {
-          if (task.kind === 'inventory') await this.processInventory(task.jobId);
-          else await this.processQuestionRetry(task.jobId, task.questionId!);
-        } catch (error) { if (!(error instanceof WorkerStopped)) this.failStorage(); }
-        finally { this.inflight.delete(inflightKey); }
-      }
-    } finally { this.running = false; }
+  private hasRunnable(): boolean {
+    return this.queue.some(task => !this.jobBusy(task.jobId));
+  }
+
+  /** 取队列里第一张「这张照片当前没在跑」的任务，并在让出事件循环前占上 in-flight。 */
+  private takeRunnable(): Work | undefined {
+    const index = this.queue.findIndex(task => !this.jobBusy(task.jobId));
+    if (index < 0) return undefined;
+    const task = this.queue.splice(index, 1)[0]!;
+    this.queued.delete(workKey(task));
+    this.inflight.add(workKey(task));
+    return task;
+  }
+
+  private kick(): void {
+    if (!this.accepting) return;
+    while (this.lanes < this.studentAiConcurrency && this.hasRunnable()) this.startLane();
+  }
+
+  private startLane(): void {
+    this.lanes += 1;
+    this.running = true;
+    const lane = this.runLane();
+    this.lanePromises.add(lane);
+    void lane.finally(() => {
+      this.lanePromises.delete(lane);
+      this.lanes -= 1;
+      if (this.accepting) this.kick();
+      if (this.lanes === 0) this.running = false;
+    });
+  }
+
+  private async runLane(): Promise<void> {
+    while (this.accepting) {
+      const task = this.takeRunnable();
+      if (!task) return;
+      const inflightKey = workKey(task);
+      try {
+        if (task.kind === 'inventory') await this.processInventory(task.jobId);
+        else await this.processQuestionRetry(task.jobId, task.questionId!);
+      } catch (error) { if (!(error instanceof WorkerStopped)) this.failStorage(); }
+      finally { this.inflight.delete(inflightKey); }
+    }
   }
 
   private async processInventory(jobId: string): Promise<void> {
@@ -474,7 +518,7 @@ export class MobileRecognitionService {
 
   private async processQuestions(jobId: string, questionIds: string[]): Promise<void> {
     let cursor = 0;
-    // Task 3：逐题并发降为 1（云端 2GB 机器资源保护；回环模式同样收敛）。
+    // 同一张照片里的题保持逐题（题序、同题号冲突、每阶段 3 次预算）。照片之间的并行在上面的通道里。
     const worker = async () => { while (cursor < questionIds.length) { this.assertRunning(); const id = questionIds[cursor++]; if (id) await this.runQuestion(jobId, id); } };
     await Promise.all(Array.from({ length: Math.min(1, questionIds.length) }, worker));
     await this.finalize(jobId);
@@ -681,7 +725,7 @@ export class MobileRecognitionService {
 
   private schedule(task: Work, deadline: number): void {
     if (!this.accepting) return;
-    const key = `${task.jobId}:${task.kind}:${task.questionId ?? ''}`;
+    const key = workKey(task);
     if (this.retryTimers.has(key)) return;
     this.retryScheduled.add(key);
     const timer = setTimeout(() => {
