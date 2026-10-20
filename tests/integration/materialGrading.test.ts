@@ -196,3 +196,16 @@ it.each([
  expect(hasScoringCriteria(stem)).toBe(false);
  expect(validateMaterialGrade({...output(a.f),score:{earned:7,total:10,rubricFragmentIds:[stem.fragmentId]}},{stem:[stem],work:[a.f]}).score).toBeNull();
 });
+it.each([
+ '评分标准：写出正确公式得5分、计算正确结果得5分。',
+ '评分标准：写出正确公式得5分 计算正确结果得5分。',
+ '评分标准：写出正确公式得5分并计算正确结果得5分。',
+ '评分标准：写出正确公式（5分）并计算正确结果得5分。',
+ '评分标准：写出正确公式得五分并计算正确结果得5分。',
+ '评分标准：写出正确公式得５分并计算正确结果得5分。',
+ '评分标准：写出正确公式给5分/计算正确结果计5分。',
+])('rejects multiple award amounts inside one unsupported clause: %s',text=>{
+ const s=setup(),q=question(s),a=work(s,q),stem={...q.stem,text};
+ expect(hasScoringCriteria(stem)).toBe(false);
+ expect(validateMaterialGrade({...output(a.f),result:'partial',score:{earned:3,total:5,rubricFragmentIds:[stem.fragmentId]}},{stem:[stem],work:[a.f]}).score).toBeNull();
+});

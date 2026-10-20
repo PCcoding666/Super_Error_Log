@@ -305,9 +305,12 @@ function parseScoringRubric(f:Fragment):ParsedScoringRubric|null {
  if(!clauses.length||clauses.length>32)return null;
  const criteria:ParsedScoringRubric['criteria']=[];
  for(const clause of clauses){
-  const match=/^((?:写出|列出|计算|求出|答出|证明|完成|说明|推导|解出)[^，,。；;：:\n]{1,80}?)(?:可得|得|给|计)\s*(\d+(?:\.\d+)?)\s*分$/u.exec(clause);
+  const match=/^((?:写出|列出|计算|求出|答出|证明|完成|说明|推导|解出)[^，,、/／。；;：:\n]{1,80}?)(?:可得|得|给|计)\s*(\d+(?:\.\d+)?)\s*分$/u.exec(clause);
   if(!match)return null;
   const condition=match[1]!,points=Number(match[2]);
+  // An anchored suffix alone is insufficient: its condition must not swallow an earlier
+  // award or point amount. Unsupported multi-award clauses fail as a whole, not at their last award.
+  if(/(?:得|给|计(?!算))/u.test(condition)||/[\p{N}零〇一二三四五六七八九十百千万两]+(?:[.．][\p{N}]+)?\s*(?:分|points?)/iu.test(condition))return null;
   // These describe paper/question accounting or ceilings, not a supported earning condition.
   if(/(?:本题|题型|题目|计算题|证明题|解答题|总分|满分|总计|合计|最高|最多|至少|至多|或者|或|若|如果)/u.test(condition)||!Number.isFinite(points)||points<=0)return null;
   criteria.push({condition,points});
