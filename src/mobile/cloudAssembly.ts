@@ -1,3 +1,6 @@
+import { config } from '../config.js';
+import { assertMaterialProviderConfigured, type MaterialProviderOptions } from '../materials/provider.js';
+import { registerMaterialExtraction } from '../materials/extraction.js';
 import type { AddressInfo } from 'node:net';
 import type { MobileConfiguration } from './configuration.js';
 import { createMobileApp } from './router.js';
@@ -48,6 +51,9 @@ export interface CloudAssembly {
  */
 export async function assembleCloudService(configuration: MobileConfiguration, overrides: CloudAssemblyOverrides = {}): Promise<CloudAssembly> {
   if (configuration.mode !== 'cloud') throw new Error('assembleCloudService 仅用于云端模式');
+  const materialOptions: MaterialProviderOptions = { mode: config.aiMode, chat: { baseUrl: config.aiBaseUrl, apiKey: config.aiApiKey, models: config.aiModels, timeoutMs: config.aiTimeoutMs, bailianOnly: config.aiMode === 'bailian' } };
+  // Validate before opening resources; explicit synthetic overrides retain their existing boundary.
+  if (!overrides.configureMaterials) assertMaterialProviderConfigured(materialOptions);
   // 共享 SQLite（SEL_DATA_DIR/app.db）：先建库再确保唯一学生档案，/v2 绑定到它。
   const materialStore = new MaterialStore(getDb(), ensureStudentProfile().id);
   // T3：启动时把已登记但尚未桥接的 v2 识别任务补桥一次（单个失败不影响启动）。
@@ -64,7 +70,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     ? await createStudentHostGateway({ hostDir: resolveStudentHostDir(configuration.dataDir) })
     : null;
   const app = await createMobileApp({
-    materialStore, configureMaterials: overrides.configureMaterials,
+    materialStore, configureMaterials: overrides.configureMaterials ?? ((jobs, uploads) => registerMaterialExtraction(materialStore, jobs, uploads, materialOptions)),
     dataDir: configuration.dataDir, vision: overrides.vision ?? new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true,
     v2Router: ({ limiter }) => createV2Router({ mobileDataDir: configuration.dataDir, transcriber, limiter }),
     // 学生网页版 /s/（2026-10-09）：同一进程、同一端口、同一 Caddy 站点。

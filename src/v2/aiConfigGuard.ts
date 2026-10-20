@@ -11,7 +11,7 @@ export interface V2AiConfig {
   aiModels: Record<string, string>;
 }
 
-const V2_STAGES = ['followup', 'correct', 'coach'] as const;
+const V2_STAGES = ['followup', 'correct', 'coach', 'material_extract', 'material_verify', 'material_answer', 'material_grade'] as const;
 
 export function assertV2AiConfigured(cfg: V2AiConfig): void {
   if (cfg.aiMode !== 'bailian') {

@@ -3,7 +3,7 @@ import type { Stage } from './evidence.js';
 import sharp from 'sharp';
 import crypto from 'node:crypto';
 
-export type ModelStage = Stage | 'crop_inventory' | 'crop_verify' | 'mobile_inventory' | 'mobile_transcribe' | 'mobile_verify' | 'mobile_ground';
+export type ModelStage = Stage | 'crop_inventory' | 'crop_verify' | 'mobile_inventory' | 'mobile_transcribe' | 'mobile_verify' | 'mobile_ground' | 'material_extract' | 'material_verify' | 'material_answer' | 'material_grade';
 export interface StageRun { stage: ModelStage; model: string; durationMs: number; promptTokens: number | null; completionTokens: number | null; maxTokens: number; thinking: false; promptVersion: string }
 export interface StageResult<T> { value: T; run: StageRun }
 export interface ChatTrace {
