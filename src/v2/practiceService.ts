@@ -78,6 +78,7 @@ function candidateRows(): CandidateRow[] {
      AND NOT EXISTS (
        SELECT 1 FROM review_packet_item rpi
        WHERE rpi.item_id = ei.id
+         AND NOT EXISTS (SELECT 1 FROM practice_task pt WHERE pt.packet_id = rpi.packet_id AND pt.lifecycle = 'cancelled')
          AND NOT EXISTS (SELECT 1 FROM review_attempt ra WHERE ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id)
      )`,
   ).all(now()) as CandidateRow[];
@@ -184,6 +185,15 @@ export function createPractice(input: unknown): CreatePracticeResult {
     return { ok: false, httpStatus: 400, message: '请求正文不合法。' };
   }
   const body = input as Record<string, unknown>;
+  const requestKey = body.requestKey;
+  if (requestKey !== undefined) {
+    if (typeof requestKey !== 'string' || !/^[0-9a-f-]{36}$/i.test(requestKey)) {
+      return { ok: false, httpStatus: 400, message: '练习请求标识无效，请重新打开推荐。' };
+    }
+    const prior = getDb().prepare('SELECT packet_id FROM practice_task WHERE request_key = ?').get(requestKey) as {packet_id:string} | undefined;
+    const detail = prior && getPractice(prior.packet_id);
+    if (detail) return {ok:true,detail};
+  }
   const itemIds = body.itemIds;
   if (!Array.isArray(itemIds) || itemIds.length === 0 || itemIds.some(id => typeof id !== 'string' || id.length === 0)) {
     return { ok: false, httpStatus: 400, message: 'itemIds 必须是非空的题目 ID 数组。' };
@@ -220,6 +230,8 @@ export function createPractice(input: unknown): CreatePracticeResult {
     db.prepare(
       'INSERT INTO review_packet (id, student_id, week, status, planned_date, practice_slot, created_at) VALUES (?,?,?,?,?,?,?)',
     ).run(packetId, student.id, isoWeekKey(nowDate), 'scheduled', plannedDateForPacket(nowDate), practiceSlot, now());
+    db.prepare('INSERT INTO practice_task(packet_id,request_key,original_statuses,updated_at) VALUES (?,?,?,?)')
+      .run(packetId, requestKey ?? null, JSON.stringify(Object.fromEntries(ids.map(id => [id,eligible.get(id)!.row.status]))), now());
     ids.forEach((itemId, index) => {
       const entry = eligible.get(itemId)!;
       // hint/answer 占位，T5 负责生成；v2_tier/v2_reason 冻结建包时的推荐层级与理由。

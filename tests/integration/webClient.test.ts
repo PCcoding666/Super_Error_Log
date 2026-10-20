@@ -177,7 +177,7 @@ describe('三栏入口', () => {
     const capture = await browser.text('/s/capture');
     expect(capture).toContain('<h1>错题录入</h1>');
     expect(capture).toContain('查看上传记录');
-    expect(await browser.text('/s/practices')).toContain('新建练习');
+    expect(await browser.text('/s/practices')).toContain('自己选题');
   });
 });
 
@@ -616,6 +616,30 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect((await browser.post(`${url}/itm_0000000000000000/result`, { correct: 'yes', performedOn: day })).status).toBe(404);
   });
 
+  it('主动练习首页只读、优先当前任务，接受建议重试不重复建包', async () => {
+    const env=await setup();
+    const {browser,packetId}=await chosen(env);
+    const current=await browser.text('/s/practices');
+    expect(current).toContain('这次的练习');
+    expect(current).toContain('拍照交练习');
+    expect(current).not.toContain('新建练习');
+    expect(current).not.toContain('继续练习 · 0/');
+    const count=()=>getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get();
+    await browser.get('/s/practices');
+    expect(count()).toEqual({n:1});
+    expect((await browser.post(`/s/practice/${packetId}/cancel`)).status).toBe(303);
+    const recommended=await browser.text('/s/practices');
+    expect(recommended).toContain('这次建议练');
+    expect(recommended).toContain('为什么练');
+    expect(count()).toEqual({n:1});
+    const key=crypto.randomUUID();
+    const first=await browser.post('/s/practices/start',{key});
+    const second=await browser.post('/s/practices/start',{key});
+    expect(first.status).toBe(303);
+    expect(second.headers.get('location')).toBe(first.headers.get('location'));
+    expect(count()).toEqual({n:2});
+  });
+
   it('练习日期下限使用学生时区，与当天上限一致', async () => {
     const env = await setup({timeZone:'Asia/Shanghai',now:() => new Date('2026-10-18T01:00:00Z')});
     const {browser,packetId,itemIds} = await chosen(env);
@@ -1005,7 +1029,7 @@ describe('稀疏的屏用现有数据填满；服务器忙页不替没连上的�
     const practicesHtml = await browser.text('/s/practices');
     expect(practicesHtml).toContain('data-testid="practice-latest-items"');
     expect((practicesHtml.match(/class="row qrow"/g) ?? []).length).toBe(itemIds.length);
-    expect(await text('/s/practices')).toContain('选择一份练习继续');
+    expect(await text('/s/practices')).toContain('这次的练习');
   });
 
   it('服务器忙：连着的手机说「照片和错题都在」，还没连上的不说', async () => {

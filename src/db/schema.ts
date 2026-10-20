@@ -287,6 +287,13 @@ CREATE TABLE IF NOT EXISTS practice_progress (
   packet_id TEXT PRIMARY KEY REFERENCES review_packet(id) ON DELETE CASCADE,
   cursor_item TEXT
 );
+CREATE TABLE IF NOT EXISTS practice_task (
+  packet_id TEXT PRIMARY KEY REFERENCES review_packet(id) ON DELETE CASCADE,
+  lifecycle TEXT NOT NULL DEFAULT 'active' CHECK(lifecycle IN ('active','paused','cancelled')),
+  request_key TEXT UNIQUE,
+  original_statuses TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS practice_question_progress (
   packet_id TEXT NOT NULL,
   item_id TEXT NOT NULL,
