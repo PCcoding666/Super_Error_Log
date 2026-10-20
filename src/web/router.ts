@@ -14,8 +14,10 @@ import { PracticeDashboardPage } from './views/practiceDashboard.js';
  *   不在视图里另写一份规则；页面只做「取数 → WeekPlan → 渲染」与表单提交。
  * - 只有拍照上传与录音用到脚本；关掉脚本时每屏照样能用（语音除外）。
  */
-import { categoryForItem, editItemCategory, isGrade, updateStudentGrade } from '../classification/itemCategories.js';
+import { categoryForItem, editItemCategory, STAGE_REQUIRED_MESSAGE, updateStudentGrade } from '../classification/itemCategories.js';
 import { readCatalog } from '../classification/catalog.js';
+import { ALL_STAGES } from '../classification/stages.js';
+import { resolveNotebookStage, stagesInScope } from './notebook.js';
 import { requireProfile } from '../services/studentService.js';
 import crypto from 'node:crypto';
 import express, { Router, type ErrorRequestHandler, type Request, type Response } from 'express';
@@ -540,16 +542,18 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const all = [...library.items, ...library.backlog];
     const input = request.method === 'POST' ? request.body : request.query;
     const cookies = readCookies(request);
-    const gradeValue = str(input?.grade);
-    const grade = isGrade(gradeValue) ? gradeValue : isGrade(cookies[COOKIE.itemsGrade]) ? cookies[COOKIE.itemsGrade]! : requireProfile().grade;
-    const subjects = [...new Set([...readCatalog(getDb(), requireProfile().id).subjects.map(subject => subject.name), ...all.map(item => item.subject || '未分类')])];
+    const profile = requireProfile();
+    const subjects = [...new Set([...readCatalog(getDb(), profile.id).subjects.map(subject => subject.name), ...all.map(item => item.subject || '未分类')])];
     const requested = str(input?.subject).trim().slice(0,100);
     // An edit/removal can empty a former subject; keep the explicit scope rather than broadening it.
     if (requested && !subjects.includes(requested)) subjects.push(requested);
-    const subject = [requested, cookies[COOKIE.itemsSubject], ...all.filter(item => item.grade === grade).map(item => item.subject), ...subjects].find(value => value && subjects.includes(value)) ?? '数学';
+    const subject = [requested, cookies[COOKIE.itemsSubject], ...all.filter(item => item.grade === profile.grade).map(item => item.subject), ...all.map(item => item.subject), ...subjects].find(value => value && subjects.includes(value)) ?? '数学';
+    const resolvedStage = resolveNotebookStage(str(input?.grade), [cookies[COOKIE.itemsGrade], profile.grade, ALL_STAGES], stagesInScope(all, subject));
+    const stageOptions = resolvedStage.stages;
+    const grade = resolvedStage.grade;
     setCookie(request, response, COOKIE.itemsSubject, subject, null);
     setCookie(request, response, COOKIE.itemsGrade, grade, null);
-    const scope = all.filter(item=>item.grade === grade && (item.subject || '未分类') === subject);
+    const scope = all.filter(item => (item.subject || '未分类') === subject && (grade === ALL_STAGES || item.grade === grade));
     const chapters = [...new Set(scope.map(item=>item.chapter || '未分类'))];
     const chapter = str(input?.chapter).trim().slice(0,100);
     // Keep unavailable chapter filters visible so a changed category never silently broadens search.
@@ -571,7 +575,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       eligibleIds:[...recommend.recommended,...recommend.others].map(item=>item.id),
       recoveryItems:all.filter(item=>selectedIds.includes(item.id) && !visibleIds.has(item.id)),
       selection:selecting,
-      category:{grade,subject,subjects},anyPhoto:state.week.photos.length > 0,
+      category:{grade,subject,subjects,stages:stageOptions},anyPhoto:state.week.photos.length > 0,
       finding:state.photos.some(photo=>photo.state === 'finding'),
       bar:{caption:'',primary:null,secondary:[]},removed,
       flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null,err:!validReturnSelection && request.method !== 'POST' ? '返回的选题信息不可用，请重新选择。' : null}};
@@ -1051,7 +1055,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   r.post('/settings/grade', form, page((request, response) => {
     if (!updateStudentGrade(getDb(), requireProfile().id, request.body?.grade)) {
-      render(response, SettingsPage({studentHostWorker:options.studentHostWorker === true,accountRole:accountRoleOf(response),grade:requireProfile().grade,error:'请选择初一、初二或初三。'}), 400); return;
+      render(response, SettingsPage({studentHostWorker:options.studentHostWorker === true,accountRole:accountRoleOf(response),grade:requireProfile().grade,error:STAGE_REQUIRED_MESSAGE}), 400); return;
     }
     audit('student_grade_updated', 'student', requireProfile().id);
     response.redirect(303, '/s/settings');

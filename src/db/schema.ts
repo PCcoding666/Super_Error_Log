@@ -5,7 +5,7 @@ export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS student_profile (
   id TEXT PRIMARY KEY,
   nickname TEXT NOT NULL,
-  grade TEXT NOT NULL DEFAULT '初三',
+  grade TEXT NOT NULL DEFAULT '初中',
   subjects TEXT NOT NULL DEFAULT '["数学","物理","化学"]',
   weekend_pref TEXT DEFAULT '周六上午',
   created_at TEXT NOT NULL
@@ -144,6 +144,8 @@ CREATE TABLE IF NOT EXISTS review_packet_item (
   answer_text TEXT,
   PRIMARY KEY (packet_id, item_id)
 );
+CREATE INDEX IF NOT EXISTS idx_error_diagnosis_item ON error_diagnosis(item_id);
+CREATE INDEX IF NOT EXISTS idx_review_packet_item_item ON review_packet_item(item_id);
 
 CREATE TABLE IF NOT EXISTS review_attempt (
   id TEXT PRIMARY KEY,

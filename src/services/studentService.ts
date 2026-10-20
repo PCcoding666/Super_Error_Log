@@ -1,4 +1,5 @@
 import { getDb, newId, now } from '../db/connection.js';
+import { isStage } from '../classification/stages.js';
 import { audit } from './eventLog.js';
 import type { Role, Subject } from '../domain/types.js';
 
@@ -32,6 +33,7 @@ export function createProfile(input: {
   nickname: string;
   subjects: Subject[];
   weekendPref: string;
+  stage?: string;
 }): StudentProfile {
   const existing = getProfile();
   if (existing) return existing;
@@ -40,7 +42,7 @@ export function createProfile(input: {
     .prepare(
       'INSERT INTO student_profile (id, nickname, grade, subjects, weekend_pref, created_at) VALUES (?,?,?,?,?,?)',
     )
-    .run(id, input.nickname, '初三', JSON.stringify(input.subjects), input.weekendPref, now());
+    .run(id, input.nickname, isStage(input.stage) ? input.stage : '初中', JSON.stringify(input.subjects), input.weekendPref, now());
   getDb()
     .prepare('INSERT INTO guardian_view_policy (student_id) VALUES (?)')
     .run(id);
@@ -61,7 +63,7 @@ export function ensureStudentProfile(): StudentProfile {
   const id = newId('stu');
   getDb()
     .prepare('INSERT INTO student_profile (id, nickname, grade, subjects, weekend_pref, created_at) VALUES (?,?,?,?,?,?)')
-    .run(id, '学生', '初三', JSON.stringify(['数学', '物理', '化学']), '周六上午', now());
+    .run(id, '学生', '初中', JSON.stringify(['数学', '物理', '化学']), '周六上午', now());
   getDb()
     .prepare('INSERT INTO guardian_view_policy (student_id) VALUES (?)')
     .run(id);

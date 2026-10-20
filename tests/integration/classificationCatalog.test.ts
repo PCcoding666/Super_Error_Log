@@ -78,7 +78,7 @@ describe('student classification catalog', () => {
 
   it('does not reuse junior topics for another stage', () => {
     readCatalog(db, 'a');
-    db.prepare('INSERT INTO learning_stage (id,name) VALUES (?,?)').run('senior', '高中');
+    db.prepare('INSERT OR IGNORE INTO learning_stage (id,name) VALUES (?,?)').run('senior', '高中');
     expect(() => readCatalog(db, 'a', 'senior')).toThrow(/学段/);
     db.exec("INSERT INTO classification_catalog (student_id,stage_id,version) VALUES ('a','senior',1)");
     db.exec("INSERT INTO classification_subject (id,student_id,stage_id,name) VALUES ('senior-math','a','senior','数学')");

@@ -3,6 +3,8 @@ import type { Stage } from './evidence.js';
 import sharp from 'sharp';
 import crypto from 'node:crypto';
 import { recordAiUsage, tokenCount } from '../observability/aiUsage.js';
+import { withProcessImage } from '../mobile/admission.js';
+import { withParentPermit } from '../studentHost/parentPermit.js';
 
 export type ModelStage = Stage | 'crop_inventory' | 'crop_verify' | 'mobile_inventory' | 'mobile_transcribe' | 'mobile_verify' | 'mobile_ground';
 export interface StageRun { stage: ModelStage; model: string; durationMs: number; promptTokens: number | null; completionTokens: number | null; maxTokens: number; thinking: false; promptVersion: string }
@@ -90,13 +92,26 @@ export function assertEndpoint(baseUrl: string, bailianOnly: boolean): void {
   if (bailianOnly && (!official || !u.pathname.endsWith('/compatible-mode/v1'))) throw new AiError('unsupported', '百炼模式只允许其官方按量付费接口');
 }
 
+function containsImage(messages: Message[]): boolean {
+  return messages.some(message => Array.isArray(message.content) && message.content.some(part => part?.type === 'image_url'));
+}
+
 export class ChatClient {
   constructor(readonly options: ChatOptions) {}
   async call(stage: ModelStage, messages: Message[]): Promise<StageResult<unknown>> {
     const o = this.options; const model = o.models[stage];
     if (!o.apiKey.trim() || !model?.trim()) throw new AiError('unsupported', '真实 AI 配置缺失，请在本机配置密钥和阶段模型；不会降级为 Mock');
     assertEndpoint(o.baseUrl, o.bailianOnly);
-    await checkInput(messages);
+    const vision = containsImage(messages);
+    // 带图的调用才占全局名额：先串行解码校验，再占视觉名额发请求。纯文本追问不排队。
+    if (vision) await withProcessImage(() => checkInput(messages));
+    else await checkInput(messages);
+    const run = (): Promise<StageResult<unknown>> => this.complete(stage, messages);
+    return vision ? withParentPermit('ai', run) : run();
+  }
+
+  private async complete(stage: ModelStage, messages: Message[]): Promise<StageResult<unknown>> {
+    const o = this.options; const model = o.models[stage]!;
     const maxTokens = o.maxTokens ?? 8192;
     if (!Number.isInteger(maxTokens) || maxTokens < 128 || maxTokens > 16384 || !Number.isFinite(o.timeoutMs) || o.timeoutMs < 1) throw new AiError('unsupported', '模型 token/超时限制无效');
     const request = { model, messages: traceMessages(messages), temperature: 0, max_tokens: maxTokens,

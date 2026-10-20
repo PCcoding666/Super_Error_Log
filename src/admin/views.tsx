@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { AdminFilters, AdminReport, UsageSummary } from './report.js';
+import { USAGE_DETAIL_CAP, type AdminFilters, type AdminReport, type UsageSummary } from './report.js';
 
 const number = (value: number | null): string => value === null ? '未采集' : value.toLocaleString('zh-CN');
 const percent = (value: number | null): string => value === null ? '未采集' : `${(value * 100).toFixed(1)}%`;
@@ -73,7 +73,7 @@ export function AdminDashboard(report: AdminReport): ReactNode {
     <p className="coverage">共 {number(summary.calls)} 次已记录调用，重试分别计数。未返回用量的调用标为“未采集”；已报告 tokens 是可计量部分，可能低于实际总用量。</p>
     <section className="panel" id="accounts"><div className="section-heading"><div><h2>账号与邀请码</h2><p className="subtle small">{report.accounts.length} 个账号 · AI 指标使用当前筛选，学习使用次数为累计值。补发邀请码不重复累计用量。</p></div></div>
       <div className="table-scroll"><table className="accounts-table"><thead><tr><th scope="col">账号</th><th scope="col">最近活跃</th><th scope="col">邀请码 / 会话</th><th scope="col">调用次数</th><th scope="col">输入 / 输出 tokens</th><th scope="col">接口成功率</th><th scope="col">累计使用</th></tr></thead>
-        <tbody>{report.accounts.map(account => <tr key={account.studentId}><td><a className="account-name" href={adminLink(filters, { studentId: account.studentId, page: 1 })}>{account.label}</a><small className="mono block">{account.studentId}</small></td>
+        <tbody>{report.accounts.map(account => <tr key={account.studentId}><td><a className="account-name" href={adminLink(filters, { studentId: account.studentId, page: 1 })}>{account.label}</a>{account.grade ? <small className="block">学段 {account.grade}</small> : null}<small className="mono block">{account.studentId}</small></td>
           <td>{time(account.lastActiveAt)}</td><td>{account.invitations.length} 个邀请码<small className="block subtle">{account.activeSessions} 个有效会话</small></td>
           <td>{account.usage.calls}</td><td>{number(account.usage.inputTokens)} / {number(account.usage.outputTokens)}</td><td>{percent(account.usage.successRate)}</td>
           <td><details><summary>查看使用情况</summary><dl className="activity"><dt>录入题目照片</dt><dd>{number(account.activity.photos)}</dd><dt>错题</dt><dd>{number(account.activity.items)}</dd>
@@ -90,7 +90,7 @@ export function AdminDashboard(report: AdminReport): ReactNode {
       <h3>按模型</h3><PerformanceTable rows={report.byModel} /><h3>按功能</h3><PerformanceTable rows={report.byOperation} />
       <div className="failures"><h3>失败原因</h3>{report.failures.length ? <ul>{report.failures.map(row => <li key={row.code}><span>{errorLabel(row.code)}</span><strong>{row.count} 次</strong></li>)}</ul> : <p className="subtle small">当前筛选下没有已记录的失败调用。</p>}</div>
     </section>
-    <section className="panel" id="calls"><div className="section-heading"><div><h2>调用明细</h2><p className="subtle small">最新在前 · 每页 50 条 · 历史识别日志缺少的耗时保留为“未采集”。</p></div><span className="badge">{summary.calls} 条记录</span></div>
+    <section className="panel" id="calls"><div className="section-heading"><div><h2>调用明细</h2><p className="subtle small">最新在前 · 每页 50 条{report.detailLimited ? ` · 明细最多展示 ${USAGE_DETAIL_CAP.toLocaleString('zh-CN')} 条，上方合计仍是全部调用` : ''} · 历史识别日志缺少的耗时保留为“未采集”。</p></div><span className="badge">{summary.calls} 条记录</span></div>
       <div className="table-scroll"><table className="calls-table"><thead><tr><th scope="col">时间</th><th scope="col">账号</th><th scope="col">功能</th><th scope="col">模型</th><th scope="col">输入 tokens</th><th scope="col">输出 tokens</th><th scope="col">耗时</th><th scope="col">状态</th><th scope="col">失败原因 / HTTP</th></tr></thead>
         <tbody>{report.records.map(row => <tr key={`${row.studentId}:${row.id}`}><td>{time(row.startedAt)}<small className="block subtle">{row.source === 'legacy' ? '历史识别日志' : '统一采集'}</small></td><td>{row.accountLabel}</td><td>{operation(row.operation)}</td><td>{row.model}</td>
           <td>{number(row.inputTokens)}</td><td>{number(row.outputTokens)}</td><td>{duration(row.durationMs)}</td><td><span className={`badge ${row.status === 'succeeded' ? 'success' : 'failure'}`}>{row.status === 'succeeded' ? '成功' : '失败'}</span></td><td>{errorLabel(row.errorCode)}<small className="block subtle">HTTP {row.httpStatus ?? '未返回'}</small></td></tr>)}</tbody></table>

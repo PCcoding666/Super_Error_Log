@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { STAGES } from '../classification/stages.js';
 import { SUBJECTS } from '../domain/types.js';
 import { Layout } from './layout.js';
 
@@ -15,6 +16,8 @@ export function OnboardingPage(props: { error?: string }): ReactNode {
         <p className="muted">不需要真实姓名、学校或任何账号，数据只保存在这台设备上。</p>
         <label htmlFor="nickname">昵称（可以虚构）</label>
         <input id="nickname" name="nickname" required maxLength={20} placeholder="例如：小舟" />
+        <label htmlFor="stage">学段</label>
+        <select id="stage" name="grade" defaultValue="初中">{STAGES.map(stage => <option key={stage} value={stage}>{stage}</option>)}</select>
 
         <h2>第 2 步：学科与节奏</h2>
         <fieldset>

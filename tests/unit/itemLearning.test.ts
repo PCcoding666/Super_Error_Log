@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ItemDetailPage } from '../../src/web/views/items.js';
 
-const item = { id: 'itm_0123456789abcdef', shortId: 'Q01', grade: '初三', subject: '数学', chapter: '二次函数', knowledgeTags: [], questionExcerpt: '求 x 的值', status: 'eligible_for_review' as const, badge: 'ok' as const, cropUrl: '', jobId: 'synthetic' };
+const item = { id: 'itm_0123456789abcdef', shortId: 'Q01', grade: '初中', subject: '数学', chapter: '二次函数', knowledgeTags: [], questionExcerpt: '求 x 的值', status: 'eligible_for_review' as const, badge: 'ok' as const, cropUrl: '', jobId: 'synthetic' };
 const reflection = { id: 'diag_test', attemptState: '方法基本正确但步骤出错' as const, cause: '计算' as const, masteryFeeling: 2 as const, summary: '移项忘了变号', adoptedAi: false, source: 'v2', createdAt: '2026-10-19T00:00:00Z' };
 const render = (extra = {}) => renderToStaticMarkup(ItemDetailPage({ item, evidence: null, canDiscard: true, reflected: false, ...extra }));
 
@@ -27,24 +27,24 @@ describe('single-question learning', () => {
     expect(html).toContain('重做这题');
   });
   it('makes retry primary, keeps corrections secondary, and preserves a safe notebook return', () => {
-    const html = render({ eligible: true, returnTo: '/s/items?grade=初三&subject=数学&q=方程#item-itm_0123456789abcdef' });
+    const html = render({ eligible: true, returnTo: '/s/items?grade=初中&subject=数学&q=方程#item-itm_0123456789abcdef' });
     expect(html).toContain(`action="/s/items/${item.id}/practice"`);
     expect(html).toMatch(/data-testid="next-step-primary"[^>]*>.*重做这题/);
     expect(html).toContain('q=%E6%96%B9%E7%A8%8B');
     for (const returnTo of ['https://evil.example/s/items','//evil.example/s/items','/s/items/../settings','/s/items?next=https://evil.example','/s/items#unexpected']) {
       const rejected = render({returnTo});
       expect(rejected).not.toContain('evil.example');
-      expect(rejected).toContain(`href="/s/items?grade=%E5%88%9D%E4%B8%89&amp;subject=%E6%95%B0%E5%AD%A6#item-${item.id}"`);
+      expect(rejected).toContain(`href="/s/items?grade=%E5%88%9D%E4%B8%AD&amp;subject=%E6%95%B0%E5%AD%A6#item-${item.id}"`);
     }
     expect(render({ returnTo: '/s/settings' })).toContain('#item-itm_0123456789abcdef');
   });
   it('keeps canonical notebook status validation and the item anchor on detail returns', () => {
-    const html = render({returnTo:'/s/items?grade=初三&subject=数学&status=toString&q=方程'});
+    const html = render({returnTo:'/s/items?grade=初中&subject=数学&status=toString&q=方程'});
     expect(html).not.toContain('status=toString');
     expect(html).toContain(`q=%E6%96%B9%E7%A8%8B#item-${item.id}`);
   });
   it('carries validated notebook and selection context into management links and discard',()=>{
-    const returnTo=`/s/items?${new URLSearchParams({grade:'初三',subject:'数学',chapter:'方程',q:'x',mode:'select',itemIds:item.id})}#item-${item.id}`;
+    const returnTo=`/s/items?${new URLSearchParams({grade:'初中',subject:'数学',chapter:'方程',q:'x',mode:'select',itemIds:item.id})}#item-${item.id}`;
     const html=render({returnTo,evidence:{questionText:'题目',badge:'ok',observations:[]}});
     for(const action of ['fix','category']) expect(html).toContain(`/s/items/${item.id}/${action}?${new URLSearchParams({returnTo})}`);
     expect(html).toContain(`name="returnTo" value="${returnTo.replaceAll('&','&amp;')}"`);

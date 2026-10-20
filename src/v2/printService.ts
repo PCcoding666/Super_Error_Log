@@ -22,6 +22,7 @@ import { validateEvidence, type Coaching, type Diagnosis, type Evidence } from '
 import { getCoachProvider } from '../ai/index.js';
 import type { CoachProvider } from '../ai/provider.js';
 import { cropPhoto, normalizePhoto, type Box } from '../media/images.js';
+import { withProcessImage } from '../mobile/admission.js';
 import { audit } from '../services/eventLog.js';
 import { getEvidence, evidenceSource } from '../services/evidenceService.js';
 import { getPractice } from './practiceService.js';
@@ -159,6 +160,10 @@ export function printMaskRects(evidence: Evidence, crop: Box, width: number, hei
  * 落在裁图内的作答/订正/批注/参考答案/未知区域填白（见 printMaskRects），diagram 不遮。
  */
 export async function maskedQuestionCrop(source: Buffer, evidence: Evidence): Promise<Buffer> {
+  return withProcessImage(() => renderMaskedQuestionCrop(source, evidence));
+}
+
+async function renderMaskedQuestionCrop(source: Buffer, evidence: Evidence): Promise<Buffer> {
   const crop = expandPrintCropMargin(evidence.questionRegion);
   const normalized = await normalizePhoto(source);
   const metadata = await sharp(normalized).metadata();
@@ -199,6 +204,11 @@ function buildSnapshot(
 
 /** 在进程内跑的准备任务（packetId → Promise），保证同一包同时只有一个准备。 */
 const preparing = new Map<string, Promise<void>>();
+
+/** 学生 worker 空闲退出前要问这一下：正在准备的打印快照不能被杀掉，重启后续做。 */
+export function printWorkPending(): boolean {
+  return preparing.size > 0;
+}
 
 async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
   const db = getDb();

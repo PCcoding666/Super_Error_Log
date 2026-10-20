@@ -28,13 +28,16 @@ PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/super-error-log
 
-# 资源限制（cgroup v1 语法；systemd 239 支持）：
-# - MemoryLimit=1G：cgroup 级内存上限（含 sharp 原生缓冲）。
-# - CPUQuota=150%：1.5 核。
-# 注意：Task 3 实现的 768MiB 是【应用层准入阈值】（AdmissionController 拒绝新照片），
-# 不宣称内核在 768MiB 节流；内核级节流只由 MemoryLimit=1G 决定。
-MemoryLimit=1G
-CPUQuota=150%
+# 资源限制。systemd 239 / cgroup v1 同时写 MemoryMax 与 MemoryLimit（v1 读的是后者），两处保持相同数值。
+# 推荐档：4 核 / 8 GB 机器。MemoryMax=4G，CPUQuota=300%（3 核）。父子进程和所有学生 worker 共用这一份。
+# 当前广州小机是 2 核 / 1.8 GB，不能直接用 4G。先装
+# deploy/systemd/super-error-log.service.d/small-box.conf（MemoryMax=1G、CPUQuota=150%），
+# 再把环境改成 SEL_SERVICE_MEMORY_MIB=1024、SEL_MAX_LIVE_WORKERS=3、
+# SEL_GLOBAL_AI_CONCURRENCY=1、SEL_GLOBAL_IMAGE_CONCURRENCY=1，然后才重启。
+# 应用层 RSS 准入按 SEL_SERVICE_MEMORY_MIB / SEL_RSS_ADMISSION_MIB 计算，不再是固定 768MiB，也不等于这里的内核上限。
+MemoryMax=4G
+MemoryLimit=4G
+CPUQuota=300%
 
 # 进程退出即重启；固定 5s 间隔（systemd 自带 StartLimit 防快连环重启）。
 Restart=on-failure

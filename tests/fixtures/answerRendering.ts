@@ -9,7 +9,7 @@ AC = √(4²+3²) = 5
 Q(2,2)，Q₁(5√2/2,(8-5√2)/2)`;
 
 export const answerItem = {
-  id: 'itm_0123456789abcdef', shortId: 'Q01', grade: '初三', subject: '数学',
+  id: 'itm_0123456789abcdef', shortId: 'Q01', grade: '初中', subject: '数学',
   chapter: '二次函数', knowledgeTags: [], questionExcerpt: '求抛物线解析式及点的坐标。',
   status: 'eligible_for_review' as const, badge: 'ok' as const, cropUrl: '', jobId: 'synthetic',
 };

@@ -75,7 +75,7 @@ describe('classification schema: additive migration and integrity', () => {
   it('rejects a subject belonging to another stage', () => {
     const db = database();
     classified(db);
-    db.prepare('INSERT INTO learning_stage (id,name) VALUES (?,?)').run('senior', '高中');
+    db.prepare('INSERT OR IGNORE INTO learning_stage (id,name) VALUES (?,?)').run('senior', '高中');
     subject(db, 'a', 'senior-math', 'senior');
     expect(() => db.prepare("UPDATE item_classification SET subject_id='senior-math' WHERE item_id='item'").run()).toThrow(/FOREIGN KEY/);
   });
@@ -147,7 +147,7 @@ describe('classification schema: additive migration and integrity', () => {
     classificationStudent(db, 'b');
     subject(db);
     subject(db, 'b', 'b-math');
-    db.exec("INSERT INTO learning_stage (id,name) VALUES ('senior','高中')");
+    db.exec("INSERT OR IGNORE INTO learning_stage (id,name) VALUES ('senior','高中')");
     subject(db, 'a', 'senior-math', 'senior');
     db.exec("INSERT INTO v2_photo (job_id,student_id,registered_at) VALUES ('photo','a','2026-10-16')");
     const insert = db.prepare('INSERT INTO photo_subject_selection (job_id,student_id,subject_id) VALUES (?,?,?)');
