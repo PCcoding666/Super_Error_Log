@@ -14,10 +14,14 @@ import { resumePendingSnapshots } from '../v2/printService.js';
 import { createWebClientRouter } from '../web/router.js';
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { MobileVisionBoundary } from './vision.js';
+import { MaterialStore } from '../materials/store.js';
+import type { MaterialJobs } from '../materials/jobs.js';
+import type { MaterialUploads } from '../materials/uploads.js';
 
 /** 测试与本机试用的替身（合成识别、固定转写）；生产入口 main.ts 不传。 */
 export interface CloudAssemblyOverrides {
   vision?: MobileVisionBoundary;
+  configureMaterials?: (jobs: MaterialJobs, uploads: MaterialUploads) => void;
   transcriber?: SpeechTranscriber;
   /** 学生空间 worker（studentHost/worker.ts）不需要管理 socket：深层目录下 unix socket 路径可能超长。 */
   adminServer?: boolean;
@@ -45,8 +49,7 @@ export interface CloudAssembly {
 export async function assembleCloudService(configuration: MobileConfiguration, overrides: CloudAssemblyOverrides = {}): Promise<CloudAssembly> {
   if (configuration.mode !== 'cloud') throw new Error('assembleCloudService 仅用于云端模式');
   // 共享 SQLite（SEL_DATA_DIR/app.db）：先建库再确保唯一学生档案，/v2 绑定到它。
-  getDb();
-  ensureStudentProfile();
+  const materialStore = new MaterialStore(getDb(), ensureStudentProfile().id);
   // T3：启动时把已登记但尚未桥接的 v2 识别任务补桥一次（单个失败不影响启动）。
   bridgePending(configuration.dataDir);
   // T5：重启后续做 preparing 状态的打印快照（已完成的题不重做）。
@@ -61,6 +64,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     ? await createStudentHostGateway({ hostDir: resolveStudentHostDir(configuration.dataDir) })
     : null;
   const app = await createMobileApp({
+    materialStore, configureMaterials: overrides.configureMaterials,
     dataDir: configuration.dataDir, vision: overrides.vision ?? new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true,
     v2Router: ({ limiter }) => createV2Router({ mobileDataDir: configuration.dataDir, transcriber, limiter }),
     // 学生网页版 /s/（2026-10-09）：同一进程、同一端口、同一 Caddy 站点。
