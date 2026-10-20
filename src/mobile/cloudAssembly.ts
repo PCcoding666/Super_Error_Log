@@ -85,16 +85,24 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     return address && typeof address === 'object' ? (address as AddressInfo).port : null;
   };
   const close = async (): Promise<void> => {
+    const errors: unknown[] = [];
+    const cleanup = async (operation: () => Promise<void>): Promise<void> => {
+      try { await operation(); } catch (error) { errors.push(error); }
+    };
     // 先停学生 worker（不再接新请求后再杀子进程，避免半截 multipart 写入）。
-    if (studentHost) await studentHost.close();
-    await app.locals.mobileRecognitionService.stop();
-    if (admin) await admin.close();
+    // Each resource still gets its cleanup attempt if an earlier shutdown write fails.
+    if (studentHost) await cleanup(() => studentHost.close());
+    await cleanup(() => app.locals.mobileRecognitionService.stop());
+    if (admin) await cleanup(() => admin.close());
     const current = server;
-    server = null;
-    if (current) await new Promise<void>((resolve, reject) => {
-      current.once('error', reject);
-      current.close(() => { current.off('error', reject); resolve(); });
+    if (current) await cleanup(async () => {
+      await new Promise<void>((resolve, reject) => {
+        current.once('error', reject);
+        current.close(error => { current.off('error', reject); if (error) reject(error); else resolve(); });
+      });
+      server = null;
     });
+    if (errors.length) throw new AggregateError(errors, 'Cloud service shutdown failed after attempting all resource cleanup.');
   };
   return { configuration, admin, pairing, listen, boundPort, close };
 }
