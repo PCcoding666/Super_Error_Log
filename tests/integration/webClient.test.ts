@@ -1554,34 +1554,36 @@ describe('年级、学科、章节分类', () => {
 
   it('lists only stages present for the subject and keeps a high-school chapter as written', async () => {
     const { browser, rows } = await categoryFixture();
-    await browser.post(`/s/items/${rows[0]!.id}/category`, { grade: '高中', subject: '物理', chapter: '求导数' });
-    await browser.post(`/s/items/${rows[1]!.id}/category`, { grade: '初中', subject: '物理', chapter: '力' });
-    const physics = await browser.text(`/s/items?subject=${encodeURIComponent('物理')}&grade=${encodeURIComponent('全部')}`);
-    expect(physics).toContain('>全部</option>');
-    expect(physics).toContain('>初中</option>');
-    expect(physics).toContain('>高中</option>');
-    for (const absent of ['初一', '初二', '初三', '高一', '高二', '高三']) expect(physics).not.toContain(`>${absent}</option>`);
-    const senior = await browser.text(`/s/items?subject=${encodeURIComponent('物理')}&grade=${encodeURIComponent('高中')}`);
-    expect(senior).toContain(`id="item-${rows[0]!.id}"`);
-    expect(senior).not.toContain(`id="item-${rows[1]!.id}"`);
-    const chemistry = await browser.text(`/s/items?subject=${encodeURIComponent('化学')}`);
-    expect(chemistry).toContain('还没有化学错题');
-    expect(chemistry).toContain('>全部</option>');
-    expect(chemistry).not.toContain('>初中</option>');
-    const math = await browser.text(`/s/items?subject=${encodeURIComponent('数学')}`);
-    expect(math).toContain('<option selected="">初中</option>');
-    expect(math).not.toContain('>全部</option>');
-    expect((await browser.post('/s/settings/grade', { grade: '高中' })).status).toBe(303);
-    expect((await uploadPhoto(browser, await photo('#c83030', 640))).status).toBe(200);
-    await waitFor(async () => {
-      await browser.get('/s/items');
-      return (getDb().prepare('SELECT COUNT(*) AS n FROM error_item').get() as { n: number }).n > rows.length;
-    });
-    const created = getDb().prepare(`SELECT id FROM error_item WHERE id NOT IN (${rows.map(() => '?').join(',')}) ORDER BY item_index LIMIT 1`).get(...rows.map(row => row.id)) as { id: string };
-    const html = await browser.text(`/s/items/${created.id}`);
-    expect(html).toContain('data-testid="item-category">高中 · 数学 · 未分类');
-    expect(html).toContain('细知识点：');
-    expect(await browser.text(`/s/items/${rows[2]!.id}`)).toContain('data-testid="item-category">初中 · 数学');
+    try {
+      await browser.post(`/s/items/${rows[0]!.id}/category`, { grade: '高中', subject: '物理', chapter: '求导数' });
+      await browser.post(`/s/items/${rows[1]!.id}/category`, { grade: '初中', subject: '物理', chapter: '力' });
+      const physics = await browser.text(`/s/items?subject=${encodeURIComponent('物理')}&grade=${encodeURIComponent('全部')}`);
+      expect(physics).toContain('>全部</option>');
+      expect(physics).toContain('>初中</option>');
+      expect(physics).toContain('>高中</option>');
+      for (const absent of ['初一', '初二', '初三', '高一', '高二', '高三']) expect(physics).not.toContain(`>${absent}</option>`);
+      const senior = await browser.text(`/s/items?subject=${encodeURIComponent('物理')}&grade=${encodeURIComponent('高中')}`);
+      expect(senior).toContain(`id="item-${rows[0]!.id}"`);
+      expect(senior).not.toContain(`id="item-${rows[1]!.id}"`);
+      const chemistry = await browser.text(`/s/items?subject=${encodeURIComponent('化学')}`);
+      expect(chemistry).toContain('还没有化学错题');
+      expect(chemistry).toContain('>全部</option>');
+      expect(chemistry).not.toContain('>初中</option>');
+      const math = await browser.text(`/s/items?subject=${encodeURIComponent('数学')}`);
+      expect(math).toContain('<option selected="">初中</option>');
+      expect(math).not.toContain('>全部</option>');
+      expect((await browser.post('/s/settings/grade', { grade: '高中' })).status).toBe(303);
+      expect((await uploadPhoto(browser, await photo('#c83030', 640))).status).toBe(200);
+      await waitFor(async () => {
+        await browser.get('/s/items');
+        return (getDb().prepare('SELECT COUNT(*) AS n FROM error_item').get() as { n: number }).n > rows.length;
+      });
+      const created = getDb().prepare(`SELECT id FROM error_item WHERE id NOT IN (${rows.map(() => '?').join(',')}) ORDER BY item_index LIMIT 1`).get(...rows.map(row => row.id)) as { id: string };
+      const html = await browser.text(`/s/items/${created.id}`);
+      expect(html).toContain('data-testid="item-category">高中 · 数学 · 未分类');
+      expect(html).toContain('细知识点：');
+      expect(await browser.text(`/s/items/${rows[2]!.id}`)).toContain('data-testid="item-category">初中 · 数学');
+    } finally { getDb().prepare("UPDATE student_profile SET grade='初中'").run(); }
   });
 });
 
@@ -1746,7 +1748,10 @@ describe('single-question learning detail', () => {
     expect(target.searchParams.get('removed')).toBe(id);
     target.searchParams.delete('removed');target.searchParams.delete('returnItem');
     expect(target.pathname+target.search+target.hash).toBe(returnTo);
-    const flash=await browser.text(discarded.headers.get('location')!);assertContext(flash);
+    const flash=await browser.text(discarded.headers.get('location')!);
+    // The discarded item was the only one in that subject, so the stage filter falls back to 全部.
+    const hidden=(html:string,name:string)=>new RegExp(`name="${name}" value="([^"]*)"`).exec(html)?.[1]?.replaceAll('&amp;','&');
+    expect(hidden(flash,'returnTo')).toBe(returnTo.replace('grade=%E5%88%9D%E4%B8%AD','grade=%E5%85%A8%E9%83%A8'));
     const restored=await browser.post(`/s/items/${id}/restore`,{returnTo});
     expect(restored.headers.get('location')).toBe(returnTo);
     const restoredPage=await browser.text(returnTo);
