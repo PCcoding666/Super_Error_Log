@@ -95,7 +95,11 @@ export function invalidateLinkDependencies(store:MaterialStore,questionIds:strin
   for (const table of ['material_answer','material_grade','material_job'] as const) {
     const rows=store.db.prepare(`SELECT rowid AS row_id,* FROM ${table} WHERE owner_id=? ${table==='material_job'?"AND kind!='extract' AND state IN ('queued','running','interrupted','failed')":'AND stale=0'}`).all(store.studentId) as {row_id:number;question_id?:string;attempt_id?:string;kind?:string;basis_key:string;dependencies_json:string}[];
     for (const row of rows) {
-      const d=JSON.parse(row.dependencies_json) as Partial<MaterialDependencies>;
+      const parsed=JSON.parse(row.dependencies_json);
+      // Photo projections depend on their own region/link, maintained atomically by linkFragment.
+      // Adding or reaffirming the receiving stem must not invalidate a newly supplemented answer.
+      if (table==='material_answer'&&parsed?.version===2&&parsed.kind==='imported') continue;
+      const d=parsed as Partial<MaterialDependencies>;
       const attemptQuestion=row.attempt_id?(store.db.prepare('SELECT question_id FROM material_attempt WHERE owner_id=? AND id=?').get(store.studentId,row.attempt_id) as {question_id:string}|undefined)?.question_id:undefined;
       const relevant=d?.version===1?questions.has(d.questionId!):row.question_id?questions.has(row.question_id):attemptIds.includes(row.attempt_id!)||stem&&questions.has(attemptQuestion!);
       if (!relevant) continue;
@@ -108,4 +112,15 @@ export function invalidateLinkDependencies(store:MaterialStore,questionIds:strin
 }
 
 /** Historical versions remain readable; no answer projection or model work occurs here. */
-export function answerHistory(store:MaterialStore,questionId:string,page=0):{answer:import('./contracts.js').ReferenceAnswer;createdAt:string}[]{const q=readQuestion(store,questionId);if(!q)return [];return (store.db.prepare('SELECT content_json,stale,created_at FROM material_answer WHERE owner_id=? AND question_id=? ORDER BY rowid DESC LIMIT 20 OFFSET ?').all(store.studentId,q.id,Math.max(0,page)*20) as {content_json:string;stale:number;created_at:string}[]).map(row=>({answer:{...JSON.parse(row.content_json),stale:!!row.stale},createdAt:row.created_at}));}
+export function answerHistory(store:MaterialStore,questionId:string,page=0):{answer:import('./contracts.js').ReferenceAnswer;createdAt:string}[]{
+  const q=readQuestion(store,questionId);if(!q)return [];
+  // UNION deduplicates IDs even if malformed historical aliases contain a cycle.
+  // Pagination is over the complete current alias family, never per original question.
+  const rows=store.db.prepare(`WITH RECURSIVE family(id) AS (
+    SELECT ? UNION SELECT m.source_key FROM material_legacy_map m JOIN family f ON m.question_id=f.id
+    WHERE m.owner_id=? AND m.source_kind='question_alias'
+  ) SELECT a.content_json,a.stale,a.created_at FROM material_answer a
+    WHERE a.owner_id=? AND a.question_id IN (SELECT id FROM family) ORDER BY a.rowid DESC LIMIT 20 OFFSET ?`)
+    .all(q.id,store.studentId,store.studentId,Math.max(0,page)*20) as {content_json:string;stale:number;created_at:string}[];
+  return rows.map(row=>({answer:{...JSON.parse(row.content_json),stale:!!row.stale},createdAt:row.created_at}));
+}

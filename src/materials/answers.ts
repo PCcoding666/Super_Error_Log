@@ -144,6 +144,7 @@ export function projectImportedFragment(store: MaterialStore, fragmentId: string
     if (old && (JSON.parse(old.content_json) as ReferenceAnswer).basisKey === key)
         return;
     const a: ReferenceAnswer = { id: old?.id ?? newId('man'), revision: (old?.revision ?? 0) + 1, questionId: target, subpart: fragment.subpart, source: 'imported', text: fragment.text, claimedSource: null, fragmentIds: [fragmentId], basisKey: key, stale: fragment.check !== 'passed' || fragment.uncertainties.length > 0, run: null };
+    if (old) store.db.prepare('UPDATE material_answer SET stale=1 WHERE owner_id=? AND id=?').run(store.studentId,old.id);
     insert(store, a, { version: 2, kind: 'imported', fragmentId, revision: fragment.revision, linkRevision: link!.revision });
     changed(store, target, before);
 }
@@ -187,7 +188,7 @@ export function importAnswerText(store: MaterialStore, documentId: string, text:
             if (!line.trim())
                 continue;
             const m = /^\s*([^\s:：()（）]+)(?:[（(]([^()（）]+)[)）])?\s*[:：]\s*(.+)$/.exec(line) ?? /^\s*(\d+)(?:[（(]([^()（）]+)[)）])?[.．、]\s+(.+)$/.exec(line);
-            if (!m) {
+            if (!m || !m[3]?.trim()) {
                 pending.push({ number: '', text: line });
                 continue;
             }

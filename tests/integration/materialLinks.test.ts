@@ -5,11 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { SCHEMA_SQL } from '../../src/db/schema.js';
 import { migrateMaterials } from '../../src/materials/schema.js';
+import { saveManualAnswer, selectAnswerBasis } from '../../src/materials/answers.js';
 import { MaterialStore } from '../../src/materials/store.js';
 import { extractMaterial } from '../../src/materials/extraction.js';
 import { reconcileAsset } from '../../src/materials/matching.js';
 import { assignDocument, assetLinkRevision, linkRevision, relink, relinkNewAttempt, undoLink } from '../../src/materials/links.js';
-import { answerBasis, gradeBasis, readQuestion, effectiveFragmentCheck, dependenciesCurrent } from '../../src/materials/queries.js';
+import { answerHistory, answerBasis, gradeBasis, readQuestion, effectiveFragmentCheck, dependenciesCurrent } from '../../src/materials/queries.js';
 import type { CaptureHints, Extraction, Fragment } from '../../src/materials/contracts.js';
 
 const dbs: DatabaseSync[] = []; const dirs: string[] = [];
@@ -401,4 +402,25 @@ describe('contextual whole-page supplementation',()=>{
   const store=setup();const initial=asset(store,[{number:'12',text:'Original stem'},{number:'12',role:'student_work'}]);reconcileAsset(store,initial.id);const q=only(store);const attempt=q.attempts[0]!;
   const supplement=asset(store,[{number:'12',text:'Conflicting stem'},{number:'12',role:'student_work'}],'paper-A',{questionId:q.id,attemptId:attempt.id});expect(()=>reconcileAsset(store,supplement.id)).not.toThrow();const other=target(store,supplement.fragments[1]!.fragmentId);expect(other.question_id).not.toBe(q.id);expect(other.attempt_id).not.toBe(attempt.id);expect(readQuestion(store,other.question_id)!.unresolved).toContain('association');
  });
+});
+
+it.each([false,true])('confirms a photo answer page with a unique stem in either order, with visible history and undo (%s)',answerFirst=>{
+ const store=setup();const answer=answerFirst?asset(store,[{role:'reference_answer',text:'Photo teacher answer'}],'D'):null;if(answer)reconcileAsset(store,answer.id);
+ const stem=asset(store,[{text:'Question'}],answerFirst?null:'D');reconcileAsset(store,stem.id);const stemId=target(store,stem.fragments[0]!.fragmentId).question_id;
+ const photo=answer??asset(store,[{role:'reference_answer',text:'Photo teacher answer'}],null);if(!answer)reconcileAsset(store,photo.id);const photoId=target(store,photo.fragments[0]!.fragmentId).question_id;const oldAnswer=readQuestion(store,photoId)!.answers[0]!;
+ const documentId=readQuestion(store,answerFirst?photoId:stemId)!.documentId!;const changedAsset=answerFirst?stem.id:photo.id;const changes=assignDocument(store,{assetId:changedAsset,documentId,expectedRevision:assetLinkRevision(store,changedAsset)});
+ expect(target(store,photo.fragments[0]!.fragmentId).question_id).toBe(stemId);expect(store.listQuestions()).toHaveLength(1);expect(readQuestion(store,stemId)!.unresolved).toEqual([]);expect(readQuestion(store,stemId)!.answers.some(a=>!a.stale&&a.fragmentIds.includes(photo.fragments[0]!.fragmentId))).toBe(true);
+ expect(answerHistory(store,stemId).some(h=>h.answer.id===oldAnswer.id)).toBe(true);expect(answerHistory(store,photoId).some(h=>h.answer.id===oldAnswer.id)).toBe(true);
+ const inverse=undoLink(store,changes[0]!.id,linkRevision(store));expect(target(store,photo.fragments[0]!.fragmentId).question_id).toBe(photoId);expect(store.listQuestions()).toHaveLength(2);expect(readQuestion(store,photoId)!.answers.some(a=>a.id===oldAnswer.id&&!a.stale)).toBe(true);expect(answerHistory(store,stemId).some(h=>h.answer.id===oldAnswer.id)).toBe(false);expect(answerHistory(store,photoId).some(h=>h.answer.id===oldAnswer.id)).toBe(true);
+ undoLink(store,inverse.id,linkRevision(store));expect(target(store,photo.fragments[0]!.fragmentId).question_id).toBe(stemId);expect(answerHistory(store,stemId).some(h=>h.answer.id===oldAnswer.id)).toBe(true);
+ expect(store.db.prepare('SELECT count(*) n FROM material_fragment WHERE id=?').get(photo.fragments[0]!.fragmentId)).toEqual({n:1});
+});
+it('supplements an existing AI answer without moving or hiding its independent history',()=>{
+ const store=setup();const stem=asset(store,[{}],'D');reconcileAsset(store,stem.id);const q=only(store);const basis=answerBasis(store,q.id);const ai={id:'existing-ai',questionId:q.id,subpart:null,revision:1,source:'ai',text:'AI answer',claimedSource:null,fragmentIds:[stem.fragments[0]!.fragmentId],basisKey:basis.basisKey,stale:false,run:null};store.db.prepare('INSERT INTO material_answer(id,revision,owner_id,question_id,source,basis_key,dependencies_json,content_json) VALUES (?,?,?,?,?,?,?,?)').run(ai.id,1,store.studentId,q.id,'ai',basis.basisKey,JSON.stringify(basis.dependencies),JSON.stringify(ai));
+ const photo=asset(store,[{role:'reference_answer',text:'Teacher answer'}],null);reconcileAsset(store,photo.id);const changes=assignDocument(store,{assetId:photo.id,documentId:q.documentId!,expectedRevision:assetLinkRevision(store,photo.id)});const after=readQuestion(store,q.id)!;expect(after.answers.find(a=>a.id===ai.id)).toEqual(ai);expect(after.answers.some(a=>a.source==='imported'&&!a.stale)).toBe(true);expect(after.answerConflict).toBe(true);expect(after.unresolved).toEqual([]);undoLink(store,changes[0]!.id,linkRevision(store));expect(readQuestion(store,q.id)!.answers.find(a=>a.id===ai.id)).toEqual(ai);
+});
+it.each(['manual','selection'])('does not merge independent photo-question history or explicit adoption (%s)',kind=>{
+ const store=setup();const stem=asset(store,[{}],'D');reconcileAsset(store,stem.id);const q=only(store);const photo=asset(store,[{role:'reference_answer',text:'Photo answer'}],null);reconcileAsset(store,photo.id);const photoId=target(store,photo.fragments[0]!.fragmentId).question_id;const pq=readQuestion(store,photoId)!;
+ if(kind==='manual')saveManualAnswer(store,{questionId:photoId,subpart:null,text:'Independent manual',claimedSource:null,expectedRevision:pq.revision});else selectAnswerBasis(store,photoId,[pq.answers[0]!.id],pq.revision);
+ assignDocument(store,{assetId:photo.id,documentId:q.documentId!,expectedRevision:assetLinkRevision(store,photo.id)});expect(target(store,photo.fragments[0]!.fragmentId).question_id).toBe(photoId);expect(readQuestion(store,photoId)!.unresolved).toContain('result_history_conflict');expect(store.listQuestions()).toHaveLength(2);
 });

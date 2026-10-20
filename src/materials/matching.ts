@@ -51,18 +51,35 @@ function compatible(store:MaterialStore,q:QuestionBundle,fragments:Fragment[],ex
   }
   return true;
 }
+/** Only an unadopted projection of the currently attached photo references may change question ownership.
+ * Independently authored/imported text, AI results, grading, learning and explicit adoption stay protected.
+ */
+function photoReferenceProvisional(store:MaterialStore,q:QuestionBundle):boolean {
+  const fragments=allFragments(store,q);
+  if (q.itemId||q.attempts.length||q.grades.length||!fragments.length||fragments.some(f=>f.role!=='reference_answer')) return false;
+  if (store.db.prepare('SELECT 1 FROM material_answer_selection WHERE owner_id=? AND question_id=?').get(store.studentId,q.id)) return false;
+  const history=store.db.prepare('SELECT source,dependencies_json,content_json FROM material_answer WHERE owner_id=? AND question_id=?').all(store.studentId,q.id) as {source:string;dependencies_json:string;content_json:string}[];
+  return history.every(row=>{
+    const dependency=JSON.parse(row.dependencies_json) as {version?:number;kind?:string;fragmentId?:string};
+    const answer=JSON.parse(row.content_json) as {fragmentIds?:string[]};
+    return row.source==='imported'&&dependency.version===2&&dependency.kind==='imported'&&
+      answer.fragmentIds?.length===1&&answer.fragmentIds[0]===dependency.fragmentId&&fragments.some(f=>f.fragmentId===dependency.fragmentId);
+  });
+}
 /** Merge only records whose evidence is compatible. Original rows/events/attempts remain available for undo/history. */
 export function mergeQuestions(store:MaterialStore,one:string,two:string):string|null {
   one=resolveQuestionId(store,one); two=resolveQuestionId(store,two); if (one===two) return one;
   const a=readQuestion(store,one)!; const b=readQuestion(store,two)!;
   if (a.itemId&&b.itemId&&a.itemId!==b.itemId) { setUnresolved(store,a.id,[...a.unresolved,'learning_conflict']); setUnresolved(store,b.id,[...b.unresolved,'learning_conflict']); return null; }
-  if (a.answers.length||b.answers.length||a.grades.length||b.grades.length) {
+  const photoLoser=photoReferenceProvisional(store,a)&&b.stem.some(f=>f.role==='question')?a.id:photoReferenceProvisional(store,b)&&a.stem.some(f=>f.role==='question')?b.id:null;
+  if (!photoLoser&&(a.answers.length||b.answers.length||a.grades.length||b.grades.length)) {
     setUnresolved(store,a.id,[...a.unresolved,'result_history_conflict']); setUnresolved(store,b.id,[...b.unresolved,'result_history_conflict']); return null;
   }
   if (!compatible(store,a,allFragments(store,b))) return null;
-  // Existing learning links have priority; otherwise retain the earlier provisional identity.
+  // A photo-only supplement retains the stem identity and any existing learning/history.
+  // Other history-free merges retain the existing learning link, then the earlier identity.
   const order=store.db.prepare('SELECT id FROM material_question WHERE owner_id=? AND id IN (?,?) ORDER BY rowid').all(store.studentId,one,two) as {id:string}[];
-  const winner=a.itemId?a.id:b.itemId?b.id:order[0]!.id; const loser=winner===one?two:one;
+  const winner=photoLoser?(photoLoser===a.id?b.id:a.id):a.itemId?a.id:b.itemId?b.id:order[0]!.id; const loser=winner===one?two:one;
   const loserQ=readQuestion(store,loser)!; const winnerQ=readQuestion(store,winner)!;
   const attempts=new Map<string,string>();
   for (const fragment of allFragments(store,loserQ)) {
