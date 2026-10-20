@@ -29,6 +29,7 @@ export class MaterialJobs {
   private readonly occupancy = new Set<string>();
   private readonly active = new Map<string, Promise<void>>();
   private readonly signals = new Map<string, AbortSignal>();
+  private readonly requests = new Map<string, Promise<unknown>>();
   private readonly shutdown = new AbortController();
   private stopped = false;
 
@@ -104,23 +105,44 @@ export class MaterialJobs {
   async stop(): Promise<void> {
     this.stopped = true; this.shutdown.abort(paused());
     // Join started callbacks, including durable checkpoint writes, before releasing ownership.
-    await Promise.allSettled([...this.active.values()]);
+    const settled = await Promise.allSettled([...this.active.values()]);
+    const errors: unknown[] = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     for (const id of [...this.occupancy]) {
       try { if (pending(this.require(id).state)) this.transition(id, 'interrupted', { code: 'interrupted', message: '处理已中断，保存的材料仍然保留。', retryable: true }); }
+      catch (error) { errors.push(error); }
       finally { this.release(id); }
     }
+    if (errors.length) throw new AggregateError(errors, 'Material shutdown could not persist all interrupted states; capacity was released.');
   }
 
   async request<T>(jobId: string, stageKey: string, invoke: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const signal = this.signals.get(jobId);
     if (!signal || signal.aborted) throw paused();
+    const key = JSON.stringify([jobId, stageKey]);
+    const current = this.requests.get(key);
+    if (current) return current as Promise<T>;
+    // Install ownership before invoke can run, including a synchronous reentrant caller.
+    const work = Promise.resolve().then(() => this.requestStage(jobId, stageKey, invoke, signal))
+      .finally(() => { this.requests.delete(key); });
+    this.requests.set(key, work);
+    return work;
+  }
+
+  private async requestStage<T>(jobId: string, stageKey: string, invoke: (signal: AbortSignal) => Promise<T>, signal: AbortSignal): Promise<T> {
     for (;;) {
+      signal.throwIfAborted();
       const execution = this.execution(jobId);
       const stage = execution.stages[stageKey] ?? { round: 1, attempts: 0, state: 'running' as const };
       if (stage.state === 'succeeded') return stage.result as T;
       if (stage.error && !stage.error.retryable) throw stage.error;
       if (stage.attempts >= 3) throw stage.error ?? { code: 'retry_budget_exhausted', message: '本轮请求次数已用完，请重试。', retryable: true };
-      if (stage.nextAttemptAt) await this.delay(Math.max(0, stage.nextAttemptAt - Date.now()), signal);
+      const waitMs = (stage.nextAttemptAt ?? 0) - Date.now();
+      if (waitMs > 0) {
+        await this.delay(waitMs, signal);
+        // Other stages can finish or reserve attempts during backoff. Read their current
+        // checkpoints again before the synchronous reservation below.
+        continue;
+      }
       signal.throwIfAborted();
       stage.attempts++; stage.state = 'running'; delete stage.nextAttemptAt;
       execution.stages[stageKey] = stage; this.saveExecution(jobId, execution);

@@ -329,10 +329,14 @@ export class MobileRecognitionService {
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.retryTimers.clear(); this.retryScheduled.clear();
     this.shutdown.abort(new WorkerStopped('recognition worker stopped'));
-    await Promise.allSettled([this.worker, this.scanning, ...[...this.externalLifecycles].map(lifecycle => lifecycle.stop())]);
+    const settled = await Promise.allSettled([this.worker, this.scanning, ...[...this.externalLifecycles].map(lifecycle => lifecycle.stop())]);
     // A generic boundary may settle via cancellation before its started storage
     // callback returns. No new callbacks can enter ownedStorage after stop.
     await Promise.allSettled([...this.ownedPersistence]);
+    // Preserve legacy worker settlement while surfacing external cleanup failures after
+    // every subsystem and already-started persistence callback has been joined.
+    const errors = settled.slice(2).flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, 'External recognition shutdown failed.');
   }
   isStorageAvailable(): boolean { return this.storageAvailable; }
 
@@ -612,7 +616,7 @@ export class MobileRecognitionService {
   }
   private failStorage(): void {
     this.storageAvailable = false; this.accepting = false;
-    void this.stop();
+    void this.stop().catch(error => console.error('[storage] Shutdown cleanup failed:', error));
     console.error('[storage] 存储故障：服务停止接收新任务与队列处理（检查磁盘/权限后重启恢复）。');
   }
   private assertRunning(): void {

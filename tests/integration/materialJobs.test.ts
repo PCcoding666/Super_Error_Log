@@ -183,6 +183,58 @@ describe('durable material scheduling', () => {
     expect(f.jobs.execution(ticket.id).stages.interrupted).toMatchObject({ round: 2, attempts: 1 });
   });
 
+  it('preserves concurrent checkpoints and retry deadlines across another stage backoff', async () => {
+    const f = await fixture(); f.jobs.retryDelaysMs = [30, 100];
+    let aCalls = 0; let bCalls = 0; let cCalls = 0; let recovered = false;
+    let cDuringARetry: ReturnType<MaterialJobs['execution']>['stages'][string] | undefined;
+    f.jobs.register('answer', async id => {
+      await Promise.all([
+        f.jobs.request(id, 'a', async () => {
+          aCalls++; if (aCalls === 1) throw transient();
+          cDuringARetry = f.jobs.execution(id).stages.c; return 'a';
+        }),
+        f.jobs.request(id, 'b', async () => { bCalls++; await new Promise(resolve => setTimeout(resolve, 5)); return 'validated b'; }),
+        f.jobs.request(id, 'c', async () => {
+          cCalls++; if (cCalls === 1) { await new Promise(resolve => setTimeout(resolve, 15)); throw transient(); } return 'c';
+        }),
+      ]);
+      if (!recovered) throw transient();
+    });
+    const ticket = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis'); await settled(f.jobs, ticket.id, 'failed');
+    expect(f.jobs.execution(ticket.id).stages.b).toMatchObject({ state: 'succeeded', attempts: 1, result: 'validated b' });
+    expect(cDuringARetry!).toMatchObject({ state: 'failed', attempts: 1, nextAttemptAt: expect.any(Number) });
+    expect(f.jobs.execution(ticket.id).stages.c).toMatchObject({ state: 'succeeded', attempts: 2, result: 'c' });
+    recovered = true; f.jobs.retry(ticket.id, randomUUID()); await settled(f.jobs, ticket.id, 'succeeded');
+    expect({ aCalls, bCalls, cCalls }).toEqual({ aCalls: 2, bCalls: 1, cCalls: 2 });
+  });
+
+  it('coalesces concurrent requests for the same stage without consuming a second attempt', async () => {
+    const f = await fixture(); let calls = 0; let results: string[] = [];
+    const invoke = async () => { calls++; await new Promise(resolve => setTimeout(resolve, 5)); return 'validated'; };
+    f.jobs.register('answer', async id => { results = await Promise.all([f.jobs.request(id, 'same', invoke), f.jobs.request(id, 'same', invoke)]); });
+    const ticket = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis'); await settled(f.jobs, ticket.id, 'succeeded');
+    expect(calls).toBe(1); expect(results).toEqual(['validated', 'validated']);
+    expect(f.jobs.execution(ticket.id).stages.same).toMatchObject({ state: 'succeeded', attempts: 1 });
+  });
+
+  it('releases every owned slot and reports shutdown writes that fail without discarding durable jobs', async () => {
+    const f = await fixture(2);
+    const first = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis');
+    const second = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis');
+    f.db.exec("CREATE TRIGGER reject_stop BEFORE UPDATE OF state ON material_job WHEN NEW.state='interrupted' BEGIN SELECT RAISE(ABORT,'synthetic storage failure'); END");
+    const stopped = await f.scheduler.stop().then(() => null, error => error);
+    expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true);
+    expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true);
+    expect(f.admission.tryAcquireJobCapacity().accepted).toBe(false);
+    expect(stopped).toBeInstanceOf(AggregateError);
+    const failures = (stopped as AggregateError).errors.flatMap(error => error instanceof AggregateError ? error.errors : [error]);
+    expect(failures).toHaveLength(2); expect(failures.every(error => String(error).includes('synthetic storage failure'))).toBe(true);
+    expect([f.jobs.get(first.id)?.state, f.jobs.get(second.id)?.state]).toEqual(['queued', 'queued']);
+    await f.jobs.stop(); expect(f.admission.tryAcquireJobCapacity().accepted).toBe(false);
+    f.admission.releaseJobCapacity(); f.admission.releaseJobCapacity();
+    f.db.exec('DROP TRIGGER reject_stop');
+  });
+
   it('stop interrupts queued and running external work and releases capacity once', async () => {
     const f = await fixture(2);
     f.jobs.register('answer', async (id) => { await f.jobs.request(id, 'request', signal => new Promise((_resolve, reject) => { signal.addEventListener('abort', () => reject(signal.reason), { once: true }); })); });
