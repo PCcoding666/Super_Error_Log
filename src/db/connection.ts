@@ -14,6 +14,7 @@ export function getDb(): DatabaseSync {
   fs.mkdirSync(packetsDir(), { recursive: true });
   fs.mkdirSync(path.dirname(eventsLogPath()), { recursive: true });
   db = new DatabaseSync(dbPath());
+  db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA_SQL);

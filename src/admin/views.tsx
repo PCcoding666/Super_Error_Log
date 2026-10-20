@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { AdminFilters, AdminReport, UsageSummary } from './report.js';
+import { USAGE_DETAIL_CAP, type AdminFilters, type AdminReport, type UsageSummary } from './report.js';
 
 const number = (value: number | null): string => value === null ? '未采集' : value.toLocaleString('zh-CN');
 const percent = (value: number | null): string => value === null ? '未采集' : `${(value * 100).toFixed(1)}%`;
@@ -90,7 +90,7 @@ export function AdminDashboard(report: AdminReport): ReactNode {
       <h3>按模型</h3><PerformanceTable rows={report.byModel} /><h3>按功能</h3><PerformanceTable rows={report.byOperation} />
       <div className="failures"><h3>失败原因</h3>{report.failures.length ? <ul>{report.failures.map(row => <li key={row.code}><span>{errorLabel(row.code)}</span><strong>{row.count} 次</strong></li>)}</ul> : <p className="subtle small">当前筛选下没有已记录的失败调用。</p>}</div>
     </section>
-    <section className="panel" id="calls"><div className="section-heading"><div><h2>调用明细</h2><p className="subtle small">最新在前 · 每页 50 条 · 历史识别日志缺少的耗时保留为“未采集”。</p></div><span className="badge">{summary.calls} 条记录</span></div>
+    <section className="panel" id="calls"><div className="section-heading"><div><h2>调用明细</h2><p className="subtle small">最新在前 · 每页 50 条{report.detailLimited ? ` · 明细最多展示 ${USAGE_DETAIL_CAP.toLocaleString('zh-CN')} 条，上方合计仍是全部调用` : ''} · 历史识别日志缺少的耗时保留为“未采集”。</p></div><span className="badge">{summary.calls} 条记录</span></div>
       <div className="table-scroll"><table className="calls-table"><thead><tr><th scope="col">时间</th><th scope="col">账号</th><th scope="col">功能</th><th scope="col">模型</th><th scope="col">输入 tokens</th><th scope="col">输出 tokens</th><th scope="col">耗时</th><th scope="col">状态</th><th scope="col">失败原因 / HTTP</th></tr></thead>
         <tbody>{report.records.map(row => <tr key={`${row.studentId}:${row.id}`}><td>{time(row.startedAt)}<small className="block subtle">{row.source === 'legacy' ? '历史识别日志' : '统一采集'}</small></td><td>{row.accountLabel}</td><td>{operation(row.operation)}</td><td>{row.model}</td>
           <td>{number(row.inputTokens)}</td><td>{number(row.outputTokens)}</td><td>{duration(row.durationMs)}</td><td><span className={`badge ${row.status === 'succeeded' ? 'success' : 'failure'}`}>{row.status === 'succeeded' ? '成功' : '失败'}</span></td><td>{errorLabel(row.errorCode)}<small className="block subtle">HTTP {row.httpStatus ?? '未返回'}</small></td></tr>)}</tbody></table>

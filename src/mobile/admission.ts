@@ -3,10 +3,11 @@
  * - 上传槽位：同时最多 1 个上传正文在解析；满则 429 busy 可重试，不在内存排队。
  * - 任务容量：待处理（含运行中）最多 jobCapacity 张照片；满则 429 capacity_full。
  * - 磁盘门槛：系统盘 <3GiB 或数据目录 10GiB 拒收新上传（503，提示管理）。
- * - 共享图像信号量：normalizePhoto / 上传 metadata 检查 / vision 题图与图示裁切的显式互斥；
+ * - 共享图像信号量：本进程内 normalize / 裁切 / 打印遮白互斥；学生 worker 再向父进程借全局名额。
  *   `sharp.concurrency(1)` 不等于跨请求串行。
- * 单进程 RSS 观测阈值（768MiB）在 service 层实现，不经由此类。
+ * 单进程 RSS 观测阈值在 service 层实现（相对整个服务预算，不是固定 768MiB），不经由此类。
  */
+import { withParentPermit } from '../studentHost/parentPermit.js';
 
 export interface AdmissionControllerOptions {
   /** 待处理容量上限（含运行中）。默认 10。 */
@@ -21,6 +22,32 @@ export const DISK_LOW_THRESHOLD_BYTES = 3n * 1024n ** 3n;
 export const DATA_QUOTA_BYTES = 10n * 1024n ** 3n;
 
 type Release = () => void;
+
+let imageBusy = false;
+const imageWaiters: Array<() => void> = [];
+
+/** 本进程内的图片处理互斥，并在学生 worker 里向父进程申请全局名额。 */
+export async function acquireProcessImage(): Promise<Release> {
+  if (imageBusy) {
+    await new Promise<void>(resolve => { imageWaiters.push(resolve); });
+  } else {
+    imageBusy = true;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const next = imageWaiters.shift();
+    if (next) { next(); return; }
+    imageBusy = false;
+  };
+}
+
+export async function withProcessImage<T>(section: () => Promise<T>): Promise<T> {
+  const release = await acquireProcessImage();
+  try { return await withParentPermit('image', section); }
+  finally { release(); }
+}
 
 async function defaultDiskFree(): Promise<bigint> {
   const { execFile } = await import('node:child_process');
@@ -52,8 +79,6 @@ export class AdmissionController {
   private readonly dataUsageProbe: () => Promise<bigint>;
   private pendingJobs = 0;
   private uploadSlotBusy = false;
-  private imageBusy = false;
-  private imageWaiters: Array<() => void> = [];
 
   constructor(options: AdmissionControllerOptions & { dataDir?: string } = {}) {
     this.jobCapacity = options.jobCapacity ?? 10;
@@ -87,28 +112,14 @@ export class AdmissionController {
     this.pendingJobs += 1;
   }
 
-  /** 图片处理互斥：覆盖 normalizePhoto、上传 metadata 检查与 vision 裁切。 */
-  async acquireImage(): Promise<Release> {
-    if (this.imageBusy) {
-      await new Promise<void>(resolve => { this.imageWaiters.push(resolve); });
-      // 被唤醒即已获得所有权：release 时直接移交给队首等待者（imageBusy 不清零，无插队空窗）。
-    } else {
-      this.imageBusy = true;
-    }
-    let released = false;
-    return () => {
-      if (released) return; // 每闭包一次：重复释放（finally+close 兜底双触发等）无效。
-      released = true;
-      const next = this.imageWaiters.shift();
-      if (next) { next(); return; } // 所有权直接移交：imageBusy 保持 true。
-      this.imageBusy = false;
-    };
+  /** 图片处理互斥：覆盖 normalize、上传 metadata 检查、vision 裁切和打印遮白。 */
+  acquireImage(): Promise<Release> {
+    return acquireProcessImage();
   }
 
-  /** 包裹图片处理段，确保互斥与释放。 */
-  async withImage<T>(section: () => Promise<T>): Promise<T> {
-    const release = await this.acquireImage();
-    try { return await section(); } finally { release(); }
+  /** 包裹图片处理段，确保本进程互斥，并在 worker 里占用父进程的全局图片名额。 */
+  withImage<T>(section: () => Promise<T>): Promise<T> {
+    return withProcessImage(section);
   }
 
   async storageGate(): Promise<{ ok: boolean; reason?: 'disk_low' | 'data_quota' }> {

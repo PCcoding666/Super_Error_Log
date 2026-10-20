@@ -585,7 +585,7 @@ describe('学生 worker 隔离与代理', () => {
     expect((await a.browser.get('/s/settings')).status).toBe(200);
   }, 90_000);
 
-  it('父进程重启：已注册学生的 worker 自动预热，旧会话仍有效、数据还在', async () => {
+  it('父进程重启：不预热 worker，旧会话仍有效，下次打开再拉起且数据还在', async () => {
     const env = await setupHost();
     const a = await loginBrowser(env);
     await a.browser.post('/s/settings', { practiceSlot: '甲放学后', paperLocation: 'home' });
@@ -598,14 +598,39 @@ describe('学生 worker 隔离与代理', () => {
     const pool2 = newPool(registry2);
     const gateway2 = await createStudentHostGateway({ hostDir: env.hostDir, registry: registry2, pool: pool2 });
     gateways.push(gateway2);
-    // 不用等学生打开：创建时预热已拉起 worker
-    await waitFor(async () => pool2.isRunning(a.studentId));
+    expect(pool2.isRunning(a.studentId)).toBe(false);
     const base2 = await serve(gateway2);
     const browser = new Browser(base2);
     const page = await browser.request('/s/settings', { headers: { cookie: `${SESSION_COOKIE}=${oldToken}` } });
     expect(page.status).toBe(200);
+    expect(pool2.isRunning(a.studentId)).toBe(true);
     expect(savedPracticeSlot(registry2, a.studentId)).toBe('甲放学后');
   }, 120_000);
+
+  it('空闲一段时间后退出 worker，下次请求再拉起，已保存的设置还在', async () => {
+    const hostDir = tempRoot('sel-host-');
+    const registry = StudentRegistry.open(hostDir);
+    const pool = new StudentWorkerPool({
+      dirFor: studentId => registry.studentDir(studentId),
+      env: { SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock' },
+      idleMs: 800,
+      refreshIntervalMs: 0,
+    });
+    const gateway = await createStudentHostGateway({ hostDir, registry, pool });
+    gateways.push(gateway);
+    const base = await serve(gateway);
+    const { studentId } = registry.createStudent();
+    expect(pool.isRunning(studentId)).toBe(false);
+    const browser = new Browser(base);
+    expect((await browser.post('/s/login', { code: registry.issueInvitation(studentId).code })).status).toBe(303);
+    expect(pool.isRunning(studentId)).toBe(false);
+    expect((await browser.post('/s/settings', { practiceSlot: '甲放学后', paperLocation: 'home' })).status).toBe(303);
+    expect(pool.isRunning(studentId)).toBe(true);
+    await waitFor(async () => !pool.isRunning(studentId), 20_000);
+    expect(savedPracticeSlot(registry, studentId)).toBe('甲放学后');
+    expect((await browser.get('/s/settings')).status).toBe(200);
+    expect(pool.isRunning(studentId)).toBe(true);
+  }, 90_000);
 
   it('worker 启动失败：503 页面，不路由到别人', async () => {
     const hostDir = tempRoot('sel-host-');

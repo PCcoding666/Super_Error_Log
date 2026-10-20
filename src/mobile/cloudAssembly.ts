@@ -14,6 +14,7 @@ import { resumePendingSnapshots } from '../v2/printService.js';
 import { createWebClientRouter } from '../web/router.js';
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { MobileVisionBoundary } from './vision.js';
+import type { MobileRecognitionService } from './service.js';
 import { AdminAuth } from '../admin/auth.js';
 import { createAdminRouter } from '../admin/router.js';
 
@@ -30,6 +31,8 @@ export interface CloudAssembly {
   admin: AdminServerHandle | null;
   /** 设备令牌管理（学生空间 worker 用它签发只有父进程知道的内部令牌）。 */
   pairing: PairingManager;
+  /** 本进程的识别队列。学生 worker 用它判断能否空闲退出。 */
+  recognition: MobileRecognitionService;
   listen(): Promise<void>;
   /** 实际监听的端口（configuration.port 传 0 时由系统分配）；未监听返回 null。 */
   boundPort(): number | null;
@@ -99,5 +102,5 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     });
     adminAuth?.close();
   };
-  return { configuration, admin, pairing, listen, boundPort, close };
+  return { configuration, admin, pairing, recognition: app.locals.mobileRecognitionService as MobileRecognitionService, listen, boundPort, close };
 }
