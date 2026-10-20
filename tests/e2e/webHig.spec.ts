@@ -12,7 +12,6 @@ async function connect(page: Page, request: import('@playwright/test').APIReques
 
 test('三栏导航在窄屏大字下可用，根页面不再显示本周安排', async ({page,request}) => {
   await connect(page,request);
-  await page.request.post(`${WEB}/s/consent`,{headers:{origin:WEB}});
   const tabs = page.getByRole('navigation',{name:'主要导航'});
   await expect(tabs.getByRole('link',{name:'错题本',exact:true})).toHaveAttribute('aria-current','page');
   for (const name of ['错题录入','练习','错题本']) {

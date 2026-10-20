@@ -1,27 +1,18 @@
 import type { ReactNode } from 'react';
+import { CAPTURE_EXAMPLE_PAGE, CAPTURE_EXAMPLE_QUESTION } from '../captureExamples.js';
 import type { PhotoView } from '../state.js';
 import { pickMoreCount, unselectedQuestions } from '../photoPlan.js';
 import { Page, NextBar, Phrased, Problem, WaitLine, quoted, type BarModel } from './layout.js';
 
-/** 上传前看一下（§4.3）。事实要素不删；按网页的实际情况改了两处：照片不进相册、上传前去掉位置信息。 */
-export function ConsentPage(props: {returnTo?: string;purpose?:'practice'} = {}): ReactNode {
-  const bar: BarModel = {
-    caption: '第一次上传前看一下',
-    primary: { title: '同意，上传', key: 'consent', post: '/s/consent', fields: props.returnTo ? {returnTo:props.returnTo} : undefined },
-    secondary: [{ title: '先不传', key: 'goHome', href: '/s/' }],
-  };
+function CaptureExamples(): ReactNode {
   return (
-    <Page title="上传前看一下" bar={bar}>
-      <h1>上传前看一下</h1>
-      <section className="card" data-testid="consent">
-        <p>拍的照片会传到广州的云服务器，再交给阿里云百炼的 AI {props.purpose==='practice'?'识别作答过程，提供待你确认的核对建议':'找出做错的题'}。照片上可能有你的名字和字迹，介意的话先遮住再拍。</p>
-        <ul className="steps-text small">
-          <li>用网页拍的照片不会存进手机相册，只存在服务器上；从相册选的，原图还留在相册里。</li>
-          <li>上传前会去掉照片里的位置等拍摄信息。</li>
-          <li>阿里云怎么处理数据，不由这个网页决定。</li>
-        </ul>
-      </section>
-    </Page>
+    <figure className="capture-examples" data-testid="capture-examples">
+      <div className="capture-example-row">
+        <img data-testid="capture-example-page" src={CAPTURE_EXAMPLE_PAGE.path} alt="平放拍全的试卷示例" width={480} height={645} />
+        <img data-testid="capture-example-question" src={CAPTURE_EXAMPLE_QUESTION.path} alt="题目和作答都清楚的示例" width={480} height={315} />
+      </div>
+      <figcaption className="small muted">平放、拍全、光线均匀</figcaption>
+    </figure>
   );
 }
 
@@ -52,7 +43,7 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
       <h1>错题录入</h1>
       <CaptureTabs active="capture" />
       <div className="capture-actions"><NextBar model={bar} inline /></div>
-      <p className="lead">整页拍全，别裁边；题目和你写的答案都要拍进去。一页拍一张。</p>
+      {has ? null : <CaptureExamples />}
       <form method="post" action="/s/capture" encType="multipart/form-data" data-upload="" data-capture-upload="" data-photo-count={props.photos.length} id="upload-form">
         <input id="camera-input" className="visually-hidden" type="file" name="photo" accept="image/*" capture="environment" data-testid="camera-input" />
         {/* 脚本启动后启用相册多选；无脚本时仍用原有单张表单。 */}
@@ -68,16 +59,7 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
       </form>
       <p data-testid="photo-count" className={has ? undefined : 'hidden'}><b>已拍 {props.photos.length} 张</b></p>
       <div data-live="capture-status">{props.photos.some(photo => photo.state === 'finding') ? <p role="status">照片已收到，正在找题。</p> : null}</div>
-      {has ? <p><a className="more" href={props.next?.href ?? '/s/items'}>查看错题 ›</a></p> : (
-        <details data-testid="capture-tips">
-          <summary>拍照小提示</summary>
-          <ul className="steps-text small">
-            <li>把卷子平放在桌上，光线亮一点，别有影子。</li>
-            <li>手机正对着拍，四个角都在框里。</li>
-            <li>拍好一页会回到这里，再拍下一页。</li>
-          </ul>
-        </details>
-      )}
+      {has ? <p><a className="more" href={props.next?.href ?? '/s/items'}>查看错题 ›</a></p> : null}
     </Page>
   );
 }

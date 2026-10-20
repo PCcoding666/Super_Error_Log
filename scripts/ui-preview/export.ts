@@ -2,7 +2,7 @@
 import { createElement } from 'react';
 import type { ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -21,7 +21,6 @@ const plan = weekPlan.make(weekPlan.makeInput({ weekKey: FIXTURE_WEEK, today: ne
 type Props = {
   login: Parameters<typeof import('../../src/studentHost/loginView.js').LoginPage>[0];
   today: Parameters<typeof import('../../src/web/views/today.js').TodayPage>[0];
-  consent: Record<string, never>;
   capture: Parameters<typeof import('../../src/web/views/photos.js').CapturePage>[0];
   photos: Parameters<typeof import('../../src/web/views/photos.js').PhotosPage>[0];
   pick: Parameters<typeof import('../../src/web/views/photos.js').PickPage>[0];
@@ -37,7 +36,6 @@ type Props = {
 const scenes: { [K in keyof Props]: [ComponentType<Props[K]>, Props[K], string] } = {
   login: [login.LoginPage, {}, 'src/studentHost/loginView.tsx#LoginPage'],
   today: [today.TodayPage, { state: { plan, week: { week: FIXTURE_WEEK, photos: [], items, backlog: [] }, photos: [photo], practices: [], latestDetail: null, preparingPrintID: null, marks: { pickDone: new Set(), dismissed: new Set() }, skips: { steps: new Set(), passedItems: new Set() } }, practiceSlot: '周三晚自习', showInstallHint: true }, 'src/web/views/today.tsx#TodayPage'],
-  consent: [photos.ConsentPage, {}, 'src/web/views/photos.tsx#ConsentPage'],
   capture: [photos.CapturePage, { photos: [], next: { title: '勾出错题', href: '/s/photos' }, caption: '拍完以后，看看有哪些错题' }, 'src/web/views/photos.tsx#CapturePage'],
   photos: [photos.PhotosPage, { photos: [photo, { ...photo, jobId: 'demo-finding', number: 2, state: 'finding', job: null }], bar, refresh: true, itemCount: items.length }, 'src/web/views/photos.tsx#PhotosPage'],
   pick: [photos.PickPage, { photo }, 'src/web/views/photos.tsx#PickPage'],
@@ -59,10 +57,12 @@ for (const theme of ['light', 'dark']) {
   await writeFile(join(output, `assets/${theme}.css`), css);
 }
 await writeFile(join(output, 'assets/icon.svg'), assets.iconSvg());
+await copyFile(join(source, 'src/web/examples/capture-page.jpg'), join(output, 'assets/capture-page.jpg'));
+await copyFile(join(source, 'src/web/examples/capture-question.jpg'), join(output, 'assets/capture-question.jpg'));
 // Reuse only the audited, network-free sheet enhancer. Upload/AI/session scripts stay excluded.
 const sheetEnhancement = typeof assets.UI_SHEET_SCRIPT === 'string' ? assets.UI_SHEET_SCRIPT : null;
 if (sheetEnhancement) await writeFile(join(output, 'assets/sheet.js'), sheetEnhancement);
-const routes: Record<string, string> = { '/s': 'today', '/s/': 'today', '/s/login': 'login', '/s/settings': 'settings', '/s/consent': 'consent', '/s/capture': 'capture', '/s/photos': 'photos', '/s/photos/demo-photo': 'pick', '/s/items': 'items', '/s/practices': 'practices', '/s/items/demo-linear': 'item', '/s/items/demo-triangle': 'item', '/s/items/demo-fraction': 'item', '/s/choose': 'choose', '/s/why/demo-practice': 'why', '/s/why/demo-practice/demo-linear/confirm': 'confirm', '/s/install': 'install' };
+const routes: Record<string, string> = { '/s': 'today', '/s/': 'today', '/s/login': 'login', '/s/settings': 'settings', '/s/capture': 'capture', '/s/photos': 'photos', '/s/photos/demo-photo': 'pick', '/s/items': 'items', '/s/practices': 'practices', '/s/items/demo-linear': 'item', '/s/items/demo-triangle': 'item', '/s/items/demo-fraction': 'item', '/s/choose': 'choose', '/s/why/demo-practice': 'why', '/s/why/demo-practice/demo-linear/confirm': 'confirm', '/s/install': 'install' };
 const records = [];
 for (const [id, title] of SCENARIOS) {
   const [Component, props, component] = scenes[id]!;
@@ -73,6 +73,8 @@ for (const [id, title] of SCENARIOS) {
     .replace(/data-(?:refresh|poll)="[^"]*"/g, '').replace(/data-endpoint="[^"]*"/g, '')
     .replace(/<link rel="preload" as="image"[^>]*>/g, '')
     .replace(/href="\/s\/assets\/app(?:\.[a-f\d]+)?\.css[^\"]*"/g, 'href="assets/app.css" id="demo-app-style"')
+    .replace(/src="\/s\/assets\/capture-page\.[a-f\d]+\.jpg"/g, 'src="assets/capture-page.jpg"')
+    .replace(/src="\/s\/assets\/capture-question\.[a-f\d]+\.jpg"/g, 'src="assets/capture-question.jpg"')
     .replace(/src="\/s\/img\/(?:photo\/[^"?]+)(?:\?[^\"]*)?"/g, 'src="../assets/photo.svg"')
     .replace(/src="\/s\/img\/(?:item\/([^"?]+)|cand\/[^/]+\/([^"?]+))(?:\?[^\"]*)?"/g, (_: string, item: string, candidate: string) => `src="../assets/${items.some(i => i.id === (item || candidate)) ? (item || candidate) : items[0]!.id}.svg"`)
     .replace(/href="([^\"]*)"/g, (original: string, href: string) => {
@@ -82,7 +84,7 @@ for (const [id, title] of SCENARIOS) {
       return route ? `href="${route}.html"` : 'href="#demo-unavailable"';
     })
     .replace(/<form\b([^>]*)action="([^\"]*)"([^>]*)>/g, (_: string, before: string, action: string, after: string) => {
-      const kind = action === '/s/login' ? 'login' : action === '/s/logout' ? 'logout' : action === '/s/settings' ? 'settings' : action === '/s/consent' ? 'consent' : action === '/s/capture' ? 'photo' : action === '/s/choose' ? 'choose' : action.endsWith('/select') || action.endsWith('/none') ? 'pick' : action.endsWith('/answer') ? 'answer' : action.endsWith('/submit') ? 'reflection' : 'unsupported';
+      const kind = action === '/s/login' ? 'login' : action === '/s/logout' ? 'logout' : action === '/s/settings' ? 'settings' : action === '/s/capture' ? 'photo' : action === '/s/choose' ? 'choose' : action.endsWith('/select') || action.endsWith('/none') ? 'pick' : action.endsWith('/answer') ? 'answer' : action.endsWith('/submit') ? 'reflection' : 'unsupported';
       return `<form${before}action="#demo" data-demo-form="${kind}"${after}>`;
     });
   html = html.replace('</head>', '<meta http-equiv="Content-Security-Policy" content="default-src &apos;self&apos; data: blob:; script-src &apos;self&apos;; style-src &apos;self&apos; &apos;unsafe-inline&apos;; connect-src &apos;none&apos;; form-action &apos;none&apos;; object-src &apos;none&apos;; base-uri &apos;none&apos;"><link rel="icon" href="assets/icon.svg"><link rel="stylesheet" href="../assets/demo.css"><script defer src="../assets/demo.js"></script>' + (sheetEnhancement ? '<script defer src="assets/sheet.js"></script>' : '') + '</head>')

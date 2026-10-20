@@ -316,21 +316,18 @@ describe('学生网关登录与退出', () => {
     const env = await setupHost();
     const { browser } = await loginBrowser(env);
     const token = browser.cookies.get(SESSION_COOKIE)!;
-    // 先拿一个本机标记（同意上传说明 → sel_consent 经网关白名单回种）
-    const consent = await browser.post('/s/consent');
-    expect(consent.status).toBe(303);
-    expect(browser.cookies.has('sel_consent')).toBe(true);
-    expect(browser.lastSetCookie.every(line => !line.startsWith('sel_device='))).toBe(true);
     // The real invitation gateway must pass the preference in both directions.
     const physics = await browser.get('/s/items?subject=' + encodeURIComponent('物理'));
     expect(await physics.text()).toContain('切换学科，当前物理');
+    expect(browser.lastSetCookie.every(line => !line.startsWith('sel_device='))).toBe(true);
     expect(browser.cookies.has('sel_items_subject')).toBe(true);
     expect(await (await browser.get('/s/items')).text()).toContain('切换学科，当前物理');
+    browser.cookies.set('sel_consent', 'v1');
     const logout = await browser.post('/s/logout');
     expect(logout.status).toBe(303);
     expect(browser.cookies.has(SESSION_COOKIE)).toBe(false);
-    expect(browser.cookies.has('sel_consent')).toBe(false);
     expect(browser.cookies.has('sel_items_subject')).toBe(false);
+    expect(logout.headers.getSetCookie().join('\n')).not.toMatch(/sel_consent=/i);
     expect(env.registry.authenticate(token)).toBeNull();
     const page = await browser.request('/s/', { headers: { cookie: `${SESSION_COOKIE}=${token}` } });
     expect(page.status).toBe(401);
@@ -377,7 +374,6 @@ describe('学生 worker 隔离与代理', () => {
   it('a rejected fix form preserves the session voice context and can transcribe again', async () => {
     const env = await setupHost();
     const { browser } = await loginBrowser(env);
-    await browser.post('/s/consent');
     const upload = await uploadPhoto(browser, await photoBytes('#c1d5ef'));
     expect(upload.ok).toBe(true);
     let questionId: string | undefined;
@@ -505,7 +501,6 @@ describe('学生 worker 隔离与代理', () => {
     const env = await setupHost();
     const a = await loginBrowser(env);
     const b = await loginBrowser(env);
-    await a.browser.post('/s/consent');
     const upload = await uploadPhoto(a.browser, await photoBytes('#b0b8ff'));
     expect(upload.ok).toBe(true);
     const jobId = upload.jobId!;

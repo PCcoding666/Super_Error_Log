@@ -12,9 +12,7 @@ import { practiceProgress } from '../v2/practiceProgress.js';
 import { taskLifecycle } from '../v2/practiceTasks.js';
 import { getReturnSummary } from '../v2/returnService.js';
 import { sendHtml } from '../views/render.js';
-import { hasConsent } from './session.js';
 import { localDayText } from './weekPlan.js';
-import { ConsentPage } from './views/photos.js';
 import { PracticeSubmitPage, PracticeFeedbackPage } from './views/practiceSubmission.js';
 
 /** Parent mounts this only after student auth, CSRF and task existence/lifecycle checks. */
@@ -27,14 +25,12 @@ export function practiceSubmissionRouter(options:{reviewer?:PracticeReviewer;lim
   };
   const uploadPage=(req:Request,res:Response,error?:string)=>{
     const p=res.locals.practice as PracticeDetail,cancelled=taskLifecycle(p.id)==='cancelled';
-    if(!cancelled&&!hasConsent(req)){sendHtml(res,ConsentPage({returnTo:`/s/practice/${p.id}/submit`,purpose:'practice'}));return;}
     sendHtml(res,PracticeSubmitPage({practice:p,state:submissionState(p.id),cancelled,error}));
   };
   r.get('/practice/:pid/submit',(req,res)=>uploadPage(req,res));
   r.get('/practice/:pid/feedback',(req,res)=>feedback(req,res));
   const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:15*1024*1024,files:2,fields:4,parts:8}}).array('photo',2);
   r.post('/practice/:pid/submission',async(req,res)=>{
-    if(!hasConsent(req)){res.status(403).json({error:{message:'请先确认上传说明'}});return;}
     // Saving photos does not call AI. This per-device upload limit is separate from
     // the transcription quota used by /review, and it rejects before the body is read.
     // The parent query limit and upload admission still apply.
@@ -61,7 +57,6 @@ export function practiceSubmissionRouter(options:{reviewer?:PracticeReviewer;lim
   });
   r.post('/practice/:pid/review',async(req,res)=>{
     const pid=String(req.params.pid),dest=`/s/practice/${pid}/feedback`;
-    if(!hasConsent(req)){res.status(403).send('请先确认上传说明');return;}
     const state=submissionState(pid);
     if(isReviewing(pid)||state.status==='ready'||state.attempts>=3){res.redirect(303,dest);return;}
     const prepared=getPrintStatus(pid);

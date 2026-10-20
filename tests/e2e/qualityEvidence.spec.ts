@@ -404,9 +404,7 @@ test('capture：每一屏、每个状态（含故障注入的状态矩阵）', a
   await snap(page, 'install', '放到主屏幕：4 步', { flow });
   await page.goto(`${WEB}/s/`);
   await clickNav(page, primary(page));
-  await snap(page, 'consent', '上传前看一下（第一次上传前的隐私说明）', { flow });
-  await clickNav(page, primary(page));
-  await snap(page, 'capture-empty', '拍这周的卷子：还没拍', { flow });
+  await snap(page, 'capture-empty', '错题录入：还没拍，示例照片代替拍摄说明', { flow });
   await page.goto(`${WEB}/s/capture?err=unreadable`);
   await snap(page, 'capture-error', '拍这周的卷子：上传失败提示（照片读不出来）', { flow });
   // 上传中途断网：照片还在这个页面里，「再试一次」（状态矩阵）。
@@ -809,8 +807,6 @@ test('webkit：200% 放大走主流程（页面缩放 200% 与只放大文字 20
     await clickNav(page, primary(page));
     await check('today-first');
     await clickNav(page, primary(page));
-    await check('consent');
-    await clickNav(page, primary(page));
     await check('capture-empty');
     await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic(mode === 'zoom' ? '#f2cfc6' : '#efc8c0', 900) });
     await expect(page.getByTestId('photo-tile')).toHaveCount(1, { timeout: 30_000 });
@@ -909,7 +905,6 @@ test('video：周末 A / B 录屏，减少动态效果的录屏与截图对照',
     await tap(page, primary(page));                       // 连接这台手机
     await sleep(1200);
     await tap(page, primary(page));                       // 拍第一页
-    await tap(page, primary(page));                       // 同意，上传
     await fault('vision=hold');
     await sleep(800);
     const [chooser] = await Promise.all([page.waitForEvent('filechooser'), primary(page).click()]);
@@ -1032,7 +1027,6 @@ test('perf：冷加载 11 个路由', async ({ browser }) => {
   const state0 = await ctx.storageState();
   const flowOnce = async (color: string): Promise<void> => {
     await page.goto(`${WEB}/s/capture`);
-    if (await page.getByText('上传前看一下').count()) await clickNav(page, primary(page));
     await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic(color, 900) });
     await expect(page.getByTestId('photo-tile').first()).toBeVisible({ timeout: 30_000 });
     await page.goto(`${WEB}/s/choose`);
@@ -1184,7 +1178,6 @@ test('sheet：练习纸 A4（用来和基线逐像素比较）', async ({ browse
   await page.goto(await pairingLink());
   await clickNav(page, primary(page));
   await page.goto(`${WEB}/s/capture`);
-  await clickNav(page, primary(page)); // 同意，上传
   await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f2cfc6', 900) });
   await expect(page.getByTestId('photo-tile')).toHaveCount(1, { timeout: 30_000 });
   await page.goto(`${WEB}/s/choose`);

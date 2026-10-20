@@ -30,7 +30,7 @@ import { HostErrorPage, LoginPage, RegistrationPage, RegistrationCompletePage } 
 export const SESSION_COOKIE = 'sel_student';
 
 /** 允许在浏览器与 worker 之间来回的业务 cookie（不含 sel_device / sel_student）。 */
-const BUSINESS_COOKIES: ReadonlySet<string> = new Set([COOKIE.consent, COOKIE.photos, COOKIE.skip, COOKIE.a2hs, COOKIE.itemsSubject, TRAIL_COOKIE]);
+const BUSINESS_COOKIES: ReadonlySet<string> = new Set([COOKIE.photos, COOKIE.skip, COOKIE.a2hs, COOKIE.itemsSubject, TRAIL_COOKIE]);
 
 const SECURITY_HEADERS: Record<string, string> = {
   'content-security-policy': "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/web/examples && cp src/web/examples/*.jpg dist/web/examples/",
     "start": "node dist/server.js",
     "mobile:dev": "tsx watch src/mobile/server.ts",
     "mobile:start": "node dist/mobile/server.js",

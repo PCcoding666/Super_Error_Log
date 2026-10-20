@@ -418,6 +418,10 @@ html:has(body.has-tabbar){scroll-padding-bottom:calc(6.625rem + env(safe-area-in
 .capture-page .upload-item{display:flow-root;min-height:72px}
 .capture-page .upload-thumb{float:left;width:48px;height:60px;object-fit:contain;margin:0 var(--s-3) var(--s-2) 0;border-radius:var(--r-1);background:var(--card)}
 .capture-page .upload-item p{margin:0 0 var(--s-1)}
+.capture-examples{margin:var(--s-3) 0 var(--s-4)}
+.capture-example-row{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:var(--s-2);align-items:start}
+.capture-example-row img{width:100%;height:auto;border-radius:var(--r-1);background:#fff;border:1px solid var(--line);display:block}
+.capture-examples figcaption{margin:var(--s-2) 0 0;text-align:center}
 .photo-record{display:flex;align-items:flex-start;gap:var(--s-3);padding:var(--s-4) 0}
 .photo-preview{display:block;flex:0 0 84px;border-radius:var(--r-1)}
 .photo-preview img{display:block;width:84px;height:104px;object-fit:contain;border-radius:var(--r-1);background:var(--mint);filter:var(--photo-dim)}

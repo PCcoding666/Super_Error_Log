@@ -46,7 +46,6 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.goto(link.replace('https://study.pccoding666.com', WEB));
     await page.getByTestId('next-step-primary').click();
     const headers = {origin:WEB};
-    await page.request.post(`${WEB}/s/consent`, {headers});
     await page.request.post(`${WEB}/s/settings/grade`, {headers, form:{grade:'高中'}});
     const idsIn = (html:string) => [...new Set([...html.matchAll(/href="\/s\/items\/(itm_[0-9a-f]+)\?/g)].map(match => match[1]!))];
     const libraryUrl = `${WEB}/s/items?grade=${encodeURIComponent('高中')}&subject=${encodeURIComponent('数学')}`;
@@ -126,7 +125,6 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.goto(link.replace('https://study.pccoding666.com',WEB));
     await page.getByTestId('next-step-primary').click();
     const headers={origin:WEB};
-    await page.request.post(`${WEB}/s/consent`,{headers});
     const image=await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1200">
       <rect width="900" height="1200" fill="white"/>
       <g fill="#191919" font-family="sans-serif" font-size="36">

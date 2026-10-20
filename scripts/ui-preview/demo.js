@@ -89,7 +89,6 @@
         if (!String(values.get('code') || '').trim()) { say('演示登录：随便输入文字即可进入，请勿输入真实邀请码。'); return; }
         go('today', '已进入合成错题本；没有兑换邀请码，也没有创建真实登录会话。'); break;
       case 'logout': go('login', '已返回演示登录页；不会影响真实账号。'); break;
-      case 'consent': go('capture', '这里只切换演示页面；没有提交真实上传同意，也没有上传照片。'); break;
       case 'settings': {
         const saved = save('settings', Object.fromEntries(values.entries()));
         say(saved ? '演示设置已记在当前标签页，刷新后可见。没有保存到服务器。' : '浏览器未允许本地存储；设置仅在当前页显示，没有保存到服务器。');
