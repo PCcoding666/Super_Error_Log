@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import sharp from 'sharp';
+import { normalizePhoto } from '../../src/media/images.js';
 import { SCHEMA_SQL } from '../../src/db/schema.js';
 import { migrateMaterials } from '../../src/materials/schema.js';
 import { MaterialStore } from '../../src/materials/store.js';
@@ -16,11 +17,11 @@ import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { backfillLegacyMaterials } from '../../src/materials/legacy.js';
 import { createMaterialActionProvider } from '../../src/materials/provider.js';
 import { answerEligibility } from '../../src/materials/answers.js';
-import { readSourceBytes } from '../../src/materials/media.js';
+import { readSourceBytes, readFragmentImage } from '../../src/materials/media.js';
 import type { Fragment } from '../../src/materials/contracts.js';
 const cleanup: (()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
-async function fixture(layout:'direct'|'mobile'|'upload') {
+async function fixture(layout:'direct'|'mobile'|'upload', identicalNormalization=false) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'material-action-source-')),db=new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');db.exec(SCHEMA_SQL);migrateMaterials(db);
   db.exec("INSERT INTO student_profile(id,nickname,created_at) VALUES ('alice','Synthetic A','2026-10-20'),('bob','Synthetic B','2026-10-20')");
@@ -28,7 +29,8 @@ async function fixture(layout:'direct'|'mobile'|'upload') {
   const scheduler=new MobileRecognitionService(mobile,{inventory:async()=>({candidates:[],warnings:[],capacityReached:false}),recognizeQuestion:async()=>{throw Error('unused');}});
   const jobs=new MaterialJobs(store,scheduler,null),uploads=new MaterialUploads(store,jobs,null);
   cleanup.push(async()=>{await scheduler.stop();db.close();fs.rmSync(dir,{recursive:true,force:true});});
-  const bytes=await sharp({create:{width:80,height:40,channels:3,background:'#f00'}}).jpeg().withMetadata({orientation:6}).toBuffer(),hash=createHash('sha256').update(bytes).digest('hex');
+  const image=sharp({create:{width:80,height:40,channels:3,background:'#f00'}});
+  const bytes=await (identicalNormalization?image.jpeg({quality:88}):image.jpeg().withMetadata({orientation:6})).toBuffer(),hash=createHash('sha256').update(bytes).digest('hex');
   let assetId:string,original:string,jobFile:string|null=null,derivative:string|null=null;
   if(layout==='upload') {
     const saved=await uploads.save({captureId:store.createCapture(randomUUID()).id,uploadId:randomUUID(),filename:'synthetic.jpg',bytes,hints:{}});assetId=saved.assetId;
@@ -36,7 +38,8 @@ async function fixture(layout:'direct'|'mobile'|'upload') {
   } else {
     assetId='legacy-source';let file=path.join(dir,'legacy-original.jpg'),jobId='direct-job';original=file;fs.writeFileSync(file,bytes);
     if(layout==='mobile') {
-      const normalized=await sharp(bytes).rotate().jpeg({quality:65}).toBuffer();expect(normalized).not.toEqual(bytes);
+      const normalized=identicalNormalization?await normalizePhoto(bytes):await sharp(bytes).rotate().jpeg({quality:65}).toBuffer();
+      if(identicalNormalization)expect(normalized).toEqual(bytes);else expect(normalized).not.toEqual(bytes);
       const {job}=await mobile.createJob({idempotencyKey:randomUUID(),photoName:'synthetic.jpg',sourceBytes:bytes,normalizedBytes:normalized});
       jobId=job.id;file=path.join(dir,'jobs',job.id,'media',`${job.sourceMediaId}.jpg`);derivative=file;
       original=path.join(dir,'jobs',job.id,'source-original.jpg');jobFile=path.join(dir,'jobs',job.id,'job.json');
@@ -102,4 +105,29 @@ it.each(['job-id','hash','media-kind','media-path','owner-link'] as const)('reje
   if(mismatch==='owner-link')f.db.prepare('UPDATE mobile_item_link SET job_id=? WHERE item_id=?').run('foreign-job','legacy-item');
   fs.writeFileSync(f.jobFile!,JSON.stringify(job));
   await expect(f.answer()).rejects.toThrow();await expect(f.grade()).rejects.toThrow();expect(f.calls()).toBe(0);
+});
+
+it.each(['mismatched-link','missing-link','missing-link-and-job-file','foreign-item-owner','job-metadata-only','bridge-provenance-only'] as const)('rejects identified mobile %s even with a naturally identical derivative and missing original',async problem=>{
+  const f=await fixture('mobile',true);
+  expect(fs.readFileSync(f.derivative!)).toEqual(f.bytes);
+  fs.unlinkSync(f.original);
+  if(problem==='mismatched-link')f.db.prepare('UPDATE mobile_item_link SET job_id=? WHERE item_id=?').run('foreign-job','legacy-item');
+  else if(problem==='foreign-item-owner')f.db.prepare('UPDATE error_item SET student_id=? WHERE id=?').run('bob','legacy-item');
+  else f.db.prepare('DELETE FROM mobile_item_link WHERE item_id=?').run('legacy-item');
+  if(problem==='job-metadata-only'||problem==='bridge-provenance-only')f.db.prepare("DELETE FROM material_legacy_map WHERE source_kind='error_item'").run();
+  if(problem==='bridge-provenance-only') {
+    const job=JSON.parse(fs.readFileSync(f.jobFile!,'utf8'));
+    f.db.prepare('INSERT INTO v2_photo(job_id,student_id,asset_id,registered_at) VALUES (?,?,?,?)').run(job.id,'alice',f.assetId,'2026-10-20');
+  }
+  if(problem==='missing-link-and-job-file'||problem==='bridge-provenance-only')fs.unlinkSync(f.jobFile!);
+  await expect(f.answer()).rejects.toThrow();await expect(f.grade()).rejects.toThrow();expect(f.calls()).toBe(0);
+  expect(()=>readSourceBytes(f.store,f.q.stem[0]!)).toThrow();
+  await expect(readFragmentImage(f.store,f.q.stem[0]!.fragmentId,1)).rejects.toThrow();
+});
+it('keeps a genuine direct legacy original inside a generic media directory',async()=>{
+  const f=await fixture('direct',true),directory=path.join(path.dirname(f.original),'archive','media');
+  fs.mkdirSync(directory,{recursive:true});fs.writeFileSync(path.join(path.dirname(directory),'job.json'),JSON.stringify({id:'unrelated-job',media:{}}));const filename=path.join(directory,'original.jpg');fs.renameSync(f.original,filename);
+  f.db.prepare('UPDATE source_asset SET storage_path=? WHERE id=?').run(filename,f.assetId);
+  expect(readSourceBytes(f.store,f.q.stem[0]!)).toEqual(f.bytes);
+  expect((await f.answer()).text).toBe('x=2');expect((await f.grade()).result).toBe('incorrect');expect(f.calls()).toBe(2);
 });

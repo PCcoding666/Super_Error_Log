@@ -34,6 +34,23 @@ export function originalSourcePath(store: MaterialStore, region: Pick<SourceRegi
         const directory = path.dirname(path.dirname(source.storage_path));
         const link = store.db.prepare(`SELECT m.job_id FROM mobile_item_link m JOIN error_item i ON i.id=m.item_id
           WHERE i.student_id=? AND i.asset_id=? AND m.job_id=?`).get(store.studentId, source.source_asset_id, path.basename(directory)) as { job_id:string } | undefined;
+        // A deleted/moved current item link cannot turn a known mobile derivative
+        // into a direct original. The bridge and migration retain source/job provenance.
+        const recorded = store.db.prepare(`SELECT 1 FROM v2_photo WHERE student_id=? AND asset_id=? AND job_id=?
+          UNION ALL SELECT 1 FROM material_legacy_map WHERE owner_id=? AND source_kind='error_item'
+          AND json_extract(details_json,'$.sourceAssetId')=? AND json_extract(details_json,'$.mobile.jobId')=? LIMIT 1`)
+          .get(store.studentId,source.source_asset_id,path.basename(directory),store.studentId,source.source_asset_id,path.basename(directory));
+        if (!link && recorded) throw new Error('原图任务缺少对应学生的关联');
+        if (!link) {
+            // Unmigrated files may still identify their actual job/source-media pair.
+            // A generic directory named media (or unrelated job.json) alone is not proof.
+            let job: {id?:string;sourceMediaId?:string;media?:Record<string,{filename:string;kind:string}>} | undefined;
+            try { job=JSON.parse(fs.readFileSync(path.join(directory,'job.json'),'utf8')); } catch { /* No identifiable job; genuine direct legacy files remain supported. */ }
+            const media=job?.sourceMediaId ? job.media?.[job.sourceMediaId] : undefined;
+            if (job?.id===path.basename(directory) && media?.kind==='source' && path.basename(media.filename)===media.filename
+                && path.resolve(directory,'media',media.filename)===path.resolve(source.storage_path))
+                throw new Error('原图任务缺少对应学生的关联');
+        }
         if (link) {
             const job = JSON.parse(fs.readFileSync(path.join(directory, 'job.json'), 'utf8')) as {
                 id:string; sourceHash:string; sourceMediaId:string; media:Record<string,{filename:string;kind:string}>;

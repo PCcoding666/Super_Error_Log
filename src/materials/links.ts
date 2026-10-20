@@ -144,7 +144,10 @@ export function assignDocument(store:MaterialStore,input:{assetId:string;documen
         const other=store.db.prepare(`SELECT 1 FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision
           WHERE l.owner_id=? AND l.question_id=? AND f.asset_id!=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision) LIMIT 1`).get(store.studentId,id,input.assetId);
         if (other&&q.documentId!==input.documentId) {
-          const provisional=store.createQuestion({documentId:input.documentId,number:q.number,subject:q.subject}).id;
+          // q.subject may be derived from another page left behind by this split.
+          // Only stored classification authority belongs on the new identity.
+          const authority=store.db.prepare('SELECT subject FROM material_question WHERE owner_id=? AND id=?').get(store.studentId,id) as {subject:string|null};
+          const provisional=store.createQuestion({documentId:input.documentId,number:q.number,subject:authority.subject}).id;
           const attempts=new Map<string,string>();
           for (const f of fragments) { const link=currentLink(store,f.fragmentId); if (link?.question_id!==id) continue; if (link.attempt_id&&!attempts.has(link.attempt_id)) attempts.set(link.attempt_id,store.createAttempt(provisional).id); store.linkFragment(f.fragmentId,f.revision,{questionId:provisional,attemptId:link.attempt_id?attempts.get(link.attempt_id)!:null},link.revision,{reason:'document_assignment'}); }
           id=provisional;

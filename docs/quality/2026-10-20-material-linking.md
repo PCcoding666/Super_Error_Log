@@ -1,6 +1,6 @@
 # 材料关联：本地合成验收记录
 
-记录日期：2026-10-21（Asia/Singapore）；文件名沿用 2026-10-20 的方案日期。分支 `codex/material-linking`，Task10 起点 `39187732739cdfe40a88f47f942aab58ba9183df`。这是本地实现与合成验证，**没有部署**，不代表线上已有这些功能。Task10 独立审查已通过；整分支最终审查发现 3 项 Important，已完成本轮修复，fresh scoped review 尚未进行，不预写批准。
+记录日期：2026-10-21（Asia/Singapore）；文件名沿用 2026-10-20 的方案日期。分支 `codex/material-linking`，Task10 起点 `39187732739cdfe40a88f47f942aab58ba9183df`。这是本地实现与合成验证，**没有部署**，不代表线上已有这些功能。Task10 独立审查已通过；整分支最终审查发现 3 项 Important，首轮修复后的 scoped review 又发现 2 项 Important（分拆固化派生学科、移动端原图身份缺失时退回 derivative）。两项已追加修复，下一轮 fresh scoped review 尚未进行，不预写批准。
 
 ## 本地能力与验证入口
 
@@ -34,7 +34,18 @@
 
 红绿证据：`materialClassification + materialExtraction` 初次 **7 失败/7 通过**（`/tmp/material-final-fix-classification-red.log`），初步修复后 14 通过；移除来源后的学习摘要断言 **4 失败/2 通过**（`/tmp/material-final-fix-projection-red.log`）；补入转写后冲突测试的相关 10 文件运行 **2 失败/190 通过**（`/tmp/material-final-fix-targeted.log`），暴露普通转写固化分类，修复后 classification/learning/v2Correct **38 通过**（`/tmp/material-final-fix-classification-final-green.log`）。`materialActionSources` 初次 **3 失败/8 通过**，包括两种旧布局 ENOENT 和外来 source batch 未拒绝（`/tmp/material-final-fix-sources-red.log`）；共用解析后 **11 通过**（`/tmp/material-final-fix-sources-green.log`）。原测试断言未弱化。
 
-最新全量门禁：`SEL_AI_MODE=mock npm run verify` **exit 0**；typecheck/build 通过，Vitest **80 文件、1010 通过/5 跳过**，Playwright **48 通过/1 跳过**。本轮仅运行这一次完整门禁，覆盖最终全部源码/测试；之后只更新证据文字。日志 `/tmp/material-final-fix-verify.log`。`git diff --check` 通过，19 条 Ruling 与原账本逐字一致。本轮使用合成数据/mock/loopback 协议替身，不证明真实模型准确率；fresh scoped review 由控制器后续发起。
+首轮修复全量门禁：`SEL_AI_MODE=mock npm run verify` **exit 0**；typecheck/build 通过，Vitest **80 文件、1010 通过/5 跳过**，Playwright **48 通过/1 跳过**。日志 `/tmp/material-final-fix-verify.log`。它未覆盖随后 scoped review 发现的两项边界；追加修复与新门禁如下。本轮使用合成数据/mock/loopback 协议替身，不证明真实模型准确率；fresh scoped review 由控制器后续发起。
+
+### Scoped review 后的窄范围追加修复
+
+首轮修复范围 `4a6eb15a..e49a6f8` 的独立审查仍为 Spec FAIL / Quality CHANGES_REQUIRED，0 Critical / 2 Important / 0 Minor。默认 mock 的域值问题已关闭；普通补齐和三种原图正常路径已关闭，下面两项交互需要修正。
+
+- **整页分拆不能固化旧页推导的学科。** `assignDocument` 的 split 原来把公开 `q.subject` 写到新题，导致答题卡离开数学题干后仍保存“数学”，后来只补入物理题干也无法恢复。现在只复制 owner-scoped 原题行的原始存储学科；派生值不复制。新增两例覆盖未明确分类/显式更正为化学，真实整页分拆、旧数学页留在原题、无题干时 NULL、随后物理来源、原始存储仍 NULL、撤销恢复原 attempt，以及 stale CAS/后来补题后不安全 undo 拒绝。其他学科持久化调用已审计：学习摘要本来是可更新的投影；matching 使用提取来源；legacy 镜像使用原 Evidence；普通转写不能固化派生值的上轮修复保持。
+- **识别出 mobile 来源后，缺失 owner/job link 必须拒绝。** 自然 JPEG 经 `normalizePhoto` 可以字节完全相同；只靠 hash 拒绝 derivative 不足。共享 resolver 现在用当前 owned link、迁移保存的 `sourceAssetId/mobile.jobId` 或 `v2_photo` source/job 记录识别对应 mobile 目录；没有这些映射时，实际匹配目录 ID/源媒体路径的 job metadata 也能识别来源。识别后缺少当前对应学生的 link 即拒绝；其余原有 job/hash/media 校验与 preserved original 读取保持。单纯目录叫 `media` 不构成 mobile 证据：真实直接旧原图位于 generic media、旁边有不相关 job.json 的正例仍能打印读取并执行答案/批改。
+
+红灯：`npx vitest run tests/integration/materialClassification.test.ts tests/integration/materialActionSources.test.ts`，**5 失败/23 通过**，`/tmp/material-final-fix2-red.log`。新增自然字节相同负例覆盖 link 改写/删除、foreign item owner、迁移记录但 job.json 已删、仅 bridge provenance、仅实际 job metadata；答案和批改均零 HTTP，`readSourceBytes` 与 `readFragmentImage` 同样拒绝。绿灯：classification/actionSources/links/print/migration/learning/uploads/v2Print **8 文件、151 通过**，`/tmp/material-final-fix2-green.log`；typecheck 通过，`/tmp/material-final-fix2-typecheck.log`。未弱化原断言。
+
+追加修复最新完整门禁：`SEL_AI_MODE=mock npm run verify` **exit 0**；typecheck/build 通过，Vitest **80 文件、1019 通过/5 跳过**，Playwright **48 通过/1 跳过**，日志 `/tmp/material-final-fix2-verify.log`。本次追加修复只在最终代码上运行一次完整门禁；之后仅更新证据文字。`git diff --check` 通过，19 条 Ruling 逐字保持。下一轮独立 scoped review 尚未发生；不把实现和测试通过写成审查批准。
 
 ## 验证环境与命令（Task10 修复前记录）
 

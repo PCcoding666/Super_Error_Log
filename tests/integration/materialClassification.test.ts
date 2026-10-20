@@ -115,3 +115,39 @@ it.each([
   const item=setQuestionIncluded(store,q.id,true,readQuestion(store,q.id)!.revision).itemId!;
   expect(readQuestion(store,q.id)!.subject).toBeNull();expect(materialPracticeEligible(store,q.id)).toBe(false);expect(getLearningContext(item)).toBeNull();
 });
+
+it.each([false,true])('keeps split-page classification source-backed while preserving explicit authority (%s)', explicit => {
+  const store=new MaterialStore(getDb(),ensureStudentProfile().id),code=newId('paper');
+  const card=page(store,'student_work',null,code);reconcileAsset(store,card.id);const original=questionFor(store,card.fragment),attempt=original.attempts[0]!.id;
+  const math=page(store,'question','数学',code);reconcileAsset(store,math.id);
+  if(explicit) {
+    const item=setQuestionIncluded(store,original.id,true,readQuestion(store,original.id)!.revision).itemId!;
+    expect(directCorrection(item,{revision:getLearningContext(item)!.revision,changes:[{field:'subject',before:'数学',after:'化学'}]}).ok).toBe(true);
+  }
+  const stored=explicit?'化学':null,documentId=newId('mdoc');
+  store.db.prepare('INSERT INTO material_document(id,owner_id) VALUES (?,?)').run(documentId,store.studentId);
+  const revision=assetLinkRevision(store,card.id),beforeClock=linkRevision(store);
+  const change=assignDocument(store,{assetId:card.id,documentId,expectedRevision:revision})[0]!;
+  const split=questionFor(store,card.fragment);
+  expect(split.id).not.toBe(original.id);expect(split.stem).toEqual([]);expect(split.subject).toBe(stored);
+  expect(store.db.prepare('SELECT subject FROM material_question WHERE id=?').get(split.id)).toEqual({subject:stored});
+  expect(readQuestion(store,original.id)!.stem.map(f=>f.assetId)).toEqual([math.id]);
+  expect(()=>assignDocument(store,{assetId:card.id,documentId,expectedRevision:revision})).toThrow(/更新/);
+  expect(()=>undoLink(store,change.id,beforeClock)).toThrow(/更新/);
+  undoLink(store,change.id,linkRevision(store));
+  expect(questionFor(store,card.fragment).id).toBe(original.id);expect(readQuestion(store,original.id)!.attempts.find(a=>a.id===attempt)!.fragments).toEqual([card.fragment]);
+  expect(readQuestion(store,original.id)!.subject).toBe(explicit?'化学':'数学');
+  expect(store.db.prepare('SELECT subject FROM material_question WHERE id=?').get(original.id)).toEqual({subject:stored});
+  const next=assignDocument(store,{assetId:card.id,documentId,expectedRevision:assetLinkRevision(store,card.id)})[0]!;
+  const moved=questionFor(store,card.fragment);
+  const physics=page(store,'question','物理',null,{documentId});reconcileAsset(store,physics.id);
+  const completed=readQuestion(store,moved.id)!;
+  expect(completed.stem.map(f=>f.assetId)).toEqual([physics.id]);expect(completed.subject).toBe(explicit?'化学':'物理');
+  expect(store.db.prepare('SELECT subject FROM material_question WHERE id=?').get(moved.id)).toEqual({subject:stored});
+  expect(()=>undoLink(store,next.id,linkRevision(store))).toThrow(/更新/);
+  const elsewhere=store.createQuestion().id;
+  const removal=relink(store,{fragmentIds:[physics.fragment.fragmentId],target:{questionId:elsewhere,attemptId:null},expectedRevision:linkRevision(store)});
+  expect(readQuestion(store,moved.id)!.subject).toBe(stored);
+  undoLink(store,removal.id,linkRevision(store));
+  expect(readQuestion(store,moved.id)!.subject).toBe(explicit?'化学':'物理');
+});
