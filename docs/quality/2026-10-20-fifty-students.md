@@ -12,6 +12,16 @@
 - 单进程 RSS 准入不再固定 768MiB。按服务预算估算，可用 `SEL_RSS_ADMISSION_MIB` 覆盖。这是暂停接收新任务的应用层门槛，不是 cgroup 上限。
 - `app.db` 增加 `busy_timeout = 5000`。`ai-usage.db` 使用 WAL。`error_diagnosis(item_id)` 和 `review_packet_item(item_id)` 用 `CREATE INDEX IF NOT EXISTS` 补索引，重复执行不会再建一次。管理后台的调用合计在 SQL 里算，明细最多带 2000 条；超过时页面会说明合计仍是全部。
 
+## 验证记录
+
+在 Node 24 上、`SEL_AI_MODE=mock`、合成数据：
+
+- `npm run typecheck` 通过。
+- `npm run build` 通过。
+- `python3 -m unittest discover -s tests/deploy -p 'test_*.py'`：14 项通过。没有改发布脚本。
+- Vitest：先跑全量时，学生网关审查夹具的假 worker 还没有 `retain`/`release`，7 项失败；补上这两个空操作后，该文件 24 项通过。同一轮全量里其余 982 项通过、5 项按条件跳过。失败只出在这个夹具上。
+- Playwright：61 项通过，6 项按条件跳过（macOS HEIC、未开启的质量证据采集）。
+
 ## 发布状态
 
 当前尚未发布。不要把本文件或本地测试当成线上版本。
