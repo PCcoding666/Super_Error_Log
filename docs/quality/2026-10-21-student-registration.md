@@ -23,10 +23,10 @@
 先通过已有受信任渠道核实申请者，再在服务器管理环境运行：
 
     node dist/studentHost/admin-cli.js lookup "学生姓名" "手机号"
-    node dist/studentHost/admin-cli.js invite <查到的学生ID>
+    node dist/studentHost/admin-cli.js reset-invitation <查到的学生ID>
 
-lookup 只显示账号 ID，不显示原码；invite 生成新的 60 天个人码并且只显示一次。手机号本轮不发送短信，也没有公开自助找回接口。旧账号没有登记资料时沿用既有管理员补码流程。
-补发本身不撤销旧会话或其他仍有效的邀请码；怀疑泄露时需要管理员按既有会话撤销流程处理。本次没有操作真实学生资料或凭证。
+lookup 只显示账号 ID，不显示原码；reset-invitation 原子作废该账号旧码和会话，并生成只显示一次的新 60 天个人码。任何一步失败，原状态完整回滚。手机号本轮不发送短信，也没有公开自助找回接口。旧账号没有登记资料时沿用既有管理员补码流程。
+普通 invite 命令仍可增加另一张邀请码；账号找回使用上述 reset-invitation，以便旧凭证失效。本次没有操作真实学生资料或凭证。
 
 ## 验证
 

@@ -321,6 +321,20 @@ export class StudentRegistry {
     return { code: formatInviteCode(normalized), expiresAt };
   }
 
+  /** 管理员核验后的找回：原子作废旧码和会话，再发新码；失败时旧状态完整保留。 */
+  resetInvitation(studentId: string): { code: string; expiresAt: Date } {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!this.studentExists(studentId)) throw new RegistryError('student_not_found', '学生不存在。');
+      const now = this.now().toISOString();
+      this.db.prepare('UPDATE invitations SET expires_at = ? WHERE student_id = ? AND expires_at > ?').run(now, studentId, now);
+      this.db.prepare('UPDATE sessions SET revoked = 1 WHERE student_id = ?').run(studentId);
+      const invitation = this.issueInvitation(studentId);
+      this.db.exec('COMMIT');
+      return invitation;
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
   /**
    * 兑换邀请码 → 新会话。错误一律 invalid_code（不暴露学生存在性：不存在/已用/过期同样说法）。
    * 新码可在有效期内多次登录；旧的一次性码仍只允许一方兑换，不复活历史凭证。

@@ -2,6 +2,7 @@
  * 学生空间管理 CLI（只能在本机/SSH 里跑；管理网页只能看统计）：
  *   tsx src/studentHost/admin-cli.ts create [role]                 新建学生空间（上限见 registry）并生成第一个邀请码；role 缺省 student
  *   tsx src/studentHost/admin-cli.ts invite <studentId>            给同一学生补一个邀请码（换手机/清浏览器后用）
+ *   tsx src/studentHost/admin-cli.ts reset-invitation <studentId> 核验后找回：换码并撤销旧码及会话，不删除学习数据
  *   tsx src/studentHost/admin-cli.ts lookup <name> <phone>        管理员核验本人后按注册资料定位账号（不返回码）
  *   tsx src/studentHost/admin-cli.ts list                          列出学生（不含任何码/令牌）
  *   tsx src/studentHost/admin-cli.ts set-role <studentId> <role>   改账号身份标签（student/parent/teacher/admin；只是标签，不是权限）
@@ -14,7 +15,7 @@ import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, isAccountRole, type AccountRole } f
 import { formatInviteCode, normalizeInviteCode, RegistryError, StudentRegistry, resolveStudentHostDir } from './registry.js';
 import { AdminAuth } from '../admin/auth.js';
 
-const USAGE = `用法：admin-cli.ts create [${ACCOUNT_ROLES.join('|')}] | invite <studentId> | list | lookup <name> <phone> | set-role <studentId> <role> | revoke-sessions <studentId> | admin-password`;
+const USAGE = `用法：admin-cli.ts create [${ACCOUNT_ROLES.join('|')}] | invite <studentId> | reset-invitation <studentId> | list | lookup <name> <phone> | set-role <studentId> <role> | revoke-sessions <studentId> | admin-password`;
 
 function usage(): never {
   console.error(USAGE);
@@ -64,12 +65,19 @@ export function runAdminCli(argv: string[], out: (line: string) => void = consol
         out(`学生 ${studentId} 的新邀请码（只显示这一次，60 天有效，可重复登录，到 ${expiresAt.toISOString()}）：${code}`);
         return 0;
       }
+      case 'reset-invitation': {
+        if (rest.length !== 1) return argError('reset-invitation 需要学生 ID；请先核验申请者本人。');
+        const { code, expiresAt } = registry.resetInvitation(rest[0]!);
+        out('原邀请码和登录会话已失效；学习记录保留。');
+        out('新邀请码（只显示这一次，60 天有效，可重复登录，到 ' + expiresAt.toISOString() + '）：' + code);
+        return 0;
+      }
       case 'lookup': {
         if (rest.length !== 2) return argError('lookup 需要姓名和手机号；仅供管理员核验本人后定位账号。');
         const studentId = registry.findRegisteredStudent(rest[0]!, rest[1]!);
         if (!studentId) { out('没有匹配的注册资料。'); return 1; }
         out('账号：' + studentId);
-        out('确认本人后使用 invite <studentId> 补发新码；此查询不返回邀请码。');
+        out('确认本人后使用 reset-invitation <studentId> 换新码并作废旧凭证；此查询不返回邀请码。');
         return 0;
       }
       case 'list': {

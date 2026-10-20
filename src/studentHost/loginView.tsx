@@ -95,7 +95,7 @@ export function RegistrationCompletePage(props: { code: string; expiresAt: Date 
       <section className="card">
         <p>你的专属邀请码</p>
         <p><code data-testid="registered-invite-code" style={{ fontSize: '1.5rem', userSelect: 'all', overflowWrap: 'anywhere' }}>{props.code}</code></p>
-        <p className="hint">有效期 60 天，期间可重复登录。到期时间：<time dateTime={props.expiresAt.toISOString()}>{props.expiresAt.toISOString().replace('T', ' ').slice(0, 19)} UTC</time>。</p>
+        <p className="hint">有效期 60 天，期间可重复登录。到期时间：<time dateTime={props.expiresAt.toISOString()}>{props.expiresAt.toLocaleString('zh-CN', { timeZone: 'Asia/Singapore', hour12: false })}（UTC+8）</time>。</p>
         <form method="post" action="/s/login" id="registered-login-form">
           <input type="hidden" name="code" value={props.code} />
         </form>

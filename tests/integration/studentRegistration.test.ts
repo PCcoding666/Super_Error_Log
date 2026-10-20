@@ -9,6 +9,7 @@ import express from 'express';
 import { afterEach, expect, it, vi } from 'vitest';
 import { StudentRegistry, MAX_STUDENTS } from '../../src/studentHost/registry.js';
 import { createStudentHostGateway, type StudentHostGateway } from '../../src/studentHost/router.js';
+import { runAdminCli } from '../../src/studentHost/admin-cli.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
 
 const roots: string[] = [];
@@ -234,4 +235,50 @@ it('legacy migration extends only still-usable codes and preserves one-time sema
   expect(() => registry.redeem('0123456789AB')).toThrow();
   expect(registry.authenticate('synthetic-session')).toEqual({ studentId: id });
   expect(registry.listStudents()).toHaveLength(1);
+});
+
+
+it('verified administrator recovery invalidates old codes and sessions without changing the student or data', () => {
+  const registry = StudentRegistry.open(root());
+  registries.push(registry);
+  const registered = registry.registerStudent('合成学生', '+6581234567');
+  const other = registry.registerStudent('合成学生乙', '+6581234568');
+  const session = registry.redeem(registered.code);
+  fs.writeFileSync(path.join(registry.studentDir(registered.studentId), 'synthetic-record.txt'), 'preserve this');
+  const next = registry.resetInvitation(registered.studentId);
+  expect(() => registry.redeem(registered.code)).toThrow();
+  expect(registry.authenticate(session.sessionToken)).toBeNull();
+  expect(registry.redeem(next.code).studentId).toBe(registered.studentId);
+  expect(registry.redeem(other.code).studentId).toBe(other.studentId);
+  expect(fs.readFileSync(path.join(registry.studentDir(registered.studentId), 'synthetic-record.txt'), 'utf8')).toBe('preserve this');
+});
+it('failed administrator recovery leaves the previous code and session usable', () => {
+  const registry = StudentRegistry.open(root());
+  registries.push(registry);
+  const registered = registry.registerStudent('合成学生', '+6581234567');
+  const session = registry.redeem(registered.code);
+  const spy = vi.spyOn(registry, 'issueInvitation').mockImplementationOnce(() => { throw new Error('synthetic storage failure'); });
+  expect(() => registry.resetInvitation(registered.studentId)).toThrow('synthetic storage failure');
+  spy.mockRestore();
+  expect(registry.authenticate(session.sessionToken)).toEqual({ studentId: registered.studentId });
+  expect(registry.redeem(registered.code).studentId).toBe(registered.studentId);
+});
+it('administrator lookup does not print the name, phone or code, and reset only returns a new credential', () => {
+  const dir = root();
+  const registry = StudentRegistry.open(dir);
+  registries.push(registry);
+  vi.stubEnv('SEL_STUDENT_HOST_DIR', dir);
+  const registered = registry.registerStudent('合成学生', '+6581234567');
+  const lines: string[] = [];
+  expect(runAdminCli(['lookup', '合成学生', '+6581234567'], line => lines.push(line))).toBe(0);
+  expect(lines.join('\n')).toContain(registered.studentId);
+  expect(lines.join('\n')).not.toContain(registered.code);
+  expect(lines.join('\n')).not.toContain('合成学生');
+  expect(lines.join('\n')).not.toContain('+6581234567');
+  const reset: string[] = [];
+  expect(runAdminCli(['reset-invitation', registered.studentId], line => reset.push(line))).toBe(0);
+  const newCode = /：([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})/.exec(reset.join('\n'))![1]!;
+  expect(newCode).not.toBe(registered.code);
+  expect(() => registry.redeem(registered.code)).toThrow();
+  expect(registry.redeem(newCode).studentId).toBe(registered.studentId);
 });
