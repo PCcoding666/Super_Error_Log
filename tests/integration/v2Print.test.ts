@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Server } from 'node:http';
 import sharp from 'sharp';
+import ts from 'typescript';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Coaching, Diagnosis, Evidence } from '../../src/ai/evidence.js';
 import type { CoachProvider } from '../../src/ai/provider.js';
@@ -609,8 +610,19 @@ describe('T5 打印快照', () => {
       if (seen.has(resolved) || !fs.existsSync(resolved)) return;
       seen.add(resolved);
       const source = fs.readFileSync(resolved, 'utf8');
-      for (const match of source.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
-        const spec = match[1]!;
+      // Parse imports instead of matching arbitrary text such as text('from'); text('to').
+      const ast = ts.createSourceFile(resolved, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+      const specs: string[] = [];
+      const collect = (node: ts.Node): void => {
+        if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+          specs.push(node.moduleSpecifier.text);
+        } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) {
+          specs.push(node.arguments[0].text);
+        }
+        ts.forEachChild(node, collect);
+      };
+      collect(ast);
+      for (const spec of specs) {
         if (spec.startsWith('node:')) continue;
         if (spec.startsWith('.')) { visit(path.join(path.dirname(resolved), spec)); continue; }
         const parts = spec.split('/');

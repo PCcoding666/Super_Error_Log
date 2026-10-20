@@ -34,10 +34,20 @@ export interface StudentRecord {
   createdAt: string;
   /** 账号身份标签（元数据，不参与鉴权）；老库迁移后一律是 student。 */
   accountRole: AccountRole;
+  lastActiveAt: string | null;
   /** 未过期且未兑换的邀请码数量（不暴露码本身）。 */
   pendingInvitations: number;
   /** 未过期且未撤销的会话数量。 */
   activeSessions: number;
+}
+
+export interface InvitationRecord {
+  invitationId: string;
+  studentId: string;
+  createdAt: string;
+  expiresAt: string;
+  redeemedAt: string | null;
+  status: 'pending' | 'redeemed' | 'expired';
 }
 
 export interface RedeemedSession {
@@ -117,6 +127,17 @@ export class StudentRegistry {
       CREATE INDEX IF NOT EXISTS idx_sessions_student ON sessions(student_id);
     `);
     this.migrateAccountRole();
+    // Add public identifiers without retaining or revealing invitation secrets.
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const columns = this.db.prepare('PRAGMA table_info(invitations)').all() as Array<{ name: string }>;
+      if (!columns.some(column => column.name === 'public_id')) this.db.exec('ALTER TABLE invitations ADD COLUMN public_id TEXT');
+      const students = this.db.prepare('PRAGMA table_info(students)').all() as Array<{ name: string }>;
+      if (!students.some(column => column.name === 'last_seen_at')) this.db.exec('ALTER TABLE students ADD COLUMN last_seen_at TEXT');
+      const missing = this.db.prepare('SELECT code_hash FROM invitations WHERE public_id IS NULL').all() as Array<{ code_hash: string }>;
+      for (const row of missing) this.db.prepare('UPDATE invitations SET public_id = ? WHERE code_hash = ?').run(crypto.randomUUID(), row.code_hash);
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_invitation_public_id ON invitations(public_id); COMMIT;');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     fs.chmodSync(path.join(this.hostDir, 'registry.db'), 0o600);
   }
 
@@ -202,8 +223,8 @@ export class StudentRegistry {
     const normalized = generateCode();
     const createdAt = this.now();
     const expiresAt = new Date(createdAt.getTime() + INVITATION_TTL_MS);
-    this.db.prepare('INSERT INTO invitations (code_hash, student_id, created_at, expires_at, redeemed_at) VALUES (?, ?, ?, ?, NULL)')
-      .run(sha256(normalized), studentId, createdAt.toISOString(), expiresAt.toISOString());
+    this.db.prepare('INSERT INTO invitations (code_hash, student_id, created_at, expires_at, redeemed_at, public_id) VALUES (?, ?, ?, ?, NULL, ?)')
+      .run(sha256(normalized), studentId, createdAt.toISOString(), expiresAt.toISOString(), crypto.randomUUID());
     return { code: formatInviteCode(normalized), expiresAt };
   }
 
@@ -230,6 +251,7 @@ export class StudentRegistry {
       const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
       this.db.prepare('INSERT INTO sessions (token_hash, student_id, created_at, expires_at, revoked) VALUES (?, ?, ?, ?, 0)')
         .run(sha256(token), invitation.student_id, now.toISOString(), expiresAt.toISOString());
+      this.db.prepare('UPDATE students SET last_seen_at = ? WHERE id = ?').run(now.toISOString(), invitation.student_id);
       this.db.exec('COMMIT');
       return { studentId: invitation.student_id, sessionToken: token, expiresAt };
     } catch (error) {
@@ -263,14 +285,38 @@ export class StudentRegistry {
 
   listStudents(): StudentRecord[] {
     const nowIso = this.now().toISOString();
-    const students = this.db.prepare('SELECT id, created_at, account_role FROM students ORDER BY created_at').all() as Array<{ id: string; created_at: string; account_role: string }>;
+    const students = this.db.prepare('SELECT id, created_at, account_role, last_seen_at FROM students ORDER BY created_at').all() as Array<{ id: string; created_at: string; account_role: string; last_seen_at: string | null }>;
     return students.map(student => ({
       studentId: student.id,
       createdAt: student.created_at,
       accountRole: isAccountRole(student.account_role) ? student.account_role : 'student',
+      lastActiveAt: student.last_seen_at,
       pendingInvitations: (this.db.prepare('SELECT COUNT(*) AS n FROM invitations WHERE student_id = ? AND redeemed_at IS NULL AND expires_at > ?').get(student.id, nowIso) as { n: number }).n,
       activeSessions: (this.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE student_id = ? AND revoked = 0 AND expires_at > ?').get(student.id, nowIso) as { n: number }).n,
     }));
+  }
+
+  recordActivity(studentId: string): void {
+    // This observer must neither delay nor fail an authenticated student request.
+    // All operations here are synchronous, so the normal timeout is restored before any other caller runs.
+    try {
+      try {
+        this.db.exec('PRAGMA busy_timeout = 0');
+        const now = this.now();
+        const cutoff = new Date(now.getTime() - 60_000).toISOString();
+        const row = this.db.prepare('SELECT last_seen_at FROM students WHERE id = ?').get(studentId) as { last_seen_at: string | null } | undefined;
+        if (!row || (row.last_seen_at !== null && row.last_seen_at >= cutoff)) return;
+        this.db.prepare('UPDATE students SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)')
+          .run(now.toISOString(), studentId, cutoff);
+      } finally { this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`); }
+    } catch { /* Best-effort metadata: a later request can update it after contention/storage recovery. */ }
+  }
+
+  listInvitations(): InvitationRecord[] {
+    const rows = this.db.prepare(`SELECT public_id AS invitationId, student_id AS studentId, created_at AS createdAt,
+      expires_at AS expiresAt, redeemed_at AS redeemedAt FROM invitations ORDER BY created_at DESC, public_id`).all() as unknown as Omit<InvitationRecord, 'status'>[];
+    const now = this.now().getTime();
+    return rows.map(row => ({ ...row, status: row.redeemedAt ? 'redeemed' : Date.parse(row.expiresAt) <= now ? 'expired' : 'pending' }));
   }
 
   close(): void {

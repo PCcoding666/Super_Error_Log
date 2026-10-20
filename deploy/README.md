@@ -86,7 +86,7 @@ SEL_AI_MODEL=<模型名>
 参考 `.env.example`；缺任何必填项服务启动会直接失败（fail-hard，不静默降级 mock）。
 `SEL_MOBILE_HOST` 只允许 `127.0.0.1`——公网入口只有 Caddy。
 v2.0 T2 起入口为 `dist/main.js`：同一端口（3101）同时服务 `/v1` 识别与 `/v2` 手机接口（均设备令牌鉴权）。
-**云端公网入口不挂旧的 Web 看板**（`/parent`、`/trends`、`/items` 等一律 404；Web 看板待有登录方案后再设计）。唯一的网页是学生网页版 `/s/`（设备令牌 cookie 鉴权，只有学生自己的页面，见 §10）。
+**云端公网入口不挂旧的 Web 看板**（`/parent`、`/trends`、`/items` 等一律 404；Web 看板待有登录方案后再设计）。学生网页版为 `/s/`（见 §10）；启用学生邀请码 host 的开发版本另有独立登录的只读管理后台 `/admin/`（见文末说明）。
 旧的 `dist/mobile/server.js` 仅保留给开发调试，不再作为线上入口。
 
 `/v2` 使用 Web 的 AI 配置（`SEL_AI_BASE_URL`、`SEL_AI_API_KEY`、`SEL_AI_MODEL*`），与上面的 `SEL_MOBILE_AI_*` 配置为同值；
@@ -472,8 +472,41 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 
 学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。受控试用最多3个学生空间，父子进程共用systemd的1GB内存上限；容量不足明确报错，不共享学生档案。
 
-管理员以服务用户运行 `dist/studentHost/admin-cli.js create [role] | list | invite <studentId> | set-role <studentId> <role> | revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。没有公网管理员页面。
+管理员以服务用户运行 `dist/studentHost/admin-cli.js create [role] | list | invite <studentId> | set-role <studentId> <role> | revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。管理后台使用独立管理员密码，不能使用学生邀请码登录。
 
 账号身份（role）只是标签：`student`/`parent`/`teacher`/`admin`，新建缺省 `student`，老账号迁移后一律 `student`。身份只能由管理员在本机用 `set-role` 修改；浏览器、网页表单、查询串都不能改身份，身份也不参与任何鉴权——每个账号仍是自己独立的空间、会话和数据。家长/老师/管理员的专属权限与账号关系尚未实现：非学生身份登录看到的仍是同一套错题本学习功能，设置页会注明「专属功能后续开放」。
 
 本轮部署检查与回滚见 `docs/quality/2026-10-15-student-web-release.md`（源码文档不随生产包部署）。关闭flag/回滚旧包不会删除新的学生目录。
+
+
+## 管理后台：账号用量与 AI 性能（2026-10-20 开发版本，尚未部署）
+
+在已启用 `SEL_STUDENT_HOST_ENABLED=1` 的同一服务上提供 `/admin/`。Caddy 现有整站反代已覆盖该路径，无需增加端口。只有 host 主进程提供后台，学生 worker 和旧单学生部署不提供。
+
+部署包含本功能的代码后，由服务器管理员以服务用户运行一次下列命令，生成管理密码：
+
+```sh
+sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-host \
+  /opt/super-error-log/node-v24/bin/node \
+  /opt/super-error-log/current/dist/studentHost/admin-cli.js admin-password
+```
+
+`SEL_STUDENT_HOST_DIR` 必须和运行中的应用相同。命令只打印一次随机密码；复制到密码管理器，不写入仓库或公开日志。打开 `https://study.pccoding666.com/admin/` 输入该密码。再次运行同一命令会重置密码，并立即注销所有旧管理会话，不影响学生会话与学习记录。管理会话有效期12小时；默认没有密码，不能登录。无需为初始化/轮换密码重启服务。
+
+后台功能：
+
+- 所有邀请码的独立编号、所属账号、创建/兑换/到期状态；编号不是登录原码。旧邀请码只存哈希，不能还原。
+- 每账号的累计录入题目照片、错题、练习包、已生成打印包、复盘、重做次数，以及最近活跃时间。题目照片统计不包含练习作答或反思附件。
+- 按账号、UTC+8日期、模型、功能筛选输入/输出 tokens、调用次数、接口成功率、平均与P95耗时；调用明细每页50条，汇总覆盖全部筛选结果。
+- 失败区分超时、取消、限流、网络/服务错误、配置认证错误和无效响应；不暴露模型原始错误正文、学生内容、音频、图片或密钥。
+
+统计口径与覆盖：
+
+- 新采集写入每学生目录的 `ai-usage.db`，一次实际 HTTP 尝试算一次调用，重试分别计数。Mock 不发模型请求，不计为真实用量。
+- 输入/输出 token 采用供应商实际返回的 usage。未知为“未采集”；已报告 tokens 是可计量部分，不能当作供应商完整账单。
+- 耗时从发出请求到读取并解析响应完成，不包括排队或后续业务处理；平均和P95仅使用有耗时的样本，P95采用最近秩（向上取整第95百分位）。
+- 接口成功表示请求及客户端响应解析成功，不等同于识别准确、业务完整性检查通过或学生掌握。失败调用已返回的 usage 仍计入已知用量。
+- 历史视觉 attempts 日志按白名单恢复元数据，并按调用ID和新采集去重。旧日志没有耗时就不能补算；旧文本/语音调用未完整记录。进程被强制终止、未写入的调用无法重建。后台标明历史来源、用量采集比例及读取/写入异常。
+- “已生成打印包”统计 ready 快照，不是实际纸张打印次数。最近活跃由登录/有效页面访问与已有活动记录推得；升级前没有记录的访问无法追溯。
+
+`admin.db` 在 host 目录保存 scrypt 密码派生值和会话哈希；管理 cookie 与学生 cookie 独立。学习库以只读连接查询，不启动/恢复学生 worker。无需新环境变量或运行时依赖。回滚旧代码时这些新增统计文件会被忽略，额外注册表列不改变旧邀请码兑换规则。

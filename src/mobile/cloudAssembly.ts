@@ -14,6 +14,8 @@ import { resumePendingSnapshots } from '../v2/printService.js';
 import { createWebClientRouter } from '../web/router.js';
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { MobileVisionBoundary } from './vision.js';
+import { AdminAuth } from '../admin/auth.js';
+import { createAdminRouter } from '../admin/router.js';
 
 /** 测试与本机试用的替身（合成识别、固定转写）；生产入口 main.ts 不传。 */
 export interface CloudAssemblyOverrides {
@@ -60,6 +62,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
   const studentHost: StudentHostGateway | null = process.env.SEL_STUDENT_HOST_ENABLED === '1'
     ? await createStudentHostGateway({ hostDir: resolveStudentHostDir(configuration.dataDir) })
     : null;
+  const adminAuth = studentHost ? AdminAuth.open(studentHost.registry.hostDir) : null;
   const app = await createMobileApp({
     dataDir: configuration.dataDir, vision: overrides.vision ?? new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true,
     v2Router: ({ limiter }) => createV2Router({ mobileDataDir: configuration.dataDir, transcriber, limiter }),
@@ -68,6 +71,9 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     webClient: studentHost
       ? deps => studentHost.router({ limiter: deps.limiter, ipOf: deps.ipOf, originScheme: 'https:' })
       : deps => createWebClientRouter({ ...deps, mobileDataDir: configuration.dataDir, transcriber, studentHostWorker: process.env.SEL_STUDENT_WORKER === '1' }),
+    adminWeb: studentHost && adminAuth
+      ? ({ ipOf }) => createAdminRouter({ registry: studentHost.registry, auth: adminAuth, ipOf, originScheme: 'https:' })
+      : undefined,
   });
   let server: Awaited<ReturnType<typeof app.listen>> | null = null;
   const listen = (): Promise<void> => new Promise((resolve, reject) => {
@@ -91,6 +97,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
       current.once('error', reject);
       current.close(() => { current.off('error', reject); resolve(); });
     });
+    adminAuth?.close();
   };
   return { configuration, admin, pairing, listen, boundPort, close };
 }

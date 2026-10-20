@@ -1,17 +1,19 @@
 /**
- * 学生空间管理 CLI（没有公网管理页；只能在本机/SSH 里跑）：
+ * 学生空间管理 CLI（只能在本机/SSH 里跑；管理网页只能看统计）：
  *   tsx src/studentHost/admin-cli.ts create [role]                 新建学生空间（上限见 registry）并生成第一个邀请码；role 缺省 student
  *   tsx src/studentHost/admin-cli.ts invite <studentId>            给同一学生补一个邀请码（换手机/清浏览器后用）
  *   tsx src/studentHost/admin-cli.ts list                          列出学生（不含任何码/令牌）
  *   tsx src/studentHost/admin-cli.ts set-role <studentId> <role>   改账号身份标签（student/parent/teacher/admin；只是标签，不是权限）
  *   tsx src/studentHost/admin-cli.ts revoke-sessions <studentId>   撤销该学生的全部登录会话
+ *   tsx src/studentHost/admin-cli.ts admin-password              生成/轮换独立管理后台密码
  * 邀请码明文只在生成时打印这一次；不写日志、不落盘。存储位置：SEL_STUDENT_HOST_DIR（缺省 <旧 dataDir>/student-host）。
  * 身份标签（role）只能在这里改；浏览器/网页任何入口都不能改身份。
  */
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, isAccountRole, type AccountRole } from './accountRole.js';
 import { formatInviteCode, normalizeInviteCode, RegistryError, StudentRegistry, resolveStudentHostDir } from './registry.js';
+import { AdminAuth } from '../admin/auth.js';
 
-const USAGE = `用法：admin-cli.ts create [${ACCOUNT_ROLES.join('|')}] | invite <studentId> | list | set-role <studentId> <role> | revoke-sessions <studentId>`;
+const USAGE = `用法：admin-cli.ts create [${ACCOUNT_ROLES.join('|')}] | invite <studentId> | list | set-role <studentId> <role> | revoke-sessions <studentId> | admin-password`;
 
 function usage(): never {
   console.error(USAGE);
@@ -36,6 +38,15 @@ export function runAdminCli(argv: string[], out: (line: string) => void = consol
   const registry = StudentRegistry.open(resolveStudentHostDir());
   try {
     switch (command) {
+      case 'admin-password': {
+        const auth = AdminAuth.open(registry.hostDir);
+        try {
+          out('管理员密码已生成，旧管理会话已失效。请妥善保存，下方密码只显示这一次。');
+          out(`管理员密码：${auth.rotatePassword()}`);
+          out('登录地址：/admin/');
+          return 0;
+        } finally { auth.close(); }
+      }
       case 'create': {
         if (rest.length > 1) return argError('create 最多带一个身份参数。');
         const role = parseRoleArg(rest[0]);

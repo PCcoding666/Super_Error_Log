@@ -18,6 +18,9 @@ export interface InventoryCandidate {
 export interface VisionInventoryResult { candidates: InventoryCandidate[]; warnings: string[] }
 export interface VisionQuestionResult { evidence: Evidence; verification: RecognitionVerification; questionCrop: Buffer; diagramCrops: Buffer[] }
 export interface VisionAttempt {
+  usageId?: string;
+  startedAt?: string;
+  durationMs?: number;
   stage: 'inventory' | 'transcribe' | 'verify' | 'ground';
   attempt: number;
   request: Record<string, unknown>;
@@ -162,7 +165,8 @@ export class BailianMobileVision implements MobileVisionBoundary {
   private attempt(stage: VisionAttempt['stage'], attempt: number, context: VisionContext, trace: ChatTrace, error: MobileVisionError | null, promptHash: string): VisionAttempt {
     const tracedError = trace.error ? errorFrom(new AiError(trace.error.kind as AiError['kind'], trace.error.message), stage) : null;
     const finalError = error ?? tracedError;
-    return { stage, attempt, request: { ...trace.request, sourceHash: context.sourceHash, promptHash }, responseRaw: trace.responseRaw,
+    return { usageId: trace.usageId, startedAt: trace.startedAt, durationMs: trace.durationMs,
+      stage, attempt, request: { ...trace.request, sourceHash: context.sourceHash, promptHash }, responseRaw: trace.responseRaw,
       httpStatus: trace.httpStatus, usage: trace.usage, error: finalError ? { code: finalError.code, message: finalError.message } : null };
   }
 

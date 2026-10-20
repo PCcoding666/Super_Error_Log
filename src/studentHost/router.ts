@@ -226,6 +226,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       // 账号身份标签：每请求从注册表现读，set-role 后下一个请求即生效，不用重新登录/重启。
       // 只是元数据，不参与鉴权；浏览器/查询串/表单里的任何「role」都不会被采信。
       response.locals.accountRole = registry.getAccountRole(session.studentId);
+      registry.recordActivity(session.studentId);
       next();
     });
 
