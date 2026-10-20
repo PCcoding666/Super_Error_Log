@@ -1,11 +1,15 @@
 import type { ReactNode } from 'react';
-import type { PracticeDetail, RecommendResponse } from '../../v2/practiceService.js';
 import type { TaskLifecycle } from '../../v2/practiceTasks.js';
 import { weekRangeText } from '../format.js';
 import { Page } from './layout.js';
 
+/** Fields the dashboard actually renders. Legacy practice cards and learning cards both satisfy this. */
+interface DashboardItem { id: string; subject?: string | null; knowledgeTags: string[]; reason: string }
+interface DashboardPractice { id: string; week: string; items: DashboardItem[] }
+interface DashboardRecommendation { recommended: DashboardItem[]; others?: DashboardItem[]; notes?: string[]; limits?: { min: number; max: number } }
+
 export interface DashboardTask {
-  practice: PracticeDetail;
+  practice: DashboardPractice;
   lifecycle: TaskLifecycle;
   recorded: number;
   received: number;
@@ -17,7 +21,7 @@ function TaskActions({task}: {task:DashboardTask}): ReactNode {
     {task.received>0?<><a className="btn primary" href={`${url}/feedback`}>{task.reviewStatus==='ready'?'查看待确认结果':'查看提交进度'}</a><a className="btn" href={`${url}/submit`}>补拍作答</a><a className="more" href={url}>查看题目</a></>:<><a className="btn primary" href={url}>查看题目</a><a className="btn" href={`${url}/submit`}>拍照交练习</a>{task.recorded>0?<a className="more" href={`${url}/feedback`}>查看反馈</a>:null}</>}
   </div>;
 }
-export function PracticeDashboardPage(props: {tasks:DashboardTask[]; activeId:string|null; recommendation:RecommendResponse; requestKey:string; error?:string}): ReactNode {
+export function PracticeDashboardPage(props: {tasks:DashboardTask[]; activeId:string|null; recommendation:DashboardRecommendation; requestKey:string; error?:string}): ReactNode {
   const active=props.tasks.find(task=>task.practice.id===props.activeId);
   const history=props.tasks.filter(task=>task!==active);
   const cards=props.recommendation.recommended;

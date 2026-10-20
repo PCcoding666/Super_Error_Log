@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { PracticeWork } from '../../v2/practiceWork.js';
 import type { ReactNode } from 'react';
-import type { PracticeDetail } from '../../v2/practiceService.js';
+import type { LearningPracticeDetail as PracticeDetail } from '../../learning/contracts.js';
 import type { PrintSnapshot } from '../../v2/printService.js';
 import type { PracticeProgress } from '../../v2/practiceProgress.js';
 import { Page } from './layout.js';

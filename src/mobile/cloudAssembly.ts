@@ -1,3 +1,8 @@
+import { registerMaterialGrading } from '../materials/grading.js';
+import { registerMaterialAnswers } from '../materials/answers.js';
+import { config } from '../config.js';
+import { assertMaterialProviderConfigured, type MaterialProviderOptions } from '../materials/provider.js';
+import { registerMaterialExtraction } from '../materials/extraction.js';
 import type { AddressInfo } from 'node:net';
 import type { MobileConfiguration } from './configuration.js';
 import { createMobileApp } from './router.js';
@@ -14,6 +19,9 @@ import { resumePendingSnapshots } from '../v2/printService.js';
 import { createWebClientRouter } from '../web/router.js';
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { MobileVisionBoundary } from './vision.js';
+import { MaterialStore } from '../materials/store.js';
+import type { MaterialJobs } from '../materials/jobs.js';
+import type { MaterialUploads } from '../materials/uploads.js';
 import type { MobileRecognitionService } from './service.js';
 import { AdminAuth } from '../admin/auth.js';
 import { createAdminRouter } from '../admin/router.js';
@@ -21,6 +29,7 @@ import { createAdminRouter } from '../admin/router.js';
 /** 测试与本机试用的替身（合成识别、固定转写）；生产入口 main.ts 不传。 */
 export interface CloudAssemblyOverrides {
   vision?: MobileVisionBoundary;
+  configureMaterials?: (jobs: MaterialJobs, uploads: MaterialUploads) => void;
   transcriber?: SpeechTranscriber;
   /** 学生空间 worker（studentHost/worker.ts）不需要管理 socket：深层目录下 unix socket 路径可能超长。 */
   adminServer?: boolean;
@@ -49,9 +58,11 @@ export interface CloudAssembly {
  */
 export async function assembleCloudService(configuration: MobileConfiguration, overrides: CloudAssemblyOverrides = {}): Promise<CloudAssembly> {
   if (configuration.mode !== 'cloud') throw new Error('assembleCloudService 仅用于云端模式');
+  const materialOptions: MaterialProviderOptions = { mode: config.aiMode, chat: { baseUrl: config.aiBaseUrl, apiKey: config.aiApiKey, models: config.aiModels, timeoutMs: config.aiTimeoutMs, bailianOnly: config.aiMode === 'bailian' } };
+  // Validate before opening resources; explicit synthetic overrides retain their existing boundary.
+  if (!overrides.configureMaterials) assertMaterialProviderConfigured(materialOptions);
   // 共享 SQLite（SEL_DATA_DIR/app.db）：先建库再确保唯一学生档案，/v2 绑定到它。
-  getDb();
-  ensureStudentProfile();
+  const materialStore = new MaterialStore(getDb(), ensureStudentProfile().id);
   // T3：启动时把已登记但尚未桥接的 v2 识别任务补桥一次（单个失败不影响启动）。
   bridgePending(configuration.dataDir);
   // T5：重启后续做 preparing 状态的打印快照（已完成的题不重做）。
@@ -67,6 +78,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     : null;
   const adminAuth = studentHost ? AdminAuth.open(studentHost.registry.hostDir) : null;
   const app = await createMobileApp({
+    materialStore, configureMaterials: overrides.configureMaterials ?? ((jobs, uploads) => { registerMaterialExtraction(materialStore, jobs, uploads, materialOptions); registerMaterialAnswers(materialStore, jobs, uploads, materialOptions); registerMaterialGrading(materialStore, jobs, uploads, materialOptions); }),
     dataDir: configuration.dataDir, vision: overrides.vision ?? new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true,
     v2Router: ({ limiter }) => createV2Router({ mobileDataDir: configuration.dataDir, transcriber, limiter }),
     // 学生网页版 /s/（2026-10-09）：同一进程、同一端口、同一 Caddy 站点。
@@ -90,17 +102,25 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     return address && typeof address === 'object' ? (address as AddressInfo).port : null;
   };
   const close = async (): Promise<void> => {
+    const errors: unknown[] = [];
+    const cleanup = async (operation: () => Promise<void>): Promise<void> => {
+      try { await operation(); } catch (error) { errors.push(error); }
+    };
     // 先停学生 worker（不再接新请求后再杀子进程，避免半截 multipart 写入）。
-    if (studentHost) await studentHost.close();
-    await app.locals.mobileRecognitionService.stop();
-    if (admin) await admin.close();
+    // Each resource still gets its cleanup attempt if an earlier shutdown write fails.
+    if (studentHost) await cleanup(() => studentHost.close());
+    await cleanup(() => app.locals.mobileRecognitionService.stop());
+    if (admin) await cleanup(() => admin.close());
     const current = server;
-    server = null;
-    if (current) await new Promise<void>((resolve, reject) => {
-      current.once('error', reject);
-      current.close(() => { current.off('error', reject); resolve(); });
+    if (current) await cleanup(async () => {
+      await new Promise<void>((resolve, reject) => {
+        current.once('error', reject);
+        current.close(error => { current.off('error', reject); if (error) reject(error); else resolve(); });
+      });
+      server = null;
     });
     adminAuth?.close();
+    if (errors.length) throw new AggregateError(errors, 'Cloud service shutdown failed after attempting all resource cleanup.');
   };
   return { configuration, admin, pairing, recognition: app.locals.mobileRecognitionService as MobileRecognitionService, listen, boundPort, close };
 }

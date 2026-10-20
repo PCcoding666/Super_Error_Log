@@ -4,7 +4,8 @@ import { stageChoices } from '../../classification/itemCategories.js';
 import { ALL_STAGES } from '../../classification/stages.js';
 import { JUNIOR_CATALOG } from '../../classification/juniorCatalog.js';
 import type { ReactNode } from 'react';
-import type { V2WeekItem } from '../../v2/weekService.js';
+import type { V2WeekItem as WeekCard } from '../../v2/weekService.js';
+type V2WeekItem = Omit<WeekCard, 'jobId'>;
 import type { EvidenceView } from '../../v2/correctionService.js';
 export { ItemDetailPage } from './itemDetail.js';
 import { Page, Phrased, Problem, VoiceBox, type BarModel } from './layout.js';
@@ -37,6 +38,7 @@ export function ItemCard(props: { item: V2WeekItem; href?: string; open?: boolea
 export interface NotebookPageProps {
   items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel;
   category: { grade: string; subject: string; subjects: string[]; stages?: string[] };
+  materials?: boolean;
   filters?: NotebookFilters; chapters?: string[]; total?: number; selection?: boolean; selectedIds?: string[];
   eligibleIds?: string[]; recoveryItems?: V2WeekItem[]; removed?: string | null; undoReturnTo?: string;
   flash?: { ok?: string | null; err?: string | null };
@@ -91,7 +93,7 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
       {recovery.length || [...selected].some(id=>!known.has(id)) ? <section aria-label="保留的选择"><h2>保留的选择</h2><p className="hint">这些题不在当前结果中或已不可用，请检查并取消后继续。</p><ul className="list notebook-list">{recovery.map(card)}</ul>{[...selected].filter(id=>!known.has(id)).map(id=><label key={id} className="choice"><input type="checkbox" name="itemIds" value={id} defaultChecked /><span>不可用的题目：{id} · 取消后重试</span></label>)}</section> : null}
       <noscript><p className="hint">勾选后点“加入练习”提交；添加章节也会更新已选题数。超过 8 道时会保留选择，取消几道再提交。</p></noscript>
     </form> : <ul className="list notebook-list">{all.map(card)}</ul>}
-    {!all.length ? <section className="card"><h2 className="card-title">{props.total ? '没有符合筛选的题目' : grade === ALL_STAGES ? `还没有${subject}错题` : `这个学段还没有${subject}错题`}</h2><p>以前收录和未分类的题目也会出现在这里。</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="more" href={notebookUrl({grade,subject})}>查看全部{subject}错题</a><a className="more" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '查看已上传照片' : '录入第一道错题'}</a></section> : null}
+    {!all.length ? <section className="card"><h2 className="card-title">{props.total ? '没有符合筛选的题目' : grade === ALL_STAGES ? `还没有${subject}错题` : `这个学段还没有${subject}错题`}</h2><p>以前收录和未分类的题目也会出现在这里。</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="more" href={notebookUrl({grade,subject})}>查看全部{subject}错题</a><a className="more" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '查看已上传照片' : '录入第一道错题'}</a>{props.materials ? <a className="more" href="/s/materials">查看学习材料</a> : null}</section> : null}
   </Page>;
 }
 

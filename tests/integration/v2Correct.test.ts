@@ -1,3 +1,4 @@
+import { resetMaterials } from '../helpers/resetMaterials.js';
 /**
  * T4e：修改识别结果（"不对，改一下"）与修改记录。
  * 真实 HTTP（回环装配，共享令牌鉴权）+ 合成识别任务 + 合成模型 HTTP 服务器（统计调用次数）。
@@ -112,6 +113,7 @@ afterEach(async () => {
 beforeEach(() => {
   modelRequests.length = 0;
   const database = getDb();
+  resetMaterials(database);
   for (const table of ['correction', 'correction_proposal', 'v2_reflection_turn', 'review_attempt', 'review_packet_item', 'review_packet', 'mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo', 'v2_setting']) {
     database.prepare(`DELETE FROM ${table}`).run();
   }

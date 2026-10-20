@@ -1,3 +1,4 @@
+import { backfillLegacyMaterials } from '../materials/legacy.js';
 /**
  * v2.0 T3 桥：v2 上传的识别任务 → 错题记录。
  * 只做登记与映射：不复制图片（storage_path 指向手机任务目录里的规范化原图，裁图现算），不调用模型。
@@ -161,6 +162,7 @@ export function bridgeJob(jobId: string, mobileDataDir: string): void {
 
     if (batchId) assignShortIds(batchId);
     db.prepare('UPDATE v2_photo SET bridged_revision = ?, bridge_error = NULL WHERE job_id = ?').run(job.revision, jobId);
+    backfillLegacyMaterials(db);
     db.exec('COMMIT');
     audit('bridge_job_bridged', 'v2_photo', jobId);
   } catch (error) {

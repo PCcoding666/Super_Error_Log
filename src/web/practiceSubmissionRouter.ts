@@ -64,7 +64,7 @@ export function practiceSubmissionRouter(options:{reviewer?:PracticeReviewer;lim
     if(!hasConsent(req)){res.status(403).send('请先确认上传说明');return;}
     const state=submissionState(pid);
     if(isReviewing(pid)||state.status==='ready'||state.attempts>=3){res.redirect(303,dest);return;}
-    const prepared=getPrintStatus(pid);
+    const prepared=getPrintStatus(pid, 'all');
     if(!state.photos.length||prepared.httpStatus!==200||prepared.body.status!=='ready'){res.status(400);feedback(req,res,!state.photos.length?'请先拍照提交作答':'题目还没有准备好，请先回到题目查看准备进度');return;}
     const gate=options.limiter.transcribe(String(res.locals.deviceId));
     if(!gate.allowed){res.setHeader('retry-after',String(gate.retryAfterSeconds));res.status(429);feedback(req,res,'核对次数较多，请稍后再试，也可以自己核对');return;}

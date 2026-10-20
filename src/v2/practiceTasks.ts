@@ -1,6 +1,7 @@
 import { getDb, now } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
-import { createPractice, getPractice, recommendPractice, type CreatePracticeResult, type PracticeDetail, type RecommendResponse } from './practiceService.js';
+import { createLearningPractice, getLearningPractice, recommendLearningPractice } from '../learning/queries.js';
+import type { LearningCreateResult, LearningPracticeDetail, LearningRecommendation } from '../learning/contracts.js';
 
 export type TaskLifecycle = 'active' | 'paused' | 'cancelled';
 export function taskLifecycle(packetId: string): TaskLifecycle {
@@ -8,36 +9,38 @@ export function taskLifecycle(packetId: string): TaskLifecycle {
   return row?.lifecycle ?? 'active';
 }
 export function assertTaskWritable(packetId: string): void {
-  if (!getPractice(packetId)) throw new Error('练习不存在');
+  if (!getLearningPractice(packetId, 'all')) throw new Error('练习不存在');
   if (taskLifecycle(packetId) === 'cancelled') throw new Error('这份练习已取消，已记录的结果仍然保留。');
 }
-export function activePractice(): PracticeDetail | null {
+export function activePractice(): LearningPracticeDetail | null {
   const row = getDb().prepare(`
     SELECT rp.id FROM review_packet rp
     LEFT JOIN practice_task pt ON pt.packet_id=rp.id
     WHERE COALESCE(pt.lifecycle,'active')='active'
-      AND EXISTS (SELECT 1 FROM review_packet_item rpi JOIN mobile_item_link mil ON mil.item_id=rpi.item_id
-        WHERE rpi.packet_id=rp.id AND NOT EXISTS
-          (SELECT 1 FROM review_attempt ra WHERE ra.packet_id=rp.id AND ra.item_id=rpi.item_id))
+      AND EXISTS (SELECT 1 FROM review_packet_item rpi
+        WHERE rpi.packet_id=rp.id
+          AND (EXISTS (SELECT 1 FROM mobile_item_link mil WHERE mil.item_id=rpi.item_id)
+            OR EXISTS (SELECT 1 FROM material_item_link ml WHERE ml.item_id=rpi.item_id))
+          AND NOT EXISTS (SELECT 1 FROM review_attempt ra WHERE ra.packet_id=rp.id AND ra.item_id=rpi.item_id))
     ORDER BY rp.created_at, rp.rowid LIMIT 1`).get() as {id:string} | undefined;
-  return row ? getPractice(row.id) : null;
+  return row ? getLearningPractice(row.id, 'all') : null;
 }
-export function suggestedPractice(dir: string): RecommendResponse {
-  const all = recommendPractice(dir);
+export function suggestedPractice(dir: string): LearningRecommendation {
+  const all = recommendLearningPractice(dir, 'all');
   return {...all,recommended:all.recommended.slice(0,3),others:[...all.recommended.slice(3),...all.others],notes:[],limits:{min:1,max:8}};
 }
-export function startSuggestedPractice(dir: string, key: string): CreatePracticeResult {
+export function startSuggestedPractice(dir: string, key: string): LearningCreateResult {
   if (!/^[0-9a-f-]{36}$/i.test(key)) return {ok:false,httpStatus:400,message:'请重新打开推荐后再试。'};
   const previous=getDb().prepare('SELECT packet_id FROM practice_task WHERE request_key=?').get(key) as {packet_id:string} | undefined;
   if (previous) {
-    const detail=getPractice(previous.packet_id);
+    const detail=getLearningPractice(previous.packet_id, 'all');
     if (detail) return {ok:true,detail};
   }
   const current=activePractice();
   if (current) return {ok:true,detail:current};
   const ids=suggestedPractice(dir).recommended.map(item=>item.id);
   if (!ids.length) return {ok:false,httpStatus:409,message:'现在没有需要安排的题，可以查看错题本或录入新错题。'};
-  return createPractice({itemIds:ids,requestKey:key});
+  return createLearningPractice({itemIds:ids,requestKey:key}, 'all');
 }
 export function setTaskLifecycle(packetId: string, lifecycle: TaskLifecycle): void {
   if (!['active','paused','cancelled'].includes(lifecycle)) throw new Error('练习状态无效');

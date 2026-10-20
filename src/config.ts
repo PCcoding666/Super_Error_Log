@@ -20,7 +20,7 @@ export const config = {
   aiBaseUrl: process.env.SEL_AI_BASE_URL ?? '',
   aiApiKey: process.env.SEL_AI_API_KEY || process.env.DASHSCOPE_API_KEY || '',
   aiModel: defaultModel,
-  aiModels: Object.fromEntries(['layout', 'transcribe', 'diagnose', 'coach', 'match', 'crop_inventory', 'crop_verify', 'followup', 'correct'].map(stage =>
+  aiModels: Object.fromEntries(['layout', 'transcribe', 'diagnose', 'coach', 'match', 'crop_inventory', 'crop_verify', 'followup', 'correct', 'material_extract', 'material_verify', 'material_answer', 'material_grade'].map(stage =>
     [stage, process.env[`SEL_AI_MODEL_${stage.toUpperCase()}`] || defaultModel])),
   /** 语音转写模型（学生网页版「说说为什么错」）；不回退到通用 SEL_AI_MODEL（文本模型不能转写）。 */
   aiAsrModel: process.env.SEL_AI_MODEL_ASR || 'qwen-audio-3.1-asr-flash',
