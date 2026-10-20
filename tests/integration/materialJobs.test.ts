@@ -106,7 +106,7 @@ describe('durable material scheduling', () => {
     releasePhoto(); releaseMaterial();
     await settled(f.jobs, material.id, 'succeeded');
     await expect.poll(() => third).toBe(true);
-    expect((await f.scheduler.getJob(legacy.job.id)).status).toBe('completed');
+    await expect.poll(async () => (await f.scheduler.getJob(legacy.job.id)).status).toBe('completed');
     expect(order).toEqual(['legacy', 'material', 'third']);
   });
 
@@ -122,7 +122,7 @@ describe('durable material scheduling', () => {
     expect(f.admission.tryAcquireJobCapacity().accepted).toBe(false);
     await expect.poll(() => order).toEqual(['legacy', 'material']); release();
     await settled(f.jobs, material.id, 'succeeded');
-    expect((await f.scheduler.getJob(legacy.job.id)).status).toBe('completed');
+    await expect.poll(async () => (await f.scheduler.getJob(legacy.job.id)).status).toBe('completed');
     expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true); expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true);
     f.admission.releaseJobCapacity(); f.admission.releaseJobCapacity();
   });
