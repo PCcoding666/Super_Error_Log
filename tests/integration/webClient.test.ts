@@ -325,6 +325,51 @@ describe('连接：链接配对 → httpOnly cookie；没有 cookie 只看到连
   });
 });
 
+
+describe('录入与上传记录分开', () => {
+  it('已有照片不会挤占录入页，拍照入口和历史入口仍可直接使用', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const { jobId } = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
+
+    const capture = await browser.text('/s/capture');
+    expect(capture).not.toContain('data-photo-grid');
+    expect(capture).not.toContain('/s/img/photo/');
+    expect(capture).toMatch(/<label[^>]*for="camera-input"[^>]*data-testid="next-step-primary"/);
+    expect(capture).toContain('新增录入');
+    expect(capture).toContain('已上传记录');
+
+    const history = await browser.text('/s/photos');
+    expect(history).toContain('已上传记录');
+    expect(history).toContain(`src="/s/img/photo/${jobId}"`);
+    expect(history).toContain(`href="/s/img/photo/${jobId}?full=1"`);
+    expect(history.replace(/<[^>]+>/g, '')).not.toMatch(/第\s*1\s*张/);
+    expect(history).toContain('已新增 3 道错题');
+  });
+
+  it('历史照片跨周保留，最新上传排在前面，旧照片仍能打开和补勾', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const { jobId: older } = await (await uploadPhoto(browser, await photo('#b0c0ed'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(older)).status === 'completed');
+    getDb().prepare('UPDATE v2_photo SET registered_at = ? WHERE job_id = ?').run(new Date(Date.now() - 14 * 86400000).toISOString(), older);
+    const { jobId: newer } = await (await uploadPhoto(browser, await photo('#edc0b0'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(newer)).status === 'completed');
+
+    const history = await browser.text('/s/photos');
+    expect(history).toContain(`src="/s/img/photo/${older}"`);
+    expect(history.indexOf(`src="/s/img/photo/${newer}"`)).toBeLessThan(history.indexOf(`src="/s/img/photo/${older}"`));
+    expect((await browser.get(`/s/photos/${older}`)).status).toBe(200);
+    const oldJob = await env.service.getJob(older);
+    expect((await browser.post(`/s/photos/${older}/select`, { questionIds: [oldJob.questions[0]!.id] })).status).toBe(303);
+    await waitFor(async () => (await env.service.getJob(older)).questions[0]!.status !== 'unselected');
+    expect((await browser.get(`/s/img/photo/${older}`)).status).toBe(200);
+  });
+});
+
 describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 共用准入', () => {
   it('今天页等待找题时自动刷新并提供查看进度；完成后停止刷新', async () => {
     const env = await setup();
