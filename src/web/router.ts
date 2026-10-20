@@ -1,3 +1,5 @@
+import type { PracticeReviewer } from '../ai/practiceReview.js';
+import { submissionState } from '../v2/practiceSubmission.js';
 import { NOTEBOOK_STATUSES, matchesNotebook, notebookUrl, safeNotebookReturn, validNotebookSelection, type NotebookFilters } from './notebook.js';
 import type { NotebookPageProps } from './views/items.js';
 import type { HandwritingRecognizer } from '../ai/handwriting.js';
@@ -73,6 +75,7 @@ export interface WebClientOptions {
   correctionProvider?: CorrectionProvider;
   coachProvider?: CoachProvider;
   handwriting?: HandwritingRecognizer;
+  practiceReviewer?: PracticeReviewer;
   /** 学生邀请码网关的 worker 模式：设置页显示「退出登录」（POST /s/logout 由网关处理）。 */
   studentHostWorker?: boolean;
   /** 「距生成几天」、录结果的日期按哪个时区的日历算；缺省用进程时区（与回传校验、ISO 周一致）。 */
@@ -293,7 +296,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.use(async (request, response, next) => {
     try {
       const token = readCookies(request)[COOKIE.device];
-      const isPage = request.method === 'GET' && !request.path.startsWith('/img/');
+      const isPage = request.method === 'GET' && !request.path.startsWith('/img/') && !/\/image\/?$/.test(request.path);
       const reject = (reason: 'unpaired' | 'unauthorized'): void => {
         if (reason === 'unauthorized') clearCookie(request, response, COOKIE.device);
         if (request.method !== 'GET') { if (wantsJson(request) || request.path === '/voice') { response.status(401).json({ error: { code: 'unauthorized', message: '需要重新连接。' } }); } else { response.redirect(303, '/s/'); } return; }
@@ -746,7 +749,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.redirect(303, itemContextUrl(item,returnTo));
   }));
 
-  r.use(practiceRouter({ coachProvider: options.coachProvider, limiter: options.limiter, admission: options.admission, handwriting: options.handwriting, timeZone: ctx.timeZone, now: ctx.now }));
+  r.use(practiceRouter({ coachProvider: options.coachProvider, practiceReviewer:options.practiceReviewer, limiter: options.limiter, admission: options.admission, handwriting: options.handwriting, timeZone: ctx.timeZone, now: ctx.now }));
 
   // ---------- 选这周要练的题 ----------
   const choosePage = async (request: Request, error?: string | null, reason?: string | null): Promise<ReactNode> => {
@@ -1017,7 +1020,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const dashboard = (response:Response, error?:string): void => {
     const recommendation=suggestedPractice(ctx.mobileDataDir);
     const tasks=listPractices(-1).map(p=>({
-      practice:getPractice(p.id)!,lifecycle:taskLifecycle(p.id),recorded:Object.keys(practiceProgress(p.id).answers).length,received:0,
+      practice:getPractice(p.id)!,lifecycle:taskLifecycle(p.id),recorded:Object.keys(practiceProgress(p.id).answers).length,received:submissionState(p.id).photos.length,reviewStatus:submissionState(p.id).status,
     }));
     render(response,PracticeDashboardPage({tasks,activeId:activePractice()?.id??null,recommendation,requestKey:crypto.randomUUID(),error}));
   };

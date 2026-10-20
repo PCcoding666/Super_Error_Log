@@ -78,7 +78,7 @@ async function photo(color: string, size = 600): Promise<Buffer> {
 
 interface Setup { base: string; manager: PairingManager; dataDir: string; vision: SyntheticVision; service: MobileRecognitionService }
 
-async function setup(options: { limiter?: RateLimiter; admission?: AdmissionController; timeZone?: string; now?: () => Date; handwriting?: import('../../src/ai/handwriting.js').HandwritingRecognizer } = {}): Promise<Setup> {
+async function setup(options: { limiter?: RateLimiter; admission?: AdmissionController; timeZone?: string; now?: () => Date; handwriting?: import('../../src/ai/handwriting.js').HandwritingRecognizer; practiceReviewer?: import('../../src/ai/practiceReview.js').PracticeReviewer } = {}): Promise<Setup> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-web-'));
   roots.push(dataDir);
   const manager = await PairingManager.open(dataDir, { pairingUrl: 'https://study.pccoding666.com' });
@@ -87,7 +87,7 @@ async function setup(options: { limiter?: RateLimiter; admission?: AdmissionCont
   const app = await createMobileApp({
     dataDir, vision, mode: 'cloud', pairing: manager, cloudProxy: true, rateLimiter: options.limiter, admission: options.admission ?? new AdmissionController({ diskProbe: async () => 100n * 1024n ** 3n, dataUsageProbe: async () => 0n }),
     v2Router: ({ limiter }) => createV2Router({ mobileDataDir: dataDir, transcriber, limiter }),
-    webClient: deps => createWebClientRouter({ ...deps, mobileDataDir: dataDir, transcriber, handwriting: options.handwriting, timeZone: options.timeZone, now: options.now }),
+    webClient: deps => createWebClientRouter({ ...deps, mobileDataDir: dataDir, transcriber, handwriting: options.handwriting, practiceReviewer:options.practiceReviewer, timeZone: options.timeZone, now: options.now }),
   });
   const service = app.locals.mobileRecognitionService as MobileRecognitionService;
   services.push(service);
@@ -638,6 +638,44 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(first.status).toBe(303);
     expect(second.headers.get('location')).toBe(first.headers.get('location'));
     expect(count()).toEqual({n:2});
+  });
+
+  it('整份照片提交保留多页、待确认建议和未识别题，确认后才记结果', async()=>{
+    let calls=0;
+    const env=await setup({practiceReviewer:{review:async input=>{calls++;expect(input.photos).toHaveLength(2);return {findings:[{questionNumber:1,photoNumbers:[1,2],text:'x=1',complete:true,uncertain:false,suggestedCorrect:true,feedback:'初步核对一致。'},{questionNumber:null,photoNumbers:[2],text:'另一题的过程',complete:false,uncertain:true,suggestedCorrect:null,feedback:'题号不清楚'}]};}}});
+    const {browser,packetId,itemIds}=await chosen(env);
+    await waitFor(async()=> (await browser.text(`/s/practice/${packetId}`)).includes('practice-question'));
+    const url=`/s/practice/${packetId}`;
+    const page=await browser.text(`${url}/submit`);
+    expect(page).toContain('data-batch-work');expect(page).toContain('一张可以拍多道题');
+    const bytes=await photo('#ffffff');
+    for(let i=0;i<2;i++){
+      const key=crypto.randomUUID();
+      const upload=()=>{const body=new FormData();body.append('key',key);body.append('photo',new Blob([new Uint8Array(bytes)],{type:'image/jpeg'}),'work.jpg');return browser.request(`${url}/submission`,{method:'POST',body,headers:{accept:'application/json'}});};
+      expect((await upload()).status).toBe(200);expect((await upload()).status).toBe(200);
+    }
+    expect(await browser.visibleText(`${url}/submit`)).toContain('已保存 2 张');
+    expect(await browser.visibleText('/s/practices')).toContain('已收到 2 张作答照片');
+    expect((await browser.post(`${url}/review`)).status).toBe(303);
+    await waitFor(async()=> (await browser.visibleText(`${url}/feedback`)).includes('待你确认'));
+    expect(calls).toBe(1);
+    const feedback=await browser.text(`${url}/feedback`);
+    expect(feedback).toContain('还没确定题号');expect(feedback).toContain('还没有收到这道题的可用作答');
+    expect(getDb().prepare('SELECT COUNT(*) n FROM review_attempt WHERE packet_id=?').get(packetId)).toEqual({n:0});
+    const revision=/name="revision" value="(\d+)"/.exec(feedback)![1]!;
+    const fields={revision,performedOn:new Date().toISOString().slice(0,10),help:'independent',[`outcome_${itemIds[0]}`]:'correct'};
+    expect((await browser.post(`${url}/confirm`,{...fields,help:''})).status).toBe(400);
+    expect((await browser.post(`${url}/confirm`,fields)).status).toBe(303);
+    expect((await browser.post(`${url}/confirm`,fields)).status).toBe(303);
+    expect(getDb().prepare('SELECT COUNT(*) n FROM review_attempt WHERE packet_id=?').get(packetId)).toEqual({n:1});
+    expect(await browser.visibleText(`${url}/feedback`)).toContain('已记录 1 道结果');
+    const images=[...feedback.matchAll(/src="([^"]+\/submission\/[^"]+\/image)"/g)];
+    expect(images.length).toBeGreaterThan(0);
+    expect((await new Browser(env.base).get(images[0]![1]!)).status).toBe(401);
+    expect((await browser.request(`${url}/review`,{method:'POST',headers:{origin:'https://evil.example'}})).status).toBe(403);
+    await browser.post(`${url}/cancel`);
+    expect((await browser.post(`${url}/review`)).status).toBe(409);
+    expect(await browser.text(`${url}/feedback`)).not.toContain('action="'+url+'/confirm"');
   });
 
   it('纸上练习直接看题和交照片，取消后旧链接只读且不能记录结果', async()=>{

@@ -1,3 +1,5 @@
+import type { PracticeReviewer } from '../ai/practiceReview.js';
+import { practiceSubmissionRouter } from './practiceSubmissionRouter.js';
 import { hasConsent } from './session.js';
 import { ConsentPage } from './views/photos.js';
 import multer from 'multer';
@@ -18,7 +20,7 @@ import { localDayText } from './weekPlan.js';
 import { taskLifecycle } from '../v2/practiceTasks.js';
 
 /** Mounted only after the existing student authentication and same-origin guards. */
-export function practiceRouter(options: { coachProvider?: CoachProvider; handwriting?: HandwritingRecognizer; limiter: RateLimiter; admission: AdmissionController | null; timeZone: string; now: () => Date }): Router {
+export function practiceRouter(options: { coachProvider?: CoachProvider; practiceReviewer?:PracticeReviewer; handwriting?: HandwritingRecognizer; limiter: RateLimiter; admission: AdmissionController | null; timeZone: string; now: () => Date }): Router {
   const router = Router();
   const form = urlencoded({ extended: false, limit: '16kb' });
   router.use('/practice/:pid', (req, res, next) => {
@@ -30,6 +32,7 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; handwri
     res.locals.practice = practice;
     next();
   });
+  router.use(practiceSubmissionRouter({...options,reviewer:options.practiceReviewer}));
   const show = (req: Request, res: Response, error?: string, selectedItem?: string, selectedView?: string) => {
     if (req.query.uploadError) error = '照片未保存，请重拍或直接核对。';
     const p = res.locals.practice as NonNullable<ReturnType<typeof getPractice>>;
@@ -38,7 +41,7 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; handwri
     const itemId = selectedItem ?? (typeof req.query.item === 'string' ? req.query.item : undefined);
     const view = selectedView ?? String(req.query.view ?? '');
     if (itemId && !p.items.some(item => item.id === itemId)) { res.status(404).send('题目不在此练习中'); return; }
-    if (itemId) savePracticeCursor(p.id,itemId);
+    if (itemId && taskLifecycle(p.id)!=='cancelled') savePracticeCursor(p.id,itemId);
     if (view === 'upload' && itemId && !hasConsent(req)) { sendHtml(res, ConsentPage({returnTo:`/s/practice/${p.id}?item=${itemId}&view=upload`})); return; }
     sendHtml(res, OnlinePracticePage({ practice: p, lifecycle:taskLifecycle(p.id), progress: practiceProgress(p.id), state: String(body.status), snapshot: body.status === 'ready' ? body.snapshot as PrintSnapshot : undefined, itemId, view, paper: req.query.mode === 'paper', today: localDayText(options.now(), options.timeZone), earliestDay: localDayText(new Date(p.generatedAt ?? p.createdAt), options.timeZone), works: Object.fromEntries(p.items.map(item => [item.id, latestWork(p.id, item.id)])), error }));
   };

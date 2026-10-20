@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getDb, now } from '../../src/db/connection.js';
 import { createPractice } from '../../src/v2/practiceService.js';
+import { attachWork } from '../../src/v2/practiceWork.js';
 import { setTaskLifecycle } from '../../src/v2/practiceTasks.js';
 import { attachSubmission, submissionState, submissionImage, reviewSubmission, assignFinding, confirmSubmission } from '../../src/v2/practiceSubmission.js';
 import { validatePracticeReview, type PracticeReviewer } from '../../src/ai/practiceReview.js';
@@ -77,6 +78,25 @@ describe('durable whole-task paper submission',()=>{
    await reviewSubmission(p.id,fail); await reviewSubmission(p.id,fail); await reviewSubmission(p.id,fail); await reviewSubmission(p.id,fail);
    expect(submissionState(p.id)).toMatchObject({status:'failed',attempts:3,photos:[expect.any(Object)]});
    expect(JSON.stringify(submissionState(p.id))).not.toContain('private provider error');expect(attempts()).toEqual({n:0});
+ });
+ it('cancellation during image decoding rejects both new and legacy photo writes',async()=>{
+   const a=prepared(1),b=prepared(1),bytes=await photo();
+   const oldUpload=attachWork(a.p.id,a.ids[0]!,crypto.randomUUID(),bytes);
+   const newUpload=attachSubmission(b.p.id,crypto.randomUUID(),bytes);
+   setTaskLifecycle(a.p.id,'cancelled');setTaskLifecycle(b.p.id,'cancelled');
+   const settled=await Promise.allSettled([oldUpload,newUpload]);
+   expect(settled.map(r=>r.status)).toEqual(['rejected','rejected']);
+   for(const result of settled)if(result.status==='rejected')expect(String(result.reason)).toContain('取消');
+   expect(submissionState(b.p.id).photos).toHaveLength(0);
+   expect(getDb().prepare('SELECT COUNT(*) n FROM practice_work').get()).toEqual({n:0});
+ });
+ it('caps each task at twelve photos and rejects changed retry payloads',async()=>{
+   const {p}=prepared(1),bytes=await photo(),key=crypto.randomUUID();
+   await attachSubmission(p.id,key,bytes);
+   await expect(attachSubmission(p.id,key,Buffer.from('changed'))).rejects.toThrow('标识');
+   for(let i=1;i<12;i++)await attachSubmission(p.id,crypto.randomUUID(),bytes);
+   await expect(attachSubmission(p.id,crypto.randomUUID(),bytes)).rejects.toThrow('12 张');
+   expect(submissionState(p.id).photos).toHaveLength(12);
  });
  it('normalizes incomplete, uncertain, unsupported and unreferenced grades to unresolved',()=>{
    const questions=[{number:1,itemId:'one',stem:'x=1',reference:null,uncertain:false,images:[]}];

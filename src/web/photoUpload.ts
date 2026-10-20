@@ -39,7 +39,7 @@ export const PHOTO_UPLOAD_SCRIPT = `
 var form=uploadForm;
 if(form){var bar=$('[data-upload-progress]',form),msg=$('[data-upload-message]',form),retry=$('[data-upload-retry]',form),uploadList=$('[data-upload-list]',form),uploadNext=$('[data-upload-next]',form),entries=[],busy=false,activeUploads=0;
 var inputs=$$('input[type=file]',form);
-var library=$('#library-input',form);if(library)library.multiple=!form.hasAttribute('data-work-upload');
+var library=$('#library-input',form);if(library)library.multiple=!form.hasAttribute('data-work-upload')||form.hasAttribute('data-batch-work');
 var photoCount=$('[data-testid="photo-count"]'),initialCount=Number(form.getAttribute('data-photo-count')||0);
 var MAX_EDGE=${MAX_UPLOAD_EDGE},MAX_BYTES=${MAX_UPLOAD_BYTES},PREPARE_MS=${PREPARE_TIMEOUT_MS},UPLOAD_MS=${UPLOAD_TIMEOUT_MS},QUALITIES=${JSON.stringify(JPEG_QUALITY_LADDER)};
 function setUploadBusy(on){busy=on;inputs.forEach(function(i){i.disabled=on});$$('label[for="camera-input"],label[for="library-input"]').forEach(function(l){if(l.control&&l.control.form===form)l.setAttribute('aria-disabled',String(on))});if(retry)retry.disabled=on}
@@ -125,7 +125,7 @@ function pumpUploads(){while(activeUploads<${UPLOAD_CONCURRENCY}){var entry=entr
 if(!activeUploads){setUploadBusy(false);renderUploads();if(entries.length&&entries.every(function(e){return e.state==='succeeded'}))location.replace(form.getAttribute('data-success-url')||'/s/capture')}
 else renderUploads()}
 inputs.forEach(function(input){input.addEventListener('change',function(){var files=Array.prototype.slice.call(input.files||[]);input.value='';if(!files.length||busy)return;
-if(form.hasAttribute('data-work-upload')){entries=[];if(uploadList)uploadList.textContent='';files=files.slice(0,1)}
+if(form.hasAttribute('data-work-upload')&&!form.hasAttribute('data-batch-work')){entries=[];if(uploadList)uploadList.textContent='';files=files.slice(0,1)}
 form.setAttribute('data-upload-pending','');setUploadBusy(true);files.forEach(function(file){var entry={file:file,name:file.name||'照片',key:uuid(),blob:null,state:'queued',progress:0,message:'等待上传',retryable:false};appendUploadRow(entry);entries.push(entry)});pumpUploads()})});
 document.addEventListener('click',function(e){var label=e.target&&e.target.closest&&e.target.closest('label[for="camera-input"],label[for="library-input"]');if(busy&&label&&label.control&&label.control.form===form)e.preventDefault()});
 form.addEventListener('submit',function(e){e.preventDefault()});

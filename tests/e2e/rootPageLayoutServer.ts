@@ -4,12 +4,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { CLIENT_SCRIPT, CSS_PATH, JS_PATH, STYLES } from '../../src/web/assets.js';
 import type { PhotoView } from '../../src/web/state.js';
 import { CapturePage } from '../../src/web/views/photos.js';
-import { PracticesPage, type PracticeRow } from '../../src/web/views/practice.js';
+import { PracticeDashboardPage } from '../../src/web/views/practiceDashboard.js';
+import type { PracticeDetail } from '../../src/v2/practiceService.js';
 
-const latest: PracticeRow = {
-  id: 'synthetic-practice', week: '2026-W43', itemCount: 4,
-  status: 'ready', practiceSlot: null, createdAt: '2026-10-20T00:00:00Z', generatedAt: null,
-  answered: 0, independentCorrect: null, shortIds: [],
+const latest: PracticeDetail = {
+  id:'synthetic-practice',week:'2026-W43',status:'ready',practiceSlot:null,createdAt:'2026-10-20T00:00:00Z',generatedAt:null,
+  items:Array.from({length:4},(_,i)=>({id:`item-${i}`,position:i,shortId:`M-${i}`,subject:'数学',knowledgeTags:['二次函数与一元二次方程'],questionExcerpt:'解方程',badge:'ok',status:'scheduled',cropUrl:'',jobId:'synthetic',reason:'上次用过提示，这次再试着独立完成',tier:1,reflected:true})),
 };
 
 const server = http.createServer((request, response) => {
@@ -36,7 +36,7 @@ const server = http.createServer((request, response) => {
     response.end('<!doctype html>' + renderToStaticMarkup(CapturePage({ photos, next: null, caption: '' })));
   } else if (url.pathname === '/s/practices') {
     response.setHeader('content-type', 'text/html; charset=utf-8');
-    response.end('<!doctype html>' + renderToStaticMarkup(PracticesPage({ practices: url.searchParams.has('empty') ? [] : [latest] })));
+    response.end('<!doctype html>' + renderToStaticMarkup(PracticeDashboardPage({tasks:url.searchParams.has('empty')?[]:[{practice:latest,lifecycle:'active',recorded:0,received:0}],activeId:url.searchParams.has('empty')?null:latest.id,recommendation:{recommended:latest.items.slice(0,3),others:[],notes:[],limits:{min:1,max:8}},requestKey:'synthetic'})));
   } else {
     response.writeHead(404).end();
   }

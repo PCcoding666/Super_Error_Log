@@ -78,23 +78,21 @@ for (const scripting of [true, false]) test.describe(`root page layout ${scripti
     }
   });
 
-  test('practice creation button has space before its introduction and cards', async ({ page }, info) => {
+  test('practice dashboard makes the next task action visible without overflow', async ({ page }, info) => {
     for (const width of [390, 320]) {
       await page.setViewportSize({ width, height: 844 });
       await page.emulateMedia({ colorScheme: width === 320 ? 'dark' : 'light' });
       for (const hasPractices of [true, false]) {
         await page.goto(`${base}/s/practices${hasPractices ? '' : '?empty=1'}`);
         if (width === 320) await page.evaluate(() => document.documentElement.style.setProperty('font-size', '200%'));
-        const create = page.getByRole('link', { name: '新建练习', exact: true });
-        const button = await create.boundingBox();
-        const following = await page.locator(hasPractices ? 'main .lead' : 'main .card').boundingBox();
-        expect(following!.y - (button!.y + button!.height)).toBeGreaterThanOrEqual(8);
+        const action=hasPractices?page.getByRole('link',{name:'查看题目',exact:true}):page.getByRole('button',{name:'就练这 3 道',exact:true});
+        await expect(action).toBeVisible();
+        expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
         expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
-        await expect(create).toHaveAttribute('href', '/s/choose');
-        if (hasPractices) {
-          await expect(page.getByTestId('practice-latest')).toContainText('继续练习');
-          await page.screenshot({ path: info.outputPath(`practices-${width}.png`) });
-        }
+        await expect(page.getByRole('link',{name:'自己选题',exact:true})).toHaveAttribute('href','/s/choose');
+        if(hasPractices)await expect(page.getByTestId('practice-latest')).toContainText('还没有收到作答');
+        else await expect(page.getByTestId('practice-recommendation')).toContainText('为什么练');
+        await page.screenshot({ path: info.outputPath(`practices-${width}-${hasPractices}.png`),fullPage:true });
       }
     }
   });

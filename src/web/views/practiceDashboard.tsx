@@ -14,9 +14,7 @@ export interface DashboardTask {
 function TaskActions({task}: {task:DashboardTask}): ReactNode {
   const url=`/s/practice/${task.practice.id}`;
   return <div className="practice-task-actions">
-    <a className="btn primary" href={url}>查看题目</a>
-    <a className="btn" href={`${url}/submit`}>拍照交练习</a>
-    {task.received>0 || task.recorded>0 ? <a className="more" href={`${url}/feedback`}>查看反馈</a> : null}
+    {task.received>0?<><a className="btn primary" href={`${url}/feedback`}>{task.reviewStatus==='ready'?'查看待确认结果':'查看提交进度'}</a><a className="btn" href={`${url}/submit`}>补拍作答</a><a className="more" href={url}>查看题目</a></>:<><a className="btn primary" href={url}>查看题目</a><a className="btn" href={`${url}/submit`}>拍照交练习</a>{task.recorded>0?<a className="more" href={`${url}/feedback`}>查看反馈</a>:null}</>}
   </div>;
 }
 export function PracticeDashboardPage(props: {tasks:DashboardTask[]; activeId:string|null; recommendation:RecommendResponse; requestKey:string; error?:string}): ReactNode {
