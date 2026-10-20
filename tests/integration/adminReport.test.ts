@@ -36,7 +36,7 @@ describe('admin account and usage report', () => {
       knownInputCalls: 2, knownOutputCalls: 2, timedCalls: 3, averageMs: 1500, p95Ms: 3000 });
     expect(report.summary.successRate).toBeCloseTo(2 / 3);
     const account = report.accounts.find(row => row.studentId === a.studentId)!;
-    expect(account.invitations.map(row => row.status).sort()).toEqual(['pending', 'redeemed']);
+    expect(account.invitations.map(row => row.status).sort()).toEqual(['active', 'pending']);
     expect(account.invitations[0]!.invitationId).toMatch(/^[a-f0-9-]{36}$/);
     expect(account.usage.calls).toBe(2);
     expect(JSON.stringify(report)).not.toMatch(/code_hash|token_hash/);
@@ -178,7 +178,7 @@ describe('admin account and usage report', () => {
     registry.close();
     registry = StudentRegistry.open(root, { now: () => new Date('2026-01-01T00:00:00.000Z') });
     registry.issueInvitation(a.studentId);
-    registry.close(); registry = StudentRegistry.open(root, { now: () => new Date('2026-01-09T00:00:00.000Z') });
+    registry.close(); registry = StudentRegistry.open(root, { now: () => new Date('2026-03-02T00:00:00.000Z') });
     expect(registry.listInvitations()[0]!.status).toBe('expired');
   });
   it.each([{ from: '2026-02-30' }, { to: 'yesterday' }, { from: '2026-10-21', to: '2026-10-20' },

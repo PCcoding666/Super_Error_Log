@@ -1,5 +1,7 @@
 /** Registration and personal login credentials use synthetic identities only. */
 import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import os from 'node:os';
 import path from 'node:path';
 import type { Server } from 'node:http';
@@ -168,4 +170,68 @@ it('rate limits registration independently of valid invitation login', async () 
   expect(response!.status).toBe(429);
   expect(response!.headers.get('retry-after')).not.toBeNull();
   expect((await env.post('/s/login', { code })).status).toBe(303);
+});
+
+
+it('personal credentials persist across restart, expire exactly at day 60, and are stored only as hashes', () => {
+  const dir = root();
+  let now = new Date('2026-10-21T00:00:00Z');
+  let registry = StudentRegistry.open(dir, { now: () => now });
+  const registered = registry.registerStudent('合成学生甲', '13800138000');
+  const studentId = registered.studentId;
+  const db = new DatabaseSync(path.join(dir, 'registry.db'), { readOnly: true });
+  const row = db.prepare('SELECT code_hash, reusable FROM invitations').get()!;
+  expect(row.code_hash).toMatch(/^[0-9a-f]{64}$/);
+  expect(row.code_hash).not.toBe(registered.code.replace(/-/g, ''));
+  expect(row.reusable).toBe(1);
+  db.close(); registry.close();
+  registry = StudentRegistry.open(dir, { now: () => now });
+  registries.push(registry);
+  expect(registry.findRegisteredStudent(' 合成学生甲 ', '+86 13800138000')).toBe(studentId);
+  expect(registry.findRegisteredStudent('合成学生甲', '+86 13900139000')).toBeNull();
+  now = new Date(registered.expiresAt.getTime() - 1);
+  expect(registry.redeem(registered.code).studentId).toBe(studentId);
+  now = registered.expiresAt;
+  expect(() => registry.redeem(registered.code)).toThrow('邀请码不正确或已经失效');
+  expect(registry.listInvitations()[0]!.status).toBe('expired');
+  expect(registry.listStudents()).toHaveLength(1);
+});
+it('registration rolls back its directory and identity when credential creation fails', () => {
+  const registry = StudentRegistry.open(root());
+  registries.push(registry);
+  const spy = vi.spyOn(registry, 'issueInvitation').mockImplementationOnce(() => { throw new Error('synthetic storage failure'); });
+  expect(() => registry.registerStudent('合成学生甲', '+6581234567')).toThrow('synthetic storage failure');
+  spy.mockRestore();
+  expect(registry.listStudents()).toHaveLength(0);
+  expect(registry.findRegisteredStudent('合成学生甲', '+6581234567')).toBeNull();
+  expect(fs.readdirSync(registry.studentsRoot())).toHaveLength(0);
+  expect(registry.registerStudent('合成学生甲', '+6581234567').code).toBeTruthy();
+});
+it.each(['0', '-1', '1.5', 'many', 'Infinity'])('rejects an invalid capacity setting: %s', value => {
+  vi.stubEnv('SEL_MAX_STUDENTS', value);
+  expect(() => StudentRegistry.open(root())).toThrow('SEL_MAX_STUDENTS');
+});
+it('legacy migration extends only still-usable codes and preserves one-time semantics and sessions', async () => {
+  const dir = root();
+  const db = new DatabaseSync(path.join(dir, 'registry.db'));
+  const id = crypto.randomUUID();
+  const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+  db.exec('CREATE TABLE students(id TEXT PRIMARY KEY, created_at TEXT NOT NULL); CREATE TABLE invitations(code_hash TEXT PRIMARY KEY, student_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, redeemed_at TEXT); CREATE TABLE sessions(token_hash TEXT PRIMARY KEY, student_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);');
+  db.prepare('INSERT INTO students VALUES (?, ?)').run(id, '2026-10-01T00:00:00.000Z');
+  const insert = db.prepare('INSERT INTO invitations VALUES (?, ?, ?, ?, ?)');
+  insert.run(hash('0123456789AB'), id, '2026-10-01T00:00:00.000Z', '2026-10-08T00:00:00.000Z', null);
+  insert.run(hash('0123456789AC'), id, '2026-10-01T00:00:00.000Z', '2026-10-08T00:00:00.000Z', '2026-10-02T00:00:00.000Z');
+  insert.run(hash('0123456789AD'), id, '2026-09-01T00:00:00.000Z', '2026-09-08T00:00:00.000Z', null);
+  db.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?, 0)').run(hash('synthetic-session'), id, '2026-10-02T00:00:00.000Z', '2026-11-01T00:00:00.000Z');
+  db.close();
+  const registry = StudentRegistry.open(dir, { now: () => new Date('2026-10-05T00:00:00.000Z') });
+  registries.push(registry);
+  const pending = registry.listInvitations().find(row => row.status === 'pending')!;
+  expect(pending.expiresAt).toBe(new Date(Date.parse('2026-10-01T00:00:00.000Z') + 60 * 24 * 60 * 60 * 1000).toISOString());
+  for (const code of ['0123456789AC', '0123456789AD']) expect(() => registry.redeem(code)).toThrow();
+  const concurrent = await Promise.allSettled([0, 1].map(() => Promise.resolve().then(() => registry.redeem('0123456789AB'))));
+  expect(concurrent.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+  expect(() => registry.redeem('0123456789AB')).toThrow();
+  expect(registry.authenticate('synthetic-session')).toEqual({ studentId: id });
+  expect(registry.listStudents()).toHaveLength(1);
 });

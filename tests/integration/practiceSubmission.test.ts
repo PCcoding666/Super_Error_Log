@@ -1,6 +1,24 @@
 import crypto from 'node:crypto';
 import sharp from 'sharp';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const sharpProbe = vi.hoisted(() => ({ bufferDecodes: 0, wait: null as Promise<void> | null }));
+vi.mock('sharp', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  const real = actual.default as typeof sharp;
+  const wrapped = Object.assign((input: unknown, options?: unknown) => {
+    const pipeline = real(input as never, options as never);
+    if (!Buffer.isBuffer(input)) return pipeline;
+    sharpProbe.bufferDecodes += 1;
+    const toBuffer = pipeline.toBuffer.bind(pipeline) as (...args: unknown[]) => ReturnType<typeof pipeline.toBuffer>;
+    pipeline.toBuffer = ((...args: unknown[]) => {
+      const run = () => toBuffer(...args);
+      return sharpProbe.wait ? sharpProbe.wait.then(run) : run();
+    }) as typeof pipeline.toBuffer;
+    return pipeline;
+  }, real);
+  return { ...actual, default: wrapped };
+});
 import { getDb, now } from '../../src/db/connection.js';
 import { createPractice } from '../../src/v2/practiceService.js';
 import { revealPracticeHint } from '../../src/v2/practiceProgress.js';
@@ -10,7 +28,7 @@ import { attachSubmission, submissionState, submissionImage, reviewSubmission, a
 import { validatePracticeReview, type PracticeReviewer } from '../../src/ai/practiceReview.js';
 import { clearPracticeFixtures, seedPracticeItems } from '../helpers/practiceTask.js';
 
-beforeEach(clearPracticeFixtures);
+beforeEach(() => { sharpProbe.wait = null; clearPracticeFixtures(); });
 function prepared(count=3) {
   const ids=seedPracticeItems(count), result=createPractice({itemIds:ids});
   if(!result.ok) throw new Error(result.message);
@@ -103,6 +121,33 @@ describe('durable whole-task paper submission',()=>{
    for(const result of settled)if(result.status==='rejected')expect(String(result.reason)).toContain('取消');
    expect(submissionState(b.p.id).photos).toHaveLength(0);
    expect(getDb().prepare('SELECT COUNT(*) n FROM practice_work').get()).toEqual({n:0});
+ });
+ it('rejects a thirteenth photo before decoding and still replays a stored key',async()=>{
+   const {p}=prepared(1),bytes=await photo(),key=crypto.randomUUID();
+   const first=await attachSubmission(p.id,key,bytes);
+   for(let i=1;i<12;i++)await attachSubmission(p.id,crypto.randomUUID(),bytes);
+   const decodes=sharpProbe.bufferDecodes;
+   await expect(attachSubmission(p.id,crypto.randomUUID(),bytes)).rejects.toThrow('12 张');
+   expect(sharpProbe.bufferDecodes).toBe(decodes);
+   expect(await attachSubmission(p.id,key,bytes)).toMatchObject({id:first.id});
+   expect(sharpProbe.bufferDecodes).toBe(decodes);
+   expect(submissionState(p.id).photos).toHaveLength(12);
+ });
+ it('concurrent saves at the last open slot cannot store a thirteenth photo',async()=>{
+   const {p}=prepared(1),bytes=await photo();
+   for(let i=0;i<11;i++)await attachSubmission(p.id,crypto.randomUUID(),bytes);
+   let release!:()=>void;
+   sharpProbe.wait=new Promise(resolve=>{release=resolve;});
+   const decodes=sharpProbe.bufferDecodes;
+   try{
+     const pending=[0,1,2].map(()=>attachSubmission(p.id,crypto.randomUUID(),bytes));
+     expect(sharpProbe.bufferDecodes).toBe(decodes+3);
+     release();
+     const settled=await Promise.allSettled(pending);
+     expect(settled.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+     for(const result of settled)if(result.status==='rejected')expect(String(result.reason)).toContain('12 张');
+     expect(submissionState(p.id).photos).toHaveLength(12);
+   }finally{sharpProbe.wait=null;}
  });
  it('caps each task at twelve photos and rejects changed retry payloads',async()=>{
    const {p}=prepared(1),bytes=await photo(),key=crypto.randomUUID();
