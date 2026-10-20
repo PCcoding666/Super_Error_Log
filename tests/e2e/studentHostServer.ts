@@ -10,8 +10,11 @@ import { RateLimiter } from '../../src/mobile/rateLimit.js';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-invite-browser-'));
 const registry = StudentRegistry.open(root);
-const codes = [0, 1].map(() => registry.issueInvitation(registry.createStudent().studentId).code);
-const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_STUDENT_WORKER_FAKE: '1' } });
+const students = [registry.createStudent().studentId, registry.createStudent().studentId];
+const codes = students.map(id => registry.issueInvitation(id).code);
+// Third code reauthenticates A without deleting A's pending browser namespace.
+codes.push(registry.issueInvitation(students[0]!).code);
+const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_STUDENT_WORKER_FAKE: '1', SEL_E2E_LEGACY_CAPTURE: process.env.SEL_E2E_MATERIAL_CAPTURE === '1' ? '0' : '1', SEL_E2E_MATERIAL_DELAY: process.env.SEL_E2E_MATERIAL_CAPTURE === '1' ? '1' : '0' } });
 const gateway = await createStudentHostGateway({ registry, pool });
 const app = express();
 app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: req => req.socket.remoteAddress ?? '127.0.0.1' }));

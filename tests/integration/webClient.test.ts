@@ -305,7 +305,7 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
     expect(refused.status).toBe(403);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM v2_photo').get()).toEqual({ n: 0 });
     expect((await browser.post('/s/consent')).headers.get('location')).toBe('/s/capture');
-    expect(browser.cookies.get('sel_consent')).toBe('v1');
+    expect(browser.cookies.get('sel_consent')).toBe('v2');
     const tagged = await sharp({ create: { width: 500, height: 650, channels: 3, background: '#f0d0c8' } }).withExif({ IFD0: { Artist: 'SYNTHETIC-EXIF-MARKER' } }).jpeg().toBuffer();
     expect((await sharp(tagged).metadata()).exif).toBeDefined();
     const response = await uploadPhoto(browser, tagged);

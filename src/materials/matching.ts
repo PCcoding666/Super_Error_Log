@@ -106,25 +106,26 @@ export function reconcileAsset(store:MaterialStore,assetId:string):{linked:numbe
       const first=group[0]!; const existingIds=[...new Set(group.map(f=>currentLink(store,f.fragmentId)?.question_id).filter((id):id is string=>!!id).map(id=>resolveQuestionId(store,id)))];
       let questionId=existingIds.length===1?existingIds[0]:undefined;
       let reason:string|null=null;
+      let selectedAttempt: string | undefined;
       if (hints.questionId) {
         const explicit=readQuestion(store,hints.questionId); if (!explicit) throw new Error('question not found');
         if (first.number!==null&&explicit.number!==null&&first.number!==explicit.number) reason='number_conflict';
         else if (documentId&&explicit.documentId&&explicit.documentId!==documentId) reason='document_conflict';
-        else questionId=explicit.id;
+        else { questionId=explicit.id; selectedAttempt=hints.attemptId; }
       }
       if (!questionId && !reason && documentId && first.number!==null) {
         const candidates=store.listQuestions().filter(q=>q.documentId===documentId&&q.number===first.number);
         // Content filtering must never turn two competing same-number candidates into a fake unique match.
-        if (candidates.length===1&&compatible(store,candidates[0]!,group,hints.attemptId)) questionId=candidates[0]!.id;
+        if (candidates.length===1&&compatible(store,candidates[0]!,group,selectedAttempt)) questionId=candidates[0]!.id;
         else if (candidates.length) reason='association';
       }
-      if (questionId && hints.attemptId) {
-        const attempt=readQuestion(store,questionId)!.attempts.find(a=>a.id===hints.attemptId); if (!attempt) throw new Error('attempt not found');
+      if (questionId && selectedAttempt) {
+        const attempt=readQuestion(store,questionId)!.attempts.find(a=>a.id===selectedAttempt); if (!attempt) throw new Error('attempt not found');
       }
-      if (questionId && !compatible(store,readQuestion(store,questionId)!,group,hints.attemptId)) { questionId=undefined; reason='association'; }
+      if (questionId && !compatible(store,readQuestion(store,questionId)!,group,selectedAttempt)) { questionId=undefined; selectedAttempt=undefined; reason='association'; }
       if (!questionId) questionId=store.createQuestion({documentId,number:first.number,subject:extraction.document.subject,unresolved:reason?[reason]:documentId?[]:['document']}).id;
       if (reason || !documentId && !hints.questionId) { pending.add(questionId); setUnresolved(store,questionId,[...(readQuestion(store,questionId)!.unresolved),reason??'document']); }
-      let attemptId=hints.attemptId??null;
+      let attemptId=selectedAttempt??null;
       // Local co-occurrence can join fragments from one image. Cross-image continuation requires explicit attempt context.
       if (!attemptId) {
         const local=group.map(f=>currentLink(store,f.fragmentId)).find(l=>l?.question_id===questionId&&l.attempt_id);

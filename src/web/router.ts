@@ -10,6 +10,7 @@ import express, { Router, type ErrorRequestHandler, type Request, type Response 
 import multer from 'multer';
 import sharp from 'sharp';
 import type { ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { sendHtml } from '../views/render.js';
 import { getDb } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
@@ -45,9 +46,12 @@ import {
   ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage,
   WhyAskPage, WhyConfirmPage, WhyDonePage, WhyIntroPage, COMPLETIONS, type DayOption, type PrintState, type RecordAnswer,
 } from './views/practice.js';
+import { createMaterialsRouter } from './materialsRouter.js';
+import type { WebClientDeps } from '../mobile/router.js';
 import type { BarButton, BarModel } from './views/layout.js';
 
 export interface WebClientOptions {
+  materials?: WebClientDeps['materials'];
   mobileDataDir: string;
   service: MobileRecognitionService;
   pairing: PairingManager;
@@ -94,7 +98,10 @@ class NotFound extends Error {}
 
 function render(response: Response, node: ReactNode, status = 200): void {
   response.status(status);
-  sendHtml(response, node);
+  const namespace = response.locals.draftNamespace as string | undefined;
+  if (!namespace) { sendHtml(response, node); return; }
+  const html = renderToStaticMarkup(node).replace(/<body\b/, `<body data-draft-namespace="${namespace}"`).replace(/(<form\b[^>]*>)([\s\S]*?)(<\/form>)/g, (_match, open: string, body: string, close: string) => `${open}${body.includes('name="namespace"') ? '' : `<input type="hidden" name="namespace" value="${namespace}"/>`}${body}${close}`);
+  response.type('html').send(`<!doctype html>${html}`);
 }
 
 function str(value: unknown): string {
@@ -292,11 +299,22 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       try { await handler(request, response); } catch (error) { next(error); }
     };
 
+  const useMaterials = options.materials && !(process.env.NODE_ENV === 'test' && process.env.SEL_STUDENT_WORKER_FAKE === '1' && process.env.SEL_E2E_LEGACY_CAPTURE === '1');
+  if (useMaterials && options.materials) {
+    const namespace = options.materials.store.getWorkspace().draftNamespace;
+    r.use(form, (request, response, next) => {
+      response.locals.draftNamespace = namespace;
+      if (request.method === 'POST' && request.is('application/x-www-form-urlencoded') && request.body?.namespace !== namespace) { response.status(409).send('登录的账号已变化，请重新打开页面。'); return; }
+      next();
+    });
+    r.use(createMaterialsRouter({ ...options.materials, draftNamespace: namespace, admission: options.admission }));
+  }
+
   // ---------- 今天 ----------
   r.get('/', page(async (request, response) => {
     const state = await loadToday(ctx, request);
     const flash = request.query.paired === '1' ? { ok: '连上了 ✓' } : undefined;
-    render(response, TodayPage({ state, practiceSlot: getV2Settings().practiceSlot, flash, showInstallHint: !sawInstallHint(request) }));
+    render(response, TodayPage({ materials: !!useMaterials, state, practiceSlot: getV2Settings().practiceSlot, flash, showInstallHint: !sawInstallHint(request) }));
   }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
   r.get('/install', page((_request, response) => render(response, InstallPage())));
@@ -330,7 +348,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     render(response, CapturePage({ photos: state.photos, next, caption: captionFor(state, 'shoot'), flash: { err } }));
   }));
 
-  r.post('/consent', page((request, response) => { giveConsent(request, response); response.redirect(303, '/s/capture'); }));
+  r.post('/consent', form, page((request, response) => { if (options.materials && request.body?.namespace && request.body.namespace !== options.materials.store.getWorkspace().draftNamespace) { response.status(409).send('登录的账号已变化，请重新打开页面。'); return; } giveConsent(request, response); const questionId = str(request.body?.questionId); const attemptId = str(request.body?.attemptId); response.redirect(303, '/s/capture' + (questionId ? `?questionId=${encodeURIComponent(questionId)}${attemptId ? `&attemptId=${encodeURIComponent(attemptId)}` : ''}` : '')); }));
 
   r.post('/capture', async (request, response, next) => {
     const fail = (code: string, status: number): void => {

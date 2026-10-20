@@ -4,6 +4,7 @@
  * 脚本只做浏览器必须做的事（上传进度、录音、选题计数、打印、按需显隐）；关掉脚本时每屏照样能用（语音除外）。
  */
 import sharp from 'sharp';
+import { UPLOAD_QUEUE_SCRIPT } from './uploadQueue.js';
 import { PHOTO_UPLOAD_SCRIPT } from './photoUpload.js';
 
 export const APP_NAME = '超级错题本';
@@ -13,7 +14,7 @@ export const THEME_COLOR = '#1F615C';
 export const THEME_COLOR_DARK = '#17191C';
 export const BACKGROUND_COLOR = '#F7F5ED';
 /** 资源版本：改了样式或脚本就改这个，让浏览器与 Service Worker 换新。 */
-export const ASSET_VERSION = '3';
+export const ASSET_VERSION = '4';
 
 export const STYLES = `
 /* ---------- 设计 token（浅色 / 深色两套；所有颜色只从这里取） ----------
@@ -255,6 +256,7 @@ var every=Number(document.body.getAttribute('data-refresh')||0);
 if(every>0){var due=Date.now()+every*1000;setInterval(function(){if(Date.now()<due||document.visibilityState!=='visible')return;var a=document.activeElement;if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))return;due=Infinity;trailAdd('auto','refresh');location.reload()},500)}
 /* 拍照上传：浏览器里先转成 JPEG 再传（HEIC、超大像素在服务器读不了）；细节见 src/web/photoUpload.ts */
 ${PHOTO_UPLOAD_SCRIPT}
+${UPLOAD_QUEUE_SCRIPT}
 /* 选题：数字跟着变，最多 8 道 */
 var pick=$('form[data-pick-count]');
 if(pick){var max=Number(pick.getAttribute('data-max')||'8'),min=Number(pick.getAttribute('data-min')||'1'),btn=$('[data-count-label]'),warn=$('[data-max-warning]');

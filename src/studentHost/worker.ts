@@ -11,7 +11,7 @@
  */
 import crypto from 'node:crypto';
 import type { MobileConfiguration } from '../mobile/configuration.js';
-import type { CloudAssembly } from '../mobile/cloudAssembly.js';
+import type { CloudAssemblyOverrides, CloudAssembly } from '../mobile/cloudAssembly.js';
 import type { PairingManager } from '../mobile/pairing.js';
 import type { InventoryCandidate, MobileVisionBoundary, VisionContext, VisionInventoryResult, VisionQuestionResult } from '../mobile/vision.js';
 
@@ -78,6 +78,7 @@ async function main(): Promise<void> {
     send({ type: 'error', message: 'SEL_STUDENT_WORKER_FAKE 只允许测试环境（NODE_ENV=test 且 SEL_AI_MODE=mock）' });
     process.exit(2);
   }
+  if (process.env.SEL_E2E_LEGACY_CAPTURE === '1' && !fake) throw new Error('Legacy capture fixture requires synthetic test worker');
   let configuration: MobileConfiguration;
   let vision: MobileVisionBoundary | undefined;
   if (fake) {
@@ -94,7 +95,24 @@ async function main(): Promise<void> {
     configuration = { ...loadMobileConfiguration(), mode: 'cloud', host: '127.0.0.1', port: 0, dataDir: studentDir };
   }
   // worker 不需要管理 socket（深层目录下 unix socket 路径可能超过系统限制；管理操作由父进程经 IPC 完成）。
-  assembly = await assembleCloudService(configuration, { ...(vision ? { vision } : {}), adminServer: false });
+  let configureMaterials: CloudAssemblyOverrides['configureMaterials'];
+  if (fake && process.env.SEL_E2E_MATERIAL_DELAY === '1') {
+    const { extractMaterial } = await import('../materials/extraction.js');
+    const { createMaterialProvider } = await import('../materials/provider.js');
+    configureMaterials = (jobs, uploads) => jobs.register('extract', async (jobId, signal) => {
+      // Deliberately slow synthetic extraction proves capture never waits for recognition.
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(signal.reason); };
+        const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 1500);
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) abort();
+      });
+      const row = jobs.store.db.prepare('SELECT j.asset_id,a.revision FROM material_job j JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id WHERE j.owner_id=? AND j.id=?').get(jobs.store.studentId, jobId) as { asset_id: string; revision: number };
+      const provider = createMaterialProvider({ mode: 'mock' }, { source: { assetId: row.asset_id, revision: row.revision, sourceHash: uploads.source(row.asset_id).sourceHash }, request: (key, invoke) => jobs.request(jobId, key, invoke) });
+      await extractMaterial(jobs.store, provider, jobId, signal);
+    });
+  }
+  assembly = await assembleCloudService(configuration, { ...(vision ? { vision } : {}), ...(configureMaterials ? { configureMaterials } : {}), adminServer: false });
   await assembly.listen();
   const port = assembly.boundPort();
   if (!port) throw new Error('worker 未能取得监听端口');

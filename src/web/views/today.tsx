@@ -94,7 +94,7 @@ function NewPhotosNote(props: { photos: PhotoView[] }): ReactNode {
   );
 }
 
-export function TodayPage(props: { state: TodayState; practiceSlot: string; flash?: { ok?: string | null; err?: string | null }; showInstallHint: boolean }): ReactNode {
+export function TodayPage(props: { materials?: boolean; state: TodayState; practiceSlot: string; flash?: { ok?: string | null; err?: string | null }; showInstallHint: boolean }): ReactNode {
   const { plan, week } = props.state;
   const slot = plan.practice?.practiceSlot ?? props.practiceSlot;
   const active = plan.stage === 'midweek' ? 1 : plan.stage === 'weekendB' ? 2 : 0;
@@ -138,6 +138,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
     <Page title="今天" back={null} bar={barFromPlan(plan.next)} flash={props.flash}>
       <h1>今天</h1>
       <Rhythm active={active} />
+      {props.materials ? <section className="card"><h2 className="card-title">学习材料</h2><p>题目、答题卡、作答或答案都可以拍，顺序不限，之后还能补。</p><a className="more" href="/s/capture">继续拍照</a><a className="more" href="/s/materials">查看我的材料</a></section> : null}
       {content}
       {props.showInstallHint ? <InstallHint /> : null}
       <section className="card" aria-labelledby="anytime-title">

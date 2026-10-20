@@ -23,26 +23,9 @@ export function targetSize(width: number, height: number, maxEdge: number = MAX_
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 
-/**
- * 嵌入 CLIENT_SCRIPT 的 DOMContentLoaded 段里运行（依赖同作用域的 $、$$、uuid、trailAdd）。
- * 行为约定（E2E 断言）：
- * - 选好照片立刻「正在准备照片…」；转换成功才发请求；传完 100% 显示「上传完成，正在处理照片…」。
- * - 2xx 但响应不是 {ok:true, jobId} 不算成功；网络/超时/服务/图片错误文案分开。
- * - 图片本身的问题（读不了、转完仍太大）不出「再试一次」，重选入口始终在；其余失败可重试，同一张用同一幂等 key。
- * - 一次只允许一个准备/上传（busy），避免竞态与重复提交。
- */
-export const PHOTO_UPLOAD_SCRIPT = `
-/* 拍照上传：先在浏览器里转成 JPEG（最长边 ${MAX_UPLOAD_EDGE}、去拍摄信息）再上传；失败可重试或可重选。 */
-var form=$('form[data-upload]');
-if(form){var bar=$('[data-upload-progress]'),msg=$('[data-upload-message]'),retry=$('[data-upload-retry]'),pending=null,busy=false;
-var inputs=$$('input[type=file]',form),labels=$$('label',form);
+/** Shared bounded conversion for the legacy uploader and recoverable material queue. */
+export const PHOTO_PREPARE_SCRIPT = `
 var MAX_EDGE=${MAX_UPLOAD_EDGE},MAX_BYTES=${MAX_UPLOAD_BYTES},PREPARE_MS=${PREPARE_TIMEOUT_MS},UPLOAD_MS=${UPLOAD_TIMEOUT_MS},QUALITIES=${JSON.stringify(JPEG_QUALITY_LADDER)};
-function say(t){if(msg)msg.textContent=t}
-function showBar(on){if(bar)bar.classList.toggle('hidden',!on)}
-function resetBar(){if(bar&&$('i',bar))$('i',bar).style.width='0%'}
-function showRetry(on){if(retry)retry.classList.toggle('hidden',!on)}
-function setBusy(on){busy=on;inputs.forEach(function(i){i.disabled=on});labels.forEach(function(l){l.setAttribute('aria-disabled',String(on))});if(retry)retry.disabled=on}
-function fail(kind,text,retryable){setBusy(false);showBar(false);say(text);showRetry(!!retryable);trailAdd('error',kind);trailSend()}
 function isHeic(f){var t=(f.type||'').toLowerCase();return t.indexOf('heic')>=0||t.indexOf('heif')>=0||/\\.hei[cf]$/i.test(f.name||'')}
 function prepare(file){return new Promise(function(resolve,reject){
 var url=null,img=new Image(),canvas=null,done=false;
@@ -63,6 +46,28 @@ i+=1;enc()},'image/jpeg',QUALITIES[i])}catch(e){finish(new Error('encode'))}}enc
 }catch(e){finish(new Error('encode'))}};
 img.onerror=function(){finish(new Error('decode'))};
 try{url=URL.createObjectURL(file);img.src=url}catch(e){finish(new Error('decode'))}})}
+`;
+
+/**
+ * 嵌入 CLIENT_SCRIPT 的 DOMContentLoaded 段里运行（依赖同作用域的 $、$$、uuid、trailAdd）。
+ * 行为约定（E2E 断言）：
+ * - 选好照片立刻「正在准备照片…」；转换成功才发请求；传完 100% 显示「上传完成，正在处理照片…」。
+ * - 2xx 但响应不是 {ok:true, jobId} 不算成功；网络/超时/服务/图片错误文案分开。
+ * - 图片本身的问题（读不了、转完仍太大）不出「再试一次」，重选入口始终在；其余失败可重试，同一张用同一幂等 key。
+ * - 一次只允许一个准备/上传（busy），避免竞态与重复提交。
+ */
+export const PHOTO_UPLOAD_SCRIPT = `
+/* 拍照上传：先在浏览器里转成 JPEG（最长边 ${MAX_UPLOAD_EDGE}、去拍摄信息）再上传；失败可重试或可重选。 */
+var form=$('form[data-upload]');
+if(form){var bar=$('[data-upload-progress]'),msg=$('[data-upload-message]'),retry=$('[data-upload-retry]'),pending=null,busy=false;
+var inputs=$$('input[type=file]',form),labels=$$('label',form);
+function say(t){if(msg)msg.textContent=t}
+function showBar(on){if(bar)bar.classList.toggle('hidden',!on)}
+function resetBar(){if(bar&&$('i',bar))$('i',bar).style.width='0%'}
+function showRetry(on){if(retry)retry.classList.toggle('hidden',!on)}
+function setBusy(on){busy=on;inputs.forEach(function(i){i.disabled=on});labels.forEach(function(l){l.setAttribute('aria-disabled',String(on))});if(retry)retry.disabled=on}
+function fail(kind,text,retryable){setBusy(false);showBar(false);say(text);showRetry(!!retryable);trailAdd('error',kind);trailSend()}
+${PHOTO_PREPARE_SCRIPT}
 function upload(entry){try{var data=new FormData();data.append('key',entry.key);data.append('photo',entry.blob,'photo.jpg');
 var xhr=new XMLHttpRequest();xhr.open('POST',form.getAttribute('action'));xhr.setRequestHeader('accept','application/json');xhr.timeout=UPLOAD_MS;
 resetBar();say('正在上传…');

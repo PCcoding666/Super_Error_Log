@@ -390,3 +390,15 @@ describe('material linking', () => {
     expect(store.db.prepare('SELECT stale FROM material_grade WHERE id=?').get('fallback-grade')).toEqual({stale:1});
   });
 });
+
+describe('contextual whole-page supplementation',()=>{
+ it('limits selected attempt context to its compatible question while preserving other numbered work',()=>{
+  const store=setup();const initial=asset(store,[{number:'12'},{number:'12',role:'student_work',text:'first work'}]);reconcileAsset(store,initial.id);const q=only(store);const attempt=q.attempts[0]!;
+  const supplement=asset(store,[{number:'12',role:'correction',text:'continued correction'},{number:'13',role:'question',text:'other question'},{number:'13',role:'student_work',text:'other work'}],'paper-A',{questionId:q.id,attemptId:attempt.id});
+  expect(()=>reconcileAsset(store,supplement.id)).not.toThrow();expect(target(store,supplement.fragments[0]!.fragmentId)).toEqual({question_id:q.id,attempt_id:attempt.id});const other=target(store,supplement.fragments[2]!.fragmentId);expect(other.question_id).not.toBe(q.id);expect(other.attempt_id).not.toBe(attempt.id);expect(readQuestion(store,other.question_id)!.number).toBe('13');expect(readQuestion(store,q.id)!.attempts).toHaveLength(1);
+ });
+ it('does not attach an incompatible same-number stem to a selected attempt after creating a provisional question',()=>{
+  const store=setup();const initial=asset(store,[{number:'12',text:'Original stem'},{number:'12',role:'student_work'}]);reconcileAsset(store,initial.id);const q=only(store);const attempt=q.attempts[0]!;
+  const supplement=asset(store,[{number:'12',text:'Conflicting stem'},{number:'12',role:'student_work'}],'paper-A',{questionId:q.id,attemptId:attempt.id});expect(()=>reconcileAsset(store,supplement.id)).not.toThrow();const other=target(store,supplement.fragments[1]!.fragmentId);expect(other.question_id).not.toBe(q.id);expect(other.attempt_id).not.toBe(attempt.id);expect(readQuestion(store,other.question_id)!.unresolved).toContain('association');
+ });
+});

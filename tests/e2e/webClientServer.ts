@@ -22,6 +22,11 @@ fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(path.join(root, 'db'), { recursive: true });
 // 必须在加载应用模块之前设好：config.ts 在导入时读取。
 process.env.SEL_AI_MODE = 'mock';
+// This synthetic single-student fixture preserves the legacy picker journey.
+// Invitation material capture is exercised separately by materialCapture.spec.ts.
+process.env.NODE_ENV = 'test';
+process.env.SEL_STUDENT_WORKER_FAKE = '1';
+process.env.SEL_E2E_LEGACY_CAPTURE = '1';
 process.env.SEL_DATA_DIR = path.join(root, 'db');
 for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) delete process.env[key];
 
