@@ -119,6 +119,11 @@ main p,main li{max-width:32em}
 .muted{color:var(--muted)}.small{font-size:var(--fs-2)}
 .lead{margin:calc(var(--s-1) * -1) 0 var(--s-5);color:var(--muted)}
 .lead.practice-intro{margin-top:var(--s-3)}
+.submission-photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}.submission-photos figure{margin:0;min-width:0}.submission-photos img{width:100%;max-height:240px;object-fit:contain;border-radius:12px}.submission-photos figcaption{font-size:.85rem;color:var(--muted);margin:6px 0 12px}
+.practice-task-actions{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}
+.practice-task-actions>.btn,.practice-task-actions>form{flex:1 1 180px;min-width:0}
+.practice-task-actions form .btn{width:100%}
+.practice-task-actions .more{flex-basis:100%}
 .lead,.hint,.small,.steps-text li,.flash{text-wrap:balance}
 .card{background:var(--card);border:1px solid transparent;border-radius:var(--r-2);padding:20px;margin:var(--s-4) 0;box-shadow:var(--surface-shadow)}
 .card>:first-child{margin-top:0}.card>:last-child{margin-bottom:0}

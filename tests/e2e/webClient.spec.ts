@@ -98,15 +98,15 @@ test('三栏：手机看题、跳过、直接核对、恢复进度与可选打�
   const first = await page.getByTestId('practice-question').getAttribute('data-item');
   await page.getByRole('button',{name:'跳过，之后再做'}).click();
   await expect(page.getByTestId('practice-question')).not.toHaveAttribute('data-item',first!);
-  await page.getByRole('link',{name:'做完了',exact:true}).click();
+  await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
   await expect(page.getByRole('link',{name:'拍照上传作答',exact:true})).toBeVisible();
   await page.getByRole('link',{name:'不上传，直接核对'}).click();
   await expect(page.getByTestId('practice-answer')).toBeVisible();
   await page.getByRole('button',{name:'做对了',exact:true}).click();
-  await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
+  await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
   await page.goto(`${WEB}/s/practices`);
-  await page.getByTestId('practice-row').first().click();
-  await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
+  await page.getByTestId('practice-latest').getByRole('link',{name:'查看题目',exact:true}).click();
+  await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
   await page.getByRole('link',{name:'打印练习',exact:true}).click();
   await expect(page.locator('.sheet .answers')).toHaveCount(0);
   await page.getByLabel('附答案与解析').check();
@@ -116,7 +116,7 @@ test('三栏：手机看题、跳过、直接核对、恢复进度与可选打�
   await expect(page.getByRole('heading',{name:'记录纸上练习结果'})).toBeVisible();
   await page.getByRole('button',{name:'做错了',exact:true}).click();
   await page.goto(practice);
-  await expect(page.getByText(/已完成 2 \/ /)).toBeVisible();
+  await expect(page.getByText(/已记录 2 道结果/)).toBeVisible();
   expect(errors).toEqual([]);
   await page.context().storageState({path:STATE});
   await page.context().close();
@@ -130,7 +130,7 @@ test('手写拍照为可选步骤，上传后可回看照片和识别文字', as
   await page.goto(`${WEB}/s/choose`);await primary(page).click();
   await page.waitForURL(/\/s\/practice\/pkt_/);
   await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
-  await page.getByRole('link',{name:'做完了',exact:true}).click();
+  await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
   await page.getByRole('link',{name:'拍照上传作答',exact:true}).click();
   await expect(page.getByRole('heading',{name:'上传手写作答',exact:true})).toBeVisible();
   await page.screenshot({path:testInfo.outputPath('handwriting-upload.png'),fullPage:true});
@@ -141,7 +141,7 @@ test('手写拍照为可选步骤，上传后可回看照片和识别文字', as
   await expect(page.getByAltText('本次手写作答')).toBeVisible();
   await expect(page.getByText('合成测试作答：x = 1')).toBeVisible();
   await page.getByRole('button',{name:'做对了',exact:true}).click();
-  await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
+  await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
   await page.context().close();
 });
 
@@ -155,11 +155,87 @@ test('无脚本：三栏入口、选题、逐题核对和打印选项仍然可�
   await page.goto(`${WEB}/s/choose`);await primary(page).click();
   await page.waitForURL(/\/s\/practice\/pkt_/);
   await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
-  await page.getByRole('link',{name:'做完了',exact:true}).click();
+  await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
   await page.getByRole('link',{name:'不上传，直接核对'}).click();
   await page.getByRole('button',{name:'做错了',exact:true}).click();
-  await expect(page.getByText(/已完成 1 \/ /)).toBeVisible();
+  await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
   await page.context().close();
+});
+
+test('主动推荐到纸上作答，多张拍照、关联题号和一次确认；手机和 iPad 均可用', async ({browser},testInfo)=>{
+  const page=await pairedPage(browser);
+  const errors=collectErrors(page);
+  await upload(page,'#f1acbc');
+  await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/,{timeout:30000});
+  // Previous tests leave tasks pending. Pause them explicitly, keeping their results intact.
+  await page.goto(`${WEB}/s/practices`);
+  while(await page.getByTestId('practice-latest').count()){
+    await page.getByText('调整这次练习',{exact:true}).click();
+    await page.getByRole('button',{name:'稍后再做',exact:true}).click();
+  }
+  await expect(page.getByTestId('practice-recommendation')).toBeVisible();
+  await page.getByRole('button',{name:/就练这 \d 道/}).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  const practice=page.url();
+  await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await expect(page.getByText('在白纸上写题号和过程，做完后拍照交到这里。')).toBeVisible();
+  await page.getByRole('link',{name:'拍照交练习',exact:true}).click();
+  await expect(page.locator('#library-input')).toHaveAttribute('multiple','');
+  const image=await synthetic('#fefefe',900);
+  await page.locator('#library-input').setInputFiles([{name:'page1.jpg',mimeType:'image/jpeg',buffer:image},{name:'page2.jpg',mimeType:'image/jpeg',buffer:image}]);
+  await expect(page.getByRole('heading',{name:'已保存 2 张'})).toBeVisible({timeout:20000});
+  await page.getByRole('button',{name:'照片交齐了，查看反馈'}).click();
+  await expect(page.getByRole('heading',{name:'待你确认',exact:true})).toBeVisible({timeout:20000});
+  await expect(page.getByText('还没有记录作答结果。',{exact:false})).toBeVisible();
+  await page.getByLabel('对应题号').selectOption({label:'第 1 题'});
+  await page.getByRole('button',{name:'关联这道题'}).click();
+  await expect(page.getByRole('heading',{name:'这段作答还没确定题号'})).toHaveCount(0);
+  await page.getByLabel('这次是否用过提示或参考帮助').selectOption('independent');
+  await page.getByTestId('submission-question').first().getByLabel('确认结果').selectOption('correct');
+  for(const width of [390,820,320]){
+    await page.setViewportSize({width,height:1000});
+    if(width===320)await page.evaluate(()=>document.documentElement.style.fontSize='200%');
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({path:testInfo.outputPath(`practice-feedback-${width}.png`),fullPage:true});
+  }
+  await page.getByRole('button',{name:'确认以上结果'}).click();
+  await expect(page.getByRole('heading',{name:'已记录 1 道结果'})).toBeVisible();
+  await page.goto(`${WEB}/s/practices`);
+  await expect(page.getByTestId('practice-latest')).toContainText('已记录 1 道结果');
+  await page.getByRole('link',{name:'查看待确认结果',exact:true}).click();
+  await expect(page).toHaveURL(practice+'/feedback');
+  expect(errors).toEqual([]);await page.context().close();
+});
+
+test('整份作答部分上传失败只补传失败照片，关闭脚本仍可继续交下一页',async({browser})=>{
+  const page=await pairedPage(browser);
+  await upload(page,'#eebac9');await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/,{timeout:30000});
+  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  const practice=page.url();await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await page.getByRole('link',{name:'拍照交练习',exact:true}).click();
+  const keys:string[]=[];
+  await page.route('**/s/practice/*/submission',async route=>{
+    keys.push(/name="key"\r\n\r\n([^\r]+)/.exec(route.request().postData()??'')?.[1]??'');
+    if(keys.length===2)await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{message:'合成网络故障，请重试'}})});
+    else await route.continue();
+  });
+  const image=await synthetic('#fefefe',900);
+  await page.locator('#library-input').setInputFiles([{name:'first.jpg',mimeType:'image/jpeg',buffer:image},{name:'second.jpg',mimeType:'image/jpeg',buffer:image}]);
+  await expect(page.locator('[data-upload-message]')).toContainText('1 张失败');
+  await expect(page.locator('[data-upload-state="succeeded"]')).toHaveCount(1);
+  await page.getByRole('button',{name:'只重试失败照片（1 张）'}).click();
+  await expect(page.getByRole('heading',{name:'已保存 2 张'})).toBeVisible({timeout:20000});
+  expect(keys).toHaveLength(3);expect(keys[0]).not.toBe('');expect(keys[1]).toBe(keys[2]);expect(keys[0]).not.toBe(keys[1]);
+  await page.context().close();
+  const plain=await pairedPage(browser,{javaScriptEnabled:false});
+  await plain.goto(practice+'/submit');
+  await plain.locator('#camera-input').setInputFiles({name:'third.jpg',mimeType:'image/jpeg',buffer:image});
+  await plain.getByRole('button',{name:'上传这张',exact:true}).click();
+  await expect(plain.getByRole('heading',{name:'已保存 3 张'})).toBeVisible();
+  await plain.context().close();
 });
 
 const DEVICE: BrowserContextOptions = {

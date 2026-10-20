@@ -4,7 +4,7 @@ import { pickMoreCount, unselectedQuestions } from '../photoPlan.js';
 import { Page, Phrased, Problem, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
 /** 上传前看一下（§4.3）。事实要素不删；按网页的实际情况改了两处：照片不进相册、上传前去掉位置信息。 */
-export function ConsentPage(props: {returnTo?: string} = {}): ReactNode {
+export function ConsentPage(props: {returnTo?: string;purpose?:'practice'} = {}): ReactNode {
   const bar: BarModel = {
     caption: '第一次上传前看一下',
     primary: { title: '同意，上传', key: 'consent', post: '/s/consent', fields: props.returnTo ? {returnTo:props.returnTo} : undefined },
@@ -14,7 +14,7 @@ export function ConsentPage(props: {returnTo?: string} = {}): ReactNode {
     <Page title="上传前看一下" bar={bar}>
       <h1>上传前看一下</h1>
       <section className="card" data-testid="consent">
-        <p>拍的照片会传到广州的云服务器，再交给阿里云百炼的 AI 找出做错的题。照片上可能有你的名字和字迹，介意的话先遮住再拍。</p>
+        <p>拍的照片会传到广州的云服务器，再交给阿里云百炼的 AI {props.purpose==='practice'?'识别作答过程，提供待你确认的核对建议':'找出做错的题'}。照片上可能有你的名字和字迹，介意的话先遮住再拍。</p>
         <ul className="steps-text small">
           <li>用网页拍的照片不会存进手机相册，只存在服务器上；从相册选的，原图还留在相册里。</li>
           <li>上传前会去掉照片里的位置等拍摄信息。</li>

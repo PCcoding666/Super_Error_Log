@@ -303,11 +303,14 @@ async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
     try {
       db.prepare("UPDATE v2_print_snapshot SET status = 'ready', progress_done = ?, progress_total = ?, snapshot_json = ?, error = NULL, ready_at = ? WHERE packet_id = ?")
         .run(total, total, JSON.stringify(final), now(), packetId);
-      db.prepare("UPDATE review_packet SET status = 'generated', generated_at = COALESCE(generated_at, ?) WHERE id = ?")
-        .run(now(), packetId);
-      for (const card of detail.items) {
-        db.prepare("UPDATE error_item SET status = 'packet_generated', updated_at = ? WHERE id = ? AND status = 'scheduled'")
-          .run(now(), card.id);
+      const cancelled=db.prepare("SELECT 1 FROM practice_task WHERE packet_id=? AND lifecycle='cancelled'").get(packetId);
+      if(!cancelled){
+        db.prepare("UPDATE review_packet SET status = 'generated', generated_at = COALESCE(generated_at, ?) WHERE id = ?")
+          .run(now(), packetId);
+        for (const card of detail.items) {
+          db.prepare("UPDATE error_item SET status = 'packet_generated', updated_at = ? WHERE id = ? AND status = 'scheduled'")
+            .run(now(), card.id);
+        }
       }
       db.exec('COMMIT');
     } catch (error) {
@@ -346,6 +349,11 @@ export type PrintRequestResult =
 export function requestPrint(packetId: string, coach?: CoachProvider): PrintRequestResult {
   if (!getPractice(packetId)) return { httpStatus: 404 };
   const db = getDb();
+  if(db.prepare("SELECT 1 FROM practice_task WHERE packet_id=? AND lifecycle='cancelled'").get(packetId)){
+    const prior=rowOf(packetId);
+    if(prior?.status==='ready')return {httpStatus:200,body:{status:'ready',snapshot:JSON.parse(prior.snapshot_json!)}};
+    return {httpStatus:200,body:{status:'failed',error:'这份练习已取消'}};
+  }
   const row = rowOf(packetId);
   if (!row) {
     db.prepare("INSERT INTO v2_print_snapshot (packet_id, status, progress_done, progress_total, created_at) VALUES (?, 'preparing', 0, ?, ?)")

@@ -161,6 +161,7 @@ export function discardV2Item(itemId: string): V2ItemAction {
   const inOpenPacket = db.prepare(
     `SELECT 1 FROM review_packet_item rpi
      WHERE rpi.item_id = ?
+       AND NOT EXISTS (SELECT 1 FROM practice_task pt WHERE pt.packet_id = rpi.packet_id AND pt.lifecycle = 'cancelled')
        AND NOT EXISTS (SELECT 1 FROM review_attempt ra WHERE ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id)
      LIMIT 1`,
   ).get(itemId);

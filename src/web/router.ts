@@ -1,7 +1,12 @@
+import type { PracticeReviewer } from '../ai/practiceReview.js';
+import { submissionState } from '../v2/practiceSubmission.js';
 import { NOTEBOOK_STATUSES, matchesNotebook, notebookUrl, safeNotebookReturn, validNotebookSelection, type NotebookFilters } from './notebook.js';
 import type { NotebookPageProps } from './views/items.js';
 import type { HandwritingRecognizer } from '../ai/handwriting.js';
 import { practiceRouter } from './practiceRouter.js';
+import { activePractice, setTaskLifecycle, startSuggestedPractice, suggestedPractice, taskLifecycle } from '../v2/practiceTasks.js';
+import { practiceProgress } from '../v2/practiceProgress.js';
+import { PracticeDashboardPage } from './views/practiceDashboard.js';
 /**
  * 学生网页版（/s/）：云端移动服务同源挂载，SSR、表单驱动、不做 hydration。
  * - 鉴权：配对兑换得到的设备令牌放在 httpOnly cookie（Path=/s），每个请求按 /v1 /v2 同一规则鉴权与限流。
@@ -70,6 +75,7 @@ export interface WebClientOptions {
   correctionProvider?: CorrectionProvider;
   coachProvider?: CoachProvider;
   handwriting?: HandwritingRecognizer;
+  practiceReviewer?: PracticeReviewer;
   /** 学生邀请码网关的 worker 模式：设置页显示「退出登录」（POST /s/logout 由网关处理）。 */
   studentHostWorker?: boolean;
   /** 「距生成几天」、录结果的日期按哪个时区的日历算；缺省用进程时区（与回传校验、ISO 周一致）。 */
@@ -290,7 +296,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.use(async (request, response, next) => {
     try {
       const token = readCookies(request)[COOKIE.device];
-      const isPage = request.method === 'GET' && !request.path.startsWith('/img/');
+      const isPage = request.method === 'GET' && !request.path.startsWith('/img/') && !/\/image\/?$/.test(request.path);
       const reject = (reason: 'unpaired' | 'unauthorized'): void => {
         if (reason === 'unauthorized') clearCookie(request, response, COOKIE.device);
         if (request.method !== 'GET') { if (wantsJson(request) || request.path === '/voice') { response.status(401).json({ error: { code: 'unauthorized', message: '需要重新连接。' } }); } else { response.redirect(303, '/s/'); } return; }
@@ -611,7 +617,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const unfinishedPractice = (itemId: string): string | null => {
     const row = getDb().prepare(`SELECT rpi.packet_id AS id FROM review_packet_item rpi
       JOIN review_packet rp ON rp.id = rpi.packet_id
-      WHERE rpi.item_id = ? AND NOT EXISTS (
+      WHERE rpi.item_id = ?
+      AND NOT EXISTS (SELECT 1 FROM practice_task pt WHERE pt.packet_id = rpi.packet_id AND pt.lifecycle = 'cancelled')
+      AND NOT EXISTS (
         SELECT 1 FROM review_attempt ra WHERE ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id
       ) ORDER BY rp.created_at DESC, rp.rowid DESC LIMIT 1`).get(itemId) as {id:string} | undefined;
     return row?.id ?? null;
@@ -741,7 +749,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.redirect(303, itemContextUrl(item,returnTo));
   }));
 
-  r.use(practiceRouter({ coachProvider: options.coachProvider, limiter: options.limiter, admission: options.admission, handwriting: options.handwriting, timeZone: ctx.timeZone, now: ctx.now }));
+  r.use(practiceRouter({ coachProvider: options.coachProvider, practiceReviewer:options.practiceReviewer, limiter: options.limiter, admission: options.admission, handwriting: options.handwriting, timeZone: ctx.timeZone, now: ctx.now }));
 
   // ---------- 选这周要练的题 ----------
   const choosePage = async (request: Request, error?: string | null, reason?: string | null): Promise<ReactNode> => {
@@ -1009,16 +1017,27 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     render(response, ResultsPage({ practice, summary, next }));
   }));
 
-  r.get('/practices', page((_request, response) => {
-    const practices = listPractices(-1).map((p, index) => {
-      const summary = p.generatedAt ? getReturnSummary(p.id) : null;
-      const items = getPractice(p.id)?.items ?? [];
-      const shortIds = items.map(item => item.shortId).filter((id): id is string => Boolean(id));
-      // 最近一份把它的题列出来（小裁图、编号、科目）；更早的只写题号。
-      return { ...p, answered: summary?.answered ?? null, independentCorrect: summary && summary.answered > 0 ? summary.independentCorrect : null, shortIds, ...(index === 0 ? { items } : {}) };
-    });
-    render(response, PracticesPage({ practices }));
+  const dashboard = (response:Response, error?:string): void => {
+    const recommendation=suggestedPractice(ctx.mobileDataDir);
+    const tasks=listPractices(-1).map(p=>({
+      practice:getPractice(p.id)!,lifecycle:taskLifecycle(p.id),recorded:Object.keys(practiceProgress(p.id).answers).length,received:submissionState(p.id).photos.length,reviewStatus:submissionState(p.id).status,
+    }));
+    render(response,PracticeDashboardPage({tasks,activeId:activePractice()?.id??null,recommendation,requestKey:crypto.randomUUID(),error}));
+  };
+  r.get('/practices',page((_request,response)=>dashboard(response)));
+  r.post('/practices/start',form,page((request,response)=>{
+    const result=startSuggestedPractice(ctx.mobileDataDir,str(request.body?.key));
+    if(!result.ok){response.status(result.httpStatus);dashboard(response,result.message);return;}
+    if(taskLifecycle(result.detail.id)!=='cancelled')requestPrint(result.detail.id,options.coachProvider);
+    response.redirect(303,`/s/practice/${result.detail.id}`);
   }));
+  for(const [action,lifecycle] of [['pause','paused'],['resume','active'],['cancel','cancelled']] as const){
+    r.post(`/practice/:pid/${action}`,form,page((request,response)=>{
+      const p=practiceOf(String(request.params.pid));
+      try{setTaskLifecycle(p.id,lifecycle);}catch(error){response.status(409);dashboard(response,error instanceof Error?error.message:'任务没有更新');return;}
+      response.redirect(303,action==='cancel'&&request.body?.next==='choose'?'/s/choose':'/s/practices');
+    }));
+  }
 
   // ---------- 设置 ----------
   /** 设置页的账号身份标签：只有邀请码网关 worker 模式才有（locals 由上面的内部头中间件写入）；旧独立版一律不显示。 */

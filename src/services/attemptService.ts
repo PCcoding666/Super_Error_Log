@@ -95,6 +95,8 @@ export function recordAttempt(
   const hintLevel = (runtimeInput.hintLevel as 0 | 1 | 2 | undefined) ?? 0;
 
   const db = getDb();
+  const cancelled = db.prepare("SELECT 1 FROM practice_task WHERE packet_id=? AND lifecycle='cancelled'").get(packetId);
+  if (cancelled) return {ok:false,error:'这份练习已取消，不能再记录作答'};
   const item = getItem(itemId);
   const packet = getPacket(packetId);
   if (!item || !packet) return { ok: false, error: '题目或复习包不存在' };
