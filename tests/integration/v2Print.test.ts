@@ -576,8 +576,8 @@ describe('T5 打印快照', () => {
   });
 
   // 2026-10-09 学生网页版（/s/）挂进生产入口：SSR 视图用 react / react-dom，拍照表单上传用 multer。
-  // 三者本来就在 package.json 的 dependencies 里（npm ci --omit=dev 会装）；白名单只加这三个，并另查任何 devDependency 都不可达。
-  it('RED9 生产入口依赖守卫：dist/main.js 可达第三方包只有 express、sharp 与学生网页版的 react、react-dom、multer', () => {
+  // KaTeX 在服务端生成原生 MathML，也必须随 npm ci --omit=dev 安装；仍检查任何 devDependency 都不可达。
+  it('RED9 生产入口依赖守卫：仅可达明确允许的服务端与学生网页版生产依赖', () => {
     const entry = path.resolve('dist/main.js');
     if (!fs.existsSync(entry)) {
       // verify 顺序下测试先于 build 执行时允许跳过；门禁跑 build 后必须真实通过。
@@ -600,7 +600,7 @@ describe('T5 打印快照', () => {
       }
     };
     visit(entry);
-    const allowed = ['express', 'sharp', 'react', 'react-dom', 'multer'];
+    const allowed = ['express', 'sharp', 'react', 'react-dom', 'multer', 'katex'];
     const manifest = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')) as { dependencies: Record<string, string>; devDependencies: Record<string, string> };
     for (const name of allowed) expect(Object.keys(manifest.dependencies), `${name} 必须是生产依赖`).toContain(name);
     for (const name of bare) {

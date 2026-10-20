@@ -6,6 +6,7 @@ import type { ReflectionView } from '../../v2/reflectionService.js';
 import { attemptLabel, itemNotebookReturn, itemContextUrl, type ItemPracticeRecord } from '../itemLearning.js';
 import { localDayText } from '../weekPlan.js';
 import { Page, Problem, quoted, type BarModel } from './layout.js';
+import { AnswerText } from './answerText.js';
 
 const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
 
@@ -54,7 +55,7 @@ export function ItemDetailPage(props: ItemDetailProps): ReactNode {
       {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">{quoted('字可能认错了：对照上面的照片看一眼，不对就点「改一下」。')}</p> : null}
       {item.knowledgeTags.length ? <p className="small muted">细知识点：{item.knowledgeTags.join('、')}</p> : null}
     </section>
-    {groups.length ? <section className="card learning-evidence" aria-label="原作答与订正">{groups.map(group => <details key={group.title}><summary>{group.title}</summary>{group.notes.map(note => <p key={note.id} className="pre">{note.text}</p>)}</details>)}</section> : null}
+    {groups.length ? <section className="card learning-evidence" aria-label="原作答与订正">{groups.map(group => <details key={group.title}><summary>{group.title}</summary>{group.notes.map(note => <AnswerText key={note.id} text={note.text} teacherNote={note.kind === 'teacher_note'} />)}</details>)}</section> : null}
     <section className="card" aria-labelledby="learning-reflection" data-testid="item-reflection">
       <h2 id="learning-reflection" className="card-title">我的错因与提醒</h2>
       {reflection ? <>
