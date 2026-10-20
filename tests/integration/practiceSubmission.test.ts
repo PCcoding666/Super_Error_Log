@@ -52,6 +52,19 @@ describe('durable whole-task paper submission',()=>{
    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(ids[0]!)).toEqual({status:'attempted'});
    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(ids[2]!)).toEqual({status:'packet_generated'});
  });
+ it.each([null,1])('combines an ambiguous continuation with question %s without inferring a grade',async firstNumber=>{
+   const {p,ids}=prepared(1),bytes=await photo();
+   await attachSubmission(p.id,crypto.randomUUID(),bytes);await attachSubmission(p.id,crypto.randomUUID(),bytes);
+   await reviewSubmission(p.id,{review:async()=>({findings:[{...finding(firstNumber,[1]),text:'第一步'}, {...finding(null,[2]),text:'第二步'}]})});
+   if(firstNumber===null)assignFinding(p.id,submissionState(p.id).revision,0,ids[0]!);
+   const oldRevision=submissionState(p.id).revision;
+   assignFinding(p.id,oldRevision,1,ids[0]!);
+   const state=submissionState(p.id);
+   expect(state.findings).toHaveLength(1);
+   expect(state.findings[0]).toMatchObject({itemId:ids[0],photoNumbers:[1,2],uncertain:true,suggestedCorrect:null});
+   expect(state.findings[0]?.text).toContain('第一步');expect(state.findings[0]?.text).toContain('第二步');
+   expect(()=>assignFinding(p.id,oldRevision,1,ids[0]!)).toThrow('更新');expect(attempts()).toEqual({n:0});
+ });
  it('rejects missing help, stale revisions and foreign item IDs without recording',async()=>{
    const {p,ids}=prepared(), foreign=prepared(1).ids[0]; await attachSubmission(p.id,crypto.randomUUID(),await photo()); await reviewSubmission(p.id,reviewer);
    const input={revision:1,performedOn:now().slice(0,10),help:'independent',results:[{itemId:ids[0],outcome:'correct'}]};

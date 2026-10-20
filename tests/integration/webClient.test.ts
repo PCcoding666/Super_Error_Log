@@ -660,7 +660,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     await waitFor(async()=> (await browser.visibleText(`${url}/feedback`)).includes('待你确认'));
     expect(calls).toBe(1);
     const feedback=await browser.text(`${url}/feedback`);
-    expect(feedback).toContain('还没确定题号');expect(feedback).toContain('还没有收到这道题的可用作答');
+    expect(feedback).toContain('还没确定题号');expect(feedback).toContain('还没有收到这道题的可用作答');expect(feedback).toContain('（补充这道题）');
     expect(getDb().prepare('SELECT COUNT(*) n FROM review_attempt WHERE packet_id=?').get(packetId)).toEqual({n:0});
     const revision=/name="revision" value="(\d+)"/.exec(feedback)![1]!;
     const fields={revision,performedOn:new Date().toISOString().slice(0,10),help:'independent',[`outcome_${itemIds[0]}`]:'correct'};
@@ -669,6 +669,9 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect((await browser.post(`${url}/confirm`,fields)).status).toBe(303);
     expect(getDb().prepare('SELECT COUNT(*) n FROM review_attempt WHERE packet_id=?').get(packetId)).toEqual({n:1});
     expect(await browser.visibleText(`${url}/feedback`)).toContain('已记录 1 道结果');
+    expect((await browser.post(`${url}/assign`,{revision,finding:'1',itemId:itemIds[0]!})).status).toBe(303);
+    expect(await browser.visibleText(`${url}/feedback`)).not.toContain('这段作答还没确定题号');
+    expect((await browser.post(`${url}/assign`,{revision,finding:'1',itemId:itemIds[0]!})).status).toBe(400);
     const images=[...feedback.matchAll(/src="([^"]+\/submission\/[^"]+\/image)"/g)];
     expect(images.length).toBeGreaterThan(0);
     expect((await new Browser(env.base).get(images[0]![1]!)).status).toBe(401);

@@ -112,7 +112,7 @@ for (const scripting of [true,false]) test.describe(`single-question learning ${
     await page.getByTestId('next-step-primary').click();
     await expect(async()=>{await page.reload();await expect(page.getByTestId('practice-question')).toBeVisible();}).toPass({timeout:30000});
     await page.getByRole('button',{name:'查看提示',exact:true}).click();
-    await page.getByRole('link',{name:'做完了',exact:true}).click();
+    await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
     await page.getByRole('link',{name:'不上传，直接核对',exact:true}).click();
     await page.getByRole('button',{name:'做对了',exact:true}).click();
     await page.goto(url);

@@ -51,7 +51,7 @@ export function PracticeDashboardPage(props: {tasks:DashboardTask[]; activeId:st
     <a className="more" href="/s/choose">自己选题</a>
     {history.length>0?<details className="card" data-testid="practice-history"><summary>练习记录（{history.length}）</summary>
       <ul className="list">{history.map(task=><li className="row" key={task.practice.id}><span className="row-text">
-        <a href={`/s/practice/${task.practice.id}${task.recorded>=task.practice.items.length?'/feedback':''}`}><b>{weekRangeText(task.practice.week,'short')} · {task.practice.items.length} 道</b></a>
+        <a data-testid="practice-row" href={`/s/practice/${task.practice.id}${task.recorded>=task.practice.items.length?'/feedback':''}`}><b>{weekRangeText(task.practice.week,'short')} · {task.practice.items.length} 道</b></a>
         <span className="meta-line muted">{task.lifecycle==='cancelled'?'已取消剩余练习':task.lifecycle==='paused'?'已暂缓':task.recorded>=task.practice.items.length?'结果已记录':`已记录 ${task.recorded} 道结果，还有 ${task.practice.items.length-task.recorded} 道待处理`}</span>
         {task.lifecycle==='paused'?<form method="post" action={`/s/practice/${task.practice.id}/resume`}><button className="link-btn">继续这份练习</button></form>:null}
       </span></li>)}</ul>

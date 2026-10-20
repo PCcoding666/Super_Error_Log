@@ -208,6 +208,36 @@ test('主动推荐到纸上作答，多张拍照、关联题号和一次确认�
   expect(errors).toEqual([]);await page.context().close();
 });
 
+test('整份作答部分上传失败只补传失败照片，关闭脚本仍可继续交下一页',async({browser})=>{
+  const page=await pairedPage(browser);
+  await upload(page,'#eebac9');await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/,{timeout:30000});
+  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  const practice=page.url();await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await page.getByRole('link',{name:'拍照交练习',exact:true}).click();
+  const keys:string[]=[];
+  await page.route('**/s/practice/*/submission',async route=>{
+    keys.push(/name="key"\r\n\r\n([^\r]+)/.exec(route.request().postData()??'')?.[1]??'');
+    if(keys.length===2)await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{message:'合成网络故障，请重试'}})});
+    else await route.continue();
+  });
+  const image=await synthetic('#fefefe',900);
+  await page.locator('#library-input').setInputFiles([{name:'first.jpg',mimeType:'image/jpeg',buffer:image},{name:'second.jpg',mimeType:'image/jpeg',buffer:image}]);
+  await expect(page.locator('[data-upload-message]')).toContainText('1 张失败');
+  await expect(page.locator('[data-upload-state="succeeded"]')).toHaveCount(1);
+  await page.getByRole('button',{name:'只重试失败照片（1 张）'}).click();
+  await expect(page.getByRole('heading',{name:'已保存 2 张'})).toBeVisible({timeout:20000});
+  expect(keys).toHaveLength(3);expect(keys[0]).not.toBe('');expect(keys[1]).toBe(keys[2]);expect(keys[0]).not.toBe(keys[1]);
+  await page.context().close();
+  const plain=await pairedPage(browser,{javaScriptEnabled:false});
+  await plain.goto(practice+'/submit');
+  await plain.locator('#camera-input').setInputFiles({name:'third.jpg',mimeType:'image/jpeg',buffer:image});
+  await plain.getByRole('button',{name:'上传这张',exact:true}).click();
+  await expect(plain.getByRole('heading',{name:'已保存 3 张'})).toBeVisible();
+  await plain.context().close();
+});
+
 const DEVICE: BrowserContextOptions = {
   viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: IPHONE_SAFARI, locale: 'zh-CN', permissions: ['microphone'],
 };

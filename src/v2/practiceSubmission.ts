@@ -105,8 +105,19 @@ function currentReview(packetId:string,revision:unknown):SubmissionState {
 export function assignFinding(packetId:string,revision:number,index:number,itemId:string):void {
   const state=currentReview(packetId,revision),p=getPractice(packetId)!;
   const finding=state.findings[index];const number=p.items.findIndex(item=>item.id===itemId)+1;
-  if(!Number.isInteger(index)||!finding||finding.itemId||!number||state.findings.some(f=>f.itemId===itemId))throw new Error('题号无法关联，请核对或补拍带题号的作答');
-  finding.itemId=itemId;finding.questionNumber=number;finding.uncertain=true;finding.suggestedCorrect=null;
+  if(!Number.isInteger(index)||!finding||finding.itemId||!number)throw new Error('题号无法关联，请核对或补拍带题号的作答');
+  const existing=state.findings.find(f=>f.itemId===itemId);
+  if(existing){
+    // One question may span several initially unidentifiable fragments. Association
+    // adds evidence; it never promotes the combined work to a confident grade.
+    existing.text=`${existing.text}\n\n补充作答（照片 ${finding.photoNumbers.join('、')}）：\n${finding.text}`;
+    existing.photoNumbers=[...new Set([...existing.photoNumbers,...finding.photoNumbers])].sort((a,b)=>a-b);
+    existing.complete=false;existing.uncertain=true;existing.suggestedCorrect=null;
+    existing.feedback='已合并这道题的作答片段，请对照照片和参考答案确认结果。';
+    state.findings.splice(index,1);
+  }else{
+    finding.itemId=itemId;finding.questionNumber=number;finding.uncertain=true;finding.suggestedCorrect=null;
+  }
   getDb().prepare('UPDATE practice_submission SET revision=revision+1,findings_json=?,updated_at=? WHERE packet_id=? AND revision=?').run(JSON.stringify(state.findings),now(),packetId,revision);
 }
 export function confirmSubmission(packetId:string,input:unknown):SubmitReturnResult {
