@@ -185,7 +185,7 @@ describe('三栏入口', () => {
     await browser.post('/s/consent');
     const capture = await browser.text('/s/capture');
     expect(capture).toContain('<h1>错题录入</h1>');
-    expect(capture).toContain('查看上传记录');
+    expect(capture).toContain('已上传记录');
     expect(await browser.text('/s/practices')).toContain('自己选题');
   });
 });
@@ -346,7 +346,7 @@ describe('录入与上传记录分开', () => {
     expect(history).toContain(`src="/s/img/photo/${jobId}"`);
     expect(history).toContain(`href="/s/img/photo/${jobId}?full=1"`);
     expect(history.replace(/<[^>]+>/g, '')).not.toMatch(/第\s*1\s*张/);
-    expect(history).toContain('已新增 3 道错题');
+    expect(history.replace(/<[^>]+>/g, '')).toContain('已新增 3 道错题');
   });
 
   it('历史照片跨周保留，最新上传排在前面，旧照片仍能打开和补勾', async () => {

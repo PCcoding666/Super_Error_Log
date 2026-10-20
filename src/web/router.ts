@@ -500,7 +500,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const { week } = await weekPhoto(request, jobId);
     const marks = readPhotoMarks(request);
     marks[kind].add(jobId);
-    writePhotoMarks(request, response, marks, week.photos.map(photo => photo.jobId));
+    writePhotoMarks(request, response, marks, week.photos.map(photo => photo.jobId), { kind, id: jobId });
     response.redirect(303, '/s/photos');
   });
   r.post('/photos/:jobId/none', markPhoto('pickDone'));

@@ -462,6 +462,6 @@ test('upload entry stays in the first screen and history shows compact previews'
   await expect(popup).toHaveURL(/\/s\/img\/photo\/[^?]+\?full=1$/);
   await popup.close();
   await expect(page).toHaveURL(/\/s\/photos$/);
-  await page.getByRole('link', { name: '新增录入', exact: true }).click();
+  await page.getByRole('navigation', { name: '错题录入视图' }).getByRole('link', { name: '新增录入', exact: true }).click();
   await expect(page.getByTestId('next-step-primary')).toBeInViewport();
 });
