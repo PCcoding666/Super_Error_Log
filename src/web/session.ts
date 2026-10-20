@@ -23,7 +23,7 @@ export const COOKIE = {
   itemsGrade: 'sel_items_grade',
 } as const;
 
-export const CONSENT_VERSION = 'v1';
+export const CONSENT_VERSION = 'v2';
 const YEAR_SECONDS = 365 * 24 * 60 * 60;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ITEM_ID = /^itm_[0-9a-f]{16}$/;

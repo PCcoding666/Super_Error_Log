@@ -1,0 +1,12 @@
+import type { Evidence } from '../ai/evidence.js';
+import type { V2WeekItem, V2WeekResponse } from '../v2/weekService.js';
+import type { PracticeCard, RecommendResponse, PracticeDetail, CreatePracticeResult } from '../v2/practiceService.js';
+export type LearningSource = { kind:'legacy'; jobId:string } | { kind:'material'; questionId:string };
+export type LearningScope = 'legacy' | 'all';
+export type LearningContext = Pick<Evidence,'questionNumber'|'questionText'|'subject'|'chapter'|'knowledgeTags'|'questionType'|'requiresDiagram'|'observations'|'uncertainties'>;
+export type LearningCard = Omit<V2WeekItem,'jobId'> & {source:LearningSource};
+export type LearningWeek = Omit<V2WeekResponse,'items'|'backlog'> & {items:LearningCard[];backlog:LearningCard[]};
+export type LearningPracticeCard = Omit<PracticeCard,'jobId'> & {source:LearningSource};
+export type LearningRecommendation = Omit<RecommendResponse,'recommended'|'others'> & {recommended:LearningPracticeCard[];others:LearningPracticeCard[]};
+export type LearningPracticeDetail = Omit<PracticeDetail,'items'> & {items:(LearningPracticeCard & {position:number})[]};
+export type LearningCreateResult = Exclude<CreatePracticeResult,{ok:true}> | {ok:true;detail:LearningPracticeDetail};

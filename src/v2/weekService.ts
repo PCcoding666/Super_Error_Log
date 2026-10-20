@@ -1,3 +1,5 @@
+import { getLearningWeek } from '../learning/queries.js';
+import { legacyCard } from '../learning/sources.js';
 /**
  * v2.0 T4a：本周错题卡片（/v2/week）与"不是错题"删/恢复。
  * 只返回 v2 来源（有 mobile_item_link）的题；Web 原有题一律不出现。
@@ -98,8 +100,8 @@ export function getRegisteredPhotos(mobileDataDir: string, includeHistory = fals
     }));
 }
 
-/** 本周错题卡片；includeHistory 用于完整错题本，包含历史已掌握/练习中的题，排除已归档题。 */
-export function getWeek(mobileDataDir: string, includeHistory = false): V2WeekResponse {
+/** 本周错题卡片。includeHistory 用于完整错题本，包含历史已掌握/练习中的题，排除已归档题。 */
+export function getLegacyWeek(mobileDataDir: string, includeHistory = false): V2WeekResponse {
   try {
     bridgePending(mobileDataDir);
   } catch {
@@ -192,4 +194,10 @@ export function restoreV2Item(itemId: string): V2ItemAction {
   db.prepare('UPDATE error_item SET status = ?, archived_reason = NULL, updated_at = ? WHERE id = ?').run(to, now(), itemId);
   audit('v2_item_restored', 'item', itemId);
   return { ok: true, status: to };
+}
+
+/** 旧 /v2/week：只返回历史手机上传题，卡片带 jobId。 */
+export function getWeek(mobileDataDir: string, includeHistory = false): V2WeekResponse {
+  const week = getLearningWeek(mobileDataDir, 'legacy', includeHistory);
+  return { ...week, items: week.items.map(legacyCard), backlog: week.backlog.map(legacyCard) };
 }

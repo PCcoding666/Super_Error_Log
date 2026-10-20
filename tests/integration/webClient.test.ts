@@ -1,3 +1,4 @@
+import { resetMaterials } from '../helpers/resetMaterials.js';
 /**
  * 学生网页版（/s/）路由集成测试：真实 HTTP（云端装配：设备令牌 + PairingManager），合成识别、mock 语音转写，
  * /v2 的追问 / 打印辅导走 mock 模式的确定性实现。不调真实模型、不读 .env 与 data/，所有照片与录音都是合成的。
@@ -38,6 +39,7 @@ afterEach(async () => {
 beforeAll(() => { ensureStudentProfile(); });
 beforeEach(() => {
   const db = getDb();
+  resetMaterials(db);
   for (const table of ['v2_print_snapshot', 'correction', 'correction_proposal', 'v2_reflection_turn', 'mastery_event', 'review_attempt', 'review_packet_item', 'review_packet', 'mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo', 'v2_setting']) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
@@ -402,7 +404,7 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
     expect(refused.status).toBe(403);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM v2_photo').get()).toEqual({ n: 0 });
     expect((await browser.post('/s/consent')).headers.get('location')).toBe('/s/capture');
-    expect(browser.cookies.get('sel_consent')).toBe('v1');
+    expect(browser.cookies.get('sel_consent')).toBe('v2');
     const tagged = await sharp({ create: { width: 500, height: 650, channels: 3, background: '#f0d0c8' } }).withExif({ IFD0: { Artist: 'SYNTHETIC-EXIF-MARKER' } }).jpeg().toBuffer();
     expect((await sharp(tagged).metadata()).exif).toBeDefined();
     const response = await uploadPhoto(browser, tagged);

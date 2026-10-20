@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { Fragment } from '../../materials/contracts.js';
 import { MASTERY_FEELING_LABEL } from '../../domain/types.js';
 import type { V2WeekItem } from '../../v2/weekService.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
@@ -11,7 +12,8 @@ import { AnswerText } from './answerText.js';
 const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
 
 export interface ItemDetailProps {
-  item: V2WeekItem;
+  item: Omit<V2WeekItem, 'jobId'> & { source?: { kind: 'legacy' | 'material'; questionId?: string; jobId?: string } };
+  images?: Fragment[];
   evidence: EvidenceView | null;
   canDiscard: boolean;
   /** Retained for old callers; a boolean alone is not a confirmed reflection. */
@@ -46,8 +48,12 @@ export function ItemDetailPage(props: ItemDetailProps): ReactNode {
     <h1>{item.shortId ?? '题目'}</h1>
     <p className="small muted" data-testid="item-category">{[item.grade,item.subject,item.chapter].filter(Boolean).join(' · ')}</p>
     {props.error ? <Problem title="暂时不能开始" detail={props.error} /> : null}
-    <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link learning-photo" data-key="item-full-photo" aria-label="打开整题原图（新窗口）"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /></a>
+    {props.images?.length ? props.images.map(fragment => <figure key={fragment.fragmentId}>
+      <a href={`/s/materials/assets/${fragment.assetId}/image`} target="_blank" rel="noreferrer" className="photo-link learning-photo"><img className="crop big" loading="lazy" src={`/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}`} alt="这道题的材料" /></a>
+      <figcaption className="hint">{fragment.page ? `第 ${fragment.page} 页 · ` : ''}点开查看这张原图</figcaption>
+    </figure>) : <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link learning-photo" data-key="item-full-photo" aria-label="打开整题原图（新窗口）"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /></a>}
     <p className="hint">整题照片 · 点开查看原图并放大；照片未显示时可阅读下面的题目。</p>
+    {props.item.source?.kind === 'material' && props.item.source.questionId ? <a className="more" href={`/s/materials/questions/${props.item.source.questionId}`}>查看这道题的全部材料与批改来源</a> : null}
     <section className="card" aria-labelledby="learning-question">
       <h2 id="learning-question" className="card-title">题目</h2>
       <p className="pre" data-testid="question-text">{evidence?.questionText || item.questionExcerpt || '还没有可读的识别文字，请打开上方原图查看。'}</p>

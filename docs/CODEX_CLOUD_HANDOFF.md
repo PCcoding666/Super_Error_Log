@@ -2,6 +2,8 @@
 
 更新时间：2026-10-20（Asia/Singapore / UTC+8）。这是当前开发入口；较早的 `.ai/tasks/current/`、MVP手册和原生iOS验收报告按各自日期理解。
 
+`codex/material-linking` 在当前 main 上追加自由拍摄、跨页关联和按需批改，尚未发布。行为与验收见 [材料关联质量记录](quality/2026-10-20-material-linking.md)。
+
 ## 1. 从哪个版本继续
 
 - 仓库：`PCcoding666/Super_Error_Log`（私有）。
@@ -12,7 +14,7 @@
 - 发布授权（2026-10-15）：用户选择“合并后自动上线”，并授权主分支整理。只有 `main` push 的 CI 全绿才会调用 production；PR 和其他分支不发布。发布规则见 [自动发布说明](../deploy/ci/README.md)。
 - R2 的 27 条提交在 PR #13 中逐项审查整合，取舍和验收见 [审查记录](quality/2026-10-15-pr13-review.md)；实际合并/发布状态查看 PR 和 Actions。历史界面设计已存入 docs，详见 [分支说明](BRANCHES.md)。
 
-## 2. 产品实际做到哪里
+## 2. 生产 0.5.0-r2 实际做到哪里
 
 学生从手机Safari/Android浏览器打开网页，用个人邀请码进入独立空间。可以添加主屏幕，不依赖Apple开发者账号安装原生App。
 

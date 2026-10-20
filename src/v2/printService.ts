@@ -7,7 +7,7 @@
  * 3. 题面不得出现答案、学生原作、订正、批注。
  * 4. 提示两级，来自 coach；生成失败不阻塞：提示为空，纸上写"对照原卷"。
  * 5. 答案优先原卷参考答案（reference_answer 观察记录），否则 coach 答案，否则空。
- * 6. 答案页统一提示"对照原卷查看解析"，封面不预设练习时间。
+ * 6. "对照原卷"措辞随学生设置 paperLocation。
  * 7. 每份包每题至多 1 次 coach，不重试（由逐题单次调用结构保证）。
  *
  * 后台准备在单进程内：同一练习包同时只有一个准备任务（preparing Map）；
@@ -18,14 +18,21 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { packetsDir } from '../config.js';
 import { getDb, now } from '../db/connection.js';
-import { validateEvidence, type Coaching, type Diagnosis, type Evidence } from '../ai/evidence.js';
+import { type Coaching, type Diagnosis, type Evidence } from '../ai/evidence.js';
 import { getCoachProvider } from '../ai/index.js';
 import type { CoachProvider } from '../ai/provider.js';
-import { cropPhoto, normalizePhoto, type Box } from '../media/images.js';
+import { normalizePhoto, type Box } from '../media/images.js';
 import { withProcessImage } from '../mobile/admission.js';
 import { audit } from '../services/eventLog.js';
-import { getEvidence, evidenceSource } from '../services/evidenceService.js';
-import { getPractice } from './practiceService.js';
+import { getEvidence } from '../services/evidenceService.js';
+import { getLearningPractice } from '../learning/queries.js';
+import { getLearningPrintInput, getLearningSource, learningPrintAnswerBlocked, learningPrintAnswerRegions, materialStoreForItem, type LearningPrintInput } from '../learning/sources.js';
+import type { LearningScope } from '../learning/contracts.js';
+import { MaterialStore } from '../materials/store.js';
+import type { SourceRegion } from '../materials/contracts.js';
+import { PRINT_IMAGE_LIMITS, readNormalizedSource, readSourceBytes } from '../materials/media.js';
+import { ensureStudentProfile } from '../services/studentService.js';
+import { getV2Settings } from './settingsService.js';
 
 // ---------- 快照形状（手机据此排版） ----------
 
@@ -127,7 +134,7 @@ function cropPixelBounds(crop: Box, width: number, height: number): { left: numb
  * T5R2-F1：遮白矩形（裁图内像素坐标）。先在整页像素坐标里算好（外扩后 floor 起点、ceil 终点），
  * 再减去裁图左上角并裁到裁图范围内——与裁图底边/右边相交时 ceil 终点对齐裁图像素边界，一直遮到那条边，不留像素缝。
  */
-export function printMaskRects(evidence: Evidence, crop: Box, width: number, height: number): PixelRect[] {
+export function printMaskRects(evidence: Pick<Evidence, 'regions'>, crop: Box, width: number, height: number): PixelRect[] {
   const { left, top, right, bottom } = cropPixelBounds(crop, width, height);
   const cropWidth = right - left;
   const cropHeight = bottom - top;
@@ -162,7 +169,6 @@ export function printMaskRects(evidence: Evidence, crop: Box, width: number, hei
 export async function maskedQuestionCrop(source: Buffer, evidence: Evidence): Promise<Buffer> {
   return withProcessImage(() => renderMaskedQuestionCrop(source, evidence));
 }
-
 async function renderMaskedQuestionCrop(source: Buffer, evidence: Evidence): Promise<Buffer> {
   const crop = expandPrintCropMargin(evidence.questionRegion);
   const normalized = await normalizePhoto(source);
@@ -186,14 +192,14 @@ async function renderMaskedQuestionCrop(source: Buffer, evidence: Evidence): Pro
 }
 
 function buildSnapshot(
-  packetId: string, week: string, preparedAt: string,
+  packetId: string, week: string, practiceSlot: string, preparedAt: string,
   items: PrintSnapshotItem[], answerSheet: PrintAnswerEntry[],
 ): PrintSnapshot {
   const ordered = [...items].sort((a, b) => a.position - b.position);
   return {
     packetId, week, preparedAt,
     cover: {
-      // 保留字符串字段以兼容既有快照协议；网页封面只留实际做题日期的填写处。
+      // 封面只留做题日期；practiceSlot 字段保留给旧快照协议，不再写入具体时段。
       title: '本周练习', practiceSlot: '', rules: [...COVER_RULES],
       itemList: ordered.map(item => ({ shortId: item.shortId, sourceLabel: '原题' })),
     },
@@ -210,129 +216,196 @@ export function printWorkPending(): boolean {
   return preparing.size > 0;
 }
 
+interface FrozenPrintItem {
+    itemId: string;
+    input: LearningPrintInput;
+    answerRegions: SourceRegion[];
+    answerBlocked: boolean;
+    diagnosis: Diagnosis;
+}
+interface FrozenPrintManifest {
+    version: 1;
+    items: FrozenPrintItem[];
+}
+function printStore(itemId: string): MaterialStore { return materialStoreForItem(itemId) ?? new MaterialStore(getDb(), ensureStudentProfile().id); }
+function freezeInputs(packetId: string, scope: LearningScope): FrozenPrintManifest {
+    const detail = getLearningPractice(packetId, scope);
+    if (!detail)
+        throw new Error('练习包不存在');
+    return { version: 1, items: detail.items.map(card => {
+            const input = getLearningPrintInput(card.id);
+            if (!input)
+                throw new Error('题目材料待补齐或核验，请先查看材料');
+            if (input.questionRegions.length + input.diagramRegions.length > PRINT_IMAGE_LIMITS.regions)
+                throw new Error('图片过多，请拆成较小的练习后重试');
+            return { itemId: card.id, input, answerRegions: learningPrintAnswerRegions(card.id, input.answers), answerBlocked: learningPrintAnswerBlocked(card.id), diagnosis: diagnosisFor(card.id) };
+        }) };
+}
+function basisRow(packetId: string): {
+    scope: LearningScope;
+    manifest_json: string;
+} | undefined {
+    return getDb().prepare('SELECT scope,manifest_json FROM v2_print_basis WHERE packet_id=?').get(packetId) as {
+        scope: LearningScope;
+        manifest_json: string;
+    } | undefined;
+}
+/** Synchronous final guard: covers completed items, masks, selected answers and raw source bytes.
+ * No await between this check and the ready transaction. */
+function assertCurrent(manifest: FrozenPrintManifest): void {
+    for (const saved of manifest.items) {
+        if (getLearningPrintInput(saved.itemId)?.basisKey !== saved.input.basisKey || JSON.stringify(diagnosisFor(saved.itemId)) !== JSON.stringify(saved.diagnosis))
+            throw new Error('材料或答案已变化，请重新生成练习纸');
+        const seen = new Set<string>();
+        for (const region of [...saved.input.questionRegions, ...saved.input.diagramRegions, ...saved.answerRegions]) {
+            if (seen.has(region.assetId))
+                continue;
+            seen.add(region.assetId);
+            readSourceBytes(printStore(saved.itemId), region);
+        }
+    }
+}
+async function maskedRegion(store: MaterialStore, region: SourceRegion, redactions: SourceRegion[], expand: boolean): Promise<Buffer> {
+    return withProcessImage(() => renderMaskedRegion(store, region, redactions, expand));
+}
+async function renderMaskedRegion(store: MaterialStore, region: SourceRegion, redactions: SourceRegion[], expand: boolean): Promise<Buffer> {
+    const source = await readNormalizedSource(store, region), meta = await sharp(source).metadata();
+    const crop = expand ? expandPrintCropMargin(region.box) : region.box;
+    const { left, top, right, bottom } = cropPixelBounds(crop, meta.width!, meta.height!);
+    const width = right - left, height = bottom - top;
+    const regions = redactions.filter(r => r.assetId === region.assetId && r.sourceHash === region.sourceHash).map(r => ({ id: r.fragmentId, box: r.box, kind: 'unknown' as const, confidence: 1, cleanForPrint: false }));
+    const rects = printMaskRects({ regions }, crop, meta.width!, meta.height!);
+    let pipeline = sharp(source).extract({ left, top, width, height });
+    if (rects.length)
+        pipeline = pipeline.composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${rects.map(r => `<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="white"/>`).join('')}</svg>`) }]);
+    return pipeline.jpeg({ quality: 88 }).toBuffer();
+}
+async function combineCrops(crops: Buffer[]): Promise<Buffer> {
+    return withProcessImage(() => renderCombinedCrops(crops));
+}
+async function renderCombinedCrops(crops: Buffer[]): Promise<Buffer> {
+    let width = 0, height = 0, bytes = 0;
+    const composites: sharp.OverlayOptions[] = [];
+    for (const crop of crops) {
+        const m = await sharp(crop).metadata();
+        width = Math.max(width, m.width!);
+        composites.push({ input: crop, left: 0, top: height });
+        height += m.height! + 12;
+        bytes += crop.length;
+    }
+    height -= 12;
+    if (width * height > PRINT_IMAGE_LIMITS.pixels || bytes > PRINT_IMAGE_LIMITS.bytes)
+        throw new Error('图片过大，请拆成较小的练习后重试');
+    return sharp({ create: { width, height, channels: 3, background: '#fff' } }).composite(composites).jpeg({ quality: 88 }).toBuffer();
+}
 async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
-  const db = getDb();
-  try {
-    const detail = getPractice(packetId);
-    if (!detail) throw new Error('练习包不存在');
-
-    // 续做：snapshot_json 里已有的部分进度（同形状、只含已完成题）直接沿用。
-    const row = rowOf(packetId)!;
-    const partial = row.snapshot_json ? JSON.parse(row.snapshot_json) as PrintSnapshot : null;
-    const items: PrintSnapshotItem[] = partial?.items ?? [];
-    const answerSheet: PrintAnswerEntry[] = partial?.answerSheet ?? [];
-    const doneItemIds = new Set(items.map(item => item.itemId));
-    const preparedAt = partial?.preparedAt ?? now();
-
-    const total = detail.items.length;
-    db.prepare('UPDATE v2_print_snapshot SET progress_done = ?, progress_total = ? WHERE packet_id = ?')
-      .run(items.length, total, packetId);
-
-    const dir = path.join(packetsDir(), packetId);
-    fs.mkdirSync(dir, { recursive: true });
-
-    for (const card of detail.items) {
-      if (doneItemIds.has(card.id)) continue;
-      const record = getEvidence(card.id);
-      if (!record) throw new Error(`题目 ${card.id} 没有证据`);
-      const evidence = validateEvidence(record.content);
-      // 原图读不到（缺失/损坏）→ 整个快照 failed。
-      const source = fs.readFileSync(evidenceSource(card.id).storagePath);
-
-      let mode: 'text' | 'crop';
-      let stemText: string | null;
-      let cropMedia: string | null = null;
-      const diagramMedia: string[] = [];
-      const diagrams = evidence.regions.filter(region => region.kind === 'diagram');
-      // F1：text 模式的前提是"不需要图示，或至少有一个 diagram 区域"；否则改用遮白裁图。
-      if (card.badge === 'low' || (evidence.requiresDiagram && diagrams.length === 0)) {
-        // 规则 2：low 印遮白裁图。T5R2-F1：同时给出识别题干文字——截图有问题还有文字，文字有问题还有截图。
-        mode = 'crop';
-        stemText = evidence.questionText;
-        cropMedia = `p${card.position}-crop.jpg`;
-        fs.writeFileSync(path.join(dir, cropMedia), await maskedQuestionCrop(source, evidence));
-      } else {
-        mode = 'text';
-        stemText = evidence.questionText;
-        if (evidence.requiresDiagram) {
-          for (const [index, region] of diagrams.entries()) {
-            const name = `p${card.position}-diagram-${index}.jpg`;
-            fs.writeFileSync(path.join(dir, name), await cropPhoto(source, region.box));
-            diagramMedia.push(name);
-          }
-        }
-      }
-
-      // F2/T5R2-F1：crop 模式下，存在无定位区域的手写观察记录（遮不掉）→ 沿用旧文案；
-      // 否则徽标 low 也提示（打印余量加宽可能带进相邻题目，且模型框可能整体漂移）。text 模式恒不需要。
-      const regionIds = new Set(evidence.regions.map(region => region.id));
-      const hasUnlocatedHandwriting = evidence.observations.some(
-        o => GLANCE_KINDS.has(o.kind) && (o.regionId === null || !regionIds.has(o.regionId)),
-      );
-      const needsGlance = mode === 'crop' && (hasUnlocatedHandwriting || card.badge === 'low');
-      const glanceReason = !needsGlance ? null
-        : hasUnlocatedHandwriting ? GLANCE_REASON_UNLOCATED : GLANCE_REASON_LOW;
-
-      // 规则 4/5/7：每题至多 1 次 coach，失败不阻塞（提示为空、答案可能只剩原卷/空）。
-      let coaching: Coaching | null = null;
-      try {
-        coaching = await coach.coachForPrint(evidence, diagnosisFor(card.id));
-      } catch {
-        coaching = null;
-      }
-      const paperAnswer = evidence.observations.find(o => o.kind === 'reference_answer');
-      const answer: PrintAnswerEntry['answer'] = paperAnswer
-        ? { text: paperAnswer.text, source: 'paper', label: '原卷参考答案' }
-        : coaching
-          ? { text: coaching.answer, source: 'ai', label: 'AI 参考，未经老师核验' }
-          : { text: null, source: 'none', label: null };
-
-      items.push({
-        itemId: card.id, shortId: card.shortId, position: card.position,
-        subject: card.subject, knowledgeTags: card.knowledgeTags,
-        mode, stemText, cropMedia, diagramMedia,
-        keyStepPrompt: KEY_STEP_PROMPT, checkboxes: [...CHECKBOXES],
-        needsGlance, glanceReason,
-      });
-      answerSheet.push({
-        shortId: card.shortId,
-        hint1: coaching?.hints[0] ?? null,
-        hint2: coaching?.hints[1] ?? null,
-        answer,
-        fallbackNote: '对照原卷查看解析',
-      });
-
-      // 每题完成立即落部分进度：重启续做不重做已完成题。
-      db.prepare('UPDATE v2_print_snapshot SET progress_done = ?, snapshot_json = ? WHERE packet_id = ?')
-        .run(items.length, JSON.stringify(buildSnapshot(packetId, detail.week, preparedAt, items, answerSheet)), packetId);
-    }
-
-    const final = buildSnapshot(packetId, detail.week, preparedAt, items, answerSheet);
-    // 收尾一个事务：快照 ready + 包 generated（generated_at 仅首次）+ scheduled 题转 packet_generated。
-    db.exec('BEGIN');
+    const db = getDb();
     try {
-      db.prepare("UPDATE v2_print_snapshot SET status = 'ready', progress_done = ?, progress_total = ?, snapshot_json = ?, error = NULL, ready_at = ? WHERE packet_id = ?")
-        .run(total, total, JSON.stringify(final), now(), packetId);
-      const cancelled=db.prepare("SELECT 1 FROM practice_task WHERE packet_id=? AND lifecycle='cancelled'").get(packetId);
-      if(!cancelled){
-        db.prepare("UPDATE review_packet SET status = 'generated', generated_at = COALESCE(generated_at, ?) WHERE id = ?")
-          .run(now(), packetId);
+        const saved = basisRow(packetId), scope = saved?.scope ?? 'legacy', detail = getLearningPractice(packetId, scope);
+        if (!detail)
+            throw new Error('练习包不存在');
+        const row = rowOf(packetId)!, settings = getV2Settings();
+        if (!saved && row.snapshot_json)
+            throw new Error('旧准备进度无法核对，请重新生成练习纸');
+        const manifest: FrozenPrintManifest = saved ? JSON.parse(saved.manifest_json) : freezeInputs(packetId, scope);
+        if (!saved)
+            db.prepare('INSERT INTO v2_print_basis(packet_id,scope,manifest_json) VALUES(?,?,?)').run(packetId, scope, JSON.stringify(manifest));
+        assertCurrent(manifest);
+        const partial = row.snapshot_json ? JSON.parse(row.snapshot_json) as PrintSnapshot : null;
+        const items = partial?.items ?? [], answerSheet = partial?.answerSheet ?? [], preparedAt = partial?.preparedAt ?? now();
+        const total = detail.items.length, dir = path.join(packetsDir(), packetId);
+        fs.mkdirSync(dir, { recursive: true });
+        db.prepare('UPDATE v2_print_snapshot SET progress_done=?,progress_total=? WHERE packet_id=?').run(items.length, total, packetId);
         for (const card of detail.items) {
-          db.prepare("UPDATE error_item SET status = 'packet_generated', updated_at = ? WHERE id = ? AND status = 'scheduled'")
-            .run(now(), card.id);
+            if (items.some(item => item.itemId === card.id))
+                continue;
+            assertCurrent(manifest);
+            const frozen = manifest.items.find(i => i.itemId === card.id);
+            if (!frozen)
+                throw new Error('练习包内容已变化');
+            const { input } = frozen, store = printStore(card.id);
+            const mode = input.badge === 'low' || input.context.requiresDiagram && !input.diagramRegions.length ? 'crop' : 'text';
+            let cropMedia: string | null = null;
+            const diagramMedia: string[] = [];
+            let imagePixels = 0, imageBytes = 0;
+            const budget = async (bytes: Buffer) => { const m = await sharp(bytes).metadata(); imagePixels += m.width! * m.height!; imageBytes += bytes.length; if (imagePixels > PRINT_IMAGE_LIMITS.pixels || imageBytes > PRINT_IMAGE_LIMITS.bytes)
+                throw new Error('图片过大，请拆成较小的练习后重试'); };
+            if (mode === 'crop') {
+                const crops: Buffer[] = [];
+                for (const region of input.questionRegions) {
+                    const bytes = await maskedRegion(store, region, input.redactRegions, true);
+                    await budget(bytes);
+                    crops.push(bytes);
+                }
+                cropMedia = `p${card.position}-crop.jpg`;
+                const composed = await combineCrops(crops);
+                if (composed.length > PRINT_IMAGE_LIMITS.bytes)
+                    throw new Error('图片过大，请拆成较小的练习后重试');
+                fs.writeFileSync(path.join(dir, cropMedia), composed);
+            }
+            // Diagrams stay separate, including diagrams on a supplementary page in crop mode.
+            for (const [index, region] of input.diagramRegions.entries()) {
+                const bytes = await maskedRegion(store, region, input.redactRegions, false);
+                await budget(bytes);
+                const name = `p${card.position}-diagram-${index}.jpg`;
+                fs.writeFileSync(path.join(dir, name), bytes);
+                diagramMedia.push(name);
+            }
+            assertCurrent(manifest);
+            let coaching: Coaching | null = null;
+            if (!frozen.answerBlocked)
+                try {
+                    coaching = await coach.coachForPrint(input.context, frozen.diagnosis);
+                }
+                catch {
+                    coaching = null;
+                }
+            assertCurrent(manifest);
+            const legacy = getLearningSource(card.id)?.kind === 'legacy' ? getEvidence(card.id)?.content : null;
+            const unlocated = legacy ? legacy.observations.some(o => GLANCE_KINDS.has(o.kind) && (o.regionId === null || !legacy.regions.some(r => r.id === o.regionId))) : false;
+            let answer: PrintAnswerEntry['answer'];
+            if (frozen.answerBlocked)
+                answer = { text: null, source: 'none', label: '参考答案待确定' };
+            else if (input.answers.length) {
+                const allAI = input.answers.every(a => a.source === 'ai');
+                answer = { text: input.answers.map(a => `${a.subpart ? `(${a.subpart}) ` : ''}${a.text}`).join('\n\n'), source: allAI ? 'ai' : 'paper', label: input.answers.map(a => a.source === 'ai' ? 'AI 参考，未经老师核验' : a.id.startsWith('legacy:') ? '原卷参考答案' : a.source === 'manual' ? `手工提供${a.claimedSource ? `（自述：${a.claimedSource}，未经核验）` : ''}` : a.fragmentIds.length ? '拍照导入参考答案' : '粘贴导入参考答案').filter((x, i, a) => a.indexOf(x) === i).join('；') };
+            }
+            else if (coaching)
+                answer = { text: coaching.answer, source: 'ai', label: 'AI 参考，未经老师核验' };
+            else
+                answer = { text: null, source: 'none', label: null };
+            items.push({ itemId: card.id, shortId: card.shortId, position: card.position, subject: card.subject, knowledgeTags: card.knowledgeTags,
+                mode, stemText: input.context.questionText, cropMedia, diagramMedia, keyStepPrompt: KEY_STEP_PROMPT, checkboxes: [...CHECKBOXES], needsGlance: mode === 'crop' && (unlocated || input.badge === 'low'), glanceReason: mode === 'crop' && (unlocated || input.badge === 'low') ? (unlocated ? GLANCE_REASON_UNLOCATED : GLANCE_REASON_LOW) : null });
+            answerSheet.push({ shortId: card.shortId, hint1: coaching?.hints[0] ?? null, hint2: coaching?.hints[1] ?? null, answer, fallbackNote: '对照原卷查看解析' });
+            db.prepare('UPDATE v2_print_snapshot SET progress_done=?,snapshot_json=? WHERE packet_id=?').run(items.length, JSON.stringify(buildSnapshot(packetId, detail.week, detail.practiceSlot ?? settings.practiceSlot, preparedAt, items, answerSheet)), packetId);
         }
-      }
-      db.exec('COMMIT');
-    } catch (error) {
-      if (db.isTransaction) db.exec('ROLLBACK');
-      throw error;
+        const final = buildSnapshot(packetId, detail.week, detail.practiceSlot ?? settings.practiceSlot, preparedAt, items, answerSheet);
+        db.exec('BEGIN');
+        try {
+            assertCurrent(manifest);
+            if (JSON.stringify(detail.items.map(i => i.id)) !== JSON.stringify(getLearningPractice(packetId, scope)?.items.map(i => i.id)))
+                throw new Error('练习包内容已变化');
+            db.prepare("UPDATE v2_print_snapshot SET status='ready',progress_done=?,progress_total=?,snapshot_json=?,error=NULL,ready_at=? WHERE packet_id=?").run(total, total, JSON.stringify(final), now(), packetId);
+            const cancelled = db.prepare("SELECT 1 FROM practice_task WHERE packet_id=? AND lifecycle='cancelled'").get(packetId);
+            if (!cancelled) {
+                db.prepare("UPDATE review_packet SET status='generated',generated_at=COALESCE(generated_at,?) WHERE id=?").run(now(), packetId);
+                for (const card of detail.items)
+                    db.prepare("UPDATE error_item SET status='packet_generated',updated_at=? WHERE id=? AND status='scheduled'").run(now(), card.id);
+            }
+            db.exec('COMMIT');
+        }
+        catch (error) {
+            if (db.isTransaction)
+                db.exec('ROLLBACK');
+            throw error;
+        }
+        audit('v2_print_ready', 'packet', packetId);
     }
-    audit('v2_print_ready', 'packet', packetId);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    getDb().prepare("UPDATE v2_print_snapshot SET status = 'failed', error = ? WHERE packet_id = ?").run(message, packetId);
-    audit('v2_print_failed', 'packet', packetId);
-  }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        db.prepare("UPDATE v2_print_snapshot SET status='failed',error=? WHERE packet_id=?").run(message, packetId);
+        audit('v2_print_failed', 'packet', packetId);
+    }
 }
 
 /** 没有在进行中就启动后台准备；已有的部分进度会被沿用。 */
@@ -356,18 +429,25 @@ export type PrintRequestResult =
   | { httpStatus: 404 };
 
 /** POST /v2/practice/:id/print：没有快照则创建并后台准备（202）；已有返回当前状态（200）。幂等。 */
-export function requestPrint(packetId: string, coach?: CoachProvider): PrintRequestResult {
-  if (!getPractice(packetId)) return { httpStatus: 404 };
+export function requestPrint(packetId: string, coach?: CoachProvider, scope:LearningScope='legacy'): PrintRequestResult {
+  if (!getLearningPractice(packetId,scope)) return { httpStatus: 404 };
   const db = getDb();
-  if(db.prepare("SELECT 1 FROM practice_task WHERE packet_id=? AND lifecycle='cancelled'").get(packetId)){
-    const prior=rowOf(packetId);
-    if(prior?.status==='ready')return {httpStatus:200,body:{status:'ready',snapshot:JSON.parse(prior.snapshot_json!)}};
-    return {httpStatus:200,body:{status:'failed',error:'这份练习已取消'}};
+  if (db.prepare("SELECT 1 FROM practice_task WHERE packet_id=? AND lifecycle='cancelled'").get(packetId)) {
+    const prior = rowOf(packetId);
+    if (prior?.status === 'ready') return { httpStatus: 200, body: { status: 'ready', snapshot: JSON.parse(prior.snapshot_json!) } };
+    return { httpStatus: 200, body: { status: 'failed', error: '这份练习已取消' } };
   }
   const row = rowOf(packetId);
   if (!row) {
     db.prepare("INSERT INTO v2_print_snapshot (packet_id, status, progress_done, progress_total, created_at) VALUES (?, 'preparing', 0, ?, ?)")
-      .run(packetId, getPractice(packetId)!.items.length, now());
+      .run(packetId, getLearningPractice(packetId,scope)!.items.length, now());
+    try {
+      const manifest=freezeInputs(packetId,scope);
+      db.prepare('INSERT INTO v2_print_basis(packet_id,scope,manifest_json) VALUES(?,?,?)').run(packetId,scope,JSON.stringify(manifest));
+    } catch(error) {
+      db.prepare("UPDATE v2_print_snapshot SET status='failed',error=? WHERE packet_id=?").run(error instanceof Error?error.message:String(error),packetId);
+      return {httpStatus:200,body:{status:'failed',error:error instanceof Error?error.message:String(error)}};
+    }
     ensurePreparing(packetId, coach);
     return { httpStatus: 202, body: { status: 'preparing' } };
   }
@@ -375,7 +455,17 @@ export function requestPrint(packetId: string, coach?: CoachProvider): PrintRequ
     return { httpStatus: 200, body: { status: 'ready', snapshot: JSON.parse(row.snapshot_json!) } };
   }
   if (row.status === 'failed') {
-    // 失败后允许重试：保留部分进度续做。
+    // Reuse only partials whose complete dependency set is still current. An explicit
+    // retry after a material change freezes a wholly new basis and drops all old partials.
+    try {
+      const previous=basisRow(packetId);let valid=false;
+      if(previous)try{assertCurrent(JSON.parse(previous.manifest_json));valid=true;}catch{valid=false;}
+      if(!valid){
+        const manifest=freezeInputs(packetId,scope);
+        db.prepare('INSERT INTO v2_print_basis(packet_id,scope,manifest_json) VALUES(?,?,?) ON CONFLICT(packet_id) DO UPDATE SET scope=excluded.scope,manifest_json=excluded.manifest_json').run(packetId,scope,JSON.stringify(manifest));
+        db.prepare('UPDATE v2_print_snapshot SET snapshot_json=NULL,progress_done=0 WHERE packet_id=?').run(packetId);
+      }
+    }catch(error){return {httpStatus:200,body:{status:'failed',error:error instanceof Error?error.message:String(error)}};}
     db.prepare("UPDATE v2_print_snapshot SET status = 'preparing', error = NULL WHERE packet_id = ?").run(packetId);
     ensurePreparing(packetId, coach);
     return { httpStatus: 202, body: { status: 'preparing' } };
@@ -390,8 +480,8 @@ export type PrintStatusResult =
   | { httpStatus: 404 };
 
 /** GET /v2/practice/:id/print：状态 + 进度；ready 时附快照。 */
-export function getPrintStatus(packetId: string): PrintStatusResult {
-  const detail = getPractice(packetId);
+export function getPrintStatus(packetId: string, scope:LearningScope='legacy'): PrintStatusResult {
+  const detail = getLearningPractice(packetId,scope);
   if (!detail) return { httpStatus: 404 };
   const row = rowOf(packetId);
   if (!row) {
@@ -409,8 +499,8 @@ export function getPrintStatus(packetId: string): PrintStatusResult {
 const MEDIA_NAME = /^[a-z0-9][a-z0-9.-]*\.jpg$/;
 
 /** GET /v2/practice/:id/print/media/:name：只返回快照登记过的图片；未登记 404。 */
-export function readPrintMedia(packetId: string, name: string): Buffer | null {
-  if (!getPractice(packetId)) return null;
+export function readPrintMedia(packetId: string, name: string, scope:LearningScope='legacy'): Buffer | null {
+  if (!getLearningPractice(packetId,scope)) return null;
   if (!MEDIA_NAME.test(name)) return null;
   const row = rowOf(packetId);
   if (!row?.snapshot_json) return null;

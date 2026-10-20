@@ -1,3 +1,4 @@
+import { legacyCard } from '../learning/sources.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import express, { Router } from 'express';
@@ -50,6 +51,15 @@ export function createV2Router(options: V2RouterOptions = {}): Router {
     if (!options.mobileDataDir) throw new Error('createV2Router 需要 mobileDataDir 才能服务该接口');
     return options.mobileDataDir;
   };
+
+  // Every legacy entrypoint gates the entire packet/item before service or media access.
+  r.use('/items/:id', (request,response,next)=>{
+    if(!isV2Item(String(request.params.id))){notFound(response,'题目不存在或不属于手机上传。');return;}next();
+  });
+  r.use('/practice/:id', (request,response,next)=>{
+    const id=String(request.params.id);if(id==='recommend'){next();return;}
+    if(!getPractice(id)){notFound(response,'练习不存在。');return;}next();
+  });
 
   r.get('/health', (_request, response) => {
     response.json({ protocolVersion: V2_PROTOCOL_VERSION });
@@ -238,13 +248,13 @@ export function createV2Router(options: V2RouterOptions = {}): Router {
   r.post('/items/:id/correct/accept', express.json({ limit: '16kb', strict: true }), (request, response) => {
     const result = acceptCorrection(String(request.params.id), request.body);
     if (!result.ok) { sendCorrectError(response, result); return; }
-    response.json({ revision: result.revision, card: result.card });
+    response.json({ revision: result.revision, card: legacyCard(result.card) });
   });
 
   r.post('/items/:id/correct/direct', express.json({ limit: '16kb', strict: true }), (request, response) => {
     const result = directCorrection(String(request.params.id), request.body);
     if (!result.ok) { sendCorrectError(response, result); return; }
-    response.json({ revision: result.revision, card: result.card });
+    response.json({ revision: result.revision, card: legacyCard(result.card) });
   });
 
   // 语音转写：录音只在内存里经过，不落盘、不记日志；返回文字由学生自己改完再提交（见 src/v2/transcribe.ts）。

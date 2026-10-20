@@ -17,9 +17,16 @@ class MobileStorageError extends Error {
 }
 class WorkerStopped extends Error {}
 type Work = { jobId: string; kind: 'inventory' | 'question'; questionId?: string };
+type ExternalWork = { kind: 'external'; key: string; run: (signal: AbortSignal) => Promise<void> };
+
+type QueueTask = Work | ExternalWork;
 
 function workKey(task: Work): string {
   return `${task.jobId}:${task.kind}:${task.questionId ?? ''}`;
+}
+
+function taskKey(task: QueueTask): string {
+  return task.kind === 'external' ? `external:${task.key}` : workKey(task);
 }
 
 function failure(error: unknown, fallbackStage: string): RecognitionFailure {
@@ -71,7 +78,8 @@ function allChecksPass(question: RecognitionQuestion, candidate?: InventoryCandi
 export class MobileRecognitionService {
   /** 单进程 RSS 准入（应用层，不是 cgroup）。构造时读环境变量，学生 worker 与主进程用不同份额。 */
   private readonly rssAdmissionBytes = rssAdmissionThresholdBytes();
-  private readonly queue: Array<{ jobId: string; kind: 'inventory' | 'question'; questionId?: string }> = [];
+  private readonly queue: Array<Work | ExternalWork> = [];
+  private readonly externalLifecycles = new Set<{ resume: () => Promise<void>; stop: () => Promise<void> }>();
   private readonly queued = new Set<string>();
   private running = false;
   private accepting = true;
@@ -84,7 +92,7 @@ export class MobileRecognitionService {
   /** 看门狗周期：扫描持久化为非终态、但既不在内存队列也不在执行中的僵尸工作单元。 */
   watchdogIntervalMs = 60_000;
   private readonly shutdown = new AbortController();
-  /** 本学生同时处理的照片数（SEL_STUDENT_AI_CONCURRENCY，缺省 3）。同一张照片仍只占一条通道。 */
+  /** 本学生同时进行的照片或材料任务数（SEL_STUDENT_AI_CONCURRENCY，缺省 3）。同一张照片仍只占一条通道。 */
   private readonly studentAiConcurrency: number;
   /** 正在跑的识别通道。与 studentAiConcurrency 比较，不再用单飞的 running 把整队串成一张照片。 */
   private lanes = 0;
@@ -105,6 +113,21 @@ export class MobileRecognitionService {
 
   /** 云端模式：接入入口容量控制（上传图像信号量 + 任务容量释放）。 */
   useAdmission(admission: AdmissionController): void { this.admission = admission; }
+
+  /** Durable subsystems share this worker and its shutdown/watchdog, without legacy job records. */
+  registerExternalLifecycle(lifecycle: { resume: () => Promise<void>; stop: () => Promise<void> }): void {
+    this.externalLifecycles.add(lifecycle);
+  }
+
+  enqueueExternalWork(key: string, run: (signal: AbortSignal) => Promise<void>): 'queued' | 'already_queued' | 'stopped' {
+    if (!this.accepting) return 'stopped';
+    const identity = `external:${key}`;
+    if (this.queued.has(identity) || this.inflight.has(identity)) return 'already_queued';
+    this.queued.add(identity); this.queue.push({ kind: 'external', key, run });
+    // Callers may still be committing their synchronous transaction.
+    queueMicrotask(() => this.kick());
+    return 'queued';
+  }
 
   async initialize(): Promise<void> {
     // Rebuild all ownership before returning the app to callers/listeners.
@@ -330,12 +353,18 @@ export class MobileRecognitionService {
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.retryTimers.clear(); this.retryScheduled.clear();
     this.shutdown.abort(new WorkerStopped('recognition worker stopped'));
+    // Abort material handlers while lanes are still joined. A lifecycle stop waits for
+    // those handlers, which themselves run on a lane.
+    const lifecycleStops = [...this.externalLifecycles].map(lifecycle => lifecycle.stop());
     while (this.lanePromises.size > 0 || this.scanning) {
       await Promise.allSettled([...this.lanePromises, ...(this.scanning ? [this.scanning] : [])]);
     }
+    const settled = await Promise.allSettled(lifecycleStops);
     // A generic boundary may settle via cancellation before its started storage
     // callback returns. No new callbacks can enter ownedStorage after stop.
     await Promise.allSettled([...this.ownedPersistence]);
+    const errors = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, 'External recognition shutdown failed.');
   }
   isStorageAvailable(): boolean { return this.storageAvailable; }
 
@@ -364,6 +393,7 @@ export class MobileRecognitionService {
     if (!this.accepting) return;
     // 队列有积压但没人 drain（异常路径下 running 卡 false 的防御）：补一脚驱动。
     if (this.queue.length > 0 && !this.running) this.kick();
+    for (const lifecycle of this.externalLifecycles) await lifecycle.resume();
     let resumed = 0;
     for (const job of await this.store.listStoredJobs()) {
       if (!this.accepting) return;
@@ -429,17 +459,24 @@ export class MobileRecognitionService {
     return false;
   }
 
-  private hasRunnable(): boolean {
-    return this.queue.some(task => !this.jobBusy(task.jobId));
+  /** 照片要等自己的清单或逐题结束；同一 external 键已在跑时不再占第二条通道。 */
+  private runnable(task: QueueTask): boolean {
+    if (task.kind === 'external') return !this.inflight.has(taskKey(task));
+    return !this.jobBusy(task.jobId);
   }
 
-  /** 取队列里第一张「这张照片当前没在跑」的任务，并在让出事件循环前占上 in-flight。 */
-  private takeRunnable(): Work | undefined {
-    const index = this.queue.findIndex(task => !this.jobBusy(task.jobId));
+  private hasRunnable(): boolean {
+    return this.queue.some(task => this.runnable(task));
+  }
+
+  /** 取队列里第一项当前可以开跑的任务，并在让出事件循环前占上 in-flight。 */
+  private takeRunnable(): QueueTask | undefined {
+    const index = this.queue.findIndex(task => this.runnable(task));
     if (index < 0) return undefined;
     const task = this.queue.splice(index, 1)[0]!;
-    this.queued.delete(workKey(task));
-    this.inflight.add(workKey(task));
+    const key = taskKey(task);
+    this.queued.delete(key);
+    this.inflight.add(key);
     return task;
   }
 
@@ -465,11 +502,12 @@ export class MobileRecognitionService {
     while (this.accepting) {
       const task = this.takeRunnable();
       if (!task) return;
-      const inflightKey = workKey(task);
+      const inflightKey = taskKey(task);
       try {
-        if (task.kind === 'inventory') await this.processInventory(task.jobId);
+        if (task.kind === 'external') await task.run(this.shutdown.signal);
+        else if (task.kind === 'inventory') await this.processInventory(task.jobId);
         else await this.processQuestionRetry(task.jobId, task.questionId!);
-      } catch (error) { if (!(error instanceof WorkerStopped)) this.failStorage(); }
+      } catch (error) { if (task.kind !== 'external' && !(error instanceof WorkerStopped)) this.failStorage(); }
       finally { this.inflight.delete(inflightKey); }
     }
   }
@@ -563,7 +601,7 @@ export class MobileRecognitionService {
     await this.ownedStorage(() => this.store.updateJob(jobId, job => { const failed = job.questions.filter(question => question.status === 'failed');
       // Reopened pending questions are temporarily marked failed/interrupted. Their
       // persisted backoff or queued owner still owns capacity until actual settlement.
-      if ([...this.retryScheduled].some(key => key.startsWith(`${jobId}:`)) || this.queue.some(task => task.jobId === jobId)) return;
+      if ([...this.retryScheduled].some(key => key.startsWith(`${jobId}:`)) || this.queue.some(task => task.kind !== 'external' && task.jobId === jobId)) return;
       if (job.questions.some(question => question.status === 'queued' || question.status === 'processing')) return;
       for (const question of job.questions) {
         if (question.status === 'needs_check' && !unresolvedOccurrence(job, question) && !occurrenceConflict(job, question)
@@ -642,7 +680,7 @@ export class MobileRecognitionService {
   }
   private failStorage(): void {
     this.storageAvailable = false; this.accepting = false;
-    void this.stop();
+    void this.stop().catch(error => console.error('[storage] Shutdown cleanup failed:', error));
     console.error('[storage] 存储故障：服务停止接收新任务与队列处理（检查磁盘/权限后重启恢复）。');
   }
   private assertRunning(): void {

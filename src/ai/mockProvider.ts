@@ -1,3 +1,4 @@
+import type { LearningContext } from '../learning/contracts.js';
 import fs from 'node:fs';
 import { AiError } from './errors.js';
 import type {
@@ -14,7 +15,7 @@ import type {
   MatchResult,
   SuggestInput,
 } from './provider.js';
-import { FOLLOWUP_FALLBACK_QUESTION, validateEvidence, type Coaching, type Diagnosis, type Evidence, type FollowupAsk, type FollowupSummarize, type CorrectionProposalResult } from './evidence.js';
+import { FOLLOWUP_FALLBACK_QUESTION, validateEvidence, validateLearningContext, type Coaching, type Diagnosis, type Evidence, type FollowupAsk, type FollowupSummarize, type CorrectionProposalResult } from './evidence.js';
 import { ATTEMPT_STATES, CAUSES, type Subject } from '../domain/types.js';
 
 export interface FixtureManifestItem {
@@ -167,15 +168,17 @@ export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionP
   }
 
   /** T4c 确定性追问：引用第一条学生作答/订正原文片段。 */
-  async followupAsk(evidence: Evidence): Promise<FollowupAsk> {
-    const target = evidence.observations.find(o => o.kind === 'student_work' || o.kind === 'correction');
+  async followupAsk(evidence: LearningContext): Promise<FollowupAsk> {
+    const context=validateLearningContext(evidence);
+    const target = context.observations.find(o => o.kind === 'student_work' || o.kind === 'correction');
     if (!target) return { question: FOLLOWUP_FALLBACK_QUESTION, referencedObservationIds: [] };
     const excerpt = target.text.slice(0, 20).replace(/[？?]/g, '');
     return { question: `你写的「${excerpt}」这一步，当时是怎么想的？`, referencedObservationIds: [target.id] };
   }
 
   /** T4c 确定性归纳：由回答内容哈希派生稳定建议；第 1 轮给第二轮追问。 */
-  async followupSummarize(_evidence: Evidence, turns: FollowupTurn[]): Promise<FollowupSummarize> {
+  async followupSummarize(_evidence: LearningContext, turns: FollowupTurn[]): Promise<FollowupSummarize> {
+    validateLearningContext(_evidence);
     const key = turns.map(t => t.answer).join('|');
     const base = derive(key, 'followup');
     return {
@@ -191,8 +194,8 @@ export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionP
    * 文字类字段附 find/replace 片段；学生原作只改最后一个字符（小幅转写纠错）；无法判断时只反问。
    */
   /** T5 确定性打印辅导：一级说考什么、二级给第一步；答案标注 AI 参考。 */
-  async coachForPrint(evidence: Evidence, _diagnosis: Diagnosis): Promise<Coaching> {
-    const e = validateEvidence(evidence);
+  async coachForPrint(evidence: LearningContext, _diagnosis: Diagnosis): Promise<Coaching> {
+    const e = validateLearningContext(evidence);
     return {
       hints: [`先想想这题考的是「${e.knowledgeTags[0] ?? '相关知识点'}」`, '把已知条件列出来，再决定第一步怎么算'],
       solution: '按定义与已知条件逐步推导。',
@@ -201,8 +204,8 @@ export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionP
     };
   }
 
-  async proposeCorrection(evidence: Evidence, instruction: string): Promise<CorrectionProposalResult> {
-    const e = validateEvidence(evidence);
+  async proposeCorrection(evidence: LearningContext, instruction: string): Promise<CorrectionProposalResult> {
+    const e = validateLearningContext(evidence);
     if (/学科/.test(instruction)) {
       const after = e.subject === '数学' ? '物理' : '数学';
       return { changes: [{ field: 'subject', before: e.subject, after }], rejected: [], clarify: null };

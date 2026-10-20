@@ -146,7 +146,7 @@ function NewPhotosNote(props: { photos: PhotoView[] }): ReactNode {
 /** 「今天」在等什么（AI 找题 / 准备练习纸）：等的时候局部轮询，清单下面写已经等了多久。 */
 export interface TodayWait { since: string | null; expect: string }
 
-export function TodayPage(props: { state: TodayState; practiceSlot: string; flash?: { ok?: string | null; err?: string | null }; showInstallHint: boolean; wait?: TodayWait | null; now?: Date }): ReactNode {
+export function TodayPage(props: { materials?: boolean; state: TodayState; practiceSlot: string; flash?: { ok?: string | null; err?: string | null }; showInstallHint: boolean; wait?: TodayWait | null; now?: Date }): ReactNode {
   const { plan, week } = props.state;
   const slot = plan.practice?.practiceSlot ?? props.practiceSlot;
   const bar = barFromPlan(plan.next);
@@ -200,6 +200,7 @@ export function TodayPage(props: { state: TodayState; practiceSlot: string; flas
         <p className="today-date">本周 · {weekRangeText(week.week)}</p>
         <h1>今天</h1>
       </div>
+      {props.materials ? <section className="card"><h2 className="card-title">学习材料</h2><p>题目、答题卡、作答或答案都可以拍，顺序不限，之后还能补。</p><a className="more" href="/s/capture">继续拍照</a><a className="more" href="/s/materials">查看我的材料</a></section> : null}
       <div data-live="today" data-steps="" data-stage={plan.stage} data-announce={bar?.primary?.title ?? (plan.stage === 'done' ? '这一份练习纸已准备好' : plan.stage === 'midweek' ? '现在是在纸上做练习的时候' : '本周安排已更新')}>
         {content}
         {finding ? <p className="small muted" data-testid="today-processing">照片已保存，正在处理。你可以先离开，回来会接着显示进度。<a href="/s/photos" data-key="today-progress">查看处理进度</a></p> : null}

@@ -6,9 +6,15 @@ import type { MobileVisionBoundary } from './vision.js';
 import { PairingError, type PairingManager } from './pairing.js';
 import { RateLimiter, clientIp } from './rateLimit.js';
 import { AdmissionController } from './admission.js';
+import type { MaterialStore } from '../materials/store.js';
+import { MaterialJobs } from '../materials/jobs.js';
+import { MaterialUploads } from '../materials/uploads.js';
 
 export interface CreateMobileAppOptions {
   dataDir: string;
+  /** Supplied only where the server-owned student database/profile already exists. */
+  materialStore?: MaterialStore;
+  configureMaterials?: (jobs: MaterialJobs, uploads: MaterialUploads) => void;
   vision: MobileVisionBoundary;
   /** 回环模式（默认）：共享令牌鉴权。 */
   pairingToken?: string;
@@ -20,7 +26,7 @@ export interface CreateMobileAppOptions {
   rateLimiter?: RateLimiter;
   /** 入口容量控制（Task 3）：云端缺省构造默认容量；回环模式不启用。 */
   admission?: AdmissionController;
-  /** 本学生同时处理的照片数。缺省读 SEL_STUDENT_AI_CONCURRENCY。 */
+  /** 本学生同时处理的照片和材料任务数。缺省读 SEL_STUDENT_AI_CONCURRENCY。 */
   studentAiConcurrency?: number;
   /** 单进程装配（v2.0 T2）：挂载 /v2 路由，与 /v1 共用鉴权与限流。云端模式把限流器交给 /v2（语音转写另有一档）。 */
   v2Router?: (deps: { limiter: RateLimiter | null }) => express.Router;
@@ -32,6 +38,7 @@ export interface CreateMobileAppOptions {
 
 export interface WebClientDeps {
   service: MobileRecognitionService;
+  materials?: { store: MaterialStore; jobs: MaterialJobs; uploads: MaterialUploads };
   pairing: PairingManager;
   limiter: RateLimiter;
   admission: AdmissionController | null;
@@ -118,10 +125,19 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
   const limiter = options.rateLimiter ?? new RateLimiter();
   const admission = options.admission ?? (mode === 'cloud' ? new AdmissionController({ dataDir: options.dataDir }) : null);
   // Task 3：service 终态释放容量与图像信号量依赖注入（云端必须接通，否则容量永不归还）。
-  if (mode === 'cloud' && admission) service.useAdmission(admission);
+  if (admission) service.useAdmission(admission);
+  const materials = options.materialStore ? {
+    store: options.materialStore, jobs: new MaterialJobs(options.materialStore, service, admission),
+  } : undefined;
+  const materialSubsystem = materials ? { ...materials, uploads: new MaterialUploads(materials.store, materials.jobs, admission) } : undefined;
+  if (materialSubsystem) {
+    await materialSubsystem.uploads.initialize();
+    options.configureMaterials?.(materialSubsystem.jobs, materialSubsystem.uploads);
+    await materialSubsystem.jobs.resume();
+  }
   // 自愈看门狗：启动即做一次恢复扫描（重启/队列卡死留下的非终态任务自动回到队列）。
   await service.initialize();
-  const app = express(); app.disable('x-powered-by'); app.locals.mobileRecognitionService = service;
+  const app = express(); app.disable('x-powered-by'); app.locals.mobileRecognitionService = service; app.locals.materials = materialSubsystem;
   app.use((_request, response, next) => { response.setHeader('cache-control', 'private, no-store'); response.setHeader('pragma', 'no-cache'); next(); });
 
   const proxyTrusted = mode === 'cloud' && options.cloudProxy === true;
@@ -279,7 +295,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
   // 只挂学生网页版 /s/（设备令牌 cookie 鉴权，没有家长 / 管理页面）。
   if (options.v2Router) app.use('/v2', options.v2Router({ limiter: mode === 'cloud' ? limiter : null }));
   if (options.webClient && mode === 'cloud') {
-    app.use('/s', options.webClient({ service, pairing: options.pairing!, limiter, admission, ipOf }));
+    app.use('/s', options.webClient({ service, materials: materialSubsystem, pairing: options.pairing!, limiter, admission, ipOf }));
   }
   if (options.adminWeb && mode === 'cloud') app.use('/admin', options.adminWeb({ ipOf }));
   app.use((_request, response) => response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }));

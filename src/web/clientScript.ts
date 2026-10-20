@@ -1,4 +1,5 @@
 import { PHOTO_UPLOAD_SCRIPT } from './photoUpload.js';
+import { UPLOAD_QUEUE_SCRIPT } from './uploadQueue.js';
 import { UI_SHEET_SCRIPT } from './sheet.js';
 
 /**
@@ -270,6 +271,7 @@ window.addEventListener('pagehide',function(){active=false;pause()});
 window.addEventListener('pageshow',function(){if(!active){active=true;if(body.getAttribute('data-poll'))later(0)}});
 later(every*1000)}
 
+${UPLOAD_QUEUE_SCRIPT}
 document.addEventListener('DOMContentLoaded',function(){enhance(document.body);startElapsed();startPolling()});
 })();
 `;
