@@ -3,7 +3,7 @@
  * 内容（隐私文档 docs/privacy/PRIVACY_AND_MINOR_DATA.md 同步列出）：
  * - sel_device：配对兑换得到的设备令牌（与 App 的令牌同一种，30 天有效，可由管理员撤销）。
  * - sel_consent：看过并同意「上传前看一下」的版本号。
- * - sel_photos：本周照片的两个本机标记（这页没有做错的题 / 移除这张），只存识别任务 ID。
+ * - sel_photos：最近操作的照片的两个本机标记（最多 80 条）（这页没有做错的题 / 移除这张），只存识别任务 ID。
  * - sel_skip：本次打开里点过的「跳过」（会话 cookie，关掉网页即失效，对应 App 的「只记在内存里」）。
  * - sel_a2hs：看过「放到主屏幕」提示。
  * - sel_items_subject：本次浏览错题页选择的学科（会话 cookie）。
@@ -76,14 +76,20 @@ export function readPhotoMarks(request: Request): PhotoMarks {
   return marks;
 }
 
-/** 只保留本周照片的标记（cookie 不会越积越大）。 */
-export function writePhotoMarks(request: Request, response: Response, marks: PhotoMarks, keep: Iterable<string>): void {
+/** 只保留仍存在的照片标记，最近操作优先；最多 80 条，避免 cookie 越积越大。 */
+export function writePhotoMarks(request: Request, response: Response, marks: PhotoMarks, keep: Iterable<string>, latest?: { kind: keyof PhotoMarks; id: string }): void {
   const allowed = new Set(keep);
-  const entries = [
+  const valid = new Set([
     ...[...marks.pickDone].filter(id => allowed.has(id)).map(id => `p-${id}`),
     ...[...marks.dismissed].filter(id => allowed.has(id)).map(id => `d-${id}`),
-  ].slice(0, 80);
-  setCookie(request, response, COOKIE.photos, entries.join('.'), YEAR_SECONDS);
+  ]);
+  const recent = latest ? `${latest.kind === 'pickDone' ? 'p' : 'd'}-${latest.id}` : null;
+  const ordered = [
+    ...(recent ? [recent] : []),
+    ...(readCookies(request)[COOKIE.photos] ?? '').split('.'),
+    ...valid,
+  ].filter(entry => valid.has(entry));
+  setCookie(request, response, COOKIE.photos, [...new Set(ordered)].slice(0, 80).join('.'), YEAR_SECONDS);
 }
 
 // ---------- 本次打开里的「跳过」 ----------

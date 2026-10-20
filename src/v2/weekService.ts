@@ -83,6 +83,23 @@ function unselectedCountOf(mobileDataDir: string, jobId: string): number {
 
 const BACKLOG_STATUSES: readonly ItemStatus[] = ['ready_for_reflection', 'eligible_for_review', 'needs_recheck'];
 
+/** 已登记照片；学习计划仍默认只读本周，上传记录页可以读取完整历史。 */
+export function getRegisteredPhotos(mobileDataDir: string, includeHistory = false): V2WeekPhoto[] {
+  const db = getDb();
+  const week = isoWeekKey(new Date());
+  return (db.prepare('SELECT job_id, registered_at, bridged_revision, bridge_error FROM v2_photo ORDER BY registered_at, job_id').all() as PhotoRow[])
+    .filter(photo => includeHistory || isoWeekKey(new Date(photo.registered_at)) === week)
+    .map(photo => ({
+      jobId: photo.job_id,
+      registeredAt: photo.registered_at,
+      recognition: recognitionOf(mobileDataDir, photo.job_id),
+      bridged: photo.bridged_revision !== null && photo.bridge_error === null,
+      bridgeError: photo.bridge_error,
+      itemCount: (db.prepare('SELECT COUNT(*) AS n FROM mobile_item_link WHERE job_id = ?').get(photo.job_id) as { n: number }).n,
+      unselectedCount: unselectedCountOf(mobileDataDir, photo.job_id),
+    }));
+}
+
 /** 本周错题卡片。includeHistory 用于完整错题本，包含历史已掌握/练习中的题，排除已归档题。 */
 export function getLegacyWeek(mobileDataDir: string, includeHistory = false): V2WeekResponse {
   try {
@@ -93,17 +110,7 @@ export function getLegacyWeek(mobileDataDir: string, includeHistory = false): V2
   const db = getDb();
   const week = isoWeekKey(new Date());
 
-  const photos = (db.prepare('SELECT job_id, registered_at, bridged_revision, bridge_error FROM v2_photo ORDER BY registered_at, job_id').all() as PhotoRow[])
-    .filter(photo => isoWeekKey(new Date(photo.registered_at)) === week)
-    .map(photo => ({
-      jobId: photo.job_id,
-      registeredAt: photo.registered_at,
-      recognition: recognitionOf(mobileDataDir, photo.job_id),
-      bridged: photo.bridged_revision !== null && photo.bridge_error === null,
-      bridgeError: photo.bridge_error,
-      itemCount: (db.prepare('SELECT COUNT(*) AS n FROM mobile_item_link WHERE job_id = ?').get(photo.job_id) as { n: number }).n,
-      unselectedCount: unselectedCountOf(mobileDataDir, photo.job_id),
-    }));
+  const photos = getRegisteredPhotos(mobileDataDir);
 
   type JoinedRow = {
     id: string; short_id: string | null; subject: string | null; knowledge_tags: string;

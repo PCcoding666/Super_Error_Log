@@ -89,7 +89,8 @@ if(photoCount&&successes){photoCount.textContent='已拍 '+(initialCount+success
 }
 function appendUploadRow(entry){var row=document.createElement('li');row.className='upload-item';row.setAttribute('data-upload-item','');
 if(form.hasAttribute('data-work-upload')){var preview=document.createElement('img');preview.className='crop';preview.alt='作答照片预览';var previewUrl=URL.createObjectURL(entry.file);preview.src=previewUrl;preview.onload=preview.onerror=function(){URL.revokeObjectURL(previewUrl)};row.appendChild(preview)}
-var name=document.createElement('p');name.className='upload-name small';name.textContent='第 '+(entries.length+1)+' 张 · '+entry.name;
+if(form.hasAttribute('data-capture-upload')){var thumb=document.createElement('img');thumb.className='upload-thumb';thumb.alt='本次上传照片';thumb.width=48;thumb.height=60;thumb.loading='lazy';var thumbUrl=URL.createObjectURL(entry.file);thumb.src=thumbUrl;thumb.onload=thumb.onerror=function(){URL.revokeObjectURL(thumbUrl)};row.appendChild(thumb)}
+var name=document.createElement('p');name.className='upload-name small';name.textContent=form.hasAttribute('data-capture-upload')?entry.name:'第 '+(entries.length+1)+' 张 · '+entry.name;
 entry.status=document.createElement('p');entry.progressBar=document.createElement('div');entry.progressBar.className='progress';
 entry.progressBar.setAttribute('role','progressbar');entry.progressBar.setAttribute('aria-label','第 '+(entries.length+1)+' 张上传进度');entry.progressBar.setAttribute('aria-valuemin','0');entry.progressBar.setAttribute('aria-valuemax','100');
 entry.progressBar.appendChild(document.createElement('i'));row.appendChild(name);row.appendChild(entry.status);row.appendChild(entry.progressBar);if(uploadList)uploadList.appendChild(row)}
