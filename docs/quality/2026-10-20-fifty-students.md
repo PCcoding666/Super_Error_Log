@@ -6,7 +6,8 @@
 
 - 注册上限沿用自助注册那一处：`SEL_MAX_STUDENTS` 缺省 100，在注册表打开时读取。这里不再另写一套上限。
 - 父进程启动时不再为每个已注册学生拉起 worker。第一次请求才 fork。空闲 `SEL_WORKER_IDLE_MS`（缺省 12 分钟）后退出。正在转发的请求、排队或在跑的识别、等待重试、以及正在准备的打印，都不会被清掉。磁盘上没做完的任务下次启动继续。
-- 同时存活的 worker 缺省最多 8 个（`SEL_MAX_LIVE_WORKERS`，0 表示不限制）。超出时先请最久没用、且当前没有请求的 worker 退出。都在忙则这次返回 503，一分钟后再试，不杀正在干活的进程。
+- 同时存活的 worker 缺省最多 8 个（`SEL_MAX_LIVE_WORKERS`，0 表示不限制）。超出时先请最久没用、且当前没有请求的 worker 退出。都在忙则这次返回 503，一分钟后再试，不杀正在干活的进程。已经决定退出的 worker 不再接新请求。
+- 拉起 worker 失败时，网关写 503 并说明原因。请求不会停在没有响应的状态。
 - 视觉模型调用和 sharp 等重图片处理各有一把父进程信号量（缺省各 2）。学生自己的进程里仍然串行处理图片。纯文字追问不占视觉名额。
 - 移动端单次模型超时缺省从 30 分钟改为 90 秒（`SEL_MOBILE_AI_TIMEOUT_MS`）。同题同阶段仍是最多 3 次调用。
 - 单进程 RSS 准入不再固定 768MiB。按服务预算估算，可用 `SEL_RSS_ADMISSION_MIB` 覆盖。这是暂停接收新任务的应用层门槛，不是 cgroup 上限。
@@ -14,13 +15,15 @@
 
 ## 验证记录
 
-在 Node 24 上、`SEL_AI_MODE=mock`、合成数据：
+在并入自助注册（#41）之后的树上，Node 24、`SEL_AI_MODE=mock`、合成数据：
 
 - `npm run typecheck` 通过。
 - `npm run build` 通过。
 - `python3 -m unittest discover -s tests/deploy -p 'test_*.py'`：14 项通过。没有改发布脚本。
-- Vitest：先跑全量时，学生网关审查夹具的假 worker 还没有 `retain`/`release`，7 项失败；补上这两个空操作后，该文件 24 项通过。同一轮全量里其余 982 项通过、5 项按条件跳过。失败只出在这个夹具上。
-- Playwright：61 项通过，6 项按条件跳过（macOS HEIC、未开启的质量证据采集）。
+- Vitest：86 个文件，1017 项通过，5 项按条件跳过。
+- Playwright：62 项通过，6 项按条件跳过（macOS HEIC、未开启的质量证据采集）。
+
+早先 CI `39461163237`（`e158d036`）里，`tests/integration/studentHostReview.test.ts` 有 7 项停在 60 秒。网关在 `try` 之外调用 `pool.retain()`，审查夹具的假进程池没有这个方法，拒绝被丢掉，响应一直不写。现已在失败时写 503，审查夹具也实现了 `retain` / `release`。这不是把超时改长。
 
 ## 发布状态
 
