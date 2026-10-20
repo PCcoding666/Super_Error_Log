@@ -1,3 +1,4 @@
+import { resetMaterials } from '../helpers/resetMaterials.js';
 /**
  * T3 桥：v2 上传的识别任务 → 错题记录（RED → GREEN）。
  * 覆盖简报 9 条 RED：未登记不桥、建题过滤与徽标、裁图可用、幂等、processing 不桥与增量、
@@ -32,6 +33,7 @@ beforeAll(() => {
 // 每个用例清空桥接相关表（共享测试库），保留学生档案。
 beforeEach(() => {
   const database = getDb();
+  resetMaterials(database);
   for (const table of ['mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo']) {
     database.prepare(`DELETE FROM ${table}`).run();
   }
@@ -119,6 +121,7 @@ describe('T3 桥：v2 识别任务 → 错题记录', () => {
 
     const items = db().prepare('SELECT * FROM error_item ORDER BY item_index').all() as Array<Record<string, unknown>>;
     expect(items).toHaveLength(2);
+    expect(db().prepare('SELECT item_id FROM material_item_link ORDER BY item_id').all()).toEqual(items.map(i=>({item_id:i.id})).sort((a,b)=>String(a.item_id).localeCompare(String(b.item_id))));
     for (const item of items) {
       expect(item.status).toBe('ready_for_reflection');
       expect(item.short_id).toMatch(/^M-\d+$/);

@@ -1,3 +1,4 @@
+import { syncMaterialLearning } from './learning.js';
 import { newId } from '../db/connection.js';
 import type { CaptureHints, DocumentClues, Extraction, Fragment, QuestionBundle } from './contracts.js';
 import type { MaterialStore } from './store.js';
@@ -172,6 +173,7 @@ export function reconcileAsset(store:MaterialStore,assetId:string):{linked:numbe
       if (unresolved.length!==question.unresolved.length) setUnresolved(store,id,unresolved);
       if (unresolved.length) pending.add(id); else pending.delete(id);
     }
+    syncMaterialLearning(store);
     return {linked,pending:[...pending]};
   });
 }

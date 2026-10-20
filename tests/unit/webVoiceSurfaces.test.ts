@@ -10,15 +10,14 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { FixPage } from '../../src/web/views/items.js';
 import { WhyAskPage } from '../../src/web/views/practice.js';
-import type { V2WeekItem } from '../../src/v2/weekService.js';
-import type { PracticeCard } from '../../src/v2/practiceService.js';
+import type { LearningCard as V2WeekItem, LearningPracticeCard as PracticeCard } from '../../src/learning/contracts.js';
 import type { ReflectionTurnView } from '../../src/v2/reflectionService.js';
 
 const VOICE_NOTICE = '录音会发给通义千问转文字，本应用不保存录音；最多 60 秒，也可以直接打字';
 
 const item: V2WeekItem = {
   id: 'item-1', shortId: 'A1', subject: '数学', knowledgeTags: ['方程'],
-  questionExcerpt: '解方程 …', badge: 'ok', status: 'needs_review', cropUrl: '/s/img/item/item-1', jobId: 'job-1',
+  questionExcerpt: '解方程 …', badge: 'ok', status: 'needs_review', cropUrl: '/s/img/item/item-1', source: {kind:'legacy',jobId:'job-1'},
 };
 const card: PracticeCard = { ...item, reason: '最近错过', tier: 1, reflected: false };
 const openTurn: ReflectionTurnView = { turn: 1, question: '当时怎么想的？', source: 'ai', answer: null };

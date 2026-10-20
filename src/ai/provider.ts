@@ -1,3 +1,4 @@
+import type { LearningContext } from '../learning/contracts.js';
 import type { AttemptState, Cause, ReviewValue, Subject } from '../domain/types.js';
 import type { Coaching, Diagnosis, Evidence, FollowupAsk, FollowupSummarize, QuestionRegion, CorrectionProposalResult } from './evidence.js';
 import type { StageRun } from './chatClient.js';
@@ -82,8 +83,8 @@ export interface FollowupTurn { question: string; answer: string }
  * AI 只提问和归纳：不讲题、不给答案、不替学生写复盘。
  */
 export interface FollowupProvider {
-  followupAsk(evidence: Evidence): Promise<FollowupAsk>;
-  followupSummarize(evidence: Evidence, turns: FollowupTurn[]): Promise<FollowupSummarize>;
+  followupAsk(evidence: LearningContext): Promise<FollowupAsk>;
+  followupSummarize(evidence: LearningContext, turns: FollowupTurn[]): Promise<FollowupSummarize>;
 }
 
 // ---------- v2.0 T4e：识别结果修订 ----------
@@ -93,7 +94,7 @@ export interface FollowupProvider {
  * AI 只提出"改前/改后"建议——不直接改证据，接受与否由学生决定。
  */
 export interface CorrectionProvider {
-  proposeCorrection(evidence: Evidence, instruction: string): Promise<CorrectionProposalResult>;
+  proposeCorrection(evidence: LearningContext, instruction: string): Promise<CorrectionProposalResult>;
 }
 
 // ---------- v2.0 T5：打印快照辅导 ----------
@@ -104,5 +105,5 @@ export interface CorrectionProvider {
  * 每份练习包每题至多调用 1 次，不重试；失败由调用方留空处理。
  */
 export interface CoachProvider {
-  coachForPrint(evidence: Evidence, diagnosis: Diagnosis): Promise<Coaching>;
+  coachForPrint(evidence: LearningContext, diagnosis: Diagnosis): Promise<Coaching>;
 }

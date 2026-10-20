@@ -1,3 +1,4 @@
+import { setQuestionIncluded, inclusionIntent } from '../materials/learning.js';
 import { requestGrades } from '../materials/grading.js';
 import { saveManualAnswer, importAnswerText, requestAnswers, selectAnswerBasis, selectedAnswerIds } from '../materials/answers.js';
 import express, { Router, type Request, type Response } from 'express';
@@ -116,6 +117,13 @@ export function createMaterialsRouter(options: {
             next(e);
         }
     });
+    r.post('/materials/questions/:id/inclusion', (req,res,next)=>{
+      try {
+        const raw=req.body.included;if(![true,false,'true','false'].includes(raw))bad('请选择是否收录。');
+        const saved=setQuestionIncluded(store,String(req.params.id),raw===true||raw==='true',revision(req.body.expectedRevision));
+        result(req,res,saved);
+      }catch(error){next(error);}
+    });
     r.get('/materials/session', (_req, res) => res.json({ draftNamespace, assetCount: assetCount() }));
     r.get('/capture', (req, res) => {
         const context: CaptureHints = {};
@@ -208,9 +216,14 @@ export function createMaterialsRouter(options: {
         const q = store.getQuestion(text(req.params.id));
         if (!q)
             throw new MobileRequestError(404, 'not_found', '题目不存在。');
-        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, question: q, gradeJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='grade' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], answerJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='answer' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], selectedAnswerIds: selectedAnswerIds(store,q.id), questions: store.listQuestions(), revision: linkRevision(store), materials: (store.db.prepare('SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)').all(store.studentId, q.id) as {
+        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, question: q, included: inclusionIntent(store,q.id), legacy: !!(q.itemId&&store.db.prepare('SELECT 1 FROM mobile_item_link WHERE item_id=?').get(q.itemId)), gradeJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='grade' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], answerJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='answer' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], selectedAnswerIds: selectedAnswerIds(store,q.id), questions: store.listQuestions(), revision: linkRevision(store), materials: (store.db.prepare('SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)').all(store.studentId, q.id) as {
                 content_json: string;
             }[]).map(row => JSON.parse(row.content_json) as Fragment) }));
+    });
+    r.get('/materials/fragments/:id/crop', (req,res)=>{
+        const row=store.db.prepare('SELECT asset_id FROM material_fragment WHERE owner_id=? AND id=? ORDER BY revision DESC LIMIT 1').get(store.studentId,String(req.params.id)) as {asset_id:string}|undefined;
+        if(!row)throw new MobileRequestError(404,'not_found','材料不存在。');
+        res.redirect(303,`/s/materials/assets/${row.asset_id}/image`);
     });
     r.get('/materials/assets/:id/image', async (req, res) => { const source = uploads.source(text(req.params.id)); const metadata = await sharp(source.originalPath).metadata(); res.type(metadata.format === 'png' ? 'image/png' : metadata.format === 'webp' ? 'image/webp' : metadata.format === 'heif' ? 'image/heic' : 'image/jpeg').sendFile(source.originalPath); });
     r.post('/materials/assets/:id/hints', (req, res) => {

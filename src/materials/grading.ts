@@ -1,3 +1,4 @@
+import { syncMaterialLearning } from './learning.js';
 import { createHash } from 'node:crypto';
 import { newId } from '../db/connection.js';
 import { MobileRequestError } from '../mobile/service.js';
@@ -81,6 +82,7 @@ export async function gradeQuestion(store:MaterialStore,provider:MaterialGrading
   const stale=!current();const grade:Grade={id:newId('mgr'),attemptId:input.attemptId,answerIds:input.answers.map(a=>a.id),basisKey:basis.basisKey,...output,stale};
   if(row()!.result_json)return;
   store.db.prepare('INSERT INTO material_grade(id,owner_id,attempt_id,basis_key,dependencies_json,content_json,stale) VALUES (?,?,?,?,?,?,?)').run(grade.id,store.studentId,grade.attemptId,grade.basisKey,JSON.stringify(basis.dependencies),JSON.stringify(grade),Number(stale));
+  syncMaterialLearning(store);
   store.db.prepare("UPDATE material_job SET result_json=?,state=CASE WHEN ? THEN 'stale' ELSE state END WHERE owner_id=? AND id=?").run(JSON.stringify({gradeId:grade.id}),Number(stale),store.studentId,jobId);
  });
 }

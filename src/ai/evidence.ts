@@ -1,3 +1,4 @@
+import type { LearningContext } from '../learning/contracts.js';
 import { AiError } from './errors.js';
 import { ATTEMPT_STATES, CAUSES, SUBJECTS, type AttemptState, type Cause, type Subject } from '../domain/types.js';
 import { validateBox, type Box } from '../media/images.js';
@@ -67,6 +68,18 @@ export function validateEvidence(data: unknown): Evidence {
   };
 }
 
+/** Text context validation is deliberately independent of image regions/verification. */
+export function validateLearningContext(input:unknown):LearningContext {
+ const e=obj(input,'learningContext');if(!SUBJECTS.includes(e.subject as Subject))bad('subject');
+ const observations=list(e.observations,'observations').map(raw=>{
+  const o=obj(raw,'observation');if(!OBSERVATION_KINDS.includes(o.kind as ObservationKind))bad('observation.kind');
+  return {id:str(o.id,'observation.id'),kind:o.kind as ObservationKind,text:str(o.text,'observation.text'),regionId:o.regionId===null?null:str(o.regionId,'regionId'),confidence:confidence(o.confidence)};
+ });unique(observations.map(o=>o.id));
+ return {questionNumber:str(e.questionNumber,'questionNumber'),questionText:str(e.questionText,'questionText'),subject:e.subject as Subject,
+ chapter:str(e.chapter,'chapter',true),knowledgeTags:strings(e.knowledgeTags,'knowledgeTags'),questionType:str(e.questionType,'questionType',true),
+ requiresDiagram:flag(e.requiresDiagram,'requiresDiagram'),observations,uncertainties:strings(e.uncertainties,'uncertainties')};
+}
+
 export function assertPrintable(e: Evidence, verified: boolean): void {
   if (!verified) throw new Error('真实题必须先校对确认');
   if (!e.questionText.trim() || e.uncertainties.length > 0) throw new Error('请先解决题目识别的不确定项');
@@ -110,7 +123,7 @@ function singleQuestion(text: string, field: string): void {
   if ((text.match(/[？?]/g) ?? []).length !== 1) bad(field);
 }
 
-export function validateFollowupAsk(data: unknown, evidence: Evidence): FollowupAsk {
+export function validateFollowupAsk(data: unknown, evidence: LearningContext): FollowupAsk {
   const d = obj(data, 'followupAsk');
   const question = str(d.question, 'question');
   if (question.length > FOLLOWUP_MAX_CHARS) bad('question 超长');
@@ -200,7 +213,7 @@ const CORRECTION_FIELD_LABEL: Record<CorrectionField, string> = {
  * subject 枚举外、knowledgeTags 形状非法、同字段重复）抛 AiError；软性问题（before 与当前值不符、
  * 规则 3 改动量超限）剔除该条并给出原因。只对转写保真与分类，不碰坐标/区域/题号。
  */
-export function validateCorrectionChanges(data: unknown, evidence: Evidence): { changes: CorrectionChange[]; rejected: RejectedChange[] } {
+export function validateCorrectionChanges(data: unknown, evidence: LearningContext): { changes: CorrectionChange[]; rejected: RejectedChange[] } {
   const entries = list(data, 'changes', 20);
   const changes: CorrectionChange[] = [];
   const rejected: RejectedChange[] = [];
@@ -265,7 +278,7 @@ export function validateCorrectionChanges(data: unknown, evidence: Evidence): { 
  * 服务器据此生成完整 before/after；subject/knowledgeTags 仍用完整 before/after。
  * changes 为空（原始输出层面）时必须有 clarify 反问。
  */
-export function validateCorrectionProposal(data: unknown, evidence: Evidence): CorrectionProposalResult {
+export function validateCorrectionProposal(data: unknown, evidence: LearningContext): CorrectionProposalResult {
   const d = obj(data, 'correctionProposal');
   // T5R2-F4：clarify 过长不判失败，截断到 80 字。
   const rawClarify = d.clarify === null || d.clarify === undefined ? null : str(d.clarify, 'clarify');

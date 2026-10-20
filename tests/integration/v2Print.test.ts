@@ -1,3 +1,5 @@
+import { moduleImports } from '../helpers/moduleImports.js';
+import { resetMaterials } from '../helpers/resetMaterials.js';
 /**
  * T5：打印快照（POST/GET /v2/practice/:id/print、GET /v2/practice/:id/print/media/:name）。
  * 真实 HTTP（回环装配，共享令牌鉴权）+ 合成识别任务 + sharp 合成图 + 注入的计数 coach。
@@ -40,6 +42,7 @@ beforeAll(() => {
 // 每个用例清空业务表（共享测试库），保留学生档案。v2_print_snapshot 依赖 review_packet，先删。
 beforeEach(() => {
   const database = getDb();
+  resetMaterials(database);
   for (const table of ['v2_print_snapshot', 'correction', 'correction_proposal', 'v2_reflection_turn', 'review_attempt', 'review_packet_item', 'review_packet', 'mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo', 'v2_setting']) {
     database.prepare(`DELETE FROM ${table}`).run();
   }
@@ -592,12 +595,11 @@ describe('T5 打印快照', () => {
       if (seen.has(resolved) || !fs.existsSync(resolved)) return;
       seen.add(resolved);
       const source = fs.readFileSync(resolved, 'utf8');
-      for (const match of source.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
-        const spec = match[1]!;
-        if (spec.startsWith('node:')) continue;
-        if (spec.startsWith('.')) { visit(path.join(path.dirname(resolved), spec)); continue; }
-        const parts = spec.split('/');
-        bare.add(spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!);
+      const imports=moduleImports(source,resolved);
+      for(const spec of imports){
+        if(spec.startsWith('node:'))continue;
+        if(spec.startsWith('.')){visit(path.join(path.dirname(resolved),spec));continue;}
+        const parts=spec.split('/');bare.add(spec.startsWith('@')?parts.slice(0,2).join('/'):parts[0]!);
       }
     };
     visit(entry);

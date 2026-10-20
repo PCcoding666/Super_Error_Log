@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { V2WeekItem } from '../../v2/weekService.js';
+import type { LearningCard as V2WeekItem } from '../../learning/contracts.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
 import { Page, Problem, quoted, type BarModel } from './layout.js';
 
@@ -30,7 +30,7 @@ export function ItemCard(props: { item: V2WeekItem; href?: string; extra?: React
     : <div className="row" data-testid="item-card">{body}</div>;
 }
 
-export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel; removed?: string | null; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
+export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; materials?: boolean; finding: boolean; bar: BarModel; removed?: string | null; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
   const low = props.items.filter(item => item.badge === 'low').length;
   return (
     <Page title="这周的错题" bar={props.bar} flash={props.flash}>
@@ -46,7 +46,7 @@ export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; a
           <p className="lead muted">{props.items.length} 道{low > 0 ? ` · 其中 ${low} 道 AI 可能认错了字` : ''}</p>
           <section className="card"><ul className="list">{props.items.map(item => <li key={item.id}><ItemCard item={item} href={`/s/items/${item.id}`} /></li>)}</ul></section>
         </>
-      ) : props.anyPhoto && props.finding ? (
+      ) : props.materials ? (<section className="card"><p>材料会一直保留。缺少题干可以以后补齐，也可以选择要收录的题。</p><a className="btn" href="/s/materials">查看材料</a></section>) : props.anyPhoto && props.finding ? (
         <section className="card"><p>AI 还在找题，找好了会出现在这里</p></section>
       ) : props.anyPhoto ? (
         <section className="card"><p>{quoted('这几张卷子里没找到做错的题。没批改的页可以去「勾出做错的题」自己勾。')}</p><a className="btn" href="/s/photos" data-key="empty-pick">去勾</a></section>
@@ -81,7 +81,8 @@ export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView
       <h1>{item.shortId ?? '题目'}</h1>
       {props.error ? <Problem title="没成功" detail={props.error} /> : null}
       <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full`} alt="整题照片" /></a>
-      <p className="hint">整题照片 · 点开可以两指放大</p>
+      <p className="hint">{item.source.kind==='material'?'题干原图 · 其他页、图形和作答在材料中分别保留':'整题照片 · 点开可以两指放大'}</p>
+      {item.source.kind==='material'?<a className="more" href={`/s/materials/questions/${item.source.questionId}`}>查看这道题的全部材料与批改来源</a>:null}
       {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">{quoted('字可能认错了：对照上面的照片看一眼，不对就点「改一下」。')}</p> : null}
       <section className="card">
         <h2 className="card-title">AI 认出的题目</h2>

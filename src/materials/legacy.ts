@@ -18,7 +18,8 @@ export function backfillLegacyMaterials(db: DatabaseSync): { mapped: number } {
     m.job_id,m.question_id,m.question_revision FROM error_item i
     JOIN source_asset a ON a.id=i.asset_id JOIN source_batch b ON b.id=a.batch_id AND b.student_id=i.student_id
     LEFT JOIN evidence_record e ON e.item_id=i.id LEFT JOIN mobile_item_link m ON m.item_id=i.id
-    WHERE NOT EXISTS (SELECT 1 FROM material_legacy_map l WHERE l.owner_id=i.student_id AND l.source_kind='error_item' AND l.source_key=i.id)
+    WHERE NOT EXISTS (SELECT 1 FROM material_item_link existing WHERE existing.item_id=i.id)
+    AND NOT EXISTS (SELECT 1 FROM material_legacy_map l WHERE l.owner_id=i.student_id AND l.source_kind='error_item' AND l.source_key=i.id)
     ORDER BY i.created_at,i.id`).all() as LegacyRow[];
   let mapped=0;
   for (const row of rows) {

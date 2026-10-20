@@ -16,6 +16,7 @@ export type NextStepAction =
   | { kind: 'scan' }
   | { kind: 'rescan' }
   | { kind: 'capture' }
+  | { kind: 'materials' }
   | { kind: 'skipShoot' }
   | { kind: 'uploadPending' }
   | { kind: 'openPick'; taskID: string }
@@ -141,6 +142,8 @@ export interface Input {
   weekPhotoJobIDs: string[];
   /** 本周错题数（周视图 items）。 */
   weekItemCount: number;
+  /** null retains legacy photo selection; material mode counts persisted originals. */
+  materialSaved: number | null;
   /** 还没走完识别流程的照片。 */
   localPhotos: LocalPhoto[];
   /** 练习，新的在前。 */
@@ -156,7 +159,7 @@ export interface Input {
 
 export function makeInput(fields: Partial<Input> & Pick<Input, 'weekKey' | 'today'>): Input {
   return {
-    connection: 'ok', weekPhotoJobIDs: [], weekItemCount: 0, localPhotos: [], practices: [],
+    connection: 'ok', weekPhotoJobIDs: [], weekItemCount: 0, materialSaved: null, localPhotos: [], practices: [],
     preparingPrintID: null, skipped: new Set(), timeZone: DEFAULT_TIME_ZONE,
     ...fields,
   };
@@ -345,13 +348,13 @@ function buildSteps(input: Input, weekKey: string): Step[] {
   const registered = new Set(input.weekPhotoJobIDs);
   // 本周的照片：周视图里已登记的 + 还没走完流程、也还没登记进周视图的。
   const unregisteredLocal = input.localPhotos.filter(photo => (photo.jobID === null ? true : !registered.has(photo.jobID)));
-  const photoCount = registered.size + unregisteredLocal.length;
+  const photoCount = (input.materialSaved ?? 0) + registered.size + unregisteredLocal.length;
   const steps: Step[] = [];
 
   // 1. 拍这周的卷子
   const shootDone = photoCount > 0 || input.skipped.has('shoot') || current !== null;
   steps.push({
-    kind: 'shoot', title: '拍这周的卷子',
+    kind: 'shoot', title: input.materialSaved===null?'拍这周的卷子':'保存题目和作答材料',
     detail: shootDone ? (photoCount > 0 ? `已拍 ${photoCount} 张` : '这周没拍卷子') : '整页拍，一页一张',
     tone: shootDone ? 'green' : 'gray', warning: null, isDone: shootDone, isOptional: false,
     minutes: minutes('shoot'), action: { kind: 'capture' },
@@ -363,13 +366,15 @@ function buildSteps(input: Input, weekKey: string): Step[] {
   }
 
   // 2. 勾出做错的题
-  steps.push(pickStep(input, current, photoCount));
+  steps.push(input.materialSaved===null?pickStep(input,current,photoCount):{
+    kind:'pick',title:'查看材料',detail:'缺的以后再补；保存后可以先结束',tone:'green',warning:null,isDone:true,isOptional:true,minutes:0,action:{kind:'materials'},
+  });
 
   // 3. 选这周要练的题
   steps.push({
-    kind: 'choose', title: '选这周要练的题',
+    kind: 'choose', title: input.materialSaved===null?'选这周要练的题':'安排本周练习（可稍后）',
     detail: current ? `选了 ${current.itemCount} 道` : 'AI 先帮你选好，5–8 道',
-    tone: current ? 'green' : 'gray', warning: null, isDone: current !== null, isOptional: false,
+    tone: current ? 'green' : 'gray', warning: null, isDone: current !== null, isOptional: input.materialSaved!==null,
     minutes: minutes('choose'), action: current ? { kind: 'why', practiceID: current.id } : { kind: 'choose' },
   });
 
@@ -498,6 +503,7 @@ function stepNext(steps: Step[], index: number, input: Input, weekKey: string): 
         choice('AI 正在找题…', null, { kind: 'goHome' }), { isEnabled: false, isWaiting: true, secondary });
     }
     case 'choose':
+      if(input.materialSaved!==null)return model('材料已保存；现在可以结束，想练习时再安排。',choice(input.weekItemCount?'安排本周练习':'查看材料',null,input.weekItemCount?{kind:'choose'}:{kind:'materials'}),{secondary:[choice('今天先到这里',null,{kind:'goHome'})]});
       return chooseModel();
     case 'why':
       if (!current) return chooseModel();

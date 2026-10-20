@@ -1,3 +1,4 @@
+import { syncMaterialLearning } from './learning.js';
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { newId } from '../db/connection.js';
@@ -84,6 +85,7 @@ export class MaterialStore {
       const source=this.db.prepare('SELECT content_json FROM material_fragment WHERE owner_id=? AND id=? AND revision=?').get(this.studentId,fragmentId,fragmentRevision) as {content_json:string};
       invalidateLinkDependencies(this,[...new Set([old?.question_id,target?.questionId].filter((v):v is string=>!!v))],JSON.parse(source.content_json),[...new Set([old?.attempt_id,target?.attemptId].filter((v):v is string=>!!v))]);
       projectImportedFragment(this,fragmentId);
+      syncMaterialLearning(this);
       return {id,questionId:target?.questionId??old?.question_id??'',revision};
     });
   }

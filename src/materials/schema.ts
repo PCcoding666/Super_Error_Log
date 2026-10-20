@@ -119,6 +119,16 @@ export function migrateMaterials(db: DatabaseSync): void {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(owner_id,question_id), UNIQUE(item_id),
       FOREIGN KEY(owner_id,question_id) REFERENCES material_question(owner_id,id)
     );
+    CREATE TABLE IF NOT EXISTS material_inclusion (
+      owner_id TEXT NOT NULL, question_id TEXT NOT NULL, included INTEGER NOT NULL CHECK(included IN (0,1)),
+      PRIMARY KEY(owner_id,question_id), FOREIGN KEY(owner_id,question_id) REFERENCES material_question(owner_id,id)
+    );
+    CREATE TABLE IF NOT EXISTS material_inclusion_event (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, question_id TEXT NOT NULL,
+      included INTEGER NOT NULL CHECK(included IN (0,1)), family_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(owner_id,question_id) REFERENCES material_question(owner_id,id)
+    );
     CREATE TABLE IF NOT EXISTS material_legacy_map (
       owner_id TEXT NOT NULL, source_kind TEXT NOT NULL, source_key TEXT NOT NULL,
       question_id TEXT NOT NULL, details_json TEXT NOT NULL DEFAULT '{}',

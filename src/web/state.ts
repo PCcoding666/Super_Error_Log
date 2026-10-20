@@ -1,3 +1,4 @@
+import type { MaterialStore } from '../materials/store.js';
 /**
  * 把服务器上已有的状态交给 WeekPlan（只读，不新增任何持久化字段）：
  * 周视图、本周照片的识别任务、练习列表 / 当前详情 / 回报、打印快照状态、cookie 里的两种本机标记与本次打开的「跳过」。
@@ -6,9 +7,11 @@
 import type { Request } from 'express';
 import type { RecognitionJob } from '../mobile/contracts.js';
 import type { MobileRecognitionService } from '../mobile/service.js';
-import { getWeek, type V2WeekResponse } from '../v2/weekService.js';
-import { getPractice, listPractices, type PracticeDetail } from '../v2/practiceService.js';
-import { getReturnSummary } from '../v2/returnService.js';
+import { getLearningWeek as getWeek } from '../learning/queries.js';
+import type { LearningWeek as V2WeekResponse } from '../learning/contracts.js';
+import { getLearningPractice as getPractice, listLearningPractices as listPractices } from '../learning/queries.js';
+import type { LearningPracticeDetail as PracticeDetail } from '../learning/contracts.js';
+import { getLearningReturnSummary as getReturnSummary } from '../v2/returnService.js';
 import { getPrintStatus } from '../v2/printService.js';
 import { photoFailurePlan, photoState, type PhotoFailurePlan } from './photoPlan.js';
 import { readPhotoMarks, readSkips, type PhotoMarks, type SkipState } from './session.js';
@@ -16,6 +19,7 @@ import { make, makeInput, practicesFrom, type LocalPhoto, type LocalPhotoState, 
 
 export interface WebContext {
   mobileDataDir: string;
+  materials?: MaterialStore;
   service: MobileRecognitionService;
   timeZone: string;
   now: () => Date;
@@ -82,7 +86,7 @@ export async function loadToday(ctx: WebContext, request: Request): Promise<Toda
     .map(photo => ({ number: photo.number, taskID: photo.jobId, jobID: photo.jobId, state: photo.state! }));
   const plan = make(makeInput({
     connection: 'ok', weekKey: week.week, weekPhotoJobIDs: week.photos.map(photo => photo.jobId),
-    weekItemCount: week.items.length, localPhotos, practices, preparingPrintID,
+    weekItemCount: week.items.length, materialSaved: ctx.materials?(ctx.materials.db.prepare('SELECT count(*) n FROM material_asset WHERE owner_id=? AND status!=?').get(ctx.materials.studentId,'legacy') as {n:number}).n:null, localPhotos, practices, preparingPrintID,
     skipped: skips.steps, today: ctx.now(), timeZone: ctx.timeZone,
   }));
   return { plan, week, photos, practices, latestDetail, marks, skips };
@@ -94,6 +98,7 @@ export function actionHref(action: NextStepAction): string {
     case 'scan': case 'rescan': return '/s/#connect';
     case 'capture': case 'uploadPending': return '/s/capture';
     case 'openPick': return `/s/photos/${action.taskID}`;
+    case 'materials': return '/s/materials';
     case 'choose': return '/s/choose';
     case 'why': case 'skipWhy': return `/s/why/${action.practiceID}`;
     case 'print': return `/s/print/${action.practiceID}`;

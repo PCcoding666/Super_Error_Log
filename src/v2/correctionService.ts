@@ -1,12 +1,15 @@
+import type { LearningCard, LearningContext } from '../learning/contracts.js';
+import { getLearningContext, getLearningSource, learningCard, materialStoreForItem } from '../learning/sources.js';
+import { applyMaterialTextCorrection, syncLegacyTranscripts } from '../materials/textCorrection.js';
 /**
  * v2.0 T4e：修改识别结果（"不对，改一下"）与修改记录（修正即测量）。
  * 只改转写保真与分类：题干、观察记录转写文字、学科、知识点；不碰坐标/区域/题号。
  * AI 只提"改前/改后"建议，学生点"接受"才生效；键盘直改不调用模型。
  * 规则 3 由校验层强制：不许把学生原作的错误"改对"（改动字符数 ≤ 原文 50% 且 ≤ 20）。
- * 只对 v2 来源的题服务；不走 Web 的 saveEvidence。instruction 与修改文字只存库、不进日志。
+ * 服务旧手机及材料来源；旧路由显式限定来源；不走 Web 的 saveEvidence。instruction 与修改文字只存库、不进日志。
  */
 import { getCorrectionProvider } from '../ai/index.js';
-import { validateCorrectionChanges, validateEvidence, type CorrectionChange, type CorrectionProposalResult, type Evidence } from '../ai/evidence.js';
+import { validateCorrectionChanges, validateEvidence, validateLearningContext, type CorrectionChange, type CorrectionProposalResult, type Evidence } from '../ai/evidence.js';
 import type { CorrectionProvider } from '../ai/provider.js';
 import { getDb, newId, now } from '../db/connection.js';
 import { isoWeekKey } from '../domain/scheduling.js';
@@ -14,7 +17,6 @@ import type { Subject } from '../domain/types.js';
 import { audit } from '../services/eventLog.js';
 import { getEvidence } from '../services/evidenceService.js';
 import { getItem } from '../services/itemService.js';
-import { isV2Item, type V2WeekItem } from './weekService.js';
 
 /** 每题每小时最多 6 次"生成修改建议"（规则 4）。 */
 export const PROPOSE_RATE_LIMIT = 6;
@@ -36,7 +38,7 @@ export type ProposeResult =
   | { ok: false; httpStatus: 400 | 404 | 409 | 429 | 502; message: string; revision?: number };
 
 export type ApplyResult =
-  | { ok: true; revision: number; card: V2WeekItem }
+  | { ok: true; revision: number; card: LearningCard }
   | { ok: false; httpStatus: 400 | 404 | 409; message: string; revision?: number };
 
 interface ProposalRow {
@@ -45,22 +47,23 @@ interface ProposalRow {
   error: string | null;
 }
 
-function notV2(itemId: string): boolean {
-  return !getItem(itemId) || !isV2Item(itemId);
+function contextRecord(itemId:string) {const r=getLearningContext(itemId);return r?{revision:r.revision,content:r.context}:null;}
+
+function notLearning(itemId: string): boolean {
+  return !getItem(itemId) || !getLearningSource(itemId);
 }
 
 /** 学生可见的证据视图（供展示与键盘直改）。 */
 export function getEvidenceView(itemId: string): EvidenceView | null {
-  if (notV2(itemId)) return null;
-  const record = getEvidence(itemId);
+  if (notLearning(itemId)) return null;
+  const record = contextRecord(itemId);
   if (!record) return null;
-  const row = getDb().prepare('SELECT confidence_badge FROM evidence_record WHERE item_id = ?').get(itemId) as { confidence_badge: string | null };
   return {
     questionText: record.content.questionText,
     subject: record.content.subject,
     knowledgeTags: record.content.knowledgeTags,
     observations: record.content.observations.map(o => ({ id: o.id, kind: o.kind, text: o.text })),
-    badge: row.confidence_badge === 'low' ? 'low' : 'ok',
+    badge: learningCard(itemId)!.badge,
     revision: record.revision,
   };
 }
@@ -71,7 +74,7 @@ export function getEvidenceView(itemId: string): EvidenceView | null {
  * 校验失败不重试，返回 502 级错误信息；失败也落一条 error 记录（不可被接受）。
  */
 export async function proposeCorrection(itemId: string, body: unknown, provider?: CorrectionProvider): Promise<ProposeResult> {
-  if (notV2(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
+  if (notLearning(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
   const input = (body ?? {}) as Record<string, unknown>;
   const instruction = typeof input.instruction === 'string' ? input.instruction.trim() : '';
   if (!instruction || instruction.length > INSTRUCTION_MAX_CHARS) return { ok: false, httpStatus: 400, message: '修改指令需要 1–200 字。' };
@@ -93,7 +96,7 @@ export async function proposeCorrection(itemId: string, body: unknown, provider?
     };
   }
 
-  const record = getEvidence(itemId);
+  const record = contextRecord(itemId);
   if (!record) return { ok: false, httpStatus: 404, message: '没有可修改的识别结果。' };
   if (record.revision !== revision) return { ok: false, httpStatus: 409, message: '识别结果已更新，请重新加载。', revision: record.revision };
 
@@ -131,32 +134,16 @@ export async function proposeCorrection(itemId: string, body: unknown, provider?
   return { ok: true, proposalId: id, revision: record.revision, changes, clarify };
 }
 
-/** 卡片形状与 /v2/week 一致。 */
-function cardOf(itemId: string): V2WeekItem {
-  const row = getDb().prepare(
-    `SELECT ei.id, ei.short_id, ei.subject, ei.knowledge_tags, ei.text_excerpt, ei.status, er.confidence_badge, mil.job_id
-     FROM error_item ei
-     JOIN mobile_item_link mil ON mil.item_id = ei.id
-     LEFT JOIN evidence_record er ON er.item_id = ei.id
-     WHERE ei.id = ?`,
-  ).get(itemId) as { id: string; short_id: string | null; subject: string | null; knowledge_tags: string; text_excerpt: string | null; status: V2WeekItem['status']; confidence_badge: string | null; job_id: string };
-  return {
-    id: row.id, shortId: row.short_id, subject: row.subject,
-    knowledgeTags: JSON.parse(row.knowledge_tags) as string[], questionExcerpt: row.text_excerpt,
-    badge: row.confidence_badge === 'low' ? 'low' : 'ok', status: row.status,
-    cropUrl: `/v2/items/${row.id}/crop`, jobId: row.job_id,
-  };
-}
-
-function applyChanges(content: Evidence, changes: CorrectionChange[]): Evidence {
-  const next: Evidence = { ...content, knowledgeTags: [...content.knowledgeTags], observations: content.observations.map(o => ({ ...o })) };
+/** Apply only text fields; full legacy evidence is validated separately at persistence. */
+function applyChanges(content: LearningContext, changes: CorrectionChange[]): LearningContext {
+  const next: LearningContext = { ...content, knowledgeTags: [...content.knowledgeTags], observations: content.observations.map(o => ({ ...o })) };
   for (const change of changes) {
     if (change.field === 'questionText') next.questionText = change.after;
     else if (change.field === 'subject') next.subject = change.after as Subject;
     else if (change.field === 'knowledgeTags') next.knowledgeTags = JSON.parse(change.after) as string[];
     else next.observations.find(o => o.id === change.observationId)!.text = change.after;
   }
-  return validateEvidence(next);
+  return validateLearningContext(next);
 }
 
 /**
@@ -169,7 +156,7 @@ function applyCorrections(itemId: string, expectedRevision: number, changes: Cor
   const db = getDb();
   db.exec('BEGIN');
   try {
-    const record = getEvidence(itemId)!;
+    const record = contextRecord(itemId)!;
     if (record.revision !== expectedRevision) {
       db.exec('ROLLBACK');
       return { ok: false, httpStatus: 409, message: '识别结果已更新，请重新加载。', revision: record.revision };
@@ -181,16 +168,26 @@ function applyCorrections(itemId: string, expectedRevision: number, changes: Cor
       return { ok: false, httpStatus: 409, message: check.rejected.map(r => r.reason).join('；'), revision: record.revision };
     }
     const next = applyChanges(record.content, check.changes);
-    const newRevision = record.revision + 1;
+    let newRevision = record.revision + 1;
+    const source=getLearningSource(itemId)!;
+    if(source.kind==='material') {
+      try {newRevision=applyMaterialTextCorrection(materialStoreForItem(itemId)!,source.questionId,record.content,next,check.changes);}
+      catch(error){db.exec('ROLLBACK');return {ok:false,httpStatus:409,message:error instanceof Error?error.message:'转写修改不合法。',revision:record.revision};}
+    }
+
     const touchesQuestion = check.changes.some(c => c.field === 'questionText');
+    if (source.kind==='legacy') {
+    const full=validateEvidence({...getEvidence(itemId)!.content,...next});
     if (touchesQuestion) {
       db.prepare(
         "UPDATE evidence_record SET content_json = ?, revision = ?, diagnosis_json = NULL, coaching_json = NULL, auto_checks_json = NULL, confidence_badge = 'ok', updated_at = ? WHERE item_id = ?",
-      ).run(JSON.stringify(next), newRevision, now(), itemId);
+      ).run(JSON.stringify(full), newRevision, now(), itemId);
     } else {
       db.prepare(
         'UPDATE evidence_record SET content_json = ?, revision = ?, diagnosis_json = NULL, coaching_json = NULL, updated_at = ? WHERE item_id = ?',
-      ).run(JSON.stringify(next), newRevision, now(), itemId);
+      ).run(JSON.stringify(full), newRevision, now(), itemId);
+    }
+    const mapped=materialStoreForItem(itemId);if(mapped)syncLegacyTranscripts(mapped,itemId,next);
     }
     db.prepare('UPDATE error_item SET text_excerpt = ?, subject = ?, knowledge_tags = ?, updated_at = ? WHERE id = ?')
       .run(next.questionText.slice(0, 80), next.subject, JSON.stringify(next.knowledgeTags), now(), itemId);
@@ -204,7 +201,7 @@ function applyCorrections(itemId: string, expectedRevision: number, changes: Cor
     }
     if (proposalId) db.prepare('UPDATE correction_proposal SET accepted_at = ? WHERE id = ?').run(now(), proposalId);
     db.exec('COMMIT');
-    return { ok: true, revision: newRevision, card: cardOf(itemId) };
+    return { ok: true, revision: newRevision, card: learningCard(itemId)! };
   } catch (error) {
     if (db.isTransaction) db.exec('ROLLBACK');
     throw error;
@@ -213,7 +210,7 @@ function applyCorrections(itemId: string, expectedRevision: number, changes: Cor
 
 /** 接受建议：建议须未过期（10 分钟）、未被接受过、revision 仍是当前值。 */
 export function acceptCorrection(itemId: string, body: unknown): ApplyResult {
-  if (notV2(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
+  if (notLearning(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
   const input = (body ?? {}) as Record<string, unknown>;
   const proposalId = typeof input.proposalId === 'string' ? input.proposalId : '';
   if (!proposalId) return { ok: false, httpStatus: 400, message: '缺少 proposalId。' };
@@ -226,7 +223,7 @@ export function acceptCorrection(itemId: string, body: unknown): ApplyResult {
   if (proposal.error) return { ok: false, httpStatus: 409, message: '该建议未成功生成，无法接受。' };
   if (proposal.accepted_at) return { ok: false, httpStatus: 409, message: '该建议已被接受。' };
   if (Date.now() - new Date(proposal.created_at).getTime() > PROPOSAL_TTL_MS) return { ok: false, httpStatus: 409, message: '该建议已过期，请重新生成。' };
-  const record = getEvidence(itemId);
+  const record = contextRecord(itemId);
   if (!record) return { ok: false, httpStatus: 404, message: '没有可修改的识别结果。' };
   if (record.revision !== revision || proposal.base_revision !== revision) {
     return { ok: false, httpStatus: 409, message: '识别结果已更新，该建议已失效。', revision: record.revision };
@@ -241,11 +238,11 @@ export function acceptCorrection(itemId: string, body: unknown): ApplyResult {
 
 /** 键盘直改：不调用模型，同样的校验（before 必须匹配当前值），直接生效，记 method=direct。 */
 export function directCorrection(itemId: string, body: unknown): ApplyResult {
-  if (notV2(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
+  if (notLearning(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
   const input = (body ?? {}) as Record<string, unknown>;
   const revision = input.revision;
   if (!Number.isInteger(revision) || (revision as number) < 1) return { ok: false, httpStatus: 400, message: 'revision 不合法。' };
-  const record = getEvidence(itemId);
+  const record = contextRecord(itemId);
   if (!record) return { ok: false, httpStatus: 404, message: '没有可修改的识别结果。' };
   if (record.revision !== revision) return { ok: false, httpStatus: 409, message: '识别结果已更新，请重新加载。', revision: record.revision };
 

@@ -1,8 +1,9 @@
+import type { LearningContext } from '../learning/contracts.js';
 import fs from 'node:fs';
 import { config } from '../config.js';
 import { AiError } from './errors.js';
 import { ChatClient, type Message, type StageResult } from './chatClient.js';
-import { validateLayout, validateEvidence, validateDiagnosis, validateCoaching, validateFollowupAsk, validateFollowupSummarize, validateCorrectionProposal, type Coaching, type Evidence, type Diagnosis, type FollowupAsk, type FollowupSummarize, type QuestionRegion, type CorrectionProposalResult } from './evidence.js';
+import { validateLayout, validateEvidence, validateLearningContext, validateDiagnosis, validateCoaching, validateFollowupAsk, validateFollowupSummarize, validateCorrectionProposal, type Coaching, type Evidence, type Diagnosis, type FollowupAsk, type FollowupSummarize, type QuestionRegion, type CorrectionProposalResult } from './evidence.js';
 import type { AiProvider, ExtractInput, ExtractResult, SuggestInput, FieldSuggestion, FollowupProvider, FollowupTurn, MatchInput, MatchResult, CorrectionProvider, CoachProvider } from './provider.js';
 import { CropAuditor } from './cropAuditor.js';
 
@@ -64,8 +65,8 @@ export class StagedProvider implements AiProvider, FollowupProvider, CorrectionP
    * T5 打印快照：诊断对象由服务器按规则合成（复盘错因或 null，无 findings），
    * 不满足 validateDiagnosis 的"错因须引学生作答"不变量，故只校验证据与输出。
    */
-  async coachForPrint(evidence: Evidence, diagnosis: Diagnosis): Promise<Coaching> {
-    const e = validateEvidence(evidence);
+  async coachForPrint(evidence: LearningContext, diagnosis: Diagnosis): Promise<Coaching> {
+    const e = validateLearningContext(evidence);
     const result = await this.client.call('coach', messages(COACH_PROMPT, JSON.stringify({ evidence: e, diagnosis })));
     return validateCoaching(result.value);
   }
@@ -101,8 +102,8 @@ export class StagedProvider implements AiProvider, FollowupProvider, CorrectionP
   }
 
   /** T4c：基于学生自己的作答/订正提一个追问；只提问，不讲题、不给答案。 */
-  async followupAsk(evidence: Evidence): Promise<FollowupAsk> {
-    const e = validateEvidence(evidence);
+  async followupAsk(evidence: LearningContext): Promise<FollowupAsk> {
+    const e = validateLearningContext(evidence);
     const material = {
       questionText: e.questionText,
       observations: e.observations
@@ -116,8 +117,8 @@ export class StagedProvider implements AiProvider, FollowupProvider, CorrectionP
   }
 
   /** T4c：归纳追问回答为"他把什么当成了什么/漏了什么"，并建议错因与做题状态。 */
-  async followupSummarize(evidence: Evidence, turns: FollowupTurn[]): Promise<FollowupSummarize> {
-    const e = validateEvidence(evidence);
+  async followupSummarize(evidence: LearningContext, turns: FollowupTurn[]): Promise<FollowupSummarize> {
+    const e = validateLearningContext(evidence);
     const result = await this.client.call('followup', messages(
       '你是错题复盘归纳助手。根据题干、学生作答证据与追问问答，归纳"他把什么当成了什么/漏了什么"：不超过60字，不含解题步骤与最终答案，不替学生写完整反思。suggestedCause 取 知识概念|方法选择|推理步骤|计算|审题遗漏|表达规范|时间注意力状态；suggestedAttemptState 取 完全不会|知道考什么但没想到方法|方法基本正确但步骤出错|本来会但审题计算书写失误|时间不足|其他。学生回答不足以归纳时 secondQuestion 给出一个追问（不超过60字、恰好一个问句），否则为 JSON null。引用原文片段或公式时用「」括起来，JSON 字符串内部不得出现英文双引号（否则字符串会被提前截断）。secondQuestion 同样用开放问句（"当时是怎么想的""这一步是怎么得到的""为什么这样写"），不用"是不是/是否/对吗/吗？"这类只需答是或否的问句，且不能出现正确做法、正确结论或对错误原因的判断。返回 {"summary":"……","suggestedCause":"……","suggestedAttemptState":"……","secondQuestion":"……？或 JSON null"}。',
       JSON.stringify({ questionText: e.questionText, observations: e.observations, turns })));
@@ -125,8 +126,8 @@ export class StagedProvider implements AiProvider, FollowupProvider, CorrectionP
   }
 
   /** T4e：按学生一句话提出修改建议；文字类字段只给 find/replace 片段，服务器生成完整 before/after。只提建议，不改证据。 */
-  async proposeCorrection(evidence: Evidence, instruction: string): Promise<CorrectionProposalResult> {
-    const e = validateEvidence(evidence);
+  async proposeCorrection(evidence: LearningContext, instruction: string): Promise<CorrectionProposalResult> {
+    const e = validateLearningContext(evidence);
     const material = {
       questionText: e.questionText,
       subject: e.subject,

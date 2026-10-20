@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
-import type { PracticeCard, PracticeDetail, PracticeSummary, RecommendResponse } from '../../v2/practiceService.js';
+import type { PracticeSummary } from '../../v2/practiceService.js';
+import type { LearningPracticeCard as PracticeCard, LearningPracticeDetail as PracticeDetail, LearningRecommendation as RecommendResponse } from '../../learning/contracts.js';
 import type { PrintSnapshot } from '../../v2/printService.js';
-import type { ReturnSummary } from '../../v2/returnService.js';
+import type { LearningReturnSummary as ReturnSummary } from '../../v2/returnService.js';
 import type { ReflectionSuggestionView, ReflectionTurnView, ReflectionView } from '../../v2/reflectionService.js';
 import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';

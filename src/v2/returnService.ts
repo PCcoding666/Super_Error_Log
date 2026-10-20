@@ -1,3 +1,5 @@
+import type { LearningCard, LearningScope } from '../learning/contracts.js';
+import { learningPacketAllowed, learningCard, legacyCard } from '../learning/sources.js';
 /**
  * v2.0 T4d：回传与回报。
  * 掌握判定完全复用 Web 的 recordAttempt（不在此复制规则）；本模块只做：
@@ -29,15 +31,6 @@ export type SubmitReturnResult =
   | { ok: false; httpStatus: 400 | 404; message: string };
 
 /** 包存在且含 v2 题（与 getPractice 同一判定）。 */
-function isV2Packet(packetId: string): boolean {
-  const db = getDb();
-  const packet = db.prepare('SELECT 1 AS x FROM review_packet WHERE id = ?').get(packetId);
-  if (!packet) return false;
-  return !!db.prepare(
-    `SELECT 1 FROM review_packet_item rpi JOIN mobile_item_link mil ON mil.item_id = rpi.item_id WHERE rpi.packet_id = ? LIMIT 1`,
-  ).get(packetId);
-}
-
 interface MappedEntry { itemId: string; input: AttemptInput }
 
 /** 单条入参形状校验 + 映射。形状不合法整条请求 400（不调用 recordAttempt）。 */
@@ -85,8 +78,8 @@ function mapEntry(raw: unknown): { ok: true; entry: MappedEntry } | { ok: false;
  * 回传：形状校验（整体 400）后逐条独立调用 recordAttempt（某条被拒不影响其他条）。
  * 分批回传天然支持：每次 1–8 条，同一包同一题只回传一次由 recordAttempt 保证。
  */
-export function submitReturns(packetId: string, input: unknown): SubmitReturnResult {
-  if (!isV2Packet(packetId)) return { ok: false, httpStatus: 404, message: '练习不存在。' };
+export function submitLearningReturns(packetId: string, input: unknown, scope:LearningScope='all'): SubmitReturnResult {
+  if (!learningPacketAllowed(packetId,scope)) return { ok: false, httpStatus: 404, message: '练习不存在。' };
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return { ok: false, httpStatus: 400, message: '请求正文不合法。' };
   }
@@ -108,20 +101,20 @@ export function submitReturns(packetId: string, input: unknown): SubmitReturnRes
   return { ok: true, results: out };
 }
 
-export interface ReturnSummary {
+export interface LearningReturnSummary {
   /** 已回传数 / 本包总题数。 */
   answered: number;
   total: number;
   /** 独立且做对的题数。 */
   independentCorrect: number;
   /** 本包回传后进入暂时/稳定掌握的题卡片（/v2/week 形状）；仅限本包已回传的题。 */
-  masteredNow: V2WeekItem[];
+  masteredNow: LearningCard[];
   /** 状态为 needs_recheck 的题卡片，附"下次再来"原因。 */
-  again: Array<V2WeekItem & { reason: string }>;
+  again: Array<LearningCard & { reason: string }>;
   /** 本包已回传、独立且做对、当前状态 attempted（当天做对不算掌握，隔几天再验证）的题卡片，附固定原因。 */
-  pending: Array<V2WeekItem & { reason: string }>;
+  pending: Array<LearningCard & { reason: string }>;
   /** 校准：本包已回传且最近一次复盘把握 ≥2 的题里，没独立做对的题数与卡片；基数为 0 时 text 为 null。 */
-  calibration: { confidentTotal: number; missedCount: number; text: string | null; items: V2WeekItem[] };
+  calibration: { confidentTotal: number; missedCount: number; text: string | null; items: LearningCard[] };
   /** 本包新进入暂时掌握的题中最早的确认日期（YYYY-MM-DD，仅日期）；无则 null。 */
   nextConfirmOn: string | null;
 }
@@ -143,8 +136,8 @@ const AGAIN_REASON: Record<string, string> = {
 const PENDING_REASON = '当天做对，隔几天再独立做对才算掌握';
 
 /** 回报：仅限 v2 练习包，否则 null（路由层 404）。 */
-export function getReturnSummary(packetId: string): ReturnSummary | null {
-  if (!isV2Packet(packetId)) return null;
+export function getLearningReturnSummary(packetId: string, scope:LearningScope='all'): LearningReturnSummary | null {
+  if (!learningPacketAllowed(packetId,scope)) return null;
   const db = getDb();
   const rows = db.prepare(
     `SELECT ei.id, ei.short_id, ei.subject, ei.knowledge_tags, ei.text_excerpt, ei.status, ei.next_review_at,
@@ -152,24 +145,14 @@ export function getReturnSummary(packetId: string): ReturnSummary | null {
             ra.completion AS att_completion, ra.correct AS att_correct
      FROM review_packet_item rpi
      JOIN error_item ei ON ei.id = rpi.item_id
-     JOIN mobile_item_link mil ON mil.item_id = ei.id
+     LEFT JOIN mobile_item_link mil ON mil.item_id = ei.id
      LEFT JOIN evidence_record er ON er.item_id = ei.id
      LEFT JOIN review_attempt ra ON ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id
      WHERE rpi.packet_id = ?
      ORDER BY rpi.position`,
   ).all(packetId) as unknown as SummaryRow[];
 
-  const toCard = (row: SummaryRow): V2WeekItem => ({
-    id: row.id,
-    shortId: row.short_id,
-    subject: row.subject,
-    knowledgeTags: JSON.parse(row.knowledge_tags) as string[],
-    questionExcerpt: row.text_excerpt,
-    badge: row.confidence_badge === 'low' ? 'low' : 'ok',
-    status: row.status,
-    cropUrl: `/v2/items/${row.id}/crop`,
-    jobId: row.job_id,
-  });
+  const toCard = (row:SummaryRow):LearningCard => learningCard(row.id)!;
   const isIndependentCorrect = (row: SummaryRow): boolean => row.att_completion === 'independent' && row.att_correct === 1;
 
   // 校准基数（R1-F1）：本包已回传、且最近一次复盘（rowid 最大者）把握程度 ≥ 2 的题。
@@ -212,4 +195,13 @@ export function getReturnSummary(packetId: string): ReturnSummary | null {
     },
     nextConfirmOn: confirmDates[0] ?? null,
   };
+}
+
+export type ReturnSummary = Omit<LearningReturnSummary,'masteredNow'|'again'|'pending'|'calibration'> & {
+ masteredNow:V2WeekItem[];again:(V2WeekItem & {reason:string})[];pending:(V2WeekItem & {reason:string})[];
+ calibration:Omit<LearningReturnSummary['calibration'],'items'> & {items:V2WeekItem[]};
+};
+export function submitReturns(id:string,input:unknown):SubmitReturnResult {return submitLearningReturns(id,input,'legacy');}
+export function getReturnSummary(id:string):ReturnSummary|null {
+ const s=getLearningReturnSummary(id,'legacy');return s?{...s,masteredNow:s.masteredNow.map(legacyCard),again:s.again.map(legacyCard),pending:s.pending.map(legacyCard),calibration:{...s.calibration,items:s.calibration.items.map(legacyCard)}}:null;
 }

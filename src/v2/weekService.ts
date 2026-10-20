@@ -1,3 +1,5 @@
+import { getLearningWeek } from '../learning/queries.js';
+import { legacyCard } from '../learning/sources.js';
 /**
  * v2.0 T4a：本周错题卡片（/v2/week）与"不是错题"删/恢复。
  * 只返回 v2 来源（有 mobile_item_link）的题；Web 原有题一律不出现。
@@ -79,7 +81,7 @@ function unselectedCountOf(mobileDataDir: string, jobId: string): number {
 const BACKLOG_STATUSES: readonly ItemStatus[] = ['ready_for_reflection', 'eligible_for_review', 'needs_recheck'];
 
 /** 本周错题卡片。先懒桥接（单个失败不影响返回），再按登记的 ISO 周划分 items / backlog。 */
-export function getWeek(mobileDataDir: string): V2WeekResponse {
+export function getLegacyWeek(mobileDataDir: string): V2WeekResponse {
   try {
     bridgePending(mobileDataDir);
   } catch {
@@ -181,3 +183,5 @@ export function restoreV2Item(itemId: string): V2ItemAction {
   audit('v2_item_restored', 'item', itemId);
   return { ok: true, status: to };
 }
+
+export function getWeek(mobileDataDir:string):V2WeekResponse { const r=getLearningWeek(mobileDataDir,'legacy');return {...r,items:r.items.map(legacyCard),backlog:r.backlog.map(legacyCard)}; }

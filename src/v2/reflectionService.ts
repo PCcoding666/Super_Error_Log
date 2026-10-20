@@ -12,9 +12,8 @@ import { getDb, newId, now } from '../db/connection.js';
 import { statusAfterReflection } from '../domain/stateMachine.js';
 import { ATTEMPT_STATES, CAUSES, type AttemptState, type Cause, type ItemStatus, type MasteryFeeling } from '../domain/types.js';
 import { audit } from '../services/eventLog.js';
-import { getEvidence } from '../services/evidenceService.js';
+import { getLearningContext, getLearningSource, learningEligible } from '../learning/sources.js';
 import { getItem } from '../services/itemService.js';
-import { isV2Item } from './weekService.js';
 
 export const MAX_TURNS = 2;
 const ANSWER_MAX_CHARS = 300;
@@ -43,8 +42,8 @@ interface TurnRow {
   answer: string | null; summary_json: string | null; created_at: string; answered_at: string | null;
 }
 
-function notV2(itemId: string): boolean {
-  return !getItem(itemId) || !isV2Item(itemId);
+function notLearning(itemId: string): boolean {
+  return !getItem(itemId) || !getLearningSource(itemId);
 }
 
 function turnsOf(itemId: string): TurnRow[] {
@@ -67,7 +66,8 @@ function latestSuggestion(itemId: string): FollowupSummarize | null {
  * 提问失败（模型/校验）退回固定开放句，不重试。
  */
 export async function askFollowup(itemId: string, provider?: FollowupProvider): Promise<AskResult> {
-  if (notV2(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
+  if (notLearning(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
+  if (!learningEligible(itemId) || !getLearningContext(itemId)) return {ok:false,httpStatus:409,message:'请先补齐并关联题目材料。'};
   const db = getDb();
   const pending = turnsOf(itemId).find(t => t.answer === null);
   if (pending) return { ok: true, turn: pending.turn, question: pending.question, source: pending.question_source as 'ai' | 'fallback' };
@@ -75,8 +75,8 @@ export async function askFollowup(itemId: string, provider?: FollowupProvider): 
   // 已有轮次且无待回答问题：要么第 1 轮归纳后无需第 2 轮，要么两轮已满——追问都已结束。
   if (turns.length > 0) return { ok: false, httpStatus: 409, message: '追问已结束（最多两轮），请提交复盘。' };
 
-  const evidence = getEvidence(itemId);
-  const studentMaterial = evidence?.content.observations.filter(o => o.kind === 'student_work' || o.kind === 'correction') ?? [];
+  const evidence = getLearningContext(itemId);
+  const studentMaterial = evidence?.context.observations.filter(o => o.kind === 'student_work' || o.kind === 'correction') ?? [];
   // S1-R1：固定句二选一——学生自己勾入的题（答案在答题卡上、卷面干净）且证据里没有学生作答/订正时，
   // "卡在哪一步"问偏了（学生其实答了，只是卷面看不到），改用"怎么做的/答案写的什么"。
   // 有学生作答或订正 → 调模型；模型失败时的退回句按同一规则二选一。
@@ -86,7 +86,7 @@ export async function askFollowup(itemId: string, provider?: FollowupProvider): 
   let source: 'ai' | 'fallback' = 'fallback';
   if (evidence && studentMaterial.length > 0) {
     try {
-      const asked = await (provider ?? getFollowupProvider()).followupAsk(evidence.content);
+      const asked = await (provider ?? getFollowupProvider()).followupAsk(evidence.context);
       question = asked.question;
       source = 'ai';
     } catch {
@@ -104,7 +104,8 @@ export async function askFollowup(itemId: string, provider?: FollowupProvider): 
  * 有 secondQuestion 且当前为第 1 轮时，它成为第 2 轮的问题；第 2 轮回答后不再追问。
  */
 export async function answerFollowup(itemId: string, body: unknown, provider?: FollowupProvider): Promise<AnswerResult> {
-  if (notV2(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
+  if (notLearning(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
+  if (!learningEligible(itemId) || !getLearningContext(itemId)) return {ok:false,httpStatus:409,message:'请先补齐并关联题目材料。'};
   const answer = typeof (body as { answer?: unknown })?.answer === 'string' ? (body as { answer: string }).answer.trim() : '';
   if (!answer || answer.length > ANSWER_MAX_CHARS) return { ok: false, httpStatus: 400, message: '回答需要 1–300 字。' };
 
@@ -112,7 +113,7 @@ export async function answerFollowup(itemId: string, body: unknown, provider?: F
   const pending = turnsOf(itemId).find(t => t.answer === null);
   if (!pending) return { ok: false, httpStatus: 409, message: '当前没有待回答的追问。' };
 
-  const evidence = getEvidence(itemId);
+  const evidence = getLearningContext(itemId);
   const priorTurns: FollowupTurn[] = turnsOf(itemId)
     .filter(t => t.answer !== null)
     .map(t => ({ question: t.question, answer: t.answer! }));
@@ -121,7 +122,7 @@ export async function answerFollowup(itemId: string, body: unknown, provider?: F
   let summarized: FollowupSummarize | null = null;
   if (evidence) {
     try {
-      summarized = await (provider ?? getFollowupProvider()).followupSummarize(evidence.content, turns);
+      summarized = await (provider ?? getFollowupProvider()).followupSummarize(evidence.context, turns);
     } catch {
       summarized = null;
     }
@@ -152,7 +153,7 @@ export async function answerFollowup(itemId: string, body: unknown, provider?: F
  * 都等于最近一次 AI 建议。可重复提交（新记录覆盖式呈现，旧记录保留）。
  */
 export function submitV2Reflection(itemId: string, body: unknown): SubmitResult {
-  if (notV2(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
+  if (notLearning(itemId)) return { ok: false, httpStatus: 404, message: '题目不存在或不属于手机上传。' };
   const input = (body ?? {}) as Record<string, unknown>;
   const attemptState = typeof input.attemptState === 'string' ? input.attemptState : '';
   const cause = typeof input.cause === 'string' ? input.cause : '';
@@ -199,7 +200,7 @@ export function submitV2Reflection(itemId: string, body: unknown): SubmitResult 
 
 /** 该题的追问轮次（含学生原话）、最近一次 AI 建议、最新复盘。仅学生端使用。 */
 export function getV2Reflection(itemId: string): { turns: ReflectionTurnView[]; suggestion: ReflectionSuggestionView | null; reflection: ReflectionView | null } | null {
-  if (notV2(itemId)) return null;
+  if (notLearning(itemId)) return null;
   const turns = turnsOf(itemId).map(t => ({
     turn: t.turn, question: t.question, source: t.question_source as 'ai' | 'fallback', answer: t.answer,
   }));

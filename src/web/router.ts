@@ -25,12 +25,17 @@ import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { CoachProvider, CorrectionProvider, FollowupProvider } from '../ai/provider.js';
-import { getWeek, discardV2Item, isV2Item, restoreV2Item, type V2WeekItem } from '../v2/weekService.js';
+import { discardV2Item, restoreV2Item } from '../v2/weekService.js';
+import { getLearningSource, learningCard, materialStoreForItem } from '../learning/sources.js';
+import { setQuestionIncluded } from '../materials/learning.js';
+import { getLearningWeek as getWeek } from '../learning/queries.js';
+import type { LearningCard as V2WeekItem } from '../learning/contracts.js';
 import { getItemFullCrop } from '../v2/fullCrop.js';
 import { getV2Settings, updateV2Settings } from '../v2/settingsService.js';
-import { createPractice, getPractice, listPractices, recommendPractice, type PracticeCard, type PracticeDetail } from '../v2/practiceService.js';
+import { createLearningPractice as createPractice, getLearningPractice as getPractice, listLearningPractices as listPractices, recommendLearningPractice as recommendPractice } from '../learning/queries.js';
+import type { LearningPracticeCard as PracticeCard, LearningPracticeDetail as PracticeDetail } from '../learning/contracts.js';
 import { getPrintStatus, readPrintMedia, requestPrint, type PrintSnapshot } from '../v2/printService.js';
-import { getReturnSummary, submitReturns } from '../v2/returnService.js';
+import { getLearningReturnSummary as getReturnSummary, submitLearningReturns as submitReturns } from '../v2/returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from '../v2/reflectionService.js';
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
@@ -301,6 +306,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   const useMaterials = options.materials && !(process.env.NODE_ENV === 'test' && process.env.SEL_STUDENT_WORKER_FAKE === '1' && process.env.SEL_E2E_LEGACY_CAPTURE === '1');
   if (useMaterials && options.materials) {
+    ctx.materials=options.materials.store;
     const namespace = options.materials.store.getWorkspace().draftNamespace;
     r.use((request,response,next) => request.path.startsWith('/materials/answers/') ? next() : form(request,response,next), (request, response, next) => {
       response.locals.draftNamespace = namespace;
@@ -488,7 +494,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // ---------- 这周的错题 / 题目详情 / 改一下 ----------
   const findItem = (itemId: string): V2WeekItem => {
     requireMatch(itemId, ITEM_ID);
-    if (!isV2Item(itemId)) throw new NotFound();
+    if (!getLearningSource(itemId)) throw new NotFound();
     const week = getWeek(ctx.mobileDataDir);
     const item = [...week.items, ...week.backlog].find(entry => entry.id === itemId);
     if (item) return item;
@@ -496,6 +502,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       const card = getPractice(summary.id)?.items.find(entry => entry.id === itemId);
       if (card) return card;
     }
+    const stored=learningCard(itemId);if(stored)return stored;
     throw new NotFound();
   };
 
@@ -504,13 +511,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const removed = ITEM_ID.test(str(request.query.removed)) ? str(request.query.removed) : null;
     const current = state.plan.currentIndex === null ? null : state.plan.steps[state.plan.currentIndex];
     const bar = current?.kind === 'choose' ? nextStepBar(state, null) : { caption: '', primary: null, secondary: [{ title: '回到今天', key: 'goHome', href: '/s/' }] };
-    render(response, ItemsPage({ items: state.week.items, backlog: state.week.backlog, anyPhoto: state.week.photos.length > 0, finding: state.photos.some(photo => photo.state === 'finding'), bar, removed }));
+    render(response, ItemsPage({ items: state.week.items, backlog: state.week.backlog, anyPhoto: state.week.photos.length > 0, materials: !!ctx.materials, finding: state.photos.some(photo => photo.state === 'finding'), bar, removed }));
   }));
 
   const detail = (itemId: string, error?: string | null): ReactNode => {
     const item = findItem(itemId);
     return ItemDetailPage({
-      item, evidence: getEvidenceView(itemId), canDiscard: item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
+      item, evidence: getEvidenceView(itemId), canDiscard: item.source.kind==='material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
       reflected: getV2Reflection(itemId)?.reflection != null, error,
     });
   };
@@ -520,6 +527,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.post('/items/:id/discard', page((request, response) => {
     const itemId = String(request.params.id);
     findItem(itemId);
+    const source=getLearningSource(itemId)!;
+    if(source.kind==='material'){const store=materialStoreForItem(itemId)!;setQuestionIncluded(store,source.questionId,false,store.getQuestion(source.questionId)!.revision);response.redirect(303,`/s/items?removed=${itemId}`);return;}
     const result = discardV2Item(itemId);
     if (!result.ok) { failed(response, 'discard_refused'); render(response, detail(itemId, result.message), result.httpStatus); return; }
     response.redirect(303, `/s/items?removed=${itemId}`);
@@ -527,7 +536,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   r.post('/items/:id/restore', page((request, response) => {
     const itemId = requireMatch(String(request.params.id), ITEM_ID);
-    restoreV2Item(itemId);
+    const source=getLearningSource(itemId);
+    if(source?.kind==='material'){const store=materialStoreForItem(itemId)!;setQuestionIncluded(store,source.questionId,true,store.getQuestion(source.questionId)!.revision);}else restoreV2Item(itemId);
     response.redirect(303, '/s/items');
   }));
 
@@ -902,7 +912,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
   r.get('/img/item/:id', page(async (request, response) => {
     const itemId = requireMatch(String(request.params.id), ITEM_ID);
-    if (!isV2Item(itemId)) throw new NotFound();
+    if (!getLearningSource(itemId)) throw new NotFound();
+    const source=getLearningSource(itemId)!;
+    if(source.kind==='material'){
+      const q=materialStoreForItem(itemId)!.getQuestion(source.questionId)!;
+      const f=q.stem.find(f=>f.role==='question');if(!f)throw new NotFound();
+      response.redirect(303,`/s/materials/fragments/${f.fragmentId}/crop`);return;
+    }
     response.type('image/jpeg').send(request.query.scope === 'full' ? await getItemFullCrop(itemId) : await getQuestionCrop(itemId));
   }));
   r.get('/img/print/:pid/:name', page((request, response) => {

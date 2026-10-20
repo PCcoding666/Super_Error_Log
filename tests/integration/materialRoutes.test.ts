@@ -222,3 +222,13 @@ it('returns an actionable 409 for pre-fingerprint saved uploads without guessing
     expect(f.db.prepare('SELECT count(*) n FROM material_job').get()).toEqual({ n: 1 });
     expect((await fetch(f.base + `/materials/assets/${saved.assetId}/image`)).status).toBe(200);
 });
+it('saves inclusion intent with owner/namespace/CAS boundaries and read-only material pages',async()=>{
+ const f=await fixture();const q=f.store.createQuestion({subject:'数学'}).id;const foreign=f.other.createQuestion({subject:'数学'}).id;
+ expect((await f.post(`/materials/questions/${foreign}/inclusion`,{included:true,expectedRevision:1})).status).toBe(404);
+ expect((await f.post(`/materials/questions/${q}/inclusion`,{included:true,expectedRevision:1},f.other.getWorkspace().draftNamespace)).status).toBe(409);
+ expect((await fetch(f.base+`/materials/questions/${q}/inclusion`,{method:'POST',headers:{...f.headers,origin:'https://foreign.example'},body:JSON.stringify({included:true,expectedRevision:1})})).status).toBe(403);
+ const saved=await f.post(`/materials/questions/${q}/inclusion`,{included:true,expectedRevision:1});expect(saved.status).toBe(200);expect(await saved.json()).toEqual({itemId:null,revision:2});
+ expect((await f.post(`/materials/questions/${q}/inclusion`,{included:false,expectedRevision:1})).status).toBe(409);
+ const before=f.db.prepare('SELECT total_changes() n').get();const html=await (await fetch(f.base+`/materials/questions/${q}`)).text();expect(html).toContain('收录意愿已保存');expect(html).toContain('今天先到这里');expect(html).toContain('安排本周练习');
+ expect(f.db.prepare('SELECT total_changes() n').get()).toEqual(before);expect(f.db.prepare('SELECT * FROM error_item').all()).toHaveLength(0);
+});

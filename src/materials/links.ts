@@ -1,3 +1,4 @@
+import { syncMaterialLearning } from './learning.js';
 import { newId } from '../db/connection.js';
 import { MobileRequestError } from '../mobile/service.js';
 import type { LinkChange, LinkTarget } from './contracts.js';
@@ -74,6 +75,7 @@ function operation(store:MaterialStore,run:()=>void):LinkChange[] {
     const previous=before.assets.find(asset=>asset.id===id);
     if (previous) store.db.prepare('UPDATE material_asset SET link_revision=link_revision+1 WHERE owner_id=? AND id=? AND link_revision=?').run(store.studentId,id,previous.link_revision);
   }
+  syncMaterialLearning(store);
   const [oldMeta,newMeta]=delta(before,metadata(store));
   const op:Operation={id:newId('mop'),eventIds:events.map(e=>e.id),before:oldMeta,after:newMeta,
     questionStates:[...affectedQuestions(events,oldMeta,newMeta)].sort().map(id=>questionState(store,id))};
