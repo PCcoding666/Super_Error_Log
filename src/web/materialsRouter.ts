@@ -4,6 +4,7 @@ import { saveManualAnswer, importAnswerText, requestAnswers, selectAnswerBasis, 
 import express, { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
+import { readFragmentImage, readSourceBytes } from '../materials/media.js';
 import { randomUUID } from 'node:crypto';
 import { newId } from '../db/connection.js';
 import type { MaterialStore } from '../materials/store.js';
@@ -220,12 +221,19 @@ export function createMaterialsRouter(options: {
                 content_json: string;
             }[]).map(row => JSON.parse(row.content_json) as Fragment) }));
     });
-    r.get('/materials/fragments/:id/crop', (req,res)=>{
-        const row=store.db.prepare('SELECT asset_id FROM material_fragment WHERE owner_id=? AND id=? ORDER BY revision DESC LIMIT 1').get(store.studentId,String(req.params.id)) as {asset_id:string}|undefined;
-        if(!row)throw new MobileRequestError(404,'not_found','材料不存在。');
-        res.redirect(303,`/s/materials/assets/${row.asset_id}/image`);
+    r.get('/materials/fragments/:id/crop', async (req,res)=>{
+        const id=text(req.params.id);
+        const row=store.db.prepare('SELECT revision FROM material_fragment WHERE owner_id=? AND id=? ORDER BY revision DESC LIMIT 1').get(store.studentId,id) as {revision:number}|undefined;
+        const revision=req.query.revision===undefined?row?.revision:Number(req.query.revision);
+        if(!row||!Number.isSafeInteger(revision)||!store.db.prepare('SELECT 1 FROM material_fragment WHERE owner_id=? AND id=? AND revision=?').get(store.studentId,id,revision!))throw new MobileRequestError(404,'not_found','材料片段版本不存在。');
+        res.type('image/jpeg').send(await readFragmentImage(store,id,revision!));
     });
-    r.get('/materials/assets/:id/image', async (req, res) => { const source = uploads.source(text(req.params.id)); const metadata = await sharp(source.originalPath).metadata(); res.type(metadata.format === 'png' ? 'image/png' : metadata.format === 'webp' ? 'image/webp' : metadata.format === 'heif' ? 'image/heic' : 'image/jpeg').sendFile(source.originalPath); });
+    r.get('/materials/assets/:id/image', async (req,res)=>{
+        const id=text(req.params.id),row=store.db.prepare('SELECT s.content_hash FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.owner_id=? AND a.id=?').get(store.studentId,id) as {content_hash:string}|undefined;
+        if(!row)throw new MobileRequestError(404,'not_found','材料不存在。');
+        const bytes=readSourceBytes(store,{assetId:id,sourceHash:row.content_hash}),metadata=await sharp(bytes,{limitInputPixels:40_000_000}).metadata();
+        res.type(metadata.format==='png'?'image/png':metadata.format==='webp'?'image/webp':metadata.format==='heif'?'image/heic':'image/jpeg').send(bytes);
+    });
     r.post('/materials/assets/:id/hints', (req, res) => {
         const selected = hints(req.body);
         const ids = [...new Set([text(req.params.id), ...list(req.body.assetIds)])];

@@ -279,4 +279,9 @@ CREATE TABLE IF NOT EXISTS v2_print_snapshot (
   created_at TEXT NOT NULL,
   ready_at TEXT
 );
+CREATE TABLE IF NOT EXISTS v2_print_basis (
+  packet_id TEXT PRIMARY KEY REFERENCES v2_print_snapshot(packet_id) ON DELETE CASCADE,
+  scope TEXT NOT NULL CHECK(scope IN ('all','legacy')),
+  manifest_json TEXT NOT NULL
+);
 `;

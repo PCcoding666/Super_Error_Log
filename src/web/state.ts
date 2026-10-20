@@ -78,7 +78,7 @@ export async function loadToday(ctx: WebContext, request: Request): Promise<Toda
   const practices = practicesFrom(list, latestDetail, summaries);
   let preparingPrintID: string | null = null;
   if (latest) {
-    const status = getPrintStatus(latest.id);
+    const status = getPrintStatus(latest.id, 'all');
     if (status.httpStatus === 200 && status.body.status === 'preparing') preparingPrintID = latest.id;
   }
   const localPhotos: LocalPhoto[] = photos

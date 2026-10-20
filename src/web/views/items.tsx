@@ -1,3 +1,4 @@
+import type { Fragment } from '../../materials/contracts.js';
 import type { ReactNode } from 'react';
 import type { LearningCard as V2WeekItem } from '../../learning/contracts.js';
 import type { EvidenceView } from '../../v2/correctionService.js';
@@ -65,7 +66,7 @@ export function ItemsPage(props: { items: V2WeekItem[]; backlog: V2WeekItem[]; a
 
 const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
 
-export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView | null; canDiscard: boolean; reflected: boolean; error?: string | null }): ReactNode {
+export function ItemDetailPage(props: { images?:Fragment[]; item: V2WeekItem; evidence: EvidenceView | null; canDiscard: boolean; reflected: boolean; error?: string | null }): ReactNode {
   const { item, evidence } = props;
   const bar: BarModel = {
     caption: '',
@@ -80,8 +81,14 @@ export function ItemDetailPage(props: { item: V2WeekItem; evidence: EvidenceView
       <p className="eyebrow">练习纸编号</p>
       <h1>{item.shortId ?? '题目'}</h1>
       {props.error ? <Problem title="没成功" detail={props.error} /> : null}
-      <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full`} alt="整题照片" /></a>
-      <p className="hint">{item.source.kind==='material'?'题干原图 · 其他页、图形和作答在材料中分别保留':'整题照片 · 点开可以两指放大'}</p>
+      {item.source.kind==='legacy'||!props.images?.length?<>
+        <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link" data-key="item-full-photo"><img className="crop big" src={`/s/img/item/${item.id}?scope=full`} alt="整题照片" /></a>
+        <p className="hint">整题照片 · 点开可以两指放大</p>
+      </>:null}
+      {props.images?.map(fragment=><figure key={fragment.fragmentId}>
+        <a href={`/s/materials/assets/${fragment.assetId}/image`} target="_blank" rel="noreferrer" className="photo-link"><img className="crop big" loading="lazy" src={`/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}`} alt={`${fragment.page?`第 ${fragment.page} 页 · `:''}${fragment.role==='question'?'题干':fragment.role==='diagram'?'图形':KIND_TITLE[fragment.role==='teacher_mark'?'teacher_note':fragment.role]??'材料'}`} /></a>
+        <figcaption className="hint">{fragment.page?`第 ${fragment.page} 页 · `:''}点开查看这张原图</figcaption>
+      </figure>)}
       {item.source.kind==='material'?<a className="more" href={`/s/materials/questions/${item.source.questionId}`}>查看这道题的全部材料与批改来源</a>:null}
       {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">{quoted('字可能认错了：对照上面的照片看一眼，不对就点「改一下」。')}</p> : null}
       <section className="card">

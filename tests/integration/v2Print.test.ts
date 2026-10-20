@@ -467,8 +467,12 @@ describe('T5 打印快照', () => {
 
     const db = getDb();
     const asset = db.prepare('SELECT sa.storage_path FROM source_asset sa JOIN error_item ei ON ei.asset_id = sa.id WHERE ei.id = ?').get(item.id) as { storage_path: string };
-    const saved = fs.readFileSync(asset.storage_path);
-    fs.rmSync(asset.storage_path);
+    // The bridge path is the normalized derivative; sourceHash identifies the
+    // independently preserved original in the actual mobile store layout.
+    const originalPath = path.join(dataDir, 'jobs', item.jobId, 'source-original.jpg');
+    expect(fs.existsSync(asset.storage_path)).toBe(true);
+    const saved = fs.readFileSync(originalPath);
+    fs.rmSync(originalPath);
 
     const response = await postPrint(base, auth, practice.id);
     expect(response.status).toBe(202);
@@ -483,7 +487,7 @@ describe('T5 打印快照', () => {
     expect(row.error).toBeTruthy();
 
     // 修复原图后再次 POST：重新准备并成功。
-    fs.writeFileSync(asset.storage_path, saved);
+    fs.writeFileSync(originalPath, saved);
     const retry = await postPrint(base, auth, practice.id);
     expect(retry.status).toBe(202);
     const ok = await pollPrint(base, auth, practice.id);

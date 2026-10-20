@@ -343,12 +343,12 @@ export function PrintPage(props: { practiceId: string; state: PrintState; captio
       <section className="card" data-testid="print-preparing">
         <p role="status">正在准备练习纸… 第 {state.done}/{state.total} 道</p>
         <div className="progress" role="progressbar" aria-label="准备进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></div>
-        <p className="hint">AI 在给每道题写提示和答案。可以先离开，回来接着准备。</p>
+        <p className="hint">正在保存本次题目、图片和参考答案。可以先离开，回来接着准备。</p>
       </section>
     );
   } else if (state.status === 'failed') {
     bar = { caption: '', primary: { title: '再试一次', key: 'retry', post: `/s/print/${practiceId}`, wait: '正在准备练习纸…' }, secondary: [{ title: '先回到今天', key: 'goHome', href: '/s/' }] };
-    body = <Problem title={`练习纸没准备好：${state.error ?? '服务器没说原因'}`} />;
+    body = <><Problem title={`练习纸没准备好：${state.error ?? '服务器没说原因'}`} /><p className="hint">如果材料或答案变了，再试会按现在的材料重新准备。已生成的练习纸会保留原来的内容。</p></>;
   } else {
     const glance = state.snapshot.items.filter(item => item.needsGlance);
     const printButton: BarButton = { title: '打印', key: 'print', href: `/s/print/${practiceId}/sheet`, print: true };

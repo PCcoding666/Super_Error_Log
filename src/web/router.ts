@@ -26,7 +26,7 @@ import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } 
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { CoachProvider, CorrectionProvider, FollowupProvider } from '../ai/provider.js';
 import { discardV2Item, restoreV2Item } from '../v2/weekService.js';
-import { getLearningSource, learningCard, materialStoreForItem } from '../learning/sources.js';
+import { getLearningSource, learningCard, materialStoreForItem, learningImageFragments } from '../learning/sources.js';
 import { setQuestionIncluded } from '../materials/learning.js';
 import { getLearningWeek as getWeek } from '../learning/queries.js';
 import type { LearningCard as V2WeekItem } from '../learning/contracts.js';
@@ -335,7 +335,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.locals.trailSkip = step;
     const practiceId = str(request.body?.practice);
     if (step === 'why' && PACKET_ID.test(practiceId) && getPractice(practiceId)) {
-      requestPrint(practiceId, options.coachProvider);
+      requestPrint(practiceId, options.coachProvider, 'all');
       response.redirect(303, `/s/print/${practiceId}`);
       return;
     }
@@ -517,7 +517,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const detail = (itemId: string, error?: string | null): ReactNode => {
     const item = findItem(itemId);
     return ItemDetailPage({
-      item, evidence: getEvidenceView(itemId), canDiscard: item.source.kind==='material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
+      item, images: learningImageFragments(itemId), evidence: getEvidenceView(itemId), canDiscard: item.source.kind==='material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
       reflected: getV2Reflection(itemId)?.reflection != null, error,
     });
   };
@@ -722,7 +722,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   // ---------- 打印练习纸 ----------
   const printState = (practiceId: string): PrintState => {
-    const status = getPrintStatus(practiceId);
+    const status = getPrintStatus(practiceId,'all');
     if (status.httpStatus !== 200) throw new NotFound();
     const body = status.body as { status: string; progress?: { done: number; total: number }; snapshot?: PrintSnapshot; error?: string | null };
     if (body.status === 'ready' && body.snapshot) return { status: 'ready', snapshot: body.snapshot };
@@ -733,7 +733,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   r.post('/print/:pid', page((request, response) => {
     const practice = practiceOf(String(request.params.pid));
-    requestPrint(practice.id, options.coachProvider);
+    requestPrint(practice.id, options.coachProvider, 'all');
     response.redirect(303, `/s/print/${practice.id}`);
   }));
 
@@ -917,12 +917,12 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     if(source.kind==='material'){
       const q=materialStoreForItem(itemId)!.getQuestion(source.questionId)!;
       const f=q.stem.find(f=>f.role==='question');if(!f)throw new NotFound();
-      response.redirect(303,`/s/materials/fragments/${f.fragmentId}/crop`);return;
+      response.redirect(303,`/s/materials/fragments/${f.fragmentId}/crop?revision=${f.revision}`);return;
     }
     response.type('image/jpeg').send(request.query.scope === 'full' ? await getItemFullCrop(itemId) : await getQuestionCrop(itemId));
   }));
   r.get('/img/print/:pid/:name', page((request, response) => {
-    const media = readPrintMedia(requireMatch(String(request.params.pid), PACKET_ID), String(request.params.name));
+    const media = readPrintMedia(requireMatch(String(request.params.pid), PACKET_ID), String(request.params.name), 'all');
     if (!media) throw new NotFound();
     response.type('image/jpeg').send(media);
   }));
