@@ -118,6 +118,7 @@ legend,.field-label,.steps-text li,.row-text{word-break:keep-all;overflow-wrap:a
 main p,main li{max-width:32em}
 .muted{color:var(--muted)}.small{font-size:var(--fs-2)}
 .lead{margin:calc(var(--s-1) * -1) 0 var(--s-5);color:var(--muted)}
+.lead.practice-intro{margin-top:var(--s-3)}
 .lead,.hint,.small,.steps-text li,.flash{text-wrap:balance}
 .card{background:var(--card);border:1px solid transparent;border-radius:var(--r-2);padding:20px;margin:var(--s-4) 0;box-shadow:var(--surface-shadow)}
 .card>:first-child{margin-top:0}.card>:last-child{margin-bottom:0}
@@ -182,7 +183,8 @@ main p,main li{max-width:32em}
 .crop.big{height:auto;max-height:none}
 .excerpt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .meta-line{display:block;font-size:var(--fs-2);line-height:var(--lh-tight);margin-top:var(--s-1)}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s-2);margin:var(--s-3) 0}
+/* 追加入口不随照片说明拉高；各列可收缩，避免宽高比反向撑宽列并溢出网格。 */
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start;gap:var(--s-2);margin:var(--s-3) 0}
 .grid figure{margin:0;font-size:var(--fs-1);line-height:var(--lh-tight);text-align:center}
 .grid figcaption{margin-top:var(--s-1)}
 .grid img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:var(--r-1);background:var(--mint);display:block;filter:var(--photo-dim)}
@@ -379,8 +381,9 @@ body:has(#camera-input:focus-visible) label[for=camera-input],body:has(#library-
 .a2hs{border:1px solid var(--line);box-shadow:none}
 .standalone .a2hs{display:none!important}
 /* 全局导航与当前任务分开；正文只有实色分组，材质只用于悬浮导航。 */
-body.has-tabbar{padding-bottom:calc(106px + env(safe-area-inset-bottom))}
-html:has(body.has-tabbar){scroll-padding-bottom:calc(106px + env(safe-area-inset-bottom))}
+/* 保留常规字号下的 106px；放大文字时同步增加留白，让末尾操作能滚到导航上方。 */
+body.has-tabbar{padding-bottom:calc(6.625rem + env(safe-area-inset-bottom))}
+html:has(body.has-tabbar){scroll-padding-bottom:calc(6.625rem + env(safe-area-inset-bottom))}
 .tab-bar{position:fixed;z-index:15;left:12px;right:12px;bottom:calc(8px + env(safe-area-inset-bottom));max-width:552px;margin:0 auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:5px 6px;border:1px solid var(--line);border-radius:29px;background:var(--bar-solid);box-shadow:var(--bar-shadow)}
 .tab-bar a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:54px;min-width:44px;padding:5px 8px;border-radius:23px;font-size:.75rem;line-height:1.3;font-weight:600;text-decoration:none;color:var(--muted)}
 .tab-bar svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}

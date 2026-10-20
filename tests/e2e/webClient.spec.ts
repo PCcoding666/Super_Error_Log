@@ -196,6 +196,10 @@ async function upload(page: Page, color: string): Promise<number> {
   const before = await page.getByTestId('photo-tile').count();
   await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic(color, 900 + before) });
   await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1, { timeout: 20_000 });
+  // A tile is appended before the upload batch redirects. Wait for the fresh form
+  // so the caller's next navigation cannot race with location.replace('/s/capture').
+  await expect(page.locator('#upload-form')).not.toHaveAttribute('data-upload-pending', { timeout: 20_000 });
+  await page.waitForLoadState('load');
   return before + 1;
 }
 
