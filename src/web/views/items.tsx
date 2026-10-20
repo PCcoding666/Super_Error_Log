@@ -51,7 +51,8 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
   const selectionUrl = notebookUrl(filters,undefined,[]);
   const subjectSwitch = <details className="subject-switch">
     <summary aria-label={`切换学科，当前${subject}`} data-testid="subject-switch"><span>{subject}</span><svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary>
-    <nav className="subject-options" aria-label="选择学科">{subjects.map(name => <a key={name} href={notebookUrl({grade,subject:name})} aria-current={name === subject ? 'page' : undefined}><span>{name}</span>{name === subject ? <span aria-hidden="true">✓</span> : null}</a>)}</nav>
+    {/* Leave the stage off the link. The next subject keeps it only when that subject still has questions in it. */}
+    <nav className="subject-options" aria-label="选择学科">{subjects.map(name => <a key={name} href={notebookUrl({subject:name})} aria-current={name === subject ? 'page' : undefined}><span>{name}</span>{name === subject ? <span aria-hidden="true">✓</span> : null}</a>)}</nav>
   </details>;
   const card = (item: V2WeekItem) => <li key={item.id} className="notebook-entry">
     {props.selection ? <label className="choice notebook-choice"><input type="checkbox" name="itemIds" value={item.id} defaultChecked={selected.has(item.id)} disabled={!eligible.has(item.id) && !selected.has(item.id)} /><span>选择 {item.shortId ?? '这道题'}{!eligible.has(item.id) ? <span className="meta-line muted">{selected.has(item.id) ? '当前不可加入，请取消选择后继续' : '已在练习中或暂不可练习'}</span> : null}</span></label> : null}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchesNotebook, notebookUrl, safeNotebookReturn, stageFilterChoices } from '../../src/web/notebook.js';
+import { matchesNotebook, notebookUrl, resolveNotebookStage, safeNotebookReturn, stageFilterChoices } from '../../src/web/notebook.js';
 import type { V2WeekItem } from '../../src/v2/weekService.js';
 
 const item: V2WeekItem = {id:'itm_0123456789abcdef',shortId:'M-01',grade:'初中',subject:'数学',chapter:'方程',knowledgeTags:['判别式'],questionExcerpt:'短题干',status:'needs_recheck',badge:'low',cropUrl:'',jobId:''};
@@ -37,6 +37,13 @@ describe('notebook filters and safe return context',()=>{
     expect(stageFilterChoices([])).toEqual(['全部']);
     expect(stageFilterChoices(['初中'])).toEqual(['初中']);
     expect(stageFilterChoices(['高中', '初中', '高中'])).toEqual(['全部', '初中', '高中']);
+  });
+  it('keeps an explicit stage after its questions are gone and ignores a stale empty-stage cookie', () => {
+    expect(resolveNotebookStage('初中', ['高中', '初中', '全部'], [])).toEqual({ grade: '初中', stages: ['初中'] });
+    expect(resolveNotebookStage('全部', ['初中'], ['初中'])).toEqual({ grade: '全部', stages: ['全部', '初中'] });
+    expect(resolveNotebookStage('高中', ['初中'], ['初中'])).toEqual({ grade: '高中', stages: ['全部', '初中', '高中'] });
+    expect(resolveNotebookStage('', ['高中', '初中', '全部'], ['初中'])).toEqual({ grade: '初中', stages: ['初中'] });
+    expect(resolveNotebookStage('初三', ['高中', '全部'], ['初中'])).toEqual({ grade: '初中', stages: ['初中'] });
   });
   it.each(['https://evil.example/s/items','//evil.example/s/items','/s/settings','/s/items/../settings','/s/items%3Fq=x','/s/items?redirect=/s/settings','/s/items#bad','/s/items\\?q=x','/s/items\n?q=x'])('rejects an untrusted return destination: %s',(value)=>{
     expect(safeNotebookReturn(value,'/fallback')).toBe('/fallback');

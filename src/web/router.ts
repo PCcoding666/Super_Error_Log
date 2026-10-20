@@ -17,7 +17,7 @@ import { PracticeDashboardPage } from './views/practiceDashboard.js';
 import { categoryForItem, editItemCategory, STAGE_REQUIRED_MESSAGE, updateStudentGrade } from '../classification/itemCategories.js';
 import { readCatalog } from '../classification/catalog.js';
 import { ALL_STAGES } from '../classification/stages.js';
-import { stageFilterChoices, stagesInScope } from './notebook.js';
+import { resolveNotebookStage, stagesInScope } from './notebook.js';
 import { requireProfile } from '../services/studentService.js';
 import crypto from 'node:crypto';
 import express, { Router, type ErrorRequestHandler, type Request, type Response } from 'express';
@@ -547,8 +547,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     // An edit/removal can empty a former subject; keep the explicit scope rather than broadening it.
     if (requested && !subjects.includes(requested)) subjects.push(requested);
     const subject = [requested, cookies[COOKIE.itemsSubject], ...all.filter(item => item.grade === profile.grade).map(item => item.subject), ...all.map(item => item.subject), ...subjects].find(value => value && subjects.includes(value)) ?? '数学';
-    const stageOptions = stageFilterChoices(stagesInScope(all, subject));
-    const grade = [str(input?.grade), cookies[COOKIE.itemsGrade], profile.grade, ALL_STAGES, stageOptions[0]].find(value => value && stageOptions.includes(value)) ?? ALL_STAGES;
+    const resolvedStage = resolveNotebookStage(str(input?.grade), [cookies[COOKIE.itemsGrade], profile.grade, ALL_STAGES], stagesInScope(all, subject));
+    const stageOptions = resolvedStage.stages;
+    const grade = resolvedStage.grade;
     setCookie(request, response, COOKIE.itemsSubject, subject, null);
     setCookie(request, response, COOKIE.itemsGrade, grade, null);
     const scope = all.filter(item => (item.subject || '未分类') === subject && (grade === ALL_STAGES || item.grade === grade));

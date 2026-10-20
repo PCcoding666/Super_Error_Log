@@ -41,6 +41,7 @@ beforeEach(() => {
   for (const table of ['v2_print_snapshot', 'correction', 'correction_proposal', 'v2_reflection_turn', 'mastery_event', 'review_attempt', 'review_packet_item', 'review_packet', 'mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo', 'v2_setting']) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
+  db.prepare("UPDATE student_profile SET grade='初中'").run();
 });
 
 /** 合成识别：偏红 = 有批改痕迹（自动精读），偏蓝 = 没批改（等学生勾）。 */
@@ -1712,7 +1713,8 @@ describe('single-question learning detail', () => {
     expect(library).toContain('管理原学科');
     expect(library).toContain('管理原章节');
     expect(library).toContain('name="subject" value="管理原学科"');
-    expect(library).toContain('还没有管理原学科错题');
+    expect(library).toContain('这个学段还没有管理原学科错题');
+    expect(library).toContain('<option selected="">初中</option>');
     expect(library).toContain('清除筛选');
     expect(library).toContain('保留的选择');
   });
@@ -1748,10 +1750,7 @@ describe('single-question learning detail', () => {
     expect(target.searchParams.get('removed')).toBe(id);
     target.searchParams.delete('removed');target.searchParams.delete('returnItem');
     expect(target.pathname+target.search+target.hash).toBe(returnTo);
-    const flash=await browser.text(discarded.headers.get('location')!);
-    // The discarded item was the only one in that subject, so the stage filter falls back to 全部.
-    const hidden=(html:string,name:string)=>new RegExp(`name="${name}" value="([^"]*)"`).exec(html)?.[1]?.replaceAll('&amp;','&');
-    expect(hidden(flash,'returnTo')).toBe(returnTo.replace('grade=%E5%88%9D%E4%B8%AD','grade=%E5%85%A8%E9%83%A8'));
+    const flash=await browser.text(discarded.headers.get('location')!);assertContext(flash);
     const restored=await browser.post(`/s/items/${id}/restore`,{returnTo});
     expect(restored.headers.get('location')).toBe(returnTo);
     const restoredPage=await browser.text(returnTo);

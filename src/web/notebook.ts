@@ -31,6 +31,26 @@ export function stageFilterChoices(present: string[]): string[] {
   return [ALL_STAGES, ...unique];
 }
 
+/**
+ * The notebook request's stage is the selection return URLs must keep, even after the
+ * last question in that stage is removed. A cookie or profile stage applies only when
+ * questions of that stage are still stored for the subject.
+ */
+export function resolveNotebookStage(
+  requested: string,
+  remembered: Array<string | null | undefined>,
+  present: string[],
+): { grade: string; stages: string[] } {
+  const explicit = requested.trim();
+  const honored = explicit === ALL_STAGES || isStage(explicit) ? explicit : '';
+  const stored = [...new Set(present.map(stage => stage.trim()).filter(Boolean))];
+  const source = honored && isStage(honored) && !stored.includes(honored) ? [...stored, honored] : stored;
+  let stages = stageFilterChoices(source);
+  if (honored === ALL_STAGES && !stages.includes(ALL_STAGES)) stages = [ALL_STAGES, ...stages];
+  const grade = honored || remembered.find(value => !!value && stages.includes(value)) || stages[0] || ALL_STAGES;
+  return { grade, stages };
+}
+
 export function notebookUrl(filters: Partial<NotebookFilters>, itemId?: string, selectedIds?: string[]): string {
   const query = new URLSearchParams();
   if (filters.grade === ALL_STAGES || isStage(filters.grade)) query.set('grade', filters.grade);
