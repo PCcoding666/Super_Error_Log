@@ -327,7 +327,9 @@ describe('学生网关登录与退出', () => {
     expect(logout.status).toBe(303);
     expect(browser.cookies.has(SESSION_COOKIE)).toBe(false);
     expect(browser.cookies.has('sel_items_subject')).toBe(false);
+    expect(browser.cookies.has('sel_consent')).toBe(true);
     expect(logout.headers.getSetCookie().join('\n')).not.toMatch(/sel_consent=/i);
+    browser.cookies.delete('sel_consent');
     expect(env.registry.authenticate(token)).toBeNull();
     const page = await browser.request('/s/', { headers: { cookie: `${SESSION_COOKIE}=${token}` } });
     expect(page.status).toBe(401);
