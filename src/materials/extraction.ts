@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import type { Extraction } from './contracts.js';
 import { MaterialStore } from './store.js';
+import { reconcileAsset } from './matching.js';
 import type { MaterialJobs } from './jobs.js';
 import type { MaterialUploads } from './uploads.js';
 import { assertMaterialProviderConfigured, createMaterialProvider, PartialMaterialExtractionError, validateMaterialExtraction, type MaterialProvider, type MaterialProviderOptions } from './provider.js';
@@ -37,11 +38,14 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
       store.putFragment(next); return next;
     }) };
     store.db.prepare('UPDATE material_asset SET extraction_json=?,status=? WHERE owner_id=? AND id=?').run(JSON.stringify(result), partial ? 'partial' : 'extracted', store.studentId, row.asset_id);
-    store.db.prepare('UPDATE material_job SET result_json=? WHERE owner_id=? AND id=?').run(JSON.stringify({ assetId: row.asset_id, revision: row.revision, partial: !!partial }), store.studentId, jobId);
+    store.db.prepare('UPDATE material_job SET result_json=? WHERE owner_id=? AND id=?').run(JSON.stringify({ assetId: row.asset_id, revision: row.revision, sourceHash: row.sourceHash, partial: !!partial }), store.studentId, jobId);
     return true;
   });
   if (!persisted) return;
-  if (result.fragments.length) await reconcile?.(row.asset_id, result);
+  if (result.fragments.length) {
+    if (reconcile) await reconcile(row.asset_id, result);
+    else reconcileAsset(store, row.asset_id);
+  }
   if (partial) throw partial.failure;
 }
 

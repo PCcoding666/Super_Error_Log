@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { newId } from '../db/connection.js';
 import { validateBox } from '../media/images.js';
+import { invalidateLinkDependencies, resolveQuestionId } from './queries.js';
 import type { Fragment, Grade, LinkChange, LinkTarget, QuestionBundle, ReferenceAnswer } from './contracts.js';
 
 type QuestionRow = { id: string; document_id: string | null; revision: number; number: string | null; subject: string | null; tags_json: string; unresolved_json: string };
@@ -79,16 +80,19 @@ export class MaterialStore {
       for (const attemptId of new Set([old?.attempt_id,target?.attemptId].filter((v):v is string=>!!v))) {
         this.db.prepare('UPDATE material_attempt SET revision=revision+1 WHERE owner_id=? AND id=?').run(this.studentId,attemptId);
       }
+      const source=this.db.prepare('SELECT content_json FROM material_fragment WHERE owner_id=? AND id=? AND revision=?').get(this.studentId,fragmentId,fragmentRevision) as {content_json:string};
+      invalidateLinkDependencies(this,[...new Set([old?.question_id,target?.questionId].filter((v):v is string=>!!v))],JSON.parse(source.content_json),[...new Set([old?.attempt_id,target?.attemptId].filter((v):v is string=>!!v))]);
       return {id,questionId:target?.questionId??old?.question_id??'',revision};
     });
   }
 
   listQuestions(): QuestionBundle[] {
-    const rows=this.db.prepare('SELECT id FROM material_question WHERE owner_id=? ORDER BY created_at,id').all(this.studentId) as {id:string}[];
+    const rows=this.db.prepare(`SELECT q.id FROM material_question q WHERE q.owner_id=? AND NOT EXISTS (SELECT 1 FROM material_legacy_map m WHERE m.owner_id=q.owner_id AND m.source_kind='question_alias' AND m.source_key=q.id) ORDER BY q.created_at,q.id`).all(this.studentId) as {id:string}[];
     return rows.map(row=>this.getQuestion(row.id)!);
   }
 
   getQuestion(id: string): QuestionBundle | null {
+    id=resolveQuestionId(this,id);
     const row=this.db.prepare('SELECT * FROM material_question WHERE owner_id=? AND id=?').get(this.studentId,id) as QuestionRow|undefined;
     if (!row) return null;
     const links=this.db.prepare(`SELECT f.content_json,l.attempt_id,l.revision AS link_revision FROM material_link_event l
@@ -97,7 +101,7 @@ export class MaterialStore {
         SELECT 1 FROM material_link_event newer WHERE newer.owner_id=l.owner_id AND newer.fragment_id=l.fragment_id AND newer.revision>l.revision
       ) ORDER BY f.id`).all(this.studentId,id) as {content_json:string;attempt_id:string|null;link_revision:number}[];
     const fragments=links.map(l=>({...l,fragment:JSON.parse(l.content_json) as Fragment}));
-    const order=(a:Fragment,b:Fragment)=>a.order-b.order||a.fragmentId.localeCompare(b.fragmentId);
+    const order=(a:Fragment,b:Fragment)=>(a.page??Number.MAX_SAFE_INTEGER)-(b.page??Number.MAX_SAFE_INTEGER)||a.order-b.order||a.fragmentId.localeCompare(b.fragmentId);
     const stem=fragments.filter(f=>f.fragment.role==='question'||f.fragment.role==='diagram').map(f=>f.fragment).sort(order);
     const attempts=(this.db.prepare('SELECT id,revision FROM material_attempt WHERE owner_id=? AND question_id=? ORDER BY created_at,id').all(this.studentId,id) as {id:string;revision:number}[])
       .map(a=>({...a,fragments:fragments.filter(f=>f.attempt_id===a.id).map(f=>f.fragment).sort(order)}));

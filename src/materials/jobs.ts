@@ -95,6 +95,8 @@ export class MaterialJobs {
 
   async resume(): Promise<void> {
     if (this.stopped) return;
+    // Link invalidation can cancel a queued job before its handler was registered.
+    for (const id of this.occupancy) if (!this.active.has(id)&&!pending(this.require(id).state)) this.release(id);
     const rows = this.store.db.prepare("SELECT * FROM material_job WHERE owner_id=? AND state IN ('queued','running','interrupted')").all(this.store.studentId) as JobRow[];
     for (const row of rows) {
       if (!this.occupancy.has(row.id)) { this.admission?.noteExistingOccupancy(); this.occupancy.add(row.id); }
@@ -131,6 +133,7 @@ export class MaterialJobs {
   private async requestStage<T>(jobId: string, stageKey: string, invoke: (signal: AbortSignal) => Promise<T>, signal: AbortSignal): Promise<T> {
     for (;;) {
       signal.throwIfAborted();
+      if (this.require(jobId).state !== 'running') throw new MobileRequestError(409, 'stale_basis', '材料已更新，请重新发起处理。');
       const execution = this.execution(jobId);
       const stage = execution.stages[stageKey] ?? { round: 1, attempts: 0, state: 'running' as const };
       if (stage.state === 'succeeded') return stage.result as T;
@@ -176,7 +179,8 @@ export class MaterialJobs {
   }
   private async run(id: string, signal: AbortSignal): Promise<void> {
     const row = this.require(id); const handler = this.handlers.get(row.kind);
-    if (!handler || !pending(row.state)) return;
+    if (!pending(row.state)) { this.release(id); return; }
+    if (!handler) return;
     this.signals.set(id, signal);
     try {
       signal.throwIfAborted(); this.transition(id, 'running', null);
@@ -184,7 +188,7 @@ export class MaterialJobs {
       // A handler may atomically mark a result stale when its dependency revision changed.
       if (this.require(id).state === 'running') this.transition(id, 'succeeded', null);
     } catch (error) {
-      this.transition(id, signal.aborted ? 'interrupted' : 'failed', signal.aborted ? { code: 'interrupted', message: '处理已中断，已完成结果仍然保留。', retryable: true } : failure(error));
+      if (pending(this.require(id).state)) this.transition(id, signal.aborted ? 'interrupted' : 'failed', signal.aborted ? { code: 'interrupted', message: '处理已中断，已完成结果仍然保留。', retryable: true } : failure(error));
     } finally { this.signals.delete(id); this.release(id); }
   }
   private row(id: string): JobRow | undefined { return this.store.db.prepare('SELECT * FROM material_job WHERE owner_id=? AND id=?').get(this.store.studentId, id) as JobRow | undefined; }

@@ -23,6 +23,7 @@ export function migrateMaterials(db: DatabaseSync): void {
       id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES material_workspace(owner_id),
       capture_id TEXT NOT NULL, source_asset_id TEXT NOT NULL REFERENCES source_asset(id),
       document_id TEXT, upload_request_id TEXT, revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+      link_revision INTEGER NOT NULL DEFAULT 1 CHECK(link_revision > 0),
       hints_json TEXT NOT NULL DEFAULT '{}', extraction_json TEXT, status TEXT NOT NULL DEFAULT 'saved',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(owner_id,id), UNIQUE(owner_id,source_asset_id), UNIQUE(owner_id,upload_request_id),
@@ -105,6 +106,9 @@ export function migrateMaterials(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_material_links_question ON material_link_event(owner_id,question_id);
     CREATE INDEX IF NOT EXISTS idx_material_fragments_asset ON material_fragment(owner_id,asset_id);
   `);
+  // Link decisions have their own CAS counter: they never change extraction/source identity.
+  const assetColumns=db.prepare('PRAGMA table_info(material_asset)').all() as {name:string}[];
+  if (!assetColumns.some(column=>column.name==='link_revision')) db.exec('ALTER TABLE material_asset ADD COLUMN link_revision INTEGER NOT NULL DEFAULT 1 CHECK(link_revision > 0)');
   // Old tables do not have composite owner keys. Validate those boundaries without changing old rows.
   for (const operation of ['INSERT', 'UPDATE'] as const) {
     db.exec(`

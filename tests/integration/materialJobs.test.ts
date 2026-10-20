@@ -250,3 +250,55 @@ describe('durable material scheduling', () => {
     expect(f.scheduler.enqueueExternalWork('after-stop', async () => {})).toBe('stopped');
   });
 });
+
+describe('invalidated material work', () => {
+  it('skips queued stale work and releases its real admission ownership exactly once', async () => {
+    const f=await fixture(1); let release!:()=>void; let blocked=false; let drained=false; let calls=0;
+    f.scheduler.enqueueExternalWork('hold-stale-queue',async()=>{blocked=true;await new Promise<void>(resolve=>{release=resolve;});});
+    await expect.poll(()=>blocked).toBe(true);
+    f.jobs.register('answer',async id=>{await f.jobs.request(id,'answer',async()=>{calls++;return 'unexpected';});});
+    const job=f.jobs.enqueue('answer',f.question,randomUUID(),'basis');
+    f.db.prepare("UPDATE material_job SET state='stale' WHERE id=?").run(job.id);
+    f.scheduler.enqueueExternalWork('observe-drained',async()=>{drained=true;}); release();
+    await expect.poll(()=>drained).toBe(true);
+    expect(calls).toBe(0); expect(f.jobs.get(job.id)?.state).toBe('stale');
+    expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true);
+    await f.jobs.resume(); expect(f.admission.tryAcquireJobCapacity().accepted).toBe(false);
+    f.admission.releaseJobCapacity();
+  });
+
+  it('releases stale pending ownership even when its handler has not yet been registered', async()=>{
+    const f=await fixture(1); const job=f.jobs.enqueue('answer',f.question,randomUUID(),'basis');
+    f.db.prepare("UPDATE material_job SET state='stale' WHERE id=?").run(job.id);
+    await f.jobs.resume(); expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true); f.admission.releaseJobCapacity();
+  });
+
+  it.each(['throw','abort'] as const)('preserves stale state when an already running handler ends by %s', async mode=>{
+    const f=await fixture(1); let started=false; let release!:()=>void; let finished=false;
+    f.jobs.register('answer',async (_id,signal)=>{
+      started=true;
+      try { await new Promise<void>(resolve=>{release=resolve;signal.addEventListener('abort',()=>resolve(),{once:true});}); throw new Error('synthetic late failure'); }
+      finally {finished=true;}
+    });
+    const job=f.jobs.enqueue('answer',f.question,randomUUID(),'basis'); await expect.poll(()=>started).toBe(true);
+    f.db.prepare("UPDATE material_job SET state='stale' WHERE id=?").run(job.id);
+    if (mode==='abort') await f.jobs.stop(); else {release();await expect.poll(()=>finished).toBe(true);await new Promise(resolve=>setImmediate(resolve));}
+    expect(f.jobs.get(job.id)?.state).toBe('stale'); expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true); f.admission.releaseJobCapacity();
+  });
+
+  it('keeps the completed checkpoint but never reserves another actual call after invalidation', async()=>{
+    const f=await fixture(1); let started=false; let release!:()=>void; let finished=false; let calls=0;
+    f.jobs.register('answer',async id=>{
+      try {
+        await f.jobs.request(id,'first',async()=>{calls++;started=true;await new Promise<void>(resolve=>{release=resolve;});return 'retained';});
+        await f.jobs.request(id,'second',async()=>{calls++;return 'must not run';});
+      } finally {finished=true;}
+    });
+    const job=f.jobs.enqueue('answer',f.question,randomUUID(),'basis'); await expect.poll(()=>started).toBe(true);
+    f.db.prepare("UPDATE material_job SET state='stale' WHERE id=?").run(job.id); release();
+    await expect.poll(()=>finished).toBe(true); await new Promise(resolve=>setImmediate(resolve));
+    expect(calls).toBe(1); expect(f.jobs.execution(job.id).stages.first).toMatchObject({state:'succeeded',result:'retained',attempts:1});
+    expect(f.jobs.execution(job.id).stages.second).toBeUndefined(); expect(f.jobs.get(job.id)?.state).toBe('stale');
+    expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true); f.admission.releaseJobCapacity();
+  });
+});
