@@ -68,7 +68,7 @@ for (const scripting of [true,false]) test.describe(`single-question learning ${
   test.use({javaScriptEnabled:scripting});
   test('read confirmed reflection, retry, resume, and truthful history with accessible mobile layout',async({page,request,detailServer:{WEB,CONTROL}},info)=>{
     const id = await fixture(page,request,{WEB,CONTROL});
-    const returnTo = `/s/items?grade=初三&subject=数学&chapter=一元一次方程&q=方程#item-${id}`;
+    const returnTo = `/s/items?grade=初中&subject=数学&chapter=一元一次方程&q=方程#item-${id}`;
     const url = `${WEB}/s/items/${id}?returnTo=${encodeURIComponent(returnTo)}`;
     await page.goto(url);
     await expect(page.getByTestId('next-step-primary')).toHaveText('重做这题');
@@ -153,8 +153,8 @@ for (const scripting of [true,false]) test.describe(`single-question learning ${
     const id=await fixture(page,request,{WEB,CONTROL});
     await page.goto(`${WEB}/s/items`);
     const ids=await page.getByTestId('item-card').evaluateAll(nodes=>nodes.slice(0,2).map(node=>node.id.slice('item-'.length)));
-    for(const itemId of ids) await page.request.post(`${WEB}/s/items/${itemId}/category`,{headers:{origin:WEB},form:{grade:'初三',subject:'数学',chapter:'管理往返'}});
-    const filters={grade:'初三',subject:'数学',chapter:'管理往返',status:'ready_for_reflection',q:'x',mode:'select'};
+    for(const itemId of ids) await page.request.post(`${WEB}/s/items/${itemId}/category`,{headers:{origin:WEB},form:{grade:'初中',subject:'数学',chapter:'管理往返'}});
+    const filters={grade:'初中',subject:'数学',chapter:'管理往返',status:'ready_for_reflection',q:'x',mode:'select'};
     await page.goto(`${WEB}/s/items?${new URLSearchParams(filters)}`);
     for(const checkbox of await page.locator('input[name=itemIds]').all()) await checkbox.check();
     await page.locator(`#item-${id}`).click();

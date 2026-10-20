@@ -45,7 +45,7 @@ test.describe('网页渐进增强', () => {
     await expect(page.getByRole('heading', { name: '错题本', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: '物理', exact: true })).toHaveCount(0);
     await expect(page.getByTestId('item-card')).toHaveCount(0);
-    await expect(page.getByText('这个年级还没有物理错题', { exact: true })).toBeVisible();
+    await expect(page.getByText('还没有物理错题', { exact: true })).toBeVisible();
     await page.getByTestId('tab-practices').click();
     await page.getByTestId('tab-items').click();
     await expect(switcher).toContainText('物理');

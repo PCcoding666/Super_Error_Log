@@ -73,7 +73,7 @@ export function pagesRouter(): Router {
       sendHtml(res, OnboardingPage({ error: '请填写昵称、至少选择一门学科，并确认已了解隐私边界。' }));
       return;
     }
-    createProfile({ nickname, subjects, weekendPref: String(req.body.weekend_pref ?? '周六上午') });
+    createProfile({ nickname, subjects, weekendPref: String(req.body.weekend_pref ?? '周六上午'), stage: String(req.body.grade ?? '') });
     res.redirect('/');
   });
 

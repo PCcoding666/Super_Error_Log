@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { config, dbPath, eventsLogPath, packetsDir, uploadsDir } from '../config.js';
+import { migrateItemCategoryGrades } from './stageMigration.js';
 import { SCHEMA_SQL } from './schema.js';
 
 let db: DatabaseSync | null = null;
@@ -17,6 +18,7 @@ export function getDb(): DatabaseSync {
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA_SQL);
+  migrateItemCategoryGrades(db);
   const evidenceCols = db.prepare('PRAGMA table_info(evidence_record)').all() as Array<{ name: string }>;
   if (!evidenceCols.some(c => c.name === 'crop_audit_json')) db.exec('ALTER TABLE evidence_record ADD COLUMN crop_audit_json TEXT');
   const packetCols = db.prepare('PRAGMA table_info(review_packet)').all() as Array<{ name: string }>;

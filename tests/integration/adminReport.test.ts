@@ -143,7 +143,7 @@ describe('admin account and usage report', () => {
       CREATE TABLE audit_event (created_at TEXT); INSERT INTO audit_event VALUES ('2026-10-20T05:00:00.000Z');`);
     db.close();
     const report = await readAdminReport(registry, parseAdminFilters({}));
-    expect(report.accounts[0]).toMatchObject({ label: '小林', lastActiveAt: '2026-10-20T05:00:00.000Z',
+    expect(report.accounts[0]).toMatchObject({ label: '小林', grade: null, lastActiveAt: '2026-10-20T05:00:00.000Z',
       activity: { photos: 2, items: 1, packets: 1, printed: 1, reflections: 1, returns: 1 } });
     expect(JSON.stringify(report)).not.toContain('private-student-words');
   });

@@ -5,7 +5,7 @@ export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS student_profile (
   id TEXT PRIMARY KEY,
   nickname TEXT NOT NULL,
-  grade TEXT NOT NULL DEFAULT '初三',
+  grade TEXT NOT NULL DEFAULT '初中',
   subjects TEXT NOT NULL DEFAULT '["数学","物理","化学"]',
   weekend_pref TEXT DEFAULT '周六上午',
   created_at TEXT NOT NULL
