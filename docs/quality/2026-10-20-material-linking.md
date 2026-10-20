@@ -1,6 +1,27 @@
 # 材料关联：本地合成验收记录
 
-记录日期：2026-10-21（Asia/Singapore）；文件名沿用 2026-10-20 的方案日期。分支 `codex/material-linking`，Task10 起点 `39187732739cdfe40a88f47f942aab58ba9183df`。这是本地实现与合成验证，**没有部署**，不代表线上已有这些功能。Task10 独立审查已通过；整分支最终审查发现 3 项 Important，首轮修复后的 scoped review 又发现 2 项 Important（分拆固化派生学科、移动端原图身份缺失时退回 derivative）。两项已追加修复，下一轮 fresh scoped review 尚未进行，不预写批准。
+记录日期：2026-10-21（Asia/Singapore）；文件名沿用 2026-10-20 的方案日期。分支 `codex/material-linking`，Task10 起点 `39187732739cdfe40a88f47f942aab58ba9183df`。这是本地实现与合成验证，**没有部署**，不代表线上已有这些功能。Task1–10 的最终独立审查均为 PASS / APPROVED、0 项遗留发现。整分支初审的 3 项 Important 和首轮修复 scoped review 的 2 项 Important 均已关闭；最后一次 fresh scoped review 为 **Spec PASS / Quality APPROVED，0 Critical / 0 Important / 0 Minor**。
+
+## 最终审查与源码门禁
+
+整体实现范围：`6434e4785fb3acfd9450b5c6cba66f8f8b48fa19..6abf6f478b992c3197b6a8ec6a15baa6e059793f`。最终源码/测试提交为 `6abf6f478b992c3197b6a8ec6a15baa6e059793f`；本次完成记录只修改文档，没有重跑测试。
+
+审查链保留历史结论：整分支初审 `6434e478..4a6eb15a` 发现 3 项 Important；首轮修复 `4a6eb15a..e49a6f8` 关闭默认 mock 域值和正常补齐/原图路径，但 scoped review 发现分拆固化派生学科、缺失 mobile link 时退回同字节 derivative 两项 Important。追加修复后，独立审查精确范围 `e49a6f85b8d20821ca1e924edbaa5474f6294259..6abf6f478b992c3197b6a8ec6a15baa6e059793f` 判定两项 **CLOSED**、无新发现，Spec PASS / Quality APPROVED。此前未受影响的整分支和首轮修复审查覆盖继续保留；没有把最后一次局部审查写成重新审查全部代码。
+
+最终源码门禁：`SEL_AI_MODE=mock npm run verify` exit 0，typecheck/build 通过，Vitest **80 文件、1019 通过/5 跳过**，Playwright **48 通过/1 跳过**；日志 `/tmp/material-final-fix2-verify.log`。独立审查检查了这份最终源码证据及 151 项定向回归结果，没有重复运行已通过的套件。下面是十项任务各自完成修复后的最终审查提交，结果均为 **Spec PASS / Quality APPROVED，0 项遗留发现**。
+
+| 任务 | 内容 | 最终审查提交 |
+| --- | --- | --- |
+| 1 | 增量存储与旧数据迁移 | `33d480f5702ccfb0787168cb06358a1df6352366` |
+| 2 | 持久化上传与共享调度 | `ca3219d935a684a8e54265060ce0e08b8a042576` |
+| 3 | 有来源依据的材料提取 | `ae8937841473fd85d55f5ffe73efc72e596e4444` |
+| 4 | 可撤销材料关联 | `7d554f59aa82e494679d8f033f0c371689a43bd5` |
+| 5 | 连续采集与草稿恢复 | `ed27ef08814d49161390dfb03c20fccbdb6c8c95` |
+| 6 | 参考答案与来源版本 | `56f328d60c8a8e4c1c5fe8ef0627ea344194b99a` |
+| 7 | 显式按需批改 | `4832caafd618687732f4653d8c4785c1e9076fa0` |
+| 8 | 共享学习来源衔接 | `c0e34315ba2b0ef3a44fe4b1dcf026c54adfb246` |
+| 9 | 多来源不可变打印 | `39187732739cdfe40a88f47f942aab58ba9183df` |
+| 10 | 真实认证旅程与合成验收 | `4a6eb15a367286c8068ae0bacaeb9032a98040e6` |
 
 ## 本地能力与验证入口
 
@@ -34,18 +55,18 @@
 
 红绿证据：`materialClassification + materialExtraction` 初次 **7 失败/7 通过**（`/tmp/material-final-fix-classification-red.log`），初步修复后 14 通过；移除来源后的学习摘要断言 **4 失败/2 通过**（`/tmp/material-final-fix-projection-red.log`）；补入转写后冲突测试的相关 10 文件运行 **2 失败/190 通过**（`/tmp/material-final-fix-targeted.log`），暴露普通转写固化分类，修复后 classification/learning/v2Correct **38 通过**（`/tmp/material-final-fix-classification-final-green.log`）。`materialActionSources` 初次 **3 失败/8 通过**，包括两种旧布局 ENOENT 和外来 source batch 未拒绝（`/tmp/material-final-fix-sources-red.log`）；共用解析后 **11 通过**（`/tmp/material-final-fix-sources-green.log`）。原测试断言未弱化。
 
-首轮修复全量门禁：`SEL_AI_MODE=mock npm run verify` **exit 0**；typecheck/build 通过，Vitest **80 文件、1010 通过/5 跳过**，Playwright **48 通过/1 跳过**。日志 `/tmp/material-final-fix-verify.log`。它未覆盖随后 scoped review 发现的两项边界；追加修复与新门禁如下。本轮使用合成数据/mock/loopback 协议替身，不证明真实模型准确率；fresh scoped review 由控制器后续发起。
+首轮修复全量门禁：`SEL_AI_MODE=mock npm run verify` **exit 0**；typecheck/build 通过，Vitest **80 文件、1010 通过/5 跳过**，Playwright **48 通过/1 跳过**。日志 `/tmp/material-final-fix-verify.log`。它未覆盖随后 scoped review 发现的两项边界；追加修复与新门禁如下。本轮使用合成数据/mock/loopback 协议替身，不证明真实模型准确率；当时待进行的 scoped review 及其发现、最终关闭结果分别记录于下文和上方最终审查节。
 
 ### Scoped review 后的窄范围追加修复
 
-首轮修复范围 `4a6eb15a..e49a6f8` 的独立审查仍为 Spec FAIL / Quality CHANGES_REQUIRED，0 Critical / 2 Important / 0 Minor。默认 mock 的域值问题已关闭；普通补齐和三种原图正常路径已关闭，下面两项交互需要修正。
+首轮修复范围 `4a6eb15a..e49a6f8` 的独立审查仍为 Spec FAIL / Quality CHANGES_REQUIRED，0 Critical / 2 Important / 0 Minor。默认 mock 的域值问题已关闭；普通补齐和三种原图正常路径已关闭，当时仍需修正的两项交互及实际修复如下。
 
 - **整页分拆不能固化旧页推导的学科。** `assignDocument` 的 split 原来把公开 `q.subject` 写到新题，导致答题卡离开数学题干后仍保存“数学”，后来只补入物理题干也无法恢复。现在只复制 owner-scoped 原题行的原始存储学科；派生值不复制。新增两例覆盖未明确分类/显式更正为化学，真实整页分拆、旧数学页留在原题、无题干时 NULL、随后物理来源、原始存储仍 NULL、撤销恢复原 attempt，以及 stale CAS/后来补题后不安全 undo 拒绝。其他学科持久化调用已审计：学习摘要本来是可更新的投影；matching 使用提取来源；legacy 镜像使用原 Evidence；普通转写不能固化派生值的上轮修复保持。
 - **识别出 mobile 来源后，缺失 owner/job link 必须拒绝。** 自然 JPEG 经 `normalizePhoto` 可以字节完全相同；只靠 hash 拒绝 derivative 不足。共享 resolver 现在用当前 owned link、迁移保存的 `sourceAssetId/mobile.jobId` 或 `v2_photo` source/job 记录识别对应 mobile 目录；没有这些映射时，实际匹配目录 ID/源媒体路径的 job metadata 也能识别来源。识别后缺少当前对应学生的 link 即拒绝；其余原有 job/hash/media 校验与 preserved original 读取保持。单纯目录叫 `media` 不构成 mobile 证据：真实直接旧原图位于 generic media、旁边有不相关 job.json 的正例仍能打印读取并执行答案/批改。
 
 红灯：`npx vitest run tests/integration/materialClassification.test.ts tests/integration/materialActionSources.test.ts`，**5 失败/23 通过**，`/tmp/material-final-fix2-red.log`。新增自然字节相同负例覆盖 link 改写/删除、foreign item owner、迁移记录但 job.json 已删、仅 bridge provenance、仅实际 job metadata；答案和批改均零 HTTP，`readSourceBytes` 与 `readFragmentImage` 同样拒绝。绿灯：classification/actionSources/links/print/migration/learning/uploads/v2Print **8 文件、151 通过**，`/tmp/material-final-fix2-green.log`；typecheck 通过，`/tmp/material-final-fix2-typecheck.log`。未弱化原断言。
 
-追加修复最新完整门禁：`SEL_AI_MODE=mock npm run verify` **exit 0**；typecheck/build 通过，Vitest **80 文件、1019 通过/5 跳过**，Playwright **48 通过/1 跳过**，日志 `/tmp/material-final-fix2-verify.log`。本次追加修复只在最终代码上运行一次完整门禁；之后仅更新证据文字。`git diff --check` 通过，19 条 Ruling 逐字保持。下一轮独立 scoped review 尚未发生；不把实现和测试通过写成审查批准。
+追加修复最新完整门禁：`SEL_AI_MODE=mock npm run verify` **exit 0**；typecheck/build 通过，Vitest **80 文件、1019 通过/5 跳过**，Playwright **48 通过/1 跳过**，日志 `/tmp/material-final-fix2-verify.log`。本次追加修复只在最终代码上运行一次完整门禁；之后仅更新证据文字。`git diff --check` 通过，19 条 Ruling 逐字保持。后续独立 scoped review 已完成：精确检查 `e49a6f8..6abf6f4`，两项 Important 均 CLOSED，Spec PASS / Quality APPROVED，0 Critical / 0 Important / 0 Minor。此结论来自独立审查，不以测试通过代替审查。
 
 ## 验证环境与命令（Task10 修复前记录）
 

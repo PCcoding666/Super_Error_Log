@@ -11,7 +11,9 @@
 - 拍照、改标签、录答案或刷新不会自动开始付费批改；老师痕迹、学生作答、订正、提供的答案和 AI 建议分开保存。掌握状态仍只由延迟回传规则更新，反思仍由学生提交。
 - 真正未分类的答题卡补入已分类题干后，可从实际当前来源推导缺失学科；撤销/移走唯一来源会撤回分类，显式学科权威保留。默认 mock 算术示例使用支持的“数学”。答案/批改与打印共用三种新旧原图布局的严格 owner/hash/job/media 身份解析。
 - 网页共享学习入口可选择新材料题和历史题并完整打印；旧 API 不返回残缺的新/混合包。打印使用真实来源与选定答案版本，旧 ready 快照不改写。
-- 合成邀请网关验收见 `tests/e2e/materialJourney.spec.ts`、`tests/integration/materialIsolation.test.ts`；原 `materialCapture.spec.ts` 的恢复/ACK/身份用例保持。最终本地 `SEL_AI_MODE=mock npm run verify` 已通过（Vitest 1019 通过/5 跳过，Playwright 48 通过/1 跳过，typecheck/build 通过）；截图/点击数据见 `docs/quality/2026-10-20-material-linking.md`。Task10 独立审查已通过；整分支最终审查 3 项 Important 的首轮修复后，scoped review 再发现 2 项边界：整页分拆固化派生学科，以及 mobile 原图身份缺失时退回同字节 derivative。已追加修复，下一轮 fresh scoped review 尚未进行。上述为追加修复后的最新门禁（80 个 Vitest 文件）；日志 `/tmp/material-final-fix2-verify.log`。详细红绿证据见质量记录。
+- 合成邀请网关验收见 `tests/e2e/materialJourney.spec.ts`、`tests/integration/materialIsolation.test.ts`；原 `materialCapture.spec.ts` 的恢复/ACK/身份用例保持。最终本地 `SEL_AI_MODE=mock npm run verify` 已通过（Vitest 1019 通过/5 跳过，Playwright 48 通过/1 跳过，typecheck/build 通过）；截图/点击数据见 `docs/quality/2026-10-20-material-linking.md`。Task1–10 最终独立审查均 PASS / APPROVED、0 项遗留发现；整分支初审 3 项 Important 和首轮修复 scoped review 的 2 项 Important 已全部关闭。最后一次独立 scoped review 检查 `e49a6f8..6abf6f4`，两项 CLOSED，Spec PASS / Quality APPROVED，0 Critical / 0 Important / 0 Minor。上述为追加修复后的最新门禁（80 个 Vitest 文件）；日志 `/tmp/material-final-fix2-verify.log`。详细红绿证据见质量记录。
+
+最终源码/测试提交：`6abf6f478b992c3197b6a8ec6a15baa6e059793f`；整体实现范围 `6434e4785fb3acfd9450b5c6cba66f8f8b48fa19..6abf6f478b992c3197b6a8ec6a15baa6e059793f`。逐任务审查提交、历史失败与最终关闭链见 [材料关联质量记录](quality/2026-10-20-material-linking.md)。完成记录只改文档，没有为文字更新重复测试，也没有推送、合并或部署。
 
 保守兼容边界：历史上传的 immutable fingerprint 若为 NULL，重放返回 409，服务器原材料仍保留，界面提供查看/删除本机草稿；不同账号切换清除旧本机草稿，同账号过期重新登录可恢复。未知学科不猜，跨片段转写仍按单个真实片段提交；真实模型准确率、真机体验和物理打印未由合成测试证明。所有执行裁定原文已保存在质量文档，不能把历史手册当当前能力或上线证据。
 
