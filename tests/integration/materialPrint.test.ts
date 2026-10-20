@@ -354,7 +354,10 @@ it('serves authenticated web page groups, exact crops, originals and mixed print
         expect((await fetch(`${base}/s/materials/fragments/${two.fragmentId}/crop`, { headers: { accept: 'application/json', cookie: 'sel_device=invalid-token' } })).status).toBe(401);
         const response = await fetch(`${base}/s/skip`, { method: 'POST', headers: {...headers,'content-type':'application/x-www-form-urlencoded'}, body:new URLSearchParams({step:'why',practice:id,namespace:f.store.getWorkspace().draftNamespace}), redirect: 'manual' });
         expect(response.status).toBe(303);
-        expect(await(await fetch(`${base}/s/`,{headers})).text()).toContain('<span class="tone-blue">正在准备练习纸…</span>');
+        expect(response.headers.get('location')).toBe(`/s/print/${id}`);
+        const preparing = await (await fetch(`${base}/s/print/${id}`, { headers })).text();
+        expect(preparing).toContain('data-testid="print-preparing"');
+        expect(preparing).toContain('正在准备练习纸…');
         release();
         const s = snapshot(await settled(id));
         const sheet = await (await fetch(`${base}/s/print/${id}/sheet`, { headers })).text();

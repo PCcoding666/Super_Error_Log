@@ -353,7 +353,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const namespace = options.materials.store.getWorkspace().draftNamespace;
     r.use((request, response, next) => request.path.startsWith('/materials/answers/') ? next() : form(request, response, next), (request, response, next) => {
       response.locals.draftNamespace = namespace;
-      if (request.method === 'POST' && !request.path.startsWith('/materials/answers/') && request.is('application/x-www-form-urlencoded') && request.body?.namespace !== namespace) { response.status(409).send('登录的账号已变化，请重新打开页面。'); return; }
+      // Rendered forms carry the draft namespace. Reject a stale page after an account switch.
+      // Posts that never included one, such as the settings form, stay bound to the current session.
+      if (request.method === 'POST' && request.body?.namespace && request.body.namespace !== namespace) { response.status(409).send('登录的账号已变化，请重新打开页面。'); return; }
       next();
     });
     r.use(createMaterialsRouter({ ...options.materials, draftNamespace: namespace, admission: options.admission }));
