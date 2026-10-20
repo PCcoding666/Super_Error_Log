@@ -1,3 +1,13 @@
+/** Stage values stored in the historical grade column. Year grades are not allowed. */
+export const ITEM_CATEGORY_COLUMNS_SQL = `
+  item_id TEXT NOT NULL PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  grade TEXT NOT NULL CHECK (grade IN ('初中','高中')),
+  subject TEXT CHECK (subject IS NULL OR (subject=trim(subject) AND length(subject) BETWEEN 1 AND 100)),
+  chapter TEXT CHECK (chapter IS NULL OR (chapter=trim(chapter) AND length(chapter) BETWEEN 1 AND 100)),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (item_id,student_id) REFERENCES error_item(id,student_id) ON DELETE CASCADE`;
+
 /** Additive classification schema. Keep migrations here: production deployment must review them. */
 export const CLASSIFICATION_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS learning_stage (
@@ -5,6 +15,7 @@ CREATE TABLE IF NOT EXISTS learning_stage (
   name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 100)
 );
 INSERT OR IGNORE INTO learning_stage (id,name) VALUES ('junior','初中');
+INSERT OR IGNORE INTO learning_stage (id,name) VALUES ('senior','高中');
 
 CREATE TABLE IF NOT EXISTS classification_catalog (
   student_id TEXT NOT NULL REFERENCES student_profile(id) ON DELETE CASCADE,
@@ -47,14 +58,7 @@ CREATE TABLE IF NOT EXISTS classification_topic (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_classification_item_owner ON error_item(id,student_id);
 -- Per-item grade snapshot and optional manual category overrides. Raw AI evidence stays intact.
 -- Additive table: existing releases can still read the original question tables.
-CREATE TABLE IF NOT EXISTS item_category (
-  item_id TEXT NOT NULL PRIMARY KEY,
-  student_id TEXT NOT NULL,
-  grade TEXT NOT NULL CHECK (grade IN ('初一','初二','初三')),
-  subject TEXT CHECK (subject IS NULL OR (subject=trim(subject) AND length(subject) BETWEEN 1 AND 100)),
-  chapter TEXT CHECK (chapter IS NULL OR (chapter=trim(chapter) AND length(chapter) BETWEEN 1 AND 100)),
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (item_id,student_id) REFERENCES error_item(id,student_id) ON DELETE CASCADE
+CREATE TABLE IF NOT EXISTS item_category (${ITEM_CATEGORY_COLUMNS_SQL}
 );
 CREATE TABLE IF NOT EXISTS item_classification (
   item_id TEXT NOT NULL PRIMARY KEY,

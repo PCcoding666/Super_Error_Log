@@ -1,6 +1,7 @@
 import { itemContextUrl, itemNotebookReturn } from '../itemLearning.js';
 import { NOTEBOOK_STATUSES, notebookUrl, type NotebookFilters } from '../notebook.js';
-import { GRADES } from '../../classification/itemCategories.js';
+import { stageChoices } from '../../classification/itemCategories.js';
+import { ALL_STAGES } from '../../classification/stages.js';
 import { JUNIOR_CATALOG } from '../../classification/juniorCatalog.js';
 import type { ReactNode } from 'react';
 import type { V2WeekItem } from '../../v2/weekService.js';
@@ -35,7 +36,7 @@ export function ItemCard(props: { item: V2WeekItem; href?: string; open?: boolea
 
 export interface NotebookPageProps {
   items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel;
-  category: { grade: string; subject: string; subjects: string[] };
+  category: { grade: string; subject: string; subjects: string[]; stages?: string[] };
   filters?: NotebookFilters; chapters?: string[]; total?: number; selection?: boolean; selectedIds?: string[];
   eligibleIds?: string[]; recoveryItems?: V2WeekItem[]; removed?: string | null; undoReturnTo?: string;
   flash?: { ok?: string | null; err?: string | null };
@@ -70,7 +71,7 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
       <details className="notebook-filter-details" data-testid="notebook-filters">
         <summary>筛选 · {grade} · {filters.chapter || '全部章节'} · {filters.status ? NOTEBOOK_STATUSES[filters.status] : '全部状态'}</summary>
         <div className="notebook-filter-row">
-          <div><label htmlFor="library-grade">年级</label><select id="library-grade" name="grade" defaultValue={grade}>{GRADES.map(value=><option key={value}>{value}</option>)}</select></div>
+          <div><label htmlFor="library-grade">学段</label><select id="library-grade" name="grade" defaultValue={grade}>{(props.category.stages ?? [grade]).map(value=><option key={value}>{value}</option>)}</select></div>
           <div><label htmlFor="library-chapter">章节</label><select id="library-chapter" name="chapter" defaultValue={filters.chapter}><option value="">全部章节</option>{(props.chapters ?? []).map(value=><option key={value}>{value}</option>)}</select></div>
           <div><label htmlFor="library-status">学习状态</label><select id="library-status" name="status" defaultValue={filters.status}><option value="">全部状态</option>{Object.entries(NOTEBOOK_STATUSES).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></div>
           <button className="link-btn" type="submit">应用筛选</button>
@@ -89,7 +90,7 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
       {recovery.length || [...selected].some(id=>!known.has(id)) ? <section aria-label="保留的选择"><h2>保留的选择</h2><p className="hint">这些题不在当前结果中或已不可用，请检查并取消后继续。</p><ul className="list notebook-list">{recovery.map(card)}</ul>{[...selected].filter(id=>!known.has(id)).map(id=><label key={id} className="choice"><input type="checkbox" name="itemIds" value={id} defaultChecked /><span>不可用的题目：{id} · 取消后重试</span></label>)}</section> : null}
       <noscript><p className="hint">勾选后点“加入练习”提交；添加章节也会更新已选题数。超过 8 道时会保留选择，取消几道再提交。</p></noscript>
     </form> : <ul className="list notebook-list">{all.map(card)}</ul>}
-    {!all.length ? <section className="card"><h2 className="card-title">{props.total ? '没有符合筛选的题目' : `这个年级还没有${subject}错题`}</h2><p>以前收录和未分类的题目也会出现在这里。</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="more" href={notebookUrl({grade,subject})}>查看全部{subject}错题</a><a className="more" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '查看已上传照片' : '录入第一道错题'}</a></section> : null}
+    {!all.length ? <section className="card"><h2 className="card-title">{props.total ? '没有符合筛选的题目' : grade === ALL_STAGES ? `还没有${subject}错题` : `这个学段还没有${subject}错题`}</h2><p>以前收录和未分类的题目也会出现在这里。</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="more" href={notebookUrl({grade,subject})}>查看全部{subject}错题</a><a className="more" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '查看已上传照片' : '录入第一道错题'}</a></section> : null}
   </Page>;
 }
 
@@ -157,18 +158,18 @@ export function EditPage(props: { item: V2WeekItem; evidence: EvidenceView; erro
 /** Direct classification edits never assert that the student has checked the question text. */
 export function CategoryEditPage(props: { item: V2WeekItem; error?: string; values?: {grade:string;subject:string;chapter:string}; returnTo?: string }): ReactNode {
   const returnTo = itemNotebookReturn(props.returnTo,props.item), detailHref = itemContextUrl(props.item,returnTo);
-  const values = props.values ?? {grade:props.item.grade ?? '初三',subject:props.item.subject ?? '',chapter:props.item.chapter ?? ''};
+  const values = props.values ?? {grade:props.item.grade ?? '初中',subject:props.item.subject ?? '',chapter:props.item.chapter ?? ''};
   return <Page title="修改分类" back={{href:detailHref,label:'返回题目'}} bar={{caption:'只修改这道题的分类', primary:{title:'保存分类',key:'save-category',form:'category-form'},secondary:[]}}>
     <h1>修改分类</h1>
     {props.error ? <Problem title="分类未保存" detail={props.error} /> : null}
     <form id="category-form" method="post" action={`/s/items/${props.item.id}/category`}><input type="hidden" name="returnTo" value={returnTo} />
-      <label className="field-label" htmlFor="category-grade">年级</label>
-      <select id="category-grade" name="grade" defaultValue={values.grade}>{GRADES.map(grade => <option key={grade}>{grade}</option>)}</select>
+      <label className="field-label" htmlFor="category-grade">学段</label>
+      <select id="category-grade" name="grade" defaultValue={values.grade}>{stageChoices(values.grade).map(grade => <option key={grade}>{grade}</option>)}</select>
       <label className="field-label" htmlFor="category-subject">学科</label>
       <input type="text" id="category-subject" name="subject" list="category-subjects" defaultValue={values.subject} required maxLength={100} />
       <datalist id="category-subjects">{JUNIOR_CATALOG.map(subject => <option key={subject.key} value={subject.name} />)}</datalist>
       <label className="field-label" htmlFor="category-chapter">章节或知识主题</label>
-      <input type="text" id="category-chapter" name="chapter" defaultValue={values.chapter} required maxLength={100} placeholder="例如：一元二次方程" />
+      <input type="text" id="category-chapter" name="chapter" defaultValue={values.chapter} required maxLength={100} placeholder={values.grade === '高中' ? '按题目填写章节' : '例如：一元二次方程'} />
       <p className="hint">填写章节即可；“根的判别式”等细知识点保留在题目详情中。</p>
     </form>
   </Page>;

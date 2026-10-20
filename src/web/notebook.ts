@@ -1,4 +1,4 @@
-import { isGrade } from '../classification/itemCategories.js';
+import { ALL_STAGES, compareStage, isStage } from '../classification/stages.js';
 import type { V2WeekItem } from '../v2/weekService.js';
 
 export const NOTEBOOK_STATUSES: Record<string, string> = {
@@ -12,9 +12,28 @@ export const MAX_NOTEBOOK_RETURN_LENGTH = 6000;
 export function validNotebookSelection(ids: string[]): boolean {
   return ids.every(id=>/^itm_[0-9a-f]{16}$/.test(id)) && new Set(ids).size === ids.length;
 }
+/** Distinct stored stages for one subject. Empty and whitespace-only values are omitted. */
+export function stagesInScope(items: Array<{ grade?: string | null; subject?: string | null }>, subject: string): string[] {
+  const found = new Set<string>();
+  for (const item of items) {
+    if ((item.subject || '未分类') !== subject) continue;
+    const stage = item.grade?.trim();
+    if (stage) found.add(stage);
+  }
+  return [...found].sort(compareStage);
+}
+
+/** No stored stage → 全部. One stage → that stage. Two or more → 全部 plus those stages. */
+export function stageFilterChoices(present: string[]): string[] {
+  const unique = [...new Set(present.map(stage => stage.trim()).filter(Boolean))].sort(compareStage);
+  if (unique.length === 0) return [ALL_STAGES];
+  if (unique.length === 1) return unique;
+  return [ALL_STAGES, ...unique];
+}
+
 export function notebookUrl(filters: Partial<NotebookFilters>, itemId?: string, selectedIds?: string[]): string {
   const query = new URLSearchParams();
-  if (isGrade(filters.grade)) query.set('grade', filters.grade);
+  if (filters.grade === ALL_STAGES || isStage(filters.grade)) query.set('grade', filters.grade);
   for (const key of ['subject', 'chapter', 'status', 'q'] as const) {
     const value = filters[key]?.trim();
     if (value && (key !== 'status' || Object.hasOwn(NOTEBOOK_STATUSES,value))) query.set(key, value.slice(0, key === 'q' ? 200 : 100));
@@ -40,7 +59,7 @@ export function safeNotebookReturn(value: unknown, fallback: string): string {
   return notebookUrl(filters, url.hash ? url.hash.slice('#item-'.length) : undefined, selecting ? selectedIds : undefined);
 }
 export function matchesNotebook(item: V2WeekItem, filters: NotebookFilters, questionText = ''): boolean {
-  return item.grade === filters.grade && (item.subject || '未分类') === filters.subject
+  return (filters.grade === ALL_STAGES || item.grade === filters.grade) && (item.subject || '未分类') === filters.subject
     && (!filters.chapter || (item.chapter || '未分类') === filters.chapter)
     && (!filters.status || item.status === filters.status)
     && (!filters.q || [questionText, item.questionExcerpt, item.shortId, item.chapter, ...item.knowledgeTags]

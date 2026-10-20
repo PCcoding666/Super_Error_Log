@@ -47,9 +47,9 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.getByTestId('next-step-primary').click();
     const headers = {origin:WEB};
     await page.request.post(`${WEB}/s/consent`, {headers});
-    await page.request.post(`${WEB}/s/settings/grade`, {headers, form:{grade:'初二'}});
+    await page.request.post(`${WEB}/s/settings/grade`, {headers, form:{grade:'高中'}});
     const idsIn = (html:string) => [...new Set([...html.matchAll(/href="\/s\/items\/(itm_[0-9a-f]+)\?/g)].map(match => match[1]!))];
-    const libraryUrl = `${WEB}/s/items?grade=${encodeURIComponent('初二')}&subject=${encodeURIComponent('数学')}`;
+    const libraryUrl = `${WEB}/s/items?grade=${encodeURIComponent('高中')}&subject=${encodeURIComponent('数学')}`;
     const before = new Set(idsIn(await (await page.request.get(libraryUrl)).text()));
     for (let i=0;i<3;i++) {
       const image = await sharp({create:{width:611+i+(javaScriptEnabled?10:20),height:800,channels:3,background:'#f4c2b1'}}).jpeg().toBuffer();
@@ -63,32 +63,32 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     }).toBe(9);
     const subject = javaScriptEnabled ? '数学选题验证' : '无脚本选题验证';
     for (const [i,id] of ids.entries()) {
-      const result = await page.request.post(`${WEB}/s/items/${id}/category`, {headers,form:{grade:'初二',subject,chapter:i<5?'一元二次方程':'二次函数'}});
+      const result = await page.request.post(`${WEB}/s/items/${id}/category`, {headers,form:{grade:'高中',subject,chapter:i<5?'一元二次方程':'二次函数'}});
       expect(result.ok()).toBeTruthy();
     }
     await page.goto(`${WEB}/s/items/${ids[0]}`);
     await page.getByText('题目信息与管理',{exact:true}).click();
     await page.getByRole('link',{name:'修改分类'}).click();
-    await expect(page.getByLabel('年级',{exact:true})).toHaveValue('初二');
-    await page.getByLabel('年级',{exact:true}).selectOption('初三');
+    await expect(page.getByLabel('学段',{exact:true})).toHaveValue('高中');
+    await page.getByLabel('学段',{exact:true}).selectOption('初中');
     await page.getByTestId('next-step-primary').click();
-    await expect(page.getByTestId('item-category')).toHaveText(`初三 · ${subject} · 一元二次方程`);
+    await expect(page.getByTestId('item-category')).toHaveText(`初中 · ${subject} · 一元二次方程`);
     await page.getByText('题目信息与管理',{exact:true}).click();
     await page.getByRole('link',{name:'修改分类'}).click();
-    await page.getByLabel('年级',{exact:true}).selectOption('初二');
+    await page.getByLabel('学段',{exact:true}).selectOption('高中');
     await page.getByTestId('next-step-primary').click();
 
-    await page.goto(`${WEB}/s/items?${new URLSearchParams({grade:'初二',subject})}`);
+    await page.goto(`${WEB}/s/items?${new URLSearchParams({grade:'高中',subject})}`);
     await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
     // Returning from a question must preserve its grade, subject and chapter position,
     // even when the student's default grade differs. This also runs without JavaScript.
-    await page.request.post(`${WEB}/s/settings/grade`, {headers,form:{grade:'初三'}});
+    await page.request.post(`${WEB}/s/settings/grade`, {headers,form:{grade:'初中'}});
     await expect(page.getByRole('checkbox')).toHaveCount(0);
     await expect(page.getByTestId('item-card')).toHaveCount(9);
     await page.locator(`#item-${ids[0]}`).click();
     await page.getByTestId('back-link').click();
     await page.getByTestId('notebook-filters').locator('summary').click();
-    await expect(page.getByLabel('年级', {exact:true})).toHaveValue('初二');
+    await expect(page.getByLabel('学段', {exact:true})).toHaveValue('高中');
     await page.getByTestId('notebook-filters').locator('summary').click();
     await expect(page.getByTestId('subject-switch')).toContainText(subject);
     await expect(page.locator(`#item-${ids[0]}`)).toBeInViewport();
@@ -119,7 +119,7 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     }
     await page.getByTestId('next-step-primary').click();
     await expect(page).toHaveURL(/\/s\/practice\/pkt_/);
-    await page.request.post(`${WEB}/s/settings/grade`, {headers,form:{grade:'初三'}});
+    await page.request.post(`${WEB}/s/settings/grade`, {headers,form:{grade:'初中'}});
   });
   test('阅读、联合搜索、返回定位与选题恢复在浅深色和大字下可用', async ({page,request,categoryServer:{WEB,CONTROL}},testInfo)=>{
     const {link}=await (await request.get(`${CONTROL}/pairing-link`)).json() as {link:string};
@@ -135,7 +135,7 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
       <text x="90" y="885">3. △ABC ∽ △DEF，AB = 3，</text><text x="90" y="945">DE = 6，求相似比。</text></g>
       <g fill="#b22932" font-family="sans-serif" font-size="32"><text x="110" y="300">x = 3  ×</text><text x="110" y="670">x = 2  ×</text><text x="110" y="1045">3 : 1  ×</text></g></svg>`)).jpeg().toBuffer();
     await page.request.post(`${WEB}/s/capture`,{headers,multipart:{key:crypto.randomUUID(),photo:{name:'synthetic.jpg',mimeType:'image/jpeg',buffer:image}}});
-    const library=`${WEB}/s/items?${new URLSearchParams({grade:'初三',subject:'数学'})}`;
+    const library=`${WEB}/s/items?${new URLSearchParams({grade:'初中',subject:'数学'})}`;
     await expect.poll(async()=>{
       const html=await (await page.request.get(library)).text();
       return [...html.matchAll(/data-testid="item-card"/g)].length;
@@ -147,7 +147,7 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await expect(cards.first()).toBeVisible();
     await expect(cards.first()).toBeInViewport();
     const id=(await cards.first().getAttribute('id'))!.slice('item-'.length);
-    await page.request.post(`${WEB}/s/items/${id}/category`,{headers,form:{grade:'初三',subject:'数学',chapter:'阅读定位'}});
+    await page.request.post(`${WEB}/s/items/${id}/category`,{headers,form:{grade:'初中',subject:'数学',chapter:'阅读定位'}});
     await page.reload();
     await page.getByLabel('搜索题目',{exact:true}).fill('x');
     await page.getByTestId('notebook-filters').locator('summary').click();
@@ -155,7 +155,7 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.getByLabel('学习状态',{exact:true}).selectOption('ready_for_reflection');
     await page.getByRole('button',{name:'查看',exact:true}).click();
     await expect(cards).toHaveCount(1);
-    const expected=`${WEB}/s/items?${new URLSearchParams({grade:'初三',subject:'数学',chapter:'阅读定位',status:'ready_for_reflection',q:'x'})}#item-${id}`;
+    const expected=`${WEB}/s/items?${new URLSearchParams({grade:'初中',subject:'数学',chapter:'阅读定位',status:'ready_for_reflection',q:'x'})}#item-${id}`;
     const photo=cards.locator('img');
     await expect(photo).toHaveAttribute('src',/\?scope=full&s=big$/);
     await expect.poll(()=>photo.evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
@@ -243,8 +243,8 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.getByTestId('notebook-filters').locator('summary').focus();
     await page.keyboard.press('Enter');
     await page.keyboard.press('Tab');
-    await expect(page.getByLabel('年级',{exact:true})).toBeFocused();
-    expect(await page.getByLabel('年级',{exact:true}).evaluate(el=>getComputedStyle(el).outlineStyle)).not.toBe('none');
+    await expect(page.getByLabel('学段',{exact:true})).toBeFocused();
+    expect(await page.getByLabel('学段',{exact:true}).evaluate(el=>getComputedStyle(el).outlineStyle)).not.toBe('none');
     await page.getByTestId('notebook-filters').locator('summary').click();
     expect((await cards.first().boundingBox())!.y).toBeLessThan(320);
     for(const colorScheme of ['light','dark'] as const){
@@ -294,8 +294,8 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await expect(page.getByRole('link',{name:/查看原图/}).first()).toBeVisible();
     await page.unroute('**/s/img/item/**');
     const questionIds=await cards.evaluateAll(nodes=>nodes.map(node=>node.id.slice('item-'.length)));
-    for(const questionId of questionIds) await page.request.post(`${WEB}/s/items/${questionId}/category`,{headers,form:{grade:'初三',subject:'数学',chapter:'往返定位'}});
-    const selectionFilters={grade:'初三',subject:'数学',chapter:'往返定位',status:'ready_for_reflection',q:'x'};
+    for(const questionId of questionIds) await page.request.post(`${WEB}/s/items/${questionId}/category`,{headers,form:{grade:'初中',subject:'数学',chapter:'往返定位'}});
+    const selectionFilters={grade:'初中',subject:'数学',chapter:'往返定位',status:'ready_for_reflection',q:'x'};
     await page.goto(`${WEB}/s/items?${new URLSearchParams(selectionFilters)}`);
     await expect(cards).toHaveCount(2);
     await page.getByRole('link',{name:'选题练习',exact:true}).click();

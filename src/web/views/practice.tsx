@@ -1,4 +1,4 @@
-import { GRADES } from '../../classification/itemCategories.js';
+import { stageChoices } from '../../classification/itemCategories.js';
 import type { ReactNode } from 'react';
 import type { PracticeCard, PracticeDetail, PracticeSummary, RecommendResponse } from '../../v2/practiceService.js';
 import type { PrintSnapshot } from '../../v2/printService.js';
@@ -711,11 +711,11 @@ export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?:
       <h1>设置</h1>
       {props.error ? <Problem title="设置没有保存" detail={props.error} /> : null}
       <form method="post" action="/s/settings/grade" className="category-filter">
-        <label htmlFor="student-grade">我的年级</label>
-        <select id="student-grade" name="grade" defaultValue={props.grade ?? '初三'}>{GRADES.map(grade => <option key={grade} value={grade}>{grade}</option>)}</select>
-        <button type="submit" className="link-btn">保存年级</button>
+        <label htmlFor="student-grade">我的学段</label>
+        <select id="student-grade" name="grade" defaultValue={props.grade ?? '初中'}>{stageChoices(props.grade).map(grade => <option key={grade} value={grade}>{grade}</option>)}</select>
+        <button type="submit" className="link-btn">保存学段</button>
       </form>
-      <p className="hint">新收录的题目默认使用这个年级。已有题目的年级可在题目详情里单独修改。</p>
+      <p className="hint">新收录的题目默认使用这个学段。已有题目的学段可在题目详情里单独修改。</p>
       <dl className="settings-list">
         {props.accountRole ? (
           <div className="settings-row">

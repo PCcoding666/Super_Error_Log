@@ -48,7 +48,7 @@ export function summarize(records: AiUsageRecord[]): UsageSummary {
 
 export interface AccountActivity { photos: number | null; items: number | null; packets: number | null; printed: number | null; reflections: number | null; returns: number | null }
 export interface AdminAccount extends StudentRecord {
-  label: string; invitations: InvitationRecord[]; activity: AccountActivity; usage: UsageSummary;
+  label: string; grade: string | null; invitations: InvitationRecord[]; activity: AccountActivity; usage: UsageSummary;
   legacyCalls: number; firstCollectedAt: string | null; warnings: string[];
 }
 export interface AdminCall extends AiUsageRecord { studentId: string; accountLabel: string }
@@ -59,11 +59,11 @@ export interface AdminReport {
   byOperation: Array<{ name: string; usage: UsageSummary }>; failures: Array<{ code: string; count: number }>;
 }
 
-function readActivity(dataDir: string, warnings: string[]): { label: string | null; lastActiveAt: string | null; activity: AccountActivity } {
+function readActivity(dataDir: string, warnings: string[]): { label: string | null; grade: string | null; lastActiveAt: string | null; activity: AccountActivity } {
   const activity: AccountActivity = { photos: 0, items: 0, packets: 0, printed: 0, reflections: 0, returns: 0 };
-  let label: string | null = null; let lastActiveAt: string | null = null;
+  let label: string | null = null; let grade: string | null = null; let lastActiveAt: string | null = null;
   const filename = path.join(dataDir, 'app.db');
-  if (!fs.existsSync(filename)) return { label, lastActiveAt, activity };
+  if (!fs.existsSync(filename)) return { label, grade, lastActiveAt, activity };
   let db: DatabaseSync | undefined;
   try {
     if (!regularPath(filename, 'file')) throw new Error();
@@ -78,12 +78,16 @@ function readActivity(dataDir: string, warnings: string[]): { label: string | nu
       catch { activity[key as keyof AccountActivity] = null; }
     }
     try { label = (db.prepare('SELECT nickname FROM student_profile LIMIT 1').get() as { nickname?: string } | undefined)?.nickname?.slice(0, 100) || null; } catch { /* older schema */ }
+    try {
+      const stored = (db.prepare('SELECT grade FROM student_profile LIMIT 1').get() as { grade?: string } | undefined)?.grade?.trim();
+      grade = stored || null;
+    } catch { /* older schema has no grade column */ }
     try { lastActiveAt = (db.prepare('SELECT MAX(created_at) AS t FROM audit_event').get() as { t: string | null }).t; } catch { /* older schema */ }
   } catch {
     for (const key of Object.keys(activity)) activity[key as keyof AccountActivity] = null;
   } finally { db?.close(); }
   if (Object.values(activity).some(value => value === null)) warnings.push('部分学习使用统计暂时无法读取。');
-  return { label, lastActiveAt, activity };
+  return { label, grade, lastActiveAt, activity };
 }
 
 export async function readAdminReport(registry: StudentRegistry, filters: AdminFilters): Promise<AdminReport> {
@@ -100,7 +104,7 @@ export async function readAdminReport(registry: StudentRegistry, filters: AdminF
     const dataDir = registry.studentDir(student.studentId);
     const warnings: string[] = [];
     let records: AiUsageRecord[] = [];
-    let learning: ReturnType<typeof readActivity> = { label: null, lastActiveAt: null,
+    let learning: ReturnType<typeof readActivity> = { label: null, grade: null, lastActiveAt: null,
       activity: { photos: null, items: null, packets: null, printed: null, reflections: null, returns: null } };
     if (regularPath(dataDir, 'directory')) {
       learning = readActivity(dataDir, warnings);
@@ -120,7 +124,7 @@ export async function readAdminReport(registry: StudentRegistry, filters: AdminF
     const lastActiveAt = [student.lastActiveAt, learning.lastActiveAt, ...records.map(row => row.startedAt)]
       .filter((value): value is string => !!value && Number.isFinite(Date.parse(value))).sort().at(-1) ?? null;
     const selected = records.filter(matches);
-    accounts.push({ ...student, label, lastActiveAt, activity: learning.activity, warnings,
+    accounts.push({ ...student, label, grade: learning.grade, lastActiveAt, activity: learning.activity, warnings,
       invitations: invitations.filter(row => row.studentId === student.studentId), usage: summarize(selected),
       legacyCalls: records.filter(row => row.source === 'legacy').length,
       firstCollectedAt: records.filter(row => row.source === 'live').map(row => row.startedAt).sort()[0] ?? null });
