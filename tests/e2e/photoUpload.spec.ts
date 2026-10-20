@@ -43,7 +43,8 @@ async function jpeg(width = 820, height = 1100, background = '#c6cff2') {
 async function uploaded(page: Page) {
   await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
   await expect(page.getByTestId('photo-tile')).toHaveCount(0);
-  await expect(page.locator('#upload-form')).not.toHaveAttribute('data-upload-pending');
+  // Earlier failed selections intentionally keep the current form and retry state.
+  await expect(page.locator('#library-input')).toBeEnabled();
 }
 
 test('5-question paper stays intact after adding 2 questions from home, refresh and invitation relogin', async ({ page, gateway }, info) => {

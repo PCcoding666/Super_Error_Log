@@ -27,7 +27,7 @@ test.afterAll(async () => {
 for (const scripting of [true, false]) test.describe(`root page layout ${scripting ? 'with' : 'without'} JavaScript`, () => {
   test.use({ javaScriptEnabled: scripting, serviceWorkers: 'block' });
 
-  test('photo grid contains every tile and caption above the next action', async ({ page }, info) => {
+  test('capture stays compact and its upload actions remain reachable regardless of history size', async ({ page }, info) => {
     for (const size of [
       { width: 796, height: 546, font: '100%', colorScheme: 'dark' as const },
       { width: 390, height: 844, font: '100%', colorScheme: 'light' as const },
@@ -35,43 +35,43 @@ for (const scripting of [true, false]) test.describe(`root page layout ${scripti
     ]) {
       await page.setViewportSize(size);
       await page.emulateMedia({ colorScheme: size.colorScheme });
-      for (const count of [8, 0, 1, 2, 3, 9]) {
+      let populatedHeight: number | undefined;
+      for (const count of [8, 0, 1, 2, 3, 9, 100]) {
         await page.goto(`${base}/s/capture?count=${count}`);
         await page.evaluate(font => document.documentElement.style.setProperty('font-size', font), size.font);
-        await expect(page.getByTestId('photo-tile')).toHaveCount(count);
-        await page.locator('[data-photo-grid] img').evaluateAll(async elements => {
-          await Promise.all(elements.map(element => { const img = element as HTMLImageElement; img.loading = 'eager'; return img.decode(); }));
-        });
+        await expect(page.getByTestId('photo-tile')).toHaveCount(0);
+        await expect(page.locator('img[src*="/s/img/photo/"]')).toHaveCount(0);
+        await expect(page.getByRole('navigation', { name: '错题录入视图' }).getByRole('link', { name: '已上传记录', exact: true })).toHaveAttribute('href', '/s/photos');
         const layout = await page.evaluate(() => {
-          const grid = document.querySelector('[data-photo-grid]')!.getBoundingClientRect();
-          const tiles = Array.from(document.querySelectorAll('[data-photo-grid] > *')).map(tile => tile.getBoundingClientRect());
-          const captions = Array.from(document.querySelectorAll('[data-photo-grid] figcaption')).map(caption => caption.getBoundingClientRect());
           const action = document.querySelector('[data-testid="next-step-bar"]')!.getBoundingClientRect();
+          const form = document.querySelector('#upload-form')!.getBoundingClientRect();
           return {
             compatMode: document.compatMode,
             overflow: document.documentElement.scrollWidth - innerWidth,
-            gridBottom: grid.bottom, actionTop: action.top,
-            tileBottoms: tiles.map(tile => tile.bottom), captionBottoms: captions.map(caption => caption.bottom),
-            widths: tiles.map(tile => tile.width),
+            actionBottom: action.bottom, formTop: form.top,
+            mainHeight: document.querySelector('main')!.getBoundingClientRect().height,
           };
         });
         expect(layout.compatMode).toBe('CSS1Compat');
         expect(layout.overflow, `${count} photos at ${size.width}px`).toBeLessThanOrEqual(1);
-        for (const bottom of [...layout.tileBottoms, ...layout.captionBottoms]) {
-          expect(bottom, `grid contains ${count} photos at ${size.width}px`).toBeLessThanOrEqual(layout.gridBottom + 1);
-          expect(bottom).toBeLessThan(layout.actionTop);
+        expect(layout.actionBottom).toBeLessThanOrEqual(layout.formTop);
+        if (count > 0) {
+          populatedHeight ??= layout.mainHeight;
+          expect(Math.abs(layout.mainHeight - populatedHeight)).toBeLessThanOrEqual(1);
         }
-        if (layout.widths.length) expect(Math.max(...layout.widths) - Math.min(...layout.widths)).toBeLessThanOrEqual(1);
+        for (const testId of ['next-step-primary', 'next-step-secondary-library']) {
+          await expect(page.getByTestId(testId)).toBeInViewport();
+        }
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
         const tabs = await page.getByTestId('root-tabs').boundingBox();
         for (const testId of ['next-step-primary', 'next-step-secondary-library']) {
           const action = await page.getByTestId(testId).boundingBox();
+          expect(action!.y).toBeGreaterThanOrEqual(0);
           expect(tabs!.y - (action!.y + action!.height), `${testId} above tabs at ${size.width}px`).toBeGreaterThanOrEqual(8);
         }
         if (count === 8) {
           await page.screenshot({ path: info.outputPath(`capture-${size.width}.png`) });
-          // The add-page tile remains usable, including the native camera chooser.
-          const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('add-page').click()]);
+          const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('next-step-primary').click()]);
           expect(chooser.isMultiple()).toBe(false);
         }
       }
