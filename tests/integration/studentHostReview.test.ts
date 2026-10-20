@@ -50,7 +50,12 @@ async function setup() {
     });
   });
   const upstreamBase = await listen(upstream);
-  const pool = { ensure: async () => { starts++; return { port: Number(new URL(upstreamBase).port), token: 'internal-secret' }; }, stopAll: async () => {} } as unknown as StudentWorkerPool;
+  const pool = {
+    ensure: async () => { starts++; return { port: Number(new URL(upstreamBase).port), token: 'internal-secret' }; },
+    retain: () => undefined,
+    release: () => undefined,
+    stopAll: async () => {},
+  } as unknown as StudentWorkerPool;
   const gateway = await createStudentHostGateway({ registry: reg, pool });
   const app = express();
   // Match the parent mobile app's default headers: public assets must override both.
