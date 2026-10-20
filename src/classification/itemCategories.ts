@@ -1,9 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { getDb } from '../db/connection.js';
 import { JUNIOR_CATALOG } from './juniorCatalog.js';
+import { isStage, STAGE_REQUIRED_MESSAGE } from './stages.js';
 
-export const GRADES = ['初一', '初二', '初三'] as const;
-export const isGrade = (value: unknown): value is typeof GRADES[number] => GRADES.some(grade => grade === value);
+export { STAGE_REQUIRED_MESSAGE, STAGES, isStage, stageChoices, type Stage } from './stages.js';
 export interface ItemCategory { grade: string; subject: string; chapter: string }
 
 // Existing seed entries include finer knowledge points. They remain evidence, but group under chapters.
@@ -15,7 +15,15 @@ const PARENT: Record<string, string> = {
   'ph-neutralization': 'acids-bases',
 };
 
-export function chapterOf(subject: string, chapter: string | null, tags: string[]): string {
+/**
+ * 初中 chapters are normalized against the junior catalog.
+ * 高中 keeps the model's chapter text; knowledge tags are not rewritten onto junior chapters.
+ */
+export function chapterOf(subject: string, chapter: string | null, tags: string[], stage?: string | null): string {
+  if (stage === '高中') {
+    const text = (chapter ?? '').trim();
+    return text ? text.slice(0, 100) : '未分类';
+  }
   const topics = JUNIOR_CATALOG.find(entry => entry.name === subject)?.topics ?? [];
   const label = (key: string, name: string): string => {
     const parent = PARENT[key];
@@ -35,7 +43,7 @@ export function chapterOf(subject: string, chapter: string | null, tags: string[
   return '未分类';
 }
 
-/** Snapshot grade once; older AI fields and evidence are never rewritten by classification. */
+/** Snapshot stage once; older AI fields and evidence are never rewritten by classification. */
 export function readItemCategory(db: DatabaseSync, studentId: string, itemId: string): ItemCategory | null {
   const item = db.prepare(`SELECT ei.subject,ei.chapter,ei.knowledge_tags,sp.grade,
       (SELECT cs.name FROM mobile_item_link mil JOIN photo_subject_selection ps ON ps.job_id=mil.job_id
@@ -44,19 +52,19 @@ export function readItemCategory(db: DatabaseSync, studentId: string, itemId: st
     .get(itemId, studentId) as {subject:string|null;chapter:string|null;knowledge_tags:string;grade:string;selected_subject:string|null}|undefined;
   if (!item) return null;
   db.prepare('INSERT OR IGNORE INTO item_category (item_id,student_id,grade) VALUES (?,?,?)')
-    .run(itemId, studentId, isGrade(item.grade) ? item.grade : '初三');
+    .run(itemId, studentId, isStage(item.grade) ? item.grade : '初中');
   const override = db.prepare('SELECT grade,subject,chapter FROM item_category WHERE item_id=? AND student_id=?')
     .get(itemId, studentId) as {grade:string;subject:string|null;chapter:string|null};
   const subject = override.subject ?? item.selected_subject ?? item.subject?.trim() ?? '未分类';
   // An upload-time subject override cannot reuse another subject's AI chapter.
   const subjectChanged = subject !== item.subject;
   return { grade: override.grade, subject: subject || '未分类',
-    chapter: override.chapter ?? chapterOf(subject, subjectChanged ? null : item.chapter, subjectChanged ? [] : JSON.parse(item.knowledge_tags) as string[]) };
+    chapter: override.chapter ?? chapterOf(subject, subjectChanged ? null : item.chapter, subjectChanged ? [] : JSON.parse(item.knowledge_tags) as string[], override.grade) };
 }
 
 export function editItemCategory(db: DatabaseSync, studentId: string, itemId: string, input: Record<string, unknown>): string | null {
   const { grade, subject, chapter } = input;
-  if (!isGrade(grade)) return '请选择初一、初二或初三。';
+  if (!isStage(grade)) return STAGE_REQUIRED_MESSAGE;
   if (typeof subject !== 'string' || !subject.trim() || subject.trim().length > 100) return '请填写学科（1–100 字）。';
   if (typeof chapter !== 'string' || !chapter.trim() || chapter.trim().length > 100) return '请填写章节（1–100 字）。';
   if (!readItemCategory(db, studentId, itemId)) return '题目不存在。';
@@ -66,12 +74,12 @@ export function editItemCategory(db: DatabaseSync, studentId: string, itemId: st
 }
 
 export function updateStudentGrade(db: DatabaseSync, studentId: string, grade: unknown): boolean {
-  if (!isGrade(grade)) return false;
+  if (!isStage(grade)) return false;
   db.exec('SAVEPOINT change_student_grade');
   try {
-    // Preserve all existing grades before changing the default, even for never-opened older questions.
+    // Preserve all existing stages before changing the default, even for never-opened older questions.
     db.prepare(`INSERT OR IGNORE INTO item_category (item_id,student_id,grade)
-      SELECT ei.id,ei.student_id,CASE WHEN sp.grade IN ('初一','初二','初三') THEN sp.grade ELSE '初三' END
+      SELECT ei.id,ei.student_id,CASE WHEN sp.grade IN ('初中','高中') THEN sp.grade ELSE '初中' END
       FROM error_item ei JOIN student_profile sp ON sp.id=ei.student_id WHERE ei.student_id=?`).run(studentId);
     const result = db.prepare('UPDATE student_profile SET grade=? WHERE id=?').run(grade, studentId);
     db.exec('RELEASE change_student_grade');
