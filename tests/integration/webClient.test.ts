@@ -146,6 +146,15 @@ async function uploadPhoto(browser: Browser, bytes: Buffer, type = 'image/jpeg')
   return browser.request('/s/capture', { method: 'POST', body: form, headers: { accept: 'application/json' } });
 }
 
+async function uploadPracticePhoto(browser: Browser, packetId: string, bytes: Buffer): Promise<Response> {
+  const body = new FormData();
+  body.append('key', crypto.randomUUID());
+  body.append('photo', new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' }), 'work.jpg');
+  return browser.request(`/s/practice/${packetId}/submission`, {
+    method: 'POST', body, headers: { accept: 'application/json' },
+  });
+}
+
 async function waitFor(check: () => Promise<boolean>, timeoutMs = 15_000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 100)); }
@@ -679,6 +688,47 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     await browser.post(`${url}/cancel`);
     expect((await browser.post(`${url}/review`)).status).toBe(409);
     expect(await browser.text(`${url}/feedback`)).not.toContain('action="'+url+'/confirm"');
+  });
+
+  it('整份照片可在同一分钟保存 12 张并立即核对，不消耗 AI 额度', async () => {
+    const env = await setup({
+      limiter: new RateLimiter({ now: () => 1000 }),
+      practiceReviewer: { review: async () => ({ findings: [] }) },
+    });
+    const { browser, packetId } = await chosen(env);
+    const url = `/s/practice/${packetId}`;
+    await waitFor(async () => (await browser.text(url)).includes('practice-question'));
+    const bytes = await photo('#ffffff', 20);
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const response = await uploadPracticePhoto(browser, packetId, bytes);
+      statuses.push(response.status);
+      await response.text();
+    }
+    expect(statuses).toEqual(Array(12).fill(200));
+    expect(getDb().prepare('SELECT COUNT(*) n FROM practice_submission_photo WHERE packet_id=?').get(packetId)).toEqual({ n: 12 });
+    expect((await browser.post(`${url}/review`)).status).toBe(303);
+    await waitFor(async () => (await browser.visibleText(`${url}/feedback`)).includes('待你确认'));
+    expect(getDb().prepare('SELECT status,attempts FROM practice_submission WHERE packet_id=?').get(packetId))
+      .toEqual({ status: 'ready', attempts: 1 });
+    expect(getDb().prepare('SELECT COUNT(*) n FROM review_attempt WHERE packet_id=?').get(packetId)).toEqual({ n: 0 });
+  });
+
+  it('AI 额度耗尽时仍可保存整份作答照片，核对仍受限且不丢照片', async () => {
+    const env = await setup({ limiter: new RateLimiter({ transcribePerDevice: 0, now: () => 1000 }) });
+    const { browser, packetId } = await chosen(env);
+    const url = `/s/practice/${packetId}`;
+    await waitFor(async () => (await browser.text(url)).includes('practice-question'));
+    const upload = await uploadPracticePhoto(browser, packetId, await photo('#ffffff', 20));
+    expect(upload.status).toBe(200);
+    await upload.text();
+    const review = await browser.post(`${url}/review`);
+    expect(review.status).toBe(429);
+    expect(Number(review.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(await review.text()).toContain('核对次数较多');
+    expect(getDb().prepare('SELECT status,attempts FROM practice_submission WHERE packet_id=?').get(packetId))
+      .toEqual({ status: 'pending', attempts: 0 });
+    expect(getDb().prepare('SELECT COUNT(*) n FROM practice_submission_photo WHERE packet_id=?').get(packetId)).toEqual({ n: 1 });
   });
 
   it('纸上练习直接看题和交照片，取消后旧链接只读且不能记录结果', async()=>{

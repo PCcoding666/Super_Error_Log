@@ -35,8 +35,8 @@ export function practiceSubmissionRouter(options:{reviewer?:PracticeReviewer;lim
   const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:15*1024*1024,files:2,fields:4,parts:8}}).array('photo',2);
   r.post('/practice/:pid/submission',async(req,res)=>{
     if(!hasConsent(req)){res.status(403).json({error:{message:'请先确认上传说明'}});return;}
-    const gate=options.limiter.transcribe(String(res.locals.deviceId));
-    if(!gate.allowed){res.setHeader('retry-after',String(gate.retryAfterSeconds));res.status(429).json({error:{message:'上传次数较多，请稍后再试'}});return;}
+    // Saving photos does not call AI. The parent query limit and upload admission
+    // still apply; only /review consumes the AI quota.
     const admission=options.admission,reservation=admission?trackUploadAdmission(admission,res):null;
     const fail=(status:number,message:string)=>{res.status(status);if(req.accepts(['html','json'])==='json')res.json({error:{message}});else uploadPage(req,res,message);};
     try{
