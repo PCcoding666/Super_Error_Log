@@ -34,6 +34,31 @@ export function targetSize(width: number, height: number, maxEdge: number = MAX_
  * - 相册多选后自动排队，准备/上传共用单并发；全部成功才刷新，部分失败留在本页。
  * - 每张独立保存 key 与已转换的 JPEG；重试只重新排入可重试的失败项。
  */
+/** Shared bounded conversion for the legacy uploader and recoverable material queue. */
+export const PHOTO_PREPARE_SCRIPT = `
+var MAX_EDGE=${MAX_UPLOAD_EDGE},MAX_BYTES=${MAX_UPLOAD_BYTES},PREPARE_MS=${PREPARE_TIMEOUT_MS},UPLOAD_MS=${UPLOAD_TIMEOUT_MS},QUALITIES=${JSON.stringify(JPEG_QUALITY_LADDER)};
+function isHeic(f){var t=(f.type||'').toLowerCase();return t.indexOf('heic')>=0||t.indexOf('heif')>=0||/\\.hei[cf]$/i.test(f.name||'')}
+function prepare(file){return new Promise(function(resolve,reject){
+var url=null,img=new Image(),canvas=null,done=false;
+var timer=setTimeout(function(){finish(new Error('prepare_timeout'))},PREPARE_MS);
+function finish(err,blob){if(done)return;done=true;clearTimeout(timer);img.onload=img.onerror=null;if(url)URL.revokeObjectURL(url);if(canvas){canvas.width=0;canvas.height=0}if(err)reject(err);else resolve(blob)}
+img.onload=function(){if(done)return;try{var w=img.naturalWidth,h=img.naturalHeight;
+if(!w||!h){finish(new Error('decode'));return}
+var scale=Math.min(1,MAX_EDGE/Math.max(w,h));
+var cw=Math.max(1,Math.round(w*scale)),ch=Math.max(1,Math.round(h*scale));
+canvas=document.createElement('canvas');canvas.width=cw;canvas.height=ch;
+var ctx=canvas.getContext('2d');if(!ctx){finish(new Error('encode'));return}
+ctx.drawImage(img,0,0,cw,ch);
+var i=0;function enc(){if(done)return;try{canvas.toBlob(function(b){if(done)return;
+if(!b||!b.size||b.type!=='image/jpeg'){finish(new Error('encode'));return}
+if(b.size<=MAX_BYTES){finish(null,b);return}
+if(i>=QUALITIES.length-1){finish(new Error('too_big'));return}
+i+=1;enc()},'image/jpeg',QUALITIES[i])}catch(e){finish(new Error('encode'))}}enc()
+}catch(e){finish(new Error('encode'))}};
+img.onerror=function(){finish(new Error('decode'))};
+try{url=URL.createObjectURL(file);img.src=url}catch(e){finish(new Error('decode'))}})}
+`;
+
 export const PHOTO_UPLOAD_SCRIPT = `
 /* 拍照上传：先在浏览器里转成 JPEG（最长边 ${MAX_UPLOAD_EDGE}、去拍摄信息）再上传；失败可重试或可重选。 */
 var form=uploadForm;

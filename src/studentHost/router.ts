@@ -217,9 +217,18 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     });
 
     // ---------- 退出（立即撤销会话；清本机页面标记，不动学习数据） ----------
-    r.post('/logout', (request, response) => {
+    r.post('/logout', form, async (request, response) => {
       if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
       const token = readCookies(request)[SESSION_COOKIE];
+      const session = token ? registry.authenticate(token) : null;
+      if (session && request.body?.namespace) {
+        try {
+          const endpoint = await pool.ensure(session.studentId);
+          const checked = await fetch(`http://127.0.0.1:${endpoint.port}/s/materials/session`, { headers: { cookie: `${COOKIE.device}=${encodeURIComponent(endpoint.token)}`, accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
+          const state = await checked.json() as { draftNamespace?: string };
+          if (!checked.ok || state.draftNamespace !== request.body.namespace) { response.status(409).send('登录的账号已变化，请重新打开页面。'); return; }
+        } catch { response.status(503).send('暂时无法退出，请稍后再试。'); return; }
+      }
       if (token) registry.revokeSession(token);
       clearCookie(request, response, SESSION_COOKIE);
       for (const name of BUSINESS_COOKIES) clearCookie(request, response, name);
@@ -317,6 +326,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       'x-real-ip': deps.ipOf(request),
       accept: typeof request.headers.accept === 'string' ? request.headers.accept : '*/*',
     };
+    // Opaque draft/replay expectations; the receiving worker validates these against its own database.
+    for (const name of ['x-draft-namespace', 'x-upload-id']) {
+      const value = request.headers[name];
+      if (typeof value === 'string' && value.length <= 200) headers[name] = value;
+    }
     if (typeof request.headers['accept-language'] === 'string') headers['accept-language'] = request.headers['accept-language'];
     if (typeof request.headers['user-agent'] === 'string') headers['user-agent'] = request.headers['user-agent'];
     if (typeof request.headers['content-type'] === 'string') headers['content-type'] = request.headers['content-type'];

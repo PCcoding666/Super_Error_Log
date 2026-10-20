@@ -1,3 +1,5 @@
+import { moduleImports } from '../helpers/moduleImports.js';
+import { resetMaterials } from '../helpers/resetMaterials.js';
 /**
  * T5：打印快照（POST/GET /v2/practice/:id/print、GET /v2/practice/:id/print/media/:name）。
  * 真实 HTTP（回环装配，共享令牌鉴权）+ 合成识别任务 + sharp 合成图 + 注入的计数 coach。
@@ -9,9 +11,9 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Server } from 'node:http';
 import sharp from 'sharp';
-import ts from 'typescript';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Coaching, Diagnosis, Evidence } from '../../src/ai/evidence.js';
+import type { LearningContext } from '../../src/learning/contracts.js';
 import type { CoachProvider } from '../../src/ai/provider.js';
 import { getDb, now } from '../../src/db/connection.js';
 import { isoWeekKey } from '../../src/domain/scheduling.js';
@@ -41,6 +43,7 @@ beforeAll(() => {
 // 每个用例清空业务表（共享测试库），保留学生档案。v2_print_snapshot 依赖 review_packet，先删。
 beforeEach(() => {
   const database = getDb();
+  resetMaterials(database);
   for (const table of ['v2_print_snapshot', 'correction', 'correction_proposal', 'v2_reflection_turn', 'review_attempt', 'review_packet_item', 'review_packet', 'mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo', 'v2_setting']) {
     database.prepare(`DELETE FROM ${table}`).run();
   }
@@ -57,9 +60,9 @@ class FixtureVision implements MobileVisionBoundary {
 
 /** 计数 coach：记录每次调用的证据与诊断；failFor 命中的题抛错（不阻塞快照，只留空提示）。 */
 class CountingCoach implements CoachProvider {
-  calls: Array<{ evidence: Evidence; diagnosis: Diagnosis }> = [];
-  failFor: ((evidence: Evidence) => boolean) | null = null;
-  async coachForPrint(evidence: Evidence, diagnosis: Diagnosis): Promise<Coaching> {
+  calls: Array<{ evidence: LearningContext; diagnosis: Diagnosis }> = [];
+  failFor: ((evidence: LearningContext) => boolean) | null = null;
+  async coachForPrint(evidence: LearningContext, diagnosis: Diagnosis): Promise<Coaching> {
     this.calls.push({ evidence, diagnosis });
     if (this.failFor?.(evidence)) throw new Error('注入的 coach 失败');
     return {
@@ -481,8 +484,12 @@ describe('T5 打印快照', () => {
 
     const db = getDb();
     const asset = db.prepare('SELECT sa.storage_path FROM source_asset sa JOIN error_item ei ON ei.asset_id = sa.id WHERE ei.id = ?').get(item.id) as { storage_path: string };
-    const saved = fs.readFileSync(asset.storage_path);
-    fs.rmSync(asset.storage_path);
+    // The bridge path is the normalized derivative; sourceHash identifies the
+    // independently preserved original in the actual mobile store layout.
+    const originalPath = path.join(dataDir, 'jobs', item.jobId, 'source-original.jpg');
+    expect(fs.existsSync(asset.storage_path)).toBe(true);
+    const saved = fs.readFileSync(originalPath);
+    fs.rmSync(originalPath);
 
     const response = await postPrint(base, auth, practice.id);
     expect(response.status).toBe(202);
@@ -497,7 +504,7 @@ describe('T5 打印快照', () => {
     expect(row.error).toBeTruthy();
 
     // 修复原图后再次 POST：重新准备并成功。
-    fs.writeFileSync(asset.storage_path, saved);
+    fs.writeFileSync(originalPath, saved);
     const retry = await postPrint(base, auth, practice.id);
     expect(retry.status).toBe(202);
     const ok = await pollPrint(base, auth, practice.id);
@@ -610,19 +617,8 @@ describe('T5 打印快照', () => {
       if (seen.has(resolved) || !fs.existsSync(resolved)) return;
       seen.add(resolved);
       const source = fs.readFileSync(resolved, 'utf8');
-      // Parse imports instead of matching arbitrary text such as text('from'); text('to').
-      const ast = ts.createSourceFile(resolved, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-      const specs: string[] = [];
-      const collect = (node: ts.Node): void => {
-        if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-          specs.push(node.moduleSpecifier.text);
-        } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) {
-          specs.push(node.arguments[0].text);
-        }
-        ts.forEachChild(node, collect);
-      };
-      collect(ast);
-      for (const spec of specs) {
+      const imports = moduleImports(source, resolved);
+      for (const spec of imports) {
         if (spec.startsWith('node:')) continue;
         if (spec.startsWith('.')) { visit(path.join(path.dirname(resolved), spec)); continue; }
         const parts = spec.split('/');

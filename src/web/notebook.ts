@@ -78,7 +78,7 @@ export function safeNotebookReturn(value: unknown, fallback: string): string {
   }
   return notebookUrl(filters, url.hash ? url.hash.slice('#item-'.length) : undefined, selecting ? selectedIds : undefined);
 }
-export function matchesNotebook(item: V2WeekItem, filters: NotebookFilters, questionText = ''): boolean {
+export function matchesNotebook(item: Omit<V2WeekItem, 'jobId'>, filters: NotebookFilters, questionText = ''): boolean {
   return (filters.grade === ALL_STAGES || item.grade === filters.grade) && (item.subject || '未分类') === filters.subject
     && (!filters.chapter || (item.chapter || '未分类') === filters.chapter)
     && (!filters.status || item.status === filters.status)

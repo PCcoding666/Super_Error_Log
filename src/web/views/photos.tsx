@@ -4,7 +4,7 @@ import type { PhotoView } from '../state.js';
 import { pickMoreCount, unselectedQuestions } from '../photoPlan.js';
 import { Page, NextBar, Phrased, Problem, WaitLine, quoted, type BarModel } from './layout.js';
 
-function CaptureExamples(): ReactNode {
+export function CaptureExamples(): ReactNode {
   return (
     <figure className="capture-examples" data-testid="capture-examples">
       <div className="capture-example-row">

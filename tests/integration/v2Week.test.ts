@@ -1,3 +1,4 @@
+import { resetMaterials } from '../helpers/resetMaterials.js';
 /**
  * T4a：本周错题卡片、删/恢复、学生设置（RED → GREEN）。
  * 真实 HTTP（回环装配，共享令牌鉴权）+ 合成识别任务 + 临时移动数据目录。
@@ -37,6 +38,7 @@ beforeAll(() => {
 // 每个用例清空业务表（共享测试库），保留学生档案。
 beforeEach(() => {
   const database = getDb();
+  resetMaterials(database);
   for (const table of ['review_attempt', 'review_packet_item', 'review_packet', 'mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo', 'v2_setting']) {
     database.prepare(`DELETE FROM ${table}`).run();
   }

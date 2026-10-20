@@ -40,12 +40,17 @@ import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } 
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { CoachProvider, CorrectionProvider, FollowupProvider } from '../ai/provider.js';
 import { isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
-import { getWeek, getRegisteredPhotos, discardV2Item, isV2Item, restoreV2Item, type V2WeekItem } from '../v2/weekService.js';
+import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
+import { getLearningSource, learningCard, materialStoreForItem, learningImageFragments } from '../learning/sources.js';
+import { setQuestionIncluded } from '../materials/learning.js';
+import { getLearningWeek } from '../learning/queries.js';
+import type { LearningCard as V2WeekItem } from '../learning/contracts.js';
 import { getItemFullCrop } from '../v2/fullCrop.js';
 import { getV2Settings, updateV2Settings } from '../v2/settingsService.js';
-import { createPractice, getPractice, listPractices, recommendPractice, type PracticeCard, type PracticeDetail } from '../v2/practiceService.js';
+import { createLearningPractice as createPractice, getLearningPractice as getPractice, listLearningPractices, recommendLearningPractice as recommendPractice } from '../learning/queries.js';
+import type { LearningPracticeCard as PracticeCard, LearningPracticeDetail as PracticeDetail } from '../learning/contracts.js';
 import { getPrintStatus, readPrintMedia, requestPrint, type PrintSnapshot } from '../v2/printService.js';
-import { getReturnSummary, submitReturns } from '../v2/returnService.js';
+import { getLearningReturnSummary as getReturnSummary, submitLearningReturns as submitReturns } from '../v2/returnService.js';
 import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from '../v2/reflectionService.js';
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
@@ -62,10 +67,13 @@ import {
   ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage, printExpect,
   WhyAskPage, WhyConfirmPage, WhyDonePage, WhyIntroPage, COMPLETIONS, type DayOption, type PrintState, type RecordAnswer,
 } from './views/practice.js';
+import { createMaterialsRouter } from './materialsRouter.js';
+import type { WebClientDeps } from '../mobile/router.js';
 import type { BarButton, BarModel } from './views/layout.js';
 import { itemNotebookReturn, itemContextUrl, removedNotebookUrl, type ItemPracticeRecord } from './itemLearning.js';
 
 export interface WebClientOptions {
+  materials?: WebClientDeps['materials'];
   mobileDataDir: string;
   service: MobileRecognitionService;
   pairing: PairingManager;
@@ -114,15 +122,16 @@ class NotFound extends Error {}
 
 function render(response: Response, node: ReactNode, status = 200): void {
   response.status(status);
+  const namespace = response.locals.draftNamespace as string | undefined;
   const context = response.locals.voiceContext;
-  if (typeof context === 'string' && /^[0-9a-f]{64}$/.test(context)) {
-    // The strict hex value comes only from worker middleware below, never from page input.
-    const html = renderToStaticMarkup(node).replace('</head>', `<meta name="sel-voice-context" content="${context}"/></head>`);
-    response.setHeader('content-type', 'text/html; charset=utf-8');
-    response.send(`<!doctype html>${html}`);
-    return;
+  const voice = typeof context === 'string' && /^[0-9a-f]{64}$/.test(context) ? context : '';
+  if (!namespace && !voice) { sendHtml(response, node); return; }
+  let html = renderToStaticMarkup(node);
+  if (voice) html = html.replace('</head>', `<meta name="sel-voice-context" content="${voice}"/></head>`);
+  if (namespace) {
+    html = html.replace(/<body\b/, `<body data-draft-namespace="${namespace}"`).replace(/(<form\b[^>]*>)([\s\S]*?)(<\/form>)/g, (_match, open: string, body: string, close: string) => `${open}${body.includes('name="namespace"') ? '' : `<input type="hidden" name="namespace" value="${namespace}"/>`}${body}${close}`);
   }
-  sendHtml(response, node);
+  response.type('html').send(`<!doctype html>${html}`);
 }
 
 function str(value: unknown): string {
@@ -338,7 +347,21 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       try { await handler(request, response); } catch (error) { next(error); }
     };
 
-  // 默认进入错题本，保留根地址作为主屏幕入口。
+  const useMaterials = options.materials && !(process.env.NODE_ENV === 'test' && process.env.SEL_STUDENT_WORKER_FAKE === '1' && process.env.SEL_E2E_LEGACY_CAPTURE === '1');
+  if (useMaterials && options.materials) {
+    ctx.materials = options.materials.store;
+    const namespace = options.materials.store.getWorkspace().draftNamespace;
+    r.use((request, response, next) => request.path.startsWith('/materials/answers/') ? next() : form(request, response, next), (request, response, next) => {
+      response.locals.draftNamespace = namespace;
+      // Rendered forms carry the draft namespace. Reject a stale page after an account switch.
+      // Posts that never included one, such as the settings form, stay bound to the current session.
+      if (request.method === 'POST' && request.body?.namespace && request.body.namespace !== namespace) { response.status(409).send('登录的账号已变化，请重新打开页面。'); return; }
+      next();
+    });
+    r.use(createMaterialsRouter({ ...options.materials, draftNamespace: namespace, admission: options.admission }));
+  }
+
+  // 默认进入错题本，保留根地址作为主屏幕入口。材料拍照由 /s/capture 接管。
   r.get('/', page(async (request, response) => {
     render(response, await itemsPage(request, response));
   }));
@@ -350,7 +373,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     if (state.photos.some(photo => photo.state === 'finding')) return { since: findingSince(state.photos), expect: 'AI 找好以后，这一步会自己打勾' };
     if (state.preparingPrintID) {
       const since = printStartedAt(state.preparingPrintID);
-      const status = getPrintStatus(state.preparingPrintID);
+      const status = getPrintStatus(state.preparingPrintID, 'all');
       const progress = status.httpStatus === 200 ? (status.body as { progress?: { done: number; total: number } }).progress : undefined;
       const elapsed = since ? Math.max(0, Math.floor((ctx.now().getTime() - Date.parse(since)) / 1000)) : null;
       return { since, expect: printExpect(progress?.done ?? 0, progress?.total ?? 0, elapsed) };
@@ -368,7 +391,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.locals.trailSkip = step;
     const practiceId = str(request.body?.practice);
     if (step === 'why' && PACKET_ID.test(practiceId) && getPractice(practiceId)) {
-      requestPrint(practiceId, options.coachProvider);
+      requestPrint(practiceId, options.coachProvider, 'all');
       response.redirect(303, `/s/print/${practiceId}`);
       return;
     }
@@ -462,7 +485,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
 
   const weekPhoto = async (request: Request, jobId: string) => {
-    const week = { ...getWeek(ctx.mobileDataDir), photos: getRegisteredPhotos(ctx.mobileDataDir, true) };
+    const week = { ...getLearningWeek(ctx.mobileDataDir, 'all'), photos: getRegisteredPhotos(ctx.mobileDataDir, true) };
     if (!week.photos.some(photo => photo.jobId === jobId)) throw new NotFound();
     const photos = await loadPhotos(ctx, week, readPhotoMarks(request));
     return { week, photo: photos.find(photo => photo.jobId === jobId)! };
@@ -515,20 +538,21 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // ---------- 这周的错题 / 题目详情 / 改一下 ----------
   const findItem = (itemId: string): V2WeekItem => {
     requireMatch(itemId, ITEM_ID);
-    if (!isV2Item(itemId)) throw new NotFound();
-    const week = getWeek(ctx.mobileDataDir, true);
+    if (!getLearningSource(itemId)) throw new NotFound();
+    const week = getLearningWeek(ctx.mobileDataDir, 'all', true);
     const item = [...week.items, ...week.backlog].find(entry => entry.id === itemId);
     if (item) return item;
-    for (const summary of listPractices()) {
+    for (const summary of listLearningPractices('all', -1)) {
       const card = getPractice(summary.id)?.items.find(entry => entry.id === itemId);
       if (card) return card;
     }
+    const stored=learningCard(itemId);if(stored)return stored;
     throw new NotFound();
   };
 
   const notebookData = async (request: Request, response: Response): Promise<NotebookPageProps> => {
     const state = await loadToday(ctx, request);
-    const library = getWeek(ctx.mobileDataDir, true);
+    const library = getLearningWeek(ctx.mobileDataDir, 'all', true);
     const all = [...library.items, ...library.backlog];
     const input = request.method === 'POST' ? request.body : request.query;
     const cookies = readCookies(request);
@@ -567,7 +591,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       selection:selecting,
       category:{grade,subject,subjects,stages:stageOptions},anyPhoto:state.week.photos.length > 0,
       finding:state.photos.some(photo=>photo.state === 'finding'),
-      bar:{caption:'',primary:null,secondary:[]},removed,
+      bar:{caption:'',primary:null,secondary:[]},removed,materials:!!ctx.materials,
       flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null,err:!validReturnSelection && request.method !== 'POST' ? '返回的选题信息不可用，请重新选择。' : null}};
   };
   const itemsPage = async (request: Request, response: Response): Promise<ReactNode> => ItemsPage(await notebookData(request,response));
@@ -605,7 +629,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     if (!result.ok) {
       reject(result.httpStatus === 409 ? '有题目已在练习中或尚未到复习时间。已保留全部选择，请取消当前不可加入的题目后重试。' : result.message,result.httpStatus); return;
     }
-    requestPrint(result.detail.id,options.coachProvider);
+    requestPrint(result.detail.id,options.coachProvider,'all');
     response.redirect(303,`/s/practice/${result.detail.id}`);
   }));
 
@@ -628,12 +652,12 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       WHERE rpi.item_id = ? ORDER BY COALESCE(ra.performed_at, rp.created_at) DESC, rp.created_at DESC, rp.rowid DESC`).all(itemId) as unknown as Array<ItemPracticeRecord & {generated_at:string|null}>;
     const reflection = getV2Reflection(itemId)?.reflection ?? null;
     return ItemDetailPage({
-      item, evidence: getEvidenceView(itemId), canDiscard: item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
-      reflected: reflection != null, reflection, error, returnTo, timeZone:ctx.timeZone,
-      eligible: [...recommend.recommended,...recommend.others].some(candidate => candidate.id === itemId),
+      item, images: learningImageFragments(itemId), evidence: getEvidenceView(itemId),
+      canDiscard: item.source.kind === 'material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
+      reflected: reflection != null, reflection, error, returnTo, timeZone: ctx.timeZone,
+      eligible: [...recommend.recommended, ...recommend.others].some(candidate => candidate.id === itemId),
       resumePracticeId: unfinishedPractice(itemId), reflectionPracticeId: history[0]?.id,
-      // recordAttempt uses the process calendar; UI time-zone overrides must not relabel its delay evidence.
-      practiceHistory: history.map(record => ({...record,generated_day:record.generated_at ? localDayText(new Date(record.generated_at),Intl.DateTimeFormat().resolvedOptions().timeZone) : null})),
+      practiceHistory: history.map(record => ({ ...record, generated_day: record.generated_at ? localDayText(new Date(record.generated_at), Intl.DateTimeFormat().resolvedOptions().timeZone) : null })),
     });
   };
 
@@ -644,7 +668,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const existing = unfinishedPractice(item.id);
     if (existing) {
       // A retried POST resumes the existing packet; GET detail never creates or prepares one.
-      requestPrint(existing,options.coachProvider);
+      requestPrint(existing, options.coachProvider, 'all');
       response.redirect(303,`/s/practice/${existing}?item=${item.id}`);
       return;
     }
@@ -657,7 +681,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       render(response,detail(item.id,reason,returnTo),result.httpStatus);
       return;
     }
-    requestPrint(result.detail.id,options.coachProvider);
+    requestPrint(result.detail.id, options.coachProvider, 'all');
     response.redirect(303,`/s/practice/${result.detail.id}?item=${item.id}`);
   }));
 
@@ -678,7 +702,14 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.post('/items/:id/discard', form, page((request, response) => {
     const itemId = String(request.params.id);
     const item = findItem(itemId);
-    const returnTo = itemNotebookReturn(request.body?.returnTo,item);
+    const returnTo = itemNotebookReturn(request.body?.returnTo, item);
+    const source = getLearningSource(itemId)!;
+    if (source.kind === 'material') {
+      const store = materialStoreForItem(itemId)!;
+      setQuestionIncluded(store, source.questionId, false, store.getQuestion(source.questionId)!.revision);
+      response.redirect(303, removedNotebookUrl(returnTo, itemId));
+      return;
+    }
     const result = discardV2Item(itemId);
     if (!result.ok) { failed(response, 'discard_refused'); render(response, detail(itemId, result.message,returnTo), result.httpStatus); return; }
     response.redirect(303, removedNotebookUrl(returnTo,itemId));
@@ -686,9 +717,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   r.post('/items/:id/restore', form, page((request, response) => {
     const itemId = requireMatch(String(request.params.id), ITEM_ID);
-    if (!isV2Item(itemId)) throw new NotFound();
-    const returnTo = itemNotebookReturn(request.body?.returnTo,{id:itemId,...categoryForItem(itemId)});
-    restoreV2Item(itemId);
+    const source = getLearningSource(itemId);
+    if (!source) throw new NotFound();
+    const returnTo = itemNotebookReturn(request.body?.returnTo, { id: itemId, ...categoryForItem(itemId) });
+    if (source.kind === 'material') {
+      const store = materialStoreForItem(itemId)!;
+      setQuestionIncluded(store, source.questionId, true, store.getQuestion(source.questionId)!.revision);
+    } else restoreV2Item(itemId);
     response.redirect(303, returnTo);
   }));
 
@@ -766,7 +801,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       render(response, await choosePage(request, message, result.httpStatus === 409 ? result.message : null), result.httpStatus);
       return;
     }
-    requestPrint(result.detail.id, options.coachProvider);
+    requestPrint(result.detail.id, options.coachProvider, 'all');
     response.redirect(303, `/s/practice/${result.detail.id}`);
   }));
 
@@ -879,7 +914,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   // ---------- 打印练习纸 ----------
   const printState = (practiceId: string): PrintState => {
-    const status = getPrintStatus(practiceId);
+    const status = getPrintStatus(practiceId,'all');
     if (status.httpStatus !== 200) throw new NotFound();
     const body = status.body as { status: string; progress?: { done: number; total: number }; snapshot?: PrintSnapshot; error?: string | null };
     if (body.status === 'ready' && body.snapshot) return { status: 'ready', snapshot: body.snapshot };
@@ -890,7 +925,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   r.post('/print/:pid', page((request, response) => {
     const practice = practiceOf(String(request.params.pid));
-    requestPrint(practice.id, options.coachProvider);
+    requestPrint(practice.id, options.coachProvider, 'all');
     response.redirect(303, `/s/print/${practice.id}`);
   }));
 
@@ -1014,7 +1049,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   const dashboard = (response:Response, error?:string): void => {
     const recommendation=suggestedPractice(ctx.mobileDataDir);
-    const tasks=listPractices(-1).map(p=>({
+    const tasks=listLearningPractices('all', -1).map(p=>({
       practice:getPractice(p.id)!,lifecycle:taskLifecycle(p.id),recorded:Object.keys(practiceProgress(p.id).answers).length,received:submissionState(p.id).photos.length,reviewStatus:submissionState(p.id).status,
     }));
     render(response,PracticeDashboardPage({tasks,activeId:activePractice()?.id??null,recommendation,requestKey:crypto.randomUUID(),error}));
@@ -1023,7 +1058,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.post('/practices/start',form,page((request,response)=>{
     const result=startSuggestedPractice(ctx.mobileDataDir,str(request.body?.key));
     if(!result.ok){response.status(result.httpStatus);dashboard(response,result.message);return;}
-    if(taskLifecycle(result.detail.id)!=='cancelled')requestPrint(result.detail.id,options.coachProvider);
+    if (taskLifecycle(result.detail.id) !== 'cancelled') requestPrint(result.detail.id, options.coachProvider, 'all');
     response.redirect(303,`/s/practice/${result.detail.id}`);
   }));
   for(const [action,lifecycle] of [['pause','paused'],['resume','active'],['cancel','cancelled']] as const){
@@ -1095,11 +1130,19 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
   r.get('/img/item/:id', page(async (request, response) => {
     const itemId = requireMatch(String(request.params.id), ITEM_ID);
-    if (!isV2Item(itemId)) throw new NotFound();
+    const source = getLearningSource(itemId);
+    if (!source) throw new NotFound();
+    if (source.kind === 'material') {
+      const question = materialStoreForItem(itemId)!.getQuestion(source.questionId)!;
+      const fragment = question.stem.find(entry => entry.role === 'question');
+      if (!fragment) throw new NotFound();
+      response.redirect(303, `/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}`);
+      return;
+    }
     response.type('image/jpeg').send(await displayImage(request.query.scope === 'full' ? await getItemFullCrop(itemId) : await getQuestionCrop(itemId), displaySize(request.query.s)));
   }));
   r.get('/img/print/:pid/:name', page(async (request, response) => {
-    const media = readPrintMedia(requireMatch(String(request.params.pid), PACKET_ID), String(request.params.name));
+    const media = readPrintMedia(requireMatch(String(request.params.pid), PACKET_ID), String(request.params.name), 'all');
     if (!media) throw new NotFound();
     // 练习纸上（打印）用原图；手机上看的那一道、打印前看一眼的截图用缩小的。
     response.type('image/jpeg').send(await displayImage(media, displaySize(request.query.s)));

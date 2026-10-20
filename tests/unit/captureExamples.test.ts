@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { CAPTURE_EXAMPLE_PAGE, CAPTURE_EXAMPLE_QUESTION } from '../../src/web/captureExamples.js';
 import type { PhotoView } from '../../src/web/state.js';
 import { CapturePage } from '../../src/web/views/photos.js';
+import { MaterialCapturePage } from '../../src/web/views/materials.js';
 
 const photo = (): PhotoView => ({
   number: 1, jobId: 'photo-1', registeredAt: '2026-10-10T03:00:00Z', job: null,
@@ -37,5 +38,17 @@ describe('错题录入示例照片', () => {
     const filled = renderToStaticMarkup(CapturePage({ photos: [photo()], next: null, caption: '' }));
     expect(filled).not.toContain('capture-examples');
     expect(filled).not.toContain('阿里云');
+    const material = renderToStaticMarkup(MaterialCapturePage({ namespace: 'ns', count: 0, uploadId: '11111111-1111-4111-8111-111111111111' }));
+    expect(material).toContain('data-material-capture');
+    expect(material).toContain('data-testid="capture-examples"');
+    expect(material).toContain('平放、拍全、光线均匀');
+    expect(material).toContain(CAPTURE_EXAMPLE_PAGE.path);
+    expect(material).not.toContain('阿里云');
+    expect(material).not.toContain('上传前看一下');
+    expect(material).not.toContain('整页拍全，别裁边');
+    expect(material).not.toContain('/s/consent');
+    const continued = renderToStaticMarkup(MaterialCapturePage({ namespace: 'ns', count: 2, uploadId: '11111111-1111-4111-8111-111111111111' }));
+    expect(continued).not.toContain('capture-examples');
+    expect(continued).toContain('已拍 2 张');
   });
 });

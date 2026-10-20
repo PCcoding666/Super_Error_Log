@@ -4,6 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { config, dbPath, eventsLogPath, packetsDir, uploadsDir } from '../config.js';
 import { migrateItemCategoryGrades } from './stageMigration.js';
 import { SCHEMA_SQL } from './schema.js';
+import { migrateMaterials } from '../materials/schema.js';
+import { backfillLegacyMaterials } from '../materials/legacy.js';
 
 let db: DatabaseSync | null = null;
 
@@ -69,6 +71,8 @@ export function getDb(): DatabaseSync {
     db.exec('ALTER TABLE correction_proposal ADD COLUMN error TEXT');
   }
   migrateBridgeSchema(db);
+  migrateMaterials(db);
+  backfillLegacyMaterials(db);
   return db;
 }
 

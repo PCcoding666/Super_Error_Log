@@ -152,6 +152,48 @@ describe('T2 云端单进程装配', () => {
     expect(post.headers.get('content-type')).toContain('application/json');
   });
 
+  it('closes HTTP and admin listeners before reporting a material shutdown write failure', async () => {
+    const dataDir = await tempRoot();
+    const assembly = await assembleCloudService(cloudConfiguration(dataDir, 0), {
+      vision: new FixtureVision(),
+      configureMaterials: jobs => {
+        const question = jobs.store.createQuestion().id;
+        jobs.enqueue('answer', question, crypto.randomUUID(), 'synthetic-basis');
+      },
+    });
+    clouds.push(assembly); await assembly.listen();
+    const port = assembly.boundPort()!; const socketPath = assembly.admin!.socketPath;
+    const canConnect = (options: net.NetConnectOpts): Promise<boolean> => new Promise(resolve => {
+      const socket = net.createConnection(options);
+      socket.once('connect', () => { socket.destroy(); resolve(true); });
+      socket.once('error', () => { socket.destroy(); resolve(false); });
+      socket.setTimeout(1000, () => { socket.destroy(); resolve(false); });
+    });
+    expect(await canConnect({ host: '127.0.0.1', port })).toBe(true);
+    expect(await canConnect({ path: socketPath })).toBe(true);
+    getDb().exec("CREATE TRIGGER reject_cloud_stop BEFORE UPDATE OF state ON material_job WHEN NEW.state='interrupted' BEGIN SELECT RAISE(ABORT,'synthetic storage failure'); END");
+    try {
+      const closeError = await assembly.close().then(() => null, error => error);
+      expect(closeError).toBeInstanceOf(AggregateError);
+      const messages = (error: unknown): string[] => error instanceof AggregateError ? error.errors.flatMap(messages) : [String(error)];
+      expect(messages(closeError).join(' ')).toContain('synthetic storage failure');
+      expect({
+        httpListening: await canConnect({ host: '127.0.0.1', port }),
+        adminListening: await canConnect({ path: socketPath }),
+        socketExists: fs.existsSync(socketPath),
+        boundPort: assembly.boundPort(),
+      }).toEqual({ httpListening: false, adminListening: false, socketExists: false, boundPort: null });
+      const replacement = net.createServer();
+      try {
+        await new Promise<void>((resolve, reject) => { replacement.once('error', reject); replacement.listen(port, '127.0.0.1', resolve); });
+        expect((replacement.address() as net.AddressInfo).port).toBe(port);
+      } finally { await new Promise<void>(resolve => replacement.close(() => resolve())); }
+    } finally {
+      getDb().exec('DROP TRIGGER reject_cloud_stop');
+      await assembly.close();
+    }
+  });
+
   it('装配两次不创建第二个学生档案（共享 SEL_DATA_DIR/app.db）', async () => {
     const first = await assembleCloudService(cloudConfiguration(await tempRoot(), await freePort()));
     clouds.push(first);

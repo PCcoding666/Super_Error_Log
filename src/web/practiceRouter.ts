@@ -8,7 +8,8 @@ import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } 
 import type { RateLimiter } from '../mobile/rateLimit.js';
 import { Router, urlencoded, type Request, type Response, type NextFunction } from 'express';
 import type { CoachProvider } from '../ai/provider.js';
-import { getPractice } from '../v2/practiceService.js';
+import type { LearningPracticeDetail } from '../learning/contracts.js';
+import { getLearningPractice } from '../learning/queries.js';
 import { getPrintStatus, requestPrint, type PrintSnapshot } from '../v2/printService.js';
 import { practiceProgress, revealPracticeHint, savePracticeCursor } from '../v2/practiceProgress.js';
 import { submitReturns } from '../v2/returnService.js';
@@ -22,7 +23,7 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; practic
   const router = Router();
   const form = urlencoded({ extended: false, limit: '16kb' });
   router.use('/practice/:pid', (req, res, next) => {
-    const practice = getPractice(String(req.params.pid));
+    const practice = getLearningPractice(String(req.params.pid), 'all');
     if (!practice) { res.status(404).send('练习不存在'); return; }
     if (req.method === 'POST' && taskLifecycle(practice.id) === 'cancelled') {
       res.status(409).send('这份练习已取消，已记录的结果仍然保留。'); return;
@@ -33,8 +34,8 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; practic
   router.use(practiceSubmissionRouter({...options,reviewer:options.practiceReviewer}));
   const show = (req: Request, res: Response, error?: string, selectedItem?: string, selectedView?: string) => {
     if (req.query.uploadError) error = '照片未保存，请重拍或直接核对。';
-    const p = res.locals.practice as NonNullable<ReturnType<typeof getPractice>>;
-    const state = getPrintStatus(p.id);
+    const p = res.locals.practice as LearningPracticeDetail;
+    const state = getPrintStatus(p.id, 'all');
     const body = state.httpStatus === 200 ? state.body : {};
     const itemId = selectedItem ?? (typeof req.query.item === 'string' ? req.query.item : undefined);
     const view = selectedView ?? String(req.query.view ?? '');
@@ -45,7 +46,7 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; practic
   router.get('/practice/:pid', (req, res) => show(req, res));
   router.post('/practice/:pid/prepare', (_req, res) => {
     const p = res.locals.practice;
-    requestPrint(p.id, options.coachProvider);
+    requestPrint(p.id, options.coachProvider, 'all');
     res.redirect(303, `/s/practice/${p.id}`);
   });
   const member = (req: Request, res: Response, next: NextFunction) => {
@@ -111,7 +112,7 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; practic
     res.redirect(303, `/s/practice/${req.params.pid}?item=${req.params.itemId}`);
   });
   router.post('/practice/:pid/:itemId/skip', member, (req, res) => {
-    const p = res.locals.practice as NonNullable<ReturnType<typeof getPractice>>;
+    const p = res.locals.practice as LearningPracticeDetail;
     const progress = practiceProgress(p.id);
     const index = p.items.findIndex(item => item.id === req.params.itemId);
     const rotated = [...p.items.slice(index + 1), ...p.items.slice(0, index + 1)];

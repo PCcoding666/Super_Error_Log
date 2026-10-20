@@ -1,3 +1,4 @@
+import { resetMaterials } from '../helpers/resetMaterials.js';
 /**
  * 学生网页版（/s/）路由集成测试：真实 HTTP（云端装配：设备令牌 + PairingManager），合成识别、mock 语音转写，
  * /v2 的追问 / 打印辅导走 mock 模式的确定性实现。不调真实模型、不读 .env 与 data/，所有照片与录音都是合成的。
@@ -39,6 +40,7 @@ afterEach(async () => {
 beforeAll(() => { ensureStudentProfile(); });
 beforeEach(() => {
   const db = getDb();
+  resetMaterials(db);
   for (const table of ['v2_print_snapshot', 'correction', 'correction_proposal', 'v2_reflection_turn', 'mastery_event', 'review_attempt', 'review_packet_item', 'review_packet', 'mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo', 'v2_setting']) {
     db.prepare(`DELETE FROM ${table}`).run();
   }

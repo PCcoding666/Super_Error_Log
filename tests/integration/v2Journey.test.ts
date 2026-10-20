@@ -1,3 +1,4 @@
+import { resetMaterials } from '../helpers/resetMaterials.js';
 /**
  * T5b：端到端串联——按 docs/mobile-v2-api.md §5 的"学生的一周"时序把所有 /v2 接口串一遍。
  * 真实 HTTP（回环装配，共享令牌鉴权）+ 直接构造终态识别任务 + 注入的合成模型
@@ -42,6 +43,7 @@ beforeAll(() => {
 // 每个用例清空业务表（共享测试库），保留学生档案。
 beforeEach(() => {
   const database = getDb();
+  resetMaterials(database);
   for (const table of ['v2_print_snapshot', 'correction', 'correction_proposal', 'v2_reflection_turn', 'mastery_event', 'review_attempt', 'review_packet_item', 'review_packet', 'mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo', 'v2_setting']) {
     database.prepare(`DELETE FROM ${table}`).run();
   }

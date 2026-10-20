@@ -71,7 +71,8 @@ interface HostSetup { base: string; gateway: StudentHostGateway; registry: Stude
 function newPool(registry: StudentRegistry): StudentWorkerPool {
   return new StudentWorkerPool({
     dirFor: studentId => registry.studentDir(studentId),
-    env: { SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock' },
+    // This fixture asserts legacy /capture jobId/media behavior; material capture has its own real-gateway browser suite.
+    env: { SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock', SEL_E2E_LEGACY_CAPTURE: '1' },
   });
 }
 
