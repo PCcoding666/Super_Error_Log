@@ -9,8 +9,8 @@ import { ensureStudentProfile } from '../../src/services/studentService.js';
 import { backfillLegacyMaterials } from '../../src/materials/legacy.js';
 import { MaterialStore } from '../../src/materials/store.js';
 import { setQuestionIncluded } from '../../src/materials/learning.js';
-import { saveManualAnswer, selectAnswerBasis } from '../../src/materials/answers.js';
-import { getLearningPrintInput } from '../../src/learning/sources.js';
+import { saveManualAnswer, selectAnswerBasis, selectedAnswerIds } from '../../src/materials/answers.js';
+import { getLearningPrintInput, learningPrintAnswerBlocked } from '../../src/learning/sources.js';
 import { readFragmentImage } from '../../src/materials/media.js';
 import { submitLearningReturns } from '../../src/v2/returnService.js';
 import { createLearningPractice } from '../../src/learning/queries.js';
@@ -172,14 +172,18 @@ describe('source-aware immutable print', () => {
         expect(s.answerSheet[0]!.answer.text).toBe('new reference');
     });
 });
-async function legacy(f: Awaited<ReturnType<typeof fixture>>, a: Awaited<ReturnType<Awaited<ReturnType<typeof fixture>>['asset']>>, stem: string, reference?: string, badge = 'low') {
+async function legacy(f: Awaited<ReturnType<typeof fixture>>, a: Awaited<ReturnType<Awaited<ReturnType<typeof fixture>>['asset']>>, stem: string, reference?: string | string[], badge = 'low', verified = 1) {
     const item = newId('itm'), job = crypto.randomUUID(), batch = (f.db.prepare('SELECT batch_id FROM source_asset WHERE id=?').get(a.sourceId) as {
         batch_id: string;
     }).batch_id;
     f.db.prepare('INSERT INTO error_item(id,student_id,batch_id,asset_id,item_index,status,text_excerpt,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(item, f.store.studentId, batch, a.sourceId, 1, 'eligible_for_review', stem, now(), now());
     f.db.prepare('INSERT INTO mobile_item_link(item_id,job_id,question_id,question_revision) VALUES(?,?,?,?)').run(item, job, crypto.randomUUID(), 1);
-    const evidence = { version: 1, questionNumber: '1', questionText: stem, subject: '数学', chapter: '', knowledgeTags: [], questionType: '', questionRegion: { x: .1, y: .1, width: .7, height: .6 }, requiresDiagram: false, regions: reference ? [{ id: 'real-answer-region', kind: 'reference_answer', box: { x: .8, y: .8, width: .1, height: .1 }, confidence: 1, cleanForPrint: false }] : [], observations: reference ? [{ id: 'real-answer-observation', kind: 'reference_answer', text: reference, regionId: 'real-answer-region', confidence: 1 }] : [], uncertainties: [] };
-    f.db.prepare('INSERT INTO evidence_record(item_id,content_json,verified,confidence_badge,updated_at) VALUES(?,?,?,?,?)').run(item, JSON.stringify(evidence), 1, badge, now());
+    const references = typeof reference === 'string' ? [reference] : reference ?? [];
+    const regionId = (i: number) => `real-answer-region${i ? `-${i}` : ''}`;
+    const evidence = { version: 1, questionNumber: '1', questionText: stem, subject: '数学', chapter: '', knowledgeTags: [], questionType: '', questionRegion: { x: .1, y: .1, width: .7, height: .6 }, requiresDiagram: false,
+        regions: references.map((_, i) => ({ id: regionId(i), kind: 'reference_answer', box: { x: .8, y: .8 - i * .2, width: .1, height: .1 }, confidence: 1, cleanForPrint: false })),
+        observations: references.map((text, i) => ({ id: `real-answer-observation${i ? `-${i}` : ''}`, kind: 'reference_answer', text, regionId: regionId(i), confidence: 1 })), uncertainties: [] };
+    f.db.prepare('INSERT INTO evidence_record(item_id,content_json,verified,confidence_badge,updated_at) VALUES(?,?,?,?,?)').run(item, JSON.stringify(evidence), verified, badge, now());
     backfillLegacyMaterials(f.db);
     return { item, q: (f.db.prepare('SELECT question_id FROM material_item_link WHERE item_id=?').get(item) as {
             question_id: string;
@@ -403,4 +407,51 @@ it('verifies original bytes in the actual legacy mobile layout before cropping i
  const fragment=f.store.getQuestion(old.q)!.stem[0]!;expect((await sharp(await readFragmentImage(f.store,fragment.fragmentId,fragment.revision)).metadata()).width).toBe(70);
  fs.writeFileSync(path.join(f.dir,'jobs',job.id,'source-original.jpg'),'replaced original');
  await expect(readFragmentImage(f.store,fragment.fragmentId,fragment.revision)).rejects.toThrow(/原图|hash/);
+});
+
+it.each([{ badge: 'low', verified: 1 }, { badge: 'ok', verified: 0 }])('retains a single original legacy answer fallback for $badge/verified=$verified', async ({ badge, verified }) => {
+    const f = await fixture(), a = await f.asset('#fff');
+    const old = await legacy(f, a, 'legacy stem', 'single original answer', badge, verified);
+    const q = f.store.getQuestion(old.q)!;
+    expect(q.answers).toHaveLength(1);
+    expect(q.answers[0]!.stale).toBe(true);
+    expect(q.answerConflict).toBe(false);
+    expect(selectedAnswerIds(f.store, old.q)).toEqual([]);
+    expect(learningPrintAnswerBlocked(old.item)).toBe(false);
+    expect(getLearningPrintInput(old.item)!.answers.map(a => a.text)).toEqual(['single original answer']);
+    const id = packet([old.item]);
+    requestPrint(id, coach, 'all');
+    expect(snapshot(await settled(id)).answerSheet[0]!.answer).toEqual({ text: 'single original answer', source: 'paper', label: '原卷参考答案' });
+});
+it('blocks unresolved original legacy reference conflicts and freezes a subsequent explicit choice', async () => {
+    const f = await fixture(), a = await f.asset('#fff');
+    const old = await legacy(f, a, 'legacy stem', ['first original answer', 'conflicting original answer'], 'ok');
+    const q = f.store.getQuestion(old.q)!;
+    expect(q.answers).toHaveLength(2);
+    expect(q.answers.every(a => !a.stale && a.subpart === null)).toBe(true);
+    expect(q.answerConflict).toBe(true);
+    expect(selectedAnswerIds(f.store, old.q)).toEqual([]);
+    const id = packet([old.item]);
+    let calls = 0;
+    const countingCoach: CoachProvider = { coachForPrint: async (...args) => { calls++; return coach.coachForPrint(...args); } };
+    requestPrint(id, countingCoach, 'all');
+    const pending = snapshot(await settled(id));
+    expect({ answer: pending.answerSheet[0]!.answer, calls }).toEqual({ answer: { text: null, source: 'none', label: '参考答案待确定' }, calls: 0 });
+    expect(learningPrintAnswerBlocked(old.item)).toBe(true);
+    expect(getLearningPrintInput(old.item)!.answers).toEqual([]);
+    const pendingBytes = (f.db.prepare('SELECT snapshot_json FROM v2_print_snapshot WHERE packet_id=?').get(id) as { snapshot_json: string }).snapshot_json;
+    const pendingBasis = frozen(id);
+    const chosen = q.answers.find(a => a.text === 'conflicting original answer')!;
+    selectAnswerBasis(f.store, old.q, [chosen.id], q.revision);
+    expect(f.store.getQuestion(old.q)!.answerConflict).toBe(true);
+    expect(learningPrintAnswerBlocked(old.item)).toBe(false);
+    expect(getLearningPrintInput(old.item)!.answers).toEqual([chosen]);
+    const next = packet([old.item]);
+    requestPrint(next, countingCoach, 'all');
+    expect(snapshot(await settled(next)).answerSheet[0]!.answer).toEqual({ text: chosen.text, source: 'paper', label: '拍照导入参考答案' });
+    expect(calls).toBe(1);
+    expect(JSON.parse(frozen(next)).items[0].input.answers).toEqual([chosen]);
+    expect(getPrintStatus(id, 'all').httpStatus).toBe(200);
+    expect((f.db.prepare('SELECT snapshot_json FROM v2_print_snapshot WHERE packet_id=?').get(id) as { snapshot_json: string }).snapshot_json).toBe(pendingBytes);
+    expect(frozen(id)).toBe(pendingBasis);
 });

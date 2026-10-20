@@ -135,7 +135,9 @@ export function learningPrintAnswerBlocked(itemId: string): boolean {
     const selected = selectedAnswerIds(store!, q.id), explicit = explicitPrintSelection(store!, q.id);
     if (explicit && selected.some(id => { const answer = q.answers.find(a => a.id === id)!; return original(answer) && !legacySelectionMatches(store!, itemId, answer); }))
         return true;
-    return selected.length === 0 && (q.answers.some(a => !original(a)) || explicit);
+    // Legacy low/unchecked projections may fall back to current Evidence, but
+    // conflicting current answers still require an explicit valid selection.
+    return selected.length === 0 && (q.answerConflict || q.answers.some(a => !original(a)) || explicit);
 }
 /** Current real regions for detail galleries; eligibility does not hide pending material. */
 export function learningImageFragments(itemId: string): Fragment[] {
