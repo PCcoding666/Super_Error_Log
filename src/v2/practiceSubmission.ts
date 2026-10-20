@@ -22,24 +22,34 @@ export function submissionImage(packetId:string,id:string):Buffer|null {
   const row=getDb().prepare('SELECT image FROM practice_submission_photo WHERE packet_id=? AND id=?').get(packetId,id) as {image:Uint8Array}|undefined;
   return row?Buffer.from(row.image):null;
 }
+const FULL_MESSAGE='本次已保存 12 张照片，可查看反馈或自己核对';
 export async function attachSubmission(packetId:string,key:string,bytes:Buffer):Promise<SubmissionPhoto> {
   assertTaskWritable(packetId);
   if(!/^[0-9a-f-]{36}$/i.test(key))throw new Error('上传标识无效，请重新选择照片');
   if(!bytes.length||bytes.length>15*1024*1024)throw new Error('照片大小须在 15 MB 以内');
-  const db=getDb(),hash=crypto.createHash('sha256').update(bytes).digest('hex');
-  const previous=()=>{
-    const row=db.prepare('SELECT id,packet_id,source_hash,created_at AS createdAt FROM practice_submission_photo WHERE request_key=?').get(key) as SubmissionPhoto&{packet_id:string;source_hash:string}|undefined;
-    if(row&&(row.packet_id!==packetId||row.source_hash!==hash))throw new Error('上传标识已用于另一份照片');
-    return row?{id:row.id,createdAt:row.createdAt}:undefined;
+  const db=getDb();
+  type Stored=SubmissionPhoto&{packet_id:string;source_hash:string};
+  const lookup=()=>db.prepare('SELECT id,packet_id,source_hash,created_at AS createdAt FROM practice_submission_photo WHERE request_key=?').get(key) as Stored|undefined;
+  const photoCount=()=>(db.prepare('SELECT COUNT(*) n FROM practice_submission_photo WHERE packet_id=?').get(packetId) as {n:number}).n;
+  const existing=lookup();
+  // A new photo on a full task stops here, before hashing or decoding. The insert
+  // rechecks the same cap inside a write transaction so concurrent saves cannot pass 12.
+  if(!existing&&photoCount()>=12)throw new Error(FULL_MESSAGE);
+  const hash=crypto.createHash('sha256').update(bytes).digest('hex');
+  const match=(row:Stored|undefined)=>{
+    if(!row)return undefined;
+    if(row.packet_id!==packetId||row.source_hash!==hash)throw new Error('上传标识已用于另一份照片');
+    return {id:row.id,createdAt:row.createdAt};
   };
-  const saved=previous();if(saved)return saved;
+  const saved=match(existing);if(saved)return saved;
   const image=await sharp(bytes,{limitInputPixels:40_000_000}).rotate().resize({width:2048,height:2048,fit:'inside',withoutEnlargement:true}).jpeg({quality:88}).toBuffer();
   assertTaskWritable(packetId);
-  const raced=previous();if(raced)return raced;
-  const count=db.prepare('SELECT COUNT(*) n FROM practice_submission_photo WHERE packet_id=?').get(packetId) as {n:number};
-  if(count.n>=12)throw new Error('本次已保存 12 张照片，可查看反馈或自己核对');
   const id=newId('psp'),createdAt=now();
-  db.exec('BEGIN');try{
+  db.exec('BEGIN IMMEDIATE');
+  try{
+    const raced=match(lookup());
+    if(raced){db.exec('ROLLBACK');return raced;}
+    if(photoCount()>=12)throw new Error(FULL_MESSAGE);
     db.prepare('INSERT INTO practice_submission_photo(id,packet_id,request_key,source_hash,image,created_at) VALUES(?,?,?,?,?,?)').run(id,packetId,key,hash,image,createdAt);
     db.prepare("INSERT INTO practice_submission(packet_id,revision,status,updated_at) VALUES(?,1,'pending',?) ON CONFLICT(packet_id) DO UPDATE SET revision=revision+1,status='pending',attempts=0,findings_json='[]',updated_at=excluded.updated_at").run(packetId,createdAt);
     db.exec('COMMIT');

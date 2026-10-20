@@ -60,6 +60,34 @@ describe('proactive paper task lifecycle',()=>{
     tasks.setTaskLifecycle(p.id,'cancelled');
     expect(recommendPractice('/none').recommended).toHaveLength(2);
   });
+  it.each(['missing', 'paused'] as const)('restores reflected legacy items with %s task metadata', metadata => {
+    const db = getDb(), ids = seedPracticeItems(3);
+    const expected = ['eligible_for_review', 'ready_for_reflection', 'needs_recheck'];
+    ids.forEach((id, index) => {
+      db.prepare('UPDATE error_item SET status=? WHERE id=?').run(expected[index]!, id);
+      if (index !== 1) {
+        db.prepare(`INSERT INTO error_diagnosis(id,item_id,attempt_state,cause,mastery_feeling,review_value,submitted_by,created_at)
+          VALUES (?,?,'其他','计算',2,'可以再做','student',?)`).run(`dia_${index}`, id, now());
+      }
+    });
+    const diagnoses = db.prepare('SELECT * FROM error_diagnosis ORDER BY id').all();
+    const p = make(ids);
+    // Pre-upgrade tasks have no snapshot; pausing them creates an empty one.
+    db.prepare('DELETE FROM practice_task WHERE packet_id=?').run(p.id);
+    if (metadata === 'paused') tasks.setTaskLifecycle(p.id, 'paused');
+    tasks.setTaskLifecycle(p.id, 'cancelled');
+    expect(ids.map(id => db.prepare('SELECT status FROM error_item WHERE id=?').get(id)?.status)).toEqual(expected);
+    expect(db.prepare('SELECT * FROM error_diagnosis ORDER BY id').all()).toEqual(diagnoses);
+    expect(db.prepare('SELECT COUNT(*) n FROM review_attempt').get()).toEqual({ n: 0 });
+  });
+  it('prefers a saved original status over the reflection fallback', () => {
+    const db = getDb(), [id] = seedPracticeItems(1);
+    db.prepare(`INSERT INTO error_diagnosis(id,item_id,attempt_state,cause,mastery_feeling,review_value,submitted_by,created_at)
+      VALUES ('dia_saved',?,'其他','计算',2,'可以再做','student',?)`).run(id!, now());
+    const p = make([id!]);
+    tasks.setTaskLifecycle(p.id, 'cancelled');
+    expect(db.prepare('SELECT status FROM error_item WHERE id=?').get(id!)).toEqual({ status: 'ready_for_reflection' });
+  });
   it('rejects unknown tasks and invalid request keys',()=>{
     expect(()=>tasks.setTaskLifecycle('pkt_missing','paused')).toThrow();
     expect(tasks.startSuggestedPractice('/none','bad')).toMatchObject({ok:false,httpStatus:400});

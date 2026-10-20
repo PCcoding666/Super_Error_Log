@@ -50,11 +50,18 @@ export function setTaskLifecycle(packetId: string, lifecycle: TaskLifecycle): vo
     db.prepare(`INSERT INTO practice_task(packet_id,lifecycle,updated_at) VALUES (?,?,?)
       ON CONFLICT(packet_id) DO UPDATE SET lifecycle=excluded.lifecycle,updated_at=excluded.updated_at`).run(packetId,lifecycle,now());
     if (lifecycle==='cancelled') {
-      const unanswered=db.prepare(`SELECT rpi.item_id,rpi.v2_tier FROM review_packet_item rpi
+      // Reflection (error_diagnosis) is attached per question, not per round,
+      // so a diagnosis from any earlier round still counts as already reflected.
+      const unanswered=db.prepare(`SELECT rpi.item_id,rpi.v2_tier,
+          EXISTS(SELECT 1 FROM error_diagnosis d WHERE d.item_id=rpi.item_id) AS reflected
+        FROM review_packet_item rpi
         WHERE rpi.packet_id=? AND NOT EXISTS (SELECT 1 FROM review_attempt ra WHERE ra.packet_id=rpi.packet_id AND ra.item_id=rpi.item_id)`)
-        .all(packetId) as Array<{item_id:string;v2_tier:number|null}>;
+        .all(packetId) as Array<{item_id:string;v2_tier:number|null;reflected:number}>;
       for (const item of unanswered) {
-        const fallback=item.v2_tier===1?'needs_recheck':item.v2_tier===2?'temporarily_mastered':item.v2_tier===3?'attempted':'ready_for_reflection';
+        // Legacy tasks have no original status snapshot; tier 4 covers both
+        // reflected and unreflected items, so recover that distinction from data.
+        const fallback=item.v2_tier===1?'needs_recheck':item.v2_tier===2?'temporarily_mastered':item.v2_tier===3?'attempted'
+          :item.reflected?'eligible_for_review':'ready_for_reflection';
         db.prepare(`UPDATE error_item SET status=?,updated_at=? WHERE id=? AND status IN ('scheduled','packet_generated')
           AND NOT EXISTS (SELECT 1 FROM review_packet_item other
             WHERE other.item_id=error_item.id AND other.packet_id<>?
