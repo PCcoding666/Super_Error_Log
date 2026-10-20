@@ -24,7 +24,7 @@ import { COOKIE, clearCookie, readCookies, setCookie } from '../web/session.js';
 import { TRAIL_COOKIE } from '../web/trail.js';
 import type { RateLimiter } from '../mobile/rateLimit.js';
 import { sendHtml } from '../views/render.js';
-import { HostErrorPage, LoginPage } from './loginView.js';
+import { HostErrorPage, LoginPage, RegistrationPage, RegistrationCompletePage } from './loginView.js';
 
 /** 前台会话 cookie（Path=/s）；与学生 worker 内部的 sel_device 设备令牌完全分开。 */
 export const SESSION_COOKIE = 'sel_student';
@@ -98,7 +98,7 @@ function safeRelativeUrl(rawUrl: string): string | null {
   if (!pathname.startsWith('/')) return null;
   if (pathname.includes('%') || pathname.includes('\\') || pathname.includes('..') || pathname.includes('\0')) return null;
   if (pathname === '/pair' || pathname.startsWith('/pair/')) return null;
-  if (pathname === '/login' || pathname === '/logout') return null;
+  if (/^\/(?:login|logout|register)\/?$/i.test(pathname)) return null;
   return rawUrl;
 }
 
@@ -127,6 +127,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   const registry = options.registry ?? StudentRegistry.open(options.hostDir ?? resolveStudentHostDir());
   const pool = options.pool ?? new StudentWorkerPool({ dirFor: studentId => registry.studentDir(studentId) });
   const throttle = new LoginThrottle();
+  const registrationThrottle = new LoginThrottle();
   let built: Router | null = null;
 
   // 重启恢复：父进程重启后预热已注册学生的 worker（识别/打印的 pending 任务由 worker 启动时的恢复扫描续做）。
@@ -151,6 +152,34 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     // ---------- 公开资源（无学生数据；与 worker 同一份静态壳） ----------
     registerStaticAssets(r);
     r.get('/login', (_request, response) => response.redirect(303, '/s/'));
+
+    // ---------- 公开注册（只接受姓名和手机号，不能指定账号身份或学生 ID） ----------
+    r.get('/register', (_request, response) => sendHtml(response, RegistrationPage({})));
+    r.post('/register', form, (request, response) => {
+      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      const ip = deps.ipOf(request);
+      const blocked = registrationThrottle.blockedSeconds(ip);
+      if (blocked > 0) {
+        response.setHeader('retry-after', String(blocked));
+        response.status(429);
+        sendHtml(response, RegistrationPage({ retryAfterSeconds: blocked }));
+        return;
+      }
+      // 成功也计数；注册与登录使用独立额度，填错注册资料不会锁住已有账号登录。
+      registrationThrottle.record(ip);
+      const name = typeof request.body?.name === 'string' ? request.body.name : '';
+      const phone = typeof request.body?.phone === 'string' ? request.body.phone : '';
+      try {
+        const registration = registry.registerStudent(name, phone);
+        response.status(201);
+        response.setHeader('referrer-policy', 'no-referrer');
+        sendHtml(response, RegistrationCompletePage(registration));
+      } catch (error) {
+        if (!(error instanceof RegistryError)) throw error;
+        response.status(error.code === 'capacity_full' ? 503 : 400);
+        sendHtml(response, RegistrationPage({ error: error.message }));
+      }
+    });
 
     // ---------- 登录（兑换邀请码） ----------
     r.post('/login', form, (request, response) => {

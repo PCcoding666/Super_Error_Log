@@ -106,3 +106,30 @@ test('mobile invitation login, compact settings, connection retry, logout, and o
     await b.close();
   }
 });
+
+
+test('name and phone registration works without JavaScript and its code works after logout', async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
+  try {
+    const page = await context.newPage();
+    await page.goto(base + '/s/');
+    await page.getByRole('link', { name: '首次使用，注册账号' }).click();
+    await expect(page.getByRole('heading', { name: '注册账号' })).toBeVisible();
+    await page.getByLabel('学生姓名').fill('合成浏览器学生');
+    await page.getByLabel('手机号', { exact: true }).fill('+6587654321');
+    await page.getByRole('button', { name: '注册并生成邀请码' }).click();
+    await expect(page.getByRole('heading', { name: '注册成功' })).toBeVisible();
+    const code = (await page.getByTestId('registered-invite-code').textContent())!;
+    expect(code).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    expect(page.url()).not.toContain(code);
+    await page.getByRole('button', { name: '我已保存，进入错题本' }).click();
+    await page.goto(base + '/s/settings');
+    await expect(page.getByTestId('account-role')).toHaveText('学生');
+    await page.getByRole('button', { name: '退出登录', exact: true }).click();
+    await page.getByLabel('12 位邀请码').fill(code);
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await page.goto(base + '/s/settings');
+    await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
+    await expect(page.getByTestId('account-role')).toHaveText('学生');
+  } finally { await context.close(); }
+});
