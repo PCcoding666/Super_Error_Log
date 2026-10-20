@@ -42,7 +42,8 @@ async function jpeg(width = 820, height = 1100, background = '#c6cff2') {
 }
 async function uploaded(page: Page) {
   await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
-  await expect(page.getByTestId('photo-tile')).toHaveCount(1);
+  await expect(page.getByTestId('photo-tile')).toHaveCount(0);
+  await expect(page.locator('#upload-form')).not.toHaveAttribute('data-upload-pending');
 }
 
 test('5-question paper stays intact after adding 2 questions from home, refresh and invitation relogin', async ({ page, gateway }, info) => {
@@ -53,12 +54,13 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   const addOne = async (number: number) => {
     await page.locator('#library-input').setInputFiles(await jpeg(820 + number, 1100));
     await expect(page.getByTestId('photo-count')).toHaveText(`已拍 ${number} 张`);
-    await expect(page.getByTestId('next-step-primary')).toHaveText('查看错题');
-    await page.getByRole('link',{name:'查看上传记录'}).click();
+    await expect(page.locator('#upload-form')).not.toHaveAttribute('data-upload-pending');
+    await expect(page.getByTestId('next-step-primary')).toHaveText('拍照录入');
+    await page.getByRole('link',{name:'已上传记录',exact:true}).click();
     await expect(page).toHaveURL(/\/s\/photos(?:\?|$)/);
     const row = page.getByTestId(`photo-row-${number}`);
     await expect(row).toContainText('这页没有批改痕迹', { timeout: 15000 });
-    await row.click();
+    await row.getByRole('link', { name: '勾出错题', exact: true }).click();
     await page.getByTestId('pick-candidate').click();
     await page.getByTestId('next-step-primary').click();
     await expect(page.getByTestId(`photo-row-${number}`)).toContainText('已新增 1 道错题', { timeout: 15000 });
@@ -206,8 +208,7 @@ test('album queue uploads five photos once, keeps four successes, and retries on
   await expect(page.getByTestId('next-step-primary')).toHaveText('再拍一页');
   expect(await page.locator('[data-upload-retry]').evaluate(button => {
     const bounds = button.getBoundingClientRect();
-    const footer = document.querySelector('[data-testid="next-step-bar"]')!.getBoundingClientRect();
-    return bounds.top >= 0 && bounds.bottom <= footer.top;
+    return bounds.top >= 0 && bounds.bottom <= window.innerHeight - 100;
   })).toBe(true);
   await expect.poll(async () => {
     const html = await (await page.request.get(gateway.base + '/s/photos')).text();
@@ -224,7 +225,8 @@ test('album queue uploads five photos once, keeps four successes, and retries on
     retry.click(); retry.click(); retry.dispatchEvent(new Event('click'));
   });
   await expect(page.getByTestId('photo-count')).toHaveText('已拍 5 张');
-  await expect(page.getByTestId('photo-tile')).toHaveCount(5);
+  await expect(page.getByTestId('photo-tile')).toHaveCount(0);
+  await expect(page.locator('#upload-form')).not.toHaveAttribute('data-upload-pending');
   await expect.poll(() => calls.length).toBe(6);
   expect(calls[5]).toEqual(calls[2]);
   expect(new Set(calls.map(call => call.key)).size).toBe(5);
@@ -260,9 +262,10 @@ test('per-photo and batch progress wait for the final server acknowledgement', a
   await expect(page.getByTestId('upload-message')).toContainText('已上传 4/5 张');
   await page.evaluate(() => (window as unknown as { resumeSyntheticUpload: () => void }).resumeSyntheticUpload());
   await expect(page.getByTestId('photo-count')).toHaveText('已拍 5 张');
-  // Success refreshes to the server's authoritative photo list.
+  // Success returns to an empty upload form, without historical photos.
   await expect(page.locator('[data-upload-item]')).toHaveCount(0);
-  await expect(page.getByTestId('photo-tile')).toHaveCount(5);
+  await expect(page.getByTestId('photo-tile')).toHaveCount(0);
+  await expect(page.locator('#upload-form')).not.toHaveAttribute('data-upload-pending');
 });
 
 test('a lost success response retries the existing recognition job instead of creating another', async ({ page, gateway }) => {
@@ -428,4 +431,37 @@ test('macOS WebKit decodes real HEIC bytes and uploads through the invitation ga
     expect((await response).status()).toBe(200);
     await uploaded(page);
   } finally { await browser.close(); }
+});
+
+
+test('upload entry stays in the first screen and history shows compact previews', async ({ page, gateway }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enter(page, gateway);
+  const files = await Promise.all(['#a1bbcc', '#a2bbcc', '#a3bbcc', '#a4bbcc', '#a5bbcc'].map(color => jpeg(820, 1100, color)));
+  await page.locator('#library-input').setInputFiles(files);
+  await expect(page.getByTestId('photo-count')).toHaveText('已拍 5 张');
+  await expect(page.locator('#upload-form')).not.toHaveAttribute('data-upload-pending');
+  await expect(page.getByTestId('next-step-primary')).toHaveText('拍照录入');
+  await expect(page.getByTestId('next-step-primary')).toBeInViewport();
+  await expect(page.getByTestId('next-step-secondary-library')).toBeInViewport();
+  await expect(page.locator('img[src*="/s/img/photo/"]')).toHaveCount(0);
+  await page.getByRole('link', { name: '已上传记录', exact: true }).click();
+  const previews = page.locator('.photo-record img');
+  await expect(previews).toHaveCount(5);
+  await expect(page.locator('.photo-record').first()).toHaveAttribute('data-testid', 'photo-row-5');
+  expect((await page.locator('.photo-record').allTextContents()).join('')).not.toMatch(/第.*张/);
+  const preview = previews.first();
+  expect(await preview.evaluate(img => {
+    const box = img.getBoundingClientRect();
+    return box.width <= 100 && box.height <= 120;
+  })).toBe(true);
+  await expect(preview).toHaveAttribute('loading', 'lazy');
+  const original = page.waitForEvent('popup');
+  await page.locator('.photo-preview').first().click();
+  const popup = await original;
+  await expect(popup).toHaveURL(/\/s\/img\/photo\/[^?]+\?full=1$/);
+  await popup.close();
+  await expect(page).toHaveURL(/\/s\/photos$/);
+  await page.getByRole('link', { name: '新增录入', exact: true }).click();
+  await expect(page.getByTestId('next-step-primary')).toBeInViewport();
 });

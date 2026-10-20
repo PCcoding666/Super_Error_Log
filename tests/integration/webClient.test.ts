@@ -470,15 +470,15 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
 });
 
 describe('勾出做错的题：没批改的页由学生勾，勾了才精读', () => {
-  it('没批改痕迹的页：今天说「勾第 1 张」，勾 2 道后进错题本；「这页没有做错的题」只记在 cookie', async () => {
+  it('没批改痕迹的页：今天说「勾出错题」，勾 2 道后进错题本；「这页没有做错的题」只记在 cookie', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
     await browser.post('/s/consent');
     const { jobId } = await (await uploadPhoto(browser, await photo('#c8d0f0'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
     const today = await browser.visibleText('/s/photos');
-    expect(today).toContain('勾第 1 张');
-    expect(today).toContain('勾第 1 张');
+    expect(today).toContain('勾出错题');
+    expect(today).toContain('勾出错题');
     expect((await browser.text('/s/photos')).replace(/<[^>]+>/g, '')).toContain('这页没有批改痕迹，点这里勾出错题');
     const pick = await browser.text(`/s/photos/${jobId}`);
     const ids = [...pick.matchAll(/name="questionIds" value="([^"]+)"/g)].map(match => match[1]!);
@@ -486,11 +486,11 @@ describe('勾出做错的题：没批改的页由学生勾，勾了才精读', (
     const candidate = await browser.get(`/s/img/cand/${jobId}/${ids[0]}`);
     expect(candidate.headers.get('content-type')).toBe('image/jpeg');
     expect((await browser.post(`/s/photos/${jobId}/select`, { questionIds: [] })).status).toBe(400);
-    // 加完回到勾出做错的题：带两个小数字（加了几道、第几张），页面上说一声「第 1 张：2 道加进错题本了」。
+    // 加完回到勾出做错的题：带两个小数字（加了几道、第几张），页面上说一声「2 道加进错题本了」。
     expect((await browser.post(`/s/photos/${jobId}/select`, { questionIds: ids.slice(0, 2) })).headers.get('location')).toBe('/s/photos?added=2&n=1');
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed' && (await env.service.getJob(jobId)).questions.filter(q => q.status === 'ready').length === 2);
     const added = (await browser.text('/s/photos?added=99&n=1')).replace(/<[^>]+>/g, '');
-    expect(added).toContain('第 1 张：2 道加进错题本了 ✓');
+    expect(added).toContain('2 道加进错题本了 ✓');
     expect(await browser.text('/s/photos?added=x&n=1')).not.toContain('data-testid="photos-added"');
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed' && (await env.service.getJob(jobId)).questions.filter(q => q.status === 'ready').length === 2);
     expect(await browser.visibleText('/s/photos')).toContain('还有 1 道没勾');

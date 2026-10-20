@@ -269,11 +269,11 @@ async function pairedPage(browser: Browser, options: BrowserContextOptions = {})
 /** 拍一张（开着脚本：选好就上传）。返回这一周现在一共几张。 */
 async function upload(page: Page, color: string): Promise<number> {
   await page.goto(`${WEB}/s/capture`);
-  const before = await page.getByTestId('photo-tile').count();
+  const before = Number(await page.locator('#upload-form').getAttribute('data-photo-count'));
   await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic(color, 900 + before) });
-  await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1, { timeout: 20_000 });
-  // A tile is appended before the upload batch redirects. Wait for the fresh form
-  // so the caller's next navigation cannot race with location.replace('/s/capture').
+  await expect(page.getByTestId('photo-count')).toHaveText(`已拍 ${before + 1} 张`, { timeout: 20_000 });
+  // Wait for the fresh form after upload so the next navigation cannot race
+  // with location.replace('/s/capture').
   await expect(page.locator('#upload-form')).not.toHaveAttribute('data-upload-pending', { timeout: 20_000 });
   await page.waitForLoadState('load');
   return before + 1;
@@ -288,7 +288,10 @@ test('拍照页识别结束后自动移除正在找题提示', async ({ browser 
     await expect(status).toHaveText('照片已收到，正在找题。');
     await fault('vision=release');
     await expect(status).toBeEmpty({ timeout: 15000 });
-    await expect(page.getByTestId('photo-tile').nth(number - 1)).toContainText('找好了');
+    await expect(page.getByTestId('photo-tile')).toHaveCount(0);
+    await expect(primary(page)).toHaveText('拍照录入');
+    await page.getByRole('link', { name: '已上传记录', exact: true }).click();
+    await expect(page.getByTestId(`photo-row-${number}`)).toContainText('已新增');
   } finally {
     await fault('vision=release');
     await page.context().close();
@@ -364,9 +367,9 @@ test('轮询遇到 503 和挂起仍能恢复；待重试的照片和当前页面
     await expect.poll(() => polls, { timeout: 55_000 }).toBeGreaterThanOrEqual(3);
     expect(await page.evaluate(() => (window as unknown as { marker: string }).marker)).toBe('keep-upload');
     await expect(page.locator('[data-upload-retry]')).toBeVisible();
-    const before = await page.getByTestId('photo-tile').count();
+    const before = Number(await page.locator('#upload-form').getAttribute('data-photo-count'));
     await page.locator('[data-upload-retry]').click();
-    await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1);
+    await expect(page.getByTestId('photo-count')).toHaveText(`已拍 ${before + 1} 张`);
   } finally { await fault('vision=release'); await page.context().close(); }
 });
 
@@ -375,10 +378,10 @@ test.describe('关掉脚本（等 AI 的页面）', () => {
     const page = await pairedPage(browser, { javaScriptEnabled: false });
     await fault('vision=hold');
     await page.goto(`${WEB}/s/capture`);
-    const before = await page.getByTestId('photo-tile').count();
+    const before = Number(await page.locator('#upload-form').getAttribute('data-photo-count'));
     await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f0c8c0', 760 + before) });
     await page.getByRole('button', { name: '上传这张' }).click();
-    await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1);
+    await expect(page.getByTestId('photo-count')).toHaveText(`已拍 ${before + 1} 张`);
     const row = page.getByTestId(`photo-row-${before + 1}`);
     let loads = 0;
     page.on('load', () => { loads += 1; });

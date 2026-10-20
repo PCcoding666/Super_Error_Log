@@ -402,6 +402,28 @@ html:has(body.has-tabbar){scroll-padding-bottom:calc(6.625rem + env(safe-area-in
 .next-bar-inline .bar-alt{order:2;justify-content:flex-start;margin:calc(var(--s-2) * -1) 0 0}
 .next-bar-inline .bar-alt .btn{padding:var(--s-2) 0;justify-content:flex-start}
 .next-bar-inline .btn.primary{min-height:52px}
+
+/* 新增录入保持短页；历史照片单独用缩略图展示。 */
+.capture-tabs{display:flex;gap:var(--s-2);padding:var(--s-1);margin:var(--s-3) 0 var(--s-4);border:1px solid var(--line);border-radius:var(--r-control);background:var(--card)}
+.capture-tabs a{flex:1;min-height:var(--tap);display:flex;align-items:center;justify-content:center;padding:var(--s-2);border-radius:var(--r-1);text-decoration:none;text-align:center;color:var(--muted)}
+.capture-tabs a[aria-current=page]{color:var(--ink);background:var(--mint);font-weight:600}
+.capture-actions{position:sticky;top:0;z-index:5;background:var(--paper);padding:var(--s-2) 0}
+.capture-actions .next-bar-inline{padding:0}
+.capture-actions .inner{display:grid;grid-template-columns:1fr 1fr;gap:var(--s-2)}
+.capture-actions .bar-main{order:0}
+.capture-actions .bar-alt{order:1;margin:0}
+.capture-actions .bar-alt .btn{width:100%;justify-content:center;padding:var(--s-2);min-height:52px;border:1px solid var(--field);border-radius:var(--r-control)}
+.capture-actions .caption{grid-column:1 / -1}
+.capture-page .upload-list{max-height:260px;overflow:auto;overscroll-behavior:contain}
+.capture-page .upload-item{display:flow-root;min-height:72px}
+.capture-page .upload-thumb{float:left;width:48px;height:60px;object-fit:contain;margin:0 var(--s-3) var(--s-2) 0;border-radius:var(--r-1);background:var(--card)}
+.capture-page .upload-item p{margin:0 0 var(--s-1)}
+.photo-record{display:flex;align-items:flex-start;gap:var(--s-3);padding:var(--s-4) 0}
+.photo-preview{display:block;flex:0 0 84px;border-radius:var(--r-1)}
+.photo-preview img{display:block;width:84px;height:104px;object-fit:contain;border-radius:var(--r-1);background:var(--mint);filter:var(--photo-dim)}
+.photo-record-content{min-width:0;flex:1;overflow-wrap:anywhere}
+.photo-record-content .more{margin-top:var(--s-2)}
+
 .today-heading{margin:var(--s-1) 0 var(--s-5)}
 .today-date{font-size:var(--fs-1);font-weight:600;color:var(--muted);margin:0 0 var(--s-1)}
 .today-heading h1{margin-bottom:var(--s-2)}
