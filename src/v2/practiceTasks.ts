@@ -50,6 +50,8 @@ export function setTaskLifecycle(packetId: string, lifecycle: TaskLifecycle): vo
     db.prepare(`INSERT INTO practice_task(packet_id,lifecycle,updated_at) VALUES (?,?,?)
       ON CONFLICT(packet_id) DO UPDATE SET lifecycle=excluded.lifecycle,updated_at=excluded.updated_at`).run(packetId,lifecycle,now());
     if (lifecycle==='cancelled') {
+      // Reflection (error_diagnosis) is attached per question, not per round,
+      // so a diagnosis from any earlier round still counts as already reflected.
       const unanswered=db.prepare(`SELECT rpi.item_id,rpi.v2_tier,
           EXISTS(SELECT 1 FROM error_diagnosis d WHERE d.item_id=rpi.item_id) AS reflected
         FROM review_packet_item rpi

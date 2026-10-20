@@ -714,6 +714,31 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(getDb().prepare('SELECT COUNT(*) n FROM review_attempt WHERE packet_id=?').get(packetId)).toEqual({ n: 0 });
   });
 
+  it('作答照片超过每设备上传限流时返回 429，核对仍走 AI 额度', async () => {
+    const env = await setup({
+      limiter: new RateLimiter({ uploadPerDevice: 2, now: () => 1000 }),
+      practiceReviewer: { review: async () => ({ findings: [] }) },
+    });
+    const { browser, packetId } = await chosen(env);
+    const url = `/s/practice/${packetId}`;
+    await waitFor(async () => (await browser.text(url)).includes('practice-question'));
+    const bytes = await photo('#ffffff', 20);
+    const allowed: number[] = [];
+    for (let i = 0; i < 2; i++) {
+      const response = await uploadPracticePhoto(browser, packetId, bytes);
+      allowed.push(response.status);
+      await response.text();
+    }
+    expect(allowed).toEqual([200, 200]);
+    const blocked = await uploadPracticePhoto(browser, packetId, bytes);
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(await blocked.text()).toContain('上传次数较多');
+    expect(getDb().prepare('SELECT COUNT(*) n FROM practice_submission_photo WHERE packet_id=?').get(packetId)).toEqual({ n: 2 });
+    expect((await browser.post(`${url}/review`)).status).toBe(303);
+    await waitFor(async () => (await browser.visibleText(`${url}/feedback`)).includes('待你确认'));
+  });
+
   it('AI 额度耗尽时仍可保存整份作答照片，核对仍受限且不丢照片', async () => {
     const env = await setup({ limiter: new RateLimiter({ transcribePerDevice: 0, now: () => 1000 }) });
     const { browser, packetId } = await chosen(env);

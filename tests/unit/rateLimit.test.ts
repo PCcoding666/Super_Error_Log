@@ -32,6 +32,21 @@ describe('RateLimiter', () => {
     expect(limiter.authedQuery('device-2').allowed).toBe(true);
   });
 
+  it('照片上传每设备 30/分钟，与语音转写额度分开', () => {
+    let clock = 0;
+    const limiter = new RateLimiter({ now: () => clock });
+    for (let index = 0; index < 30; index += 1) expect(limiter.upload('device-1').allowed).toBe(true);
+    const blocked = limiter.upload('device-1');
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    expect(blocked.retryAfterSeconds).toBeLessThanOrEqual(60);
+    expect(limiter.upload('device-2').allowed).toBe(true);
+    expect(limiter.transcribe('device-1').allowed).toBe(true);
+    const tight = new RateLimiter({ uploadPerDevice: 1, now: () => clock });
+    expect(tight.upload('device-1').allowed).toBe(true);
+    expect(tight.upload('device-1').allowed).toBe(false);
+  });
+
   it('分钟窗口滚动后桶重置', () => {
     let clock = 0;
     const limiter = new RateLimiter({ now: () => clock });
