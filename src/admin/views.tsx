@@ -9,7 +9,7 @@ const time = (value: string | null): string => value && Number.isFinite(Date.par
 }).format(new Date(value)) : '未采集';
 export const OPERATIONS: Record<string, string> = {
   mobile_inventory: '整页找题', mobile_transcribe: '题目精读', mobile_verify: '裁图检查', mobile_ground: '识别修正',
-  layout: '题目定位', transcribe: '题目转写', diagnose: '错因分析', coach: '提示与答案',
+  layout: '题目定位', transcribe: '图文转写与作答核对', diagnose: '错因分析', coach: '提示与答案',
   followup: '复盘追问与归纳', match: '回传匹配', correct: '修订建议', asr: '语音转写',
   crop_inventory: '原图清单', crop_verify: '裁图核验',
 };
@@ -76,7 +76,7 @@ export function AdminDashboard(report: AdminReport): ReactNode {
         <tbody>{report.accounts.map(account => <tr key={account.studentId}><td><a className="account-name" href={adminLink(filters, { studentId: account.studentId, page: 1 })}>{account.label}</a><small className="mono block">{account.studentId}</small></td>
           <td>{time(account.lastActiveAt)}</td><td>{account.invitations.length} 个邀请码<small className="block subtle">{account.activeSessions} 个有效会话</small></td>
           <td>{account.usage.calls}</td><td>{number(account.usage.inputTokens)} / {number(account.usage.outputTokens)}</td><td>{percent(account.usage.successRate)}</td>
-          <td><details><summary>查看使用情况</summary><dl className="activity"><dt>上传照片</dt><dd>{number(account.activity.photos)}</dd><dt>错题</dt><dd>{number(account.activity.items)}</dd>
+          <td><details><summary>查看使用情况</summary><dl className="activity"><dt>录入题目照片</dt><dd>{number(account.activity.photos)}</dd><dt>错题</dt><dd>{number(account.activity.items)}</dd>
             <dt>练习包</dt><dd>{number(account.activity.packets)}</dd><dt>已生成打印包</dt><dd>{number(account.activity.printed)}</dd><dt>复盘记录</dt><dd>{number(account.activity.reflections)}</dd><dt>重做记录</dt><dd>{number(account.activity.returns)}</dd></dl>
             <p className="small subtle">新采集最早记录：{time(account.firstCollectedAt)}<br />可恢复的历史识别调用：{account.legacyCalls} 次</p></details></td></tr>)}</tbody></table>
         {report.accounts.length === 0 && <p className="empty">还没有符合条件的账号。</p>}</div>

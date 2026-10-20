@@ -116,6 +116,7 @@ CI：`.github/workflows/ci.yml`在每个PR以及 `main` 推送时验证；**仅 
 - `src/observability/aiUsage.ts`：每学生模型调用元数据；文本/视觉 ChatClient 与原生 ASR 统一采集。历史视觉日志只恢复现存字段。
 - `dist/studentHost/admin-cli.js admin-password`：服务器管理员生成/轮换后台密码，不修改学生会话。
 - 配置、口径、历史数据限制和初始化步骤见 `deploy/README.md` 文末。本功能尚未合入或部署；当前生产版本按 Actions 与服务器版本记录确认。
+- 实现口径、审查及合成验收证据见 [后台验收说明](quality/2026-10-20-admin-usage.md)。
 
 ## 6. 接下来怎么做
 
