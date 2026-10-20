@@ -166,8 +166,16 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
           // Bad references never enter persistence; successful siblings remain usable.
         }
       }
-      for (const fragment of fragments) if (fragment.role === 'question' && fragment.requiresDiagram && !fragments.some(f => f.role === 'diagram' && f.number === fragment.number && f.page === fragment.page && f.check === 'passed')) {
-        if (fragment.check === 'passed') fragment.check = 'low'; fragment.uncertainties.push('missing_diagram');
+      for (const fragment of fragments) if (fragment.role === 'question' && fragment.requiresDiagram) {
+        // Missing identifiers never establish support. Equal null subparts represent
+        // whole-question scope only when the question number and page are explicit.
+        // A shared diagram's applicability to a specific subpart remains unresolved.
+        const supported = fragment.number !== null && fragment.page !== null && fragments.some(f =>
+          f.role === 'diagram' && f.check === 'passed' && f.number === fragment.number &&
+          f.page === fragment.page && f.subpart === fragment.subpart);
+        if (!supported) {
+          if (fragment.check === 'passed') fragment.check = 'low'; fragment.uncertainties.push('missing_diagram');
+        }
       }
       const extraction = validateMaterialExtraction({ assetId: source.assetId, revision: source.revision, document: located.document, fragments, warnings, runs }, source);
       if (failure) throw new PartialMaterialExtractionError(extraction, failure);

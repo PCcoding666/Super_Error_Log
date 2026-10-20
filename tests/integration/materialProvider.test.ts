@@ -8,7 +8,7 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
 const source: MaterialSource = { assetId: 'asset', revision: 1, sourceHash: 'original-upload-hash' };
 const document = { title: 'Synthetic page', subject: 'math', date: null, printedCode: 'SYNTH', page: 1 };
-const candidate = (key: string, role: string, order = 0) => ({ key, role, box: { x: 0, y: order / 10, width: 1, height: .1 }, number: '1', subpart: null, page: 1, order, requiresDiagram: false });
+const candidate = (key: string, role: string, order = 0) => ({ key, role, box: { x: 0, y: order / 10, width: 1, height: .1 }, number: '1' as string | null, subpart: null as string | null, page: 1 as number | null, order, requiresDiagram: false });
 const image = () => sharp({ create: { width: 100, height: 100, channels: 3, background: '#fff' } }).jpeg().toBuffer();
 type Request = { model: string; messages: { role: string; content: string | { type: string; text?: string; image_url?: { url: string } }[] }[]; max_tokens: number; response_format: unknown };
 function context(body: Request): { operation: string; source: MaterialSource; candidate?: ReturnType<typeof candidate>; fragment?: { text: string } } {
@@ -64,6 +64,34 @@ describe('grounded material provider protocol', () => {
     const missing = await createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
     expect(missing.fragments[0]!.check).toBe('low'); expect(missing.fragments[0]!.uncertainties).toContain('missing_diagram');
     expect([...f.requests, ...g.requests].some(r => ['answer', 'grade'].includes(r.model))).toBe(false);
+  });
+
+  it.each([
+    { label: 'different explicit subparts', number: '1', page: 1, questionSubpart: 'a', diagramSubpart: 'b', expected: 'low' },
+    { label: 'unidentified question and diagram', number: null, page: null, questionSubpart: null, diagramSubpart: null, expected: 'low' },
+    { label: 'missing question numbers', number: null, page: 1, questionSubpart: 'a', diagramSubpart: 'a', expected: 'low' },
+    { label: 'missing page identifiers', number: '1', page: null, questionSubpart: 'a', diagramSubpart: 'a', expected: 'low' },
+    { label: 'unproven whole-question diagram for a subpart', number: '1', page: 1, questionSubpart: 'a', diagramSubpart: null, expected: 'low' },
+    { label: 'subpart diagram for a whole question', number: '1', page: 1, questionSubpart: null, diagramSubpart: 'a', expected: 'low' },
+    { label: 'matching explicit subpart scope', number: '1', page: 1, questionSubpart: 'a', diagramSubpart: 'a', expected: 'passed' },
+    { label: 'matching explicit whole-question scope', number: '1', page: 1, questionSubpart: null, diagramSubpart: null, expected: 'passed' },
+  ])('requires compatible diagram evidence: $label', async ({ number, page, questionSubpart, diagramSubpart, expected }) => {
+    const candidates = [
+      { ...candidate('question', 'question', 0), number, page, subpart: questionSubpart, requiresDiagram: true },
+      { ...candidate('diagram', 'diagram', 1), number, page, subpart: diagramSubpart },
+    ];
+    const f = await local((body, res) => {
+      const value = response(body, candidates);
+      if (context(body).operation === 'locate') Object.assign(value, { document: { ...document, page: null } });
+      send(res, value);
+    });
+    const extraction = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    const question = extraction.fragments.find(f => f.role === 'question')!;
+    expect(question.check).toBe(expected);
+    if (expected === 'low') expect(question.uncertainties).toContain('missing_diagram');
+    else expect(question.uncertainties).toEqual([]);
+    expect(extraction.fragments.find(f => f.role === 'diagram')!.check).toBe('passed');
+    expect(f.requests).toHaveLength(5);
   });
 
   it.each(['source', 'box', 'duplicate', 'number', 'page', 'page_order', 'role', 'reference'])('rejects invalid %s before a checkpoint can become successful', async fault => {
