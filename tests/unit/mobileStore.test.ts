@@ -143,9 +143,11 @@ describe('mobile production configuration', () => {
     expect(() => withEnvironment(withoutKey, () => loadMobileConfiguration(root()))).toThrow(/密钥/);
   });
 
-  it('keeps the dedicated mobile timeout at 30 minutes without changing web configuration', () => {
+  it('defaults the mobile model timeout to 90 seconds and still honors an override', () => {
     const configuration = withEnvironment(valid, () => loadMobileConfiguration(root()));
-    expect(configuration).toMatchObject({ host: '127.0.0.1', port: 3101, mode: 'loopback', vision: { timeoutMs: 1_800_000, bailianOnly: true } });
+    expect(configuration).toMatchObject({ host: '127.0.0.1', port: 3101, mode: 'loopback', vision: { timeoutMs: 90_000, bailianOnly: true } });
+    const overridden = withEnvironment({ ...valid, SEL_MOBILE_AI_TIMEOUT_MS: '120000' }, () => loadMobileConfiguration(root()));
+    expect(overridden.vision.timeoutMs).toBe(120_000);
   });
 
   it('loopback is the default mode and requires a shared pairing token', () => {

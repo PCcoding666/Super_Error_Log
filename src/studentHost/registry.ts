@@ -3,7 +3,7 @@
  * - 独立 SQLite（SEL_STUDENT_HOST_DIR/registry.db），与业务库完全分开；目录 0700、库文件 0600。
  * - 只存邀请码与会话令牌的 SHA256，不落明文；邀请码 12 位（32 字母表，60 bit 安全随机），
  *   大小写不敏感、允许空格/短横线分组，一次性、7 天过期；会话令牌 256 bit、30 天。
- * - 受控试用上限 MAX_STUDENTS 个学生空间；达到上限拒绝新建，绝不复用别人的空间。
+ * - 受控上限默认 50 个学生空间（SEL_MAX_STUDENTS）；达到上限拒绝新建，绝不复用别人的空间。
  * - 兑换在 BEGIN IMMEDIATE 事务里「查 + 标记已用 + 建会话」，并发兑换只有一个成功。
  */
 import crypto from 'node:crypto';
@@ -11,8 +11,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ACCOUNT_ROLES, isAccountRole, type AccountRole } from './accountRole.js';
+import { DEFAULT_MAX_STUDENTS, maxStudentsLimit } from './limits.js';
 
-export const MAX_STUDENTS = 3;
+/** 缺省注册上限。新建时以 maxStudentsLimit() 为准，可用 SEL_MAX_STUDENTS 覆盖。 */
+export const MAX_STUDENTS = DEFAULT_MAX_STUDENTS;
+export { maxStudentsLimit };
 export const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** Crockford base32（不含 I/L/O/U，读错成 1/0 也无歧义）；32 个字符 × 12 位 = 60 bit。 */
@@ -179,15 +182,16 @@ export class StudentRegistry {
     return this.db.prepare('SELECT 1 FROM students WHERE id = ?').get(studentId) !== undefined;
   }
 
-  /** 新建学生空间（含独立数据目录，0700）；达到 MAX_STUDENTS 拒绝。身份只是标签，先校验再碰目录/库。 */
+  /** 新建学生空间（含独立数据目录，0700）；达到当前上限拒绝。身份只是标签，先校验再碰目录/库。 */
   createStudent(role: AccountRole = 'student'): { studentId: string; studentDir: string } {
     if (!isAccountRole(role)) throw new RegistryError('invalid_role', `身份只能是 ${ACCOUNT_ROLES.join(' / ')}。`);
     const studentId = crypto.randomUUID();
     const studentDir = this.studentDir(studentId);
+    const limit = maxStudentsLimit();
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const count = (this.db.prepare('SELECT COUNT(*) AS n FROM students').get() as { n: number }).n;
-      if (count >= MAX_STUDENTS) throw new RegistryError('capacity_full', `学生空间已满（最多 ${MAX_STUDENTS} 个），不能再新建。`);
+      if (count >= limit) throw new RegistryError('capacity_full', `学生空间已满（最多 ${limit} 个），不能再新建。`);
       // 先落目录再登记；登记失败把空目录清掉，不留下无主空间。
       fs.mkdirSync(studentDir, { recursive: false, mode: 0o700 });
       fs.chmodSync(studentDir, 0o700);

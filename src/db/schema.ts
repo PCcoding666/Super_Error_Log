@@ -144,6 +144,8 @@ CREATE TABLE IF NOT EXISTS review_packet_item (
   answer_text TEXT,
   PRIMARY KEY (packet_id, item_id)
 );
+CREATE INDEX IF NOT EXISTS idx_error_diagnosis_item ON error_diagnosis(item_id);
+CREATE INDEX IF NOT EXISTS idx_review_packet_item_item ON review_packet_item(item_id);
 
 CREATE TABLE IF NOT EXISTS review_attempt (
   id TEXT PRIMARY KEY,

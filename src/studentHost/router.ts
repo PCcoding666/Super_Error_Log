@@ -129,11 +129,8 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   const throttle = new LoginThrottle();
   let built: Router | null = null;
 
-  // 重启恢复：父进程重启后预热已注册学生的 worker（识别/打印的 pending 任务由 worker 启动时的恢复扫描续做）。
-  // 每个空间独立拉起，单个失败不影响其他；失败的空间等学生下次打开时还会重拉。
-  for (const student of registry.listStudents()) {
-    void pool.ensure(student.studentId).catch(() => undefined);
-  }
+  // 不在启动时为每个已注册学生拉起进程。第一次打开再 fork；空闲后由进程池退出。
+  // 未完成的识别和打印留在该学生自己的目录里，下次启动时的恢复扫描会续做。
 
   const buildRouter = (deps: StudentHostGatewayDeps): Router => {
     const r = Router();
@@ -254,15 +251,30 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   };
 
   const proxyToWorker = async (request: Request, response: Response, studentId: string, relUrl: string, deps: StudentHostGatewayDeps): Promise<void> => {
+    pool.retain(studentId);
+    let released = false;
+    const releaseWorker = (): void => {
+      if (released) return;
+      released = true;
+      pool.release(studentId);
+    };
     let endpoint;
     try {
       endpoint = await pool.ensure(studentId);
     } catch (error) {
-      const detail = error instanceof WorkerStartError ? '你的学习空间正在准备中，等半分钟再试。' : '服务器暂时没准备好，过一会儿再试。';
-      if (!response.headersSent) { response.status(503); sendHtml(response, HostErrorPage({ title: '暂时进不去', detail })); }
+      releaseWorker();
+      const capacity = error instanceof WorkerStartError && error.reason === 'capacity';
+      const detail = capacity
+        ? '现在同时打开的人比较多，等一两分钟再试。'
+        : error instanceof WorkerStartError ? '你的学习空间正在准备中，等半分钟再试。' : '服务器暂时没准备好，过一会儿再试。';
+      if (!response.headersSent) {
+        if (capacity) response.setHeader('retry-after', '60');
+        response.status(503);
+        sendHtml(response, HostErrorPage({ title: capacity ? '人有点多' : '暂时进不去', detail }));
+      }
       return;
     }
-    if (response.writableEnded || request.destroyed) return;
+    if (response.writableEnded || request.destroyed) { releaseWorker(); return; }
 
     // 请求头白名单重建：用户带来的 sel_device / authorization / 转发头一律丢弃。
     const headers: Record<string, string> = {
@@ -314,8 +326,10 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         upstreamResponse.pipe(response);
       },
     );
+    upstream.on('close', releaseWorker);
     upstream.on('timeout', () => upstream.destroy(new Error('学生空间响应超时')));
     upstream.on('error', () => {
+      releaseWorker();
       if (!response.headersSent) { response.status(502); sendHtml(response, HostErrorPage({ title: '暂时连不上', detail: '你的学习空间刚断了一下，稍等再试。' })); return; }
       response.destroy();
     });

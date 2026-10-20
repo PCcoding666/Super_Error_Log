@@ -32,7 +32,7 @@ The service reads the repository-root `.env` without printing credentials. Real 
 | `SEL_MOBILE_AI_MODEL_TRANSCRIBE` | mobile common model |
 | `SEL_MOBILE_AI_MODEL_VERIFY` | mobile common model |
 | `SEL_MOBILE_AI_MODEL_GROUND` | mobile common model |
-| `SEL_MOBILE_AI_TIMEOUT_MS` | `1800000` (30 minutes per model call) |
+| `SEL_MOBILE_AI_TIMEOUT_MS` | `90000` (90 seconds per model call; same stage still retries at most twice) |
 | `SEL_MOBILE_DATA_DIR` | `data/mobile-recognition` |
 | `SEL_MOBILE_PORT` | `3101` |
 | `SEL_MOBILE_HOST` | `127.0.0.1`; other values are rejected |
@@ -231,7 +231,7 @@ Cloud-mode admission (checked in order, before the request body is consumed):
 2. Storage gates: system disk below 3 GiB free → `503 disk_low`; data directory at/over 10 GiB → `503 data_quota`. Both messages direct the user to contact the administrator.
 3. Upload slot: at most one request body being parsed at a time; a second concurrent upload gets `429 busy` + `Retry-After` and should retry, not queue.
 4. Job capacity: at most 10 pending photos (running ones included); a full queue gets `429 capacity_full` + `Retry-After`. Capacity is released when a job reaches a terminal state (completed/partial/failed), by the service itself.
-5. Single-process RSS observation: above 768 MiB the service stops accepting new jobs (`health.acceptingJobs=false`) until memory falls back; this is an application-level admission threshold, not a kernel throttling claim.
+5. Single-process RSS observation: above the configured admission threshold the service stops accepting new jobs (`health.acceptingJobs=false`) until memory falls back. This is an application-level admission threshold, not a kernel limit. The default follows `SEL_SERVICE_MEMORY_MIB` (4096) and is 512 MiB in the parent process, 256 MiB in a student worker when eight workers may be live. `SEL_RSS_ADMISSION_MIB` overrides the formula. The whole service still shares the systemd cgroup (`MemoryMax`, 4G on the recommended host, 1G on the current small box).
 
 Per-question model concurrency is 1 (one question boundary at a time), and image work (upload decode/normalize, question/diagram crops) is serialized by a shared image semaphore, because `sharp.concurrency(1)` alone does not guarantee cross-request serialization.
 

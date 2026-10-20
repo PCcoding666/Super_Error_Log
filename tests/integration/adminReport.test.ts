@@ -71,6 +71,7 @@ describe('admin account and usage report', () => {
     for (let i = 0; i < 52; i++) recordAiUsage(event({ durationMs: i + 1 }), a.studentDir);
     const first = await readAdminReport(registry, parseAdminFilters({ page: '1' }));
     const second = await readAdminReport(registry, parseAdminFilters({ page: '2' }));
+    expect(first.detailLimited).toBe(false);
     expect(first.summary.calls).toBe(52); expect(second.summary.calls).toBe(52);
     expect(first.records).toHaveLength(50); expect(second.records).toHaveLength(2);
     expect(second.summary.p95Ms).toBe(50);

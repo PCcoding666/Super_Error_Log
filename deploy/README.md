@@ -61,7 +61,8 @@ SEL_MOBILE_AI_MODEL_INVENTORY=<模型名>
 SEL_MOBILE_AI_MODEL_TRANSCRIBE=<模型名>
 SEL_MOBILE_AI_MODEL_VERIFY=<模型名>
 SEL_MOBILE_AI_MODEL_GROUND=<模型名>
-SEL_MOBILE_AI_TIMEOUT_MS=1800000
+# 单次视觉模型调用超时。缺省 90000（90 秒），与 SEL_AI_TIMEOUT_MS 对齐；同题同阶段最多 3 次（首次 + 两次重试）。
+SEL_MOBILE_AI_TIMEOUT_MS=90000
 # v2.0 T2 单进程装配（dist/main.js）新增必填：
 # SEL_AI_MODE=bailian：/v2 与主入口共用同一配置入口，缺省 mock 会 fail-hard 拒绝启动。
 # SEL_DATA_DIR：/v2 的 node:sqlite 库（app.db）所在目录，必须与 SEL_MOBILE_DATA_DIR 相同。
@@ -140,9 +141,15 @@ systemctl daemon-reload && systemctl enable --now super-error-log-caddy
 ## 5. 部署验收（服务器实测，直接读内核接口）
 
 ```bash
-# cgroup v1 实测（systemctl show 不是内核读回）：
-cat /sys/fs/cgroup/memory/system.slice/super-error-log.service/memory.limit_in_bytes   # 期望 1073741824
-cat /sys/fs/cgroup/cpu/system.slice/super-error-log.service/cpu.cfs_quota_us          # 期望 150000（150% × 100000 period）
+# cgroup v1 实测（systemctl show 不是内核读回）。先确认这台机器用的是哪一档，再对数字。
+# 推荐档（4 核 / 8 GB，单元文件默认值）：
+#   memory.limit_in_bytes = 4294967296
+#   cpu.cfs_quota_us = 300000（300% × 100000 period）
+# 当前广州小机（已安装 small-box.conf）：
+#   memory.limit_in_bytes = 1073741824
+#   cpu.cfs_quota_us = 150000（150% × 100000 period）
+cat /sys/fs/cgroup/memory/system.slice/super-error-log.service/memory.limit_in_bytes
+cat /sys/fs/cgroup/cpu/system.slice/super-error-log.service/cpu.cfs_quota_us
 cat /sys/fs/cgroup/cpu/system.slice/super-error-log.service/cpu.cfs_period_us          # 期望 100000
 
 # 监听端口：服务只应 127.0.0.1:3101 + admin socket；443 属 Caddy，80 仍属原服务
@@ -189,9 +196,41 @@ cp -p /etc/super-error-log/env /root/backup-sel-env-$(date +%Y%m%d-%H%M)
 
 ## 7. 资源语义（重要）
 
-- `MemoryLimit=1G`：cgroup v1 内核级上限（含 sharp 原生缓冲）。
-- **768 MiB 是应用层准入阈值**（`AdmissionController` 在云端模式拒绝新照片上传）：
-  它防的是任务积压，**不宣称内核在 768MiB 节流**。两者独立生效，先到先限。
+单元文件 `deploy/systemd/super-error-log.service` 的默认值是 **4 核 / 8 GB 推荐档**：`MemoryMax=4G`、`MemoryLimit=4G`（systemd 239 的 cgroup v1 读 `MemoryLimit`）、`CPUQuota=300%`。父子进程和全部学生 worker 共用这一份 cgroup。
+
+当前广州机器是 **2 核 / 1.8 GB**。自动发布不会安装单元文件。人工发布到这台机器时，必须在重启前装上 `deploy/systemd/super-error-log.service.d/small-box.conf`（`MemoryMax=1G`、`CPUQuota=150%`），并在 `/etc/super-error-log/env` 写上小机档：
+
+```
+SEL_MAX_STUDENTS=50
+SEL_WORKER_IDLE_MS=720000
+SEL_MAX_LIVE_WORKERS=3
+SEL_GLOBAL_AI_CONCURRENCY=1
+SEL_GLOBAL_IMAGE_CONCURRENCY=1
+SEL_SERVICE_MEMORY_MIB=1024
+```
+
+只换 4G 单元、不装 drop-in，会让 cgroup 上限高于物理内存。只改代码、不改环境，学生 worker 会按 4G 预算估算自己的准入阈值。
+
+应用层 RSS 准入（超过后暂停接收新识别任务，内存回落再恢复）按下面计算，**不是内核节流，也不再是固定 768MiB**：
+
+- `SEL_RSS_ADMISSION_MIB` 若设置了，就用它（64–8192）。
+- 否则看 `SEL_SERVICE_MEMORY_MIB`（缺省 4096，对应推荐档的 4G）。
+- 主进程：预算的 60%，夹在 256–512 MiB。缺省 512 MiB。
+- 学生 worker：预算的一半 ÷ `SEL_MAX_LIVE_WORKERS`（至少按 1 份），夹在 192–512 MiB。推荐档缺省 256 MiB；小机档 192 MiB。
+
+容量相关环境变量（未写则用缺省）：
+
+| 变量 | 缺省 | 含义 |
+| --- | --- | --- |
+| `SEL_MAX_STUDENTS` | 50 | 注册表里最多多少个学生空间 |
+| `SEL_WORKER_IDLE_MS` | 720000 | 空闲多久退出 worker。0 表示不因空闲退出 |
+| `SEL_MAX_LIVE_WORKERS` | 8 | 同时存活的学生进程。0 表示不限制。超出时先请最久没用且空闲的退出；都在忙则本次 503 |
+| `SEL_GLOBAL_AI_CONCURRENCY` | 2 | 所有学生加起来，同时进行的视觉模型调用 |
+| `SEL_GLOBAL_IMAGE_CONCURRENCY` | 2 | 所有学生加起来，同时进行的 sharp 等重图片处理 |
+| `SEL_SERVICE_MEMORY_MIB` | 4096 | 估算 RSS 准入用的服务预算，应与 cgroup 内存上限同一量级 |
+| `SEL_MOBILE_AI_TIMEOUT_MS` | 90000 | 单次移动端模型调用超时 |
+
+学生空间仍是一人一进程、一人一个 SQLite。启动时不为已注册学生预热。第一次打开才拉起；空闲退出前若还有正在转发的请求、排队或在跑的识别、或正在准备的打印，就留下。磁盘上没做完的任务，下次拉起时继续。
 
 ## 8. 证书存储迁移与安全回滚（需单独批准执行）
 
@@ -470,7 +509,7 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 
 ## 学生邀请码手机版网页（2026-10-15）
 
-学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。受控试用最多3个学生空间，父子进程共用systemd的1GB内存上限；容量不足明确报错，不共享学生档案。
+学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。注册上限缺省 50（`SEL_MAX_STUDENTS`）。进程不按注册人数常驻：第一次打开才启动，空闲约 12 分钟后退出；同时存活的进程缺省最多 8 个（小机请改成 3）。视觉调用和重图片处理由父进程限流，缺省各 2 路（小机请改成 1）。学生之间不共享档案。容量相关变量和两档 cgroup 限制见 §7。本改动会让自动发布拒绝，须走人工发布，见 `docs/quality/2026-10-20-fifty-students.md`。
 
 管理员以服务用户运行 `dist/studentHost/admin-cli.js create [role] | list | invite <studentId> | set-role <studentId> <role> | revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。管理后台使用独立管理员密码，不能使用学生邀请码登录。
 

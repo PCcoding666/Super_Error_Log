@@ -7,6 +7,7 @@ import { IdempotencyConflictError, MobileRecognitionStore, UnknownMediaError } f
 import { MobileVisionError, type InventoryCandidate, type MobileVisionBoundary } from './vision.js';
 import { expandCropMargin } from './modelBox.js';
 import type { AdmissionController } from './admission.js';
+import { rssAdmissionThresholdBytes } from '../studentHost/limits.js';
 
 export class MobileRequestError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) { super(message); this.name = 'MobileRequestError'; }
@@ -63,10 +64,9 @@ function allChecksPass(question: RecognitionQuestion, candidate?: InventoryCandi
       && question.diagramMediaIds.length === question.evidence.regions.filter(region => region.kind === 'diagram').length)));
 }
 
-/** 单进程 RSS 观测阈值（应用层新任务准入，不是内核节流声明）。 */
-const RSS_ADMISSION_THRESHOLD_BYTES = 768 * 1024 * 1024;
-
 export class MobileRecognitionService {
+  /** 单进程 RSS 准入（应用层，不是 cgroup）。构造时读环境变量，学生 worker 与主进程用不同份额。 */
+  private readonly rssAdmissionBytes = rssAdmissionThresholdBytes();
   private readonly queue: Array<{ jobId: string; kind: 'inventory' | 'question'; questionId?: string }> = [];
   private readonly queued = new Set<string>();
   private running = false;
@@ -104,13 +104,19 @@ export class MobileRecognitionService {
 
   acceptingJobs(): boolean {
     if (!this.accepting) return false;
-    // 单进程 RSS 观测：超过 768MiB 阈值时停止接收新任务并记日志（可恢复：内存回落后恢复）。
+    // 单进程 RSS 观测：超过本进程份额时停止接收新任务（可恢复：内存回落后恢复）。不是内核节流。
     const rss = process.memoryUsage.rss();
-    if (rss > RSS_ADMISSION_THRESHOLD_BYTES) {
-      console.warn(`[admission] 单进程 RSS ${Math.round(rss / 1024 / 1024)}MiB 超过 768MiB 阈值，暂停接收新任务。`);
+    if (rss > this.rssAdmissionBytes) {
+      const limit = Math.round(this.rssAdmissionBytes / 1024 / 1024);
+      console.warn(`[admission] 单进程 RSS ${Math.round(rss / 1024 / 1024)}MiB 超过 ${limit}MiB 准入阈值，暂停接收新任务。`);
       return false;
     }
     return true;
+  }
+
+  /** 队列、正在跑的识别、自动重试倒计时或恢复扫描都算忙。空闲退出前由 worker 问这一下。 */
+  hasPendingRecognition(): boolean {
+    return this.running || this.queue.length > 0 || this.inflight.size > 0 || this.retryScheduled.size > 0 || this.scanning !== null;
   }
 
   async hasJob(idempotencyKey: string): Promise<boolean> { return this.store.hasJob(idempotencyKey); }

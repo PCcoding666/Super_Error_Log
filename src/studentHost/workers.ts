@@ -1,6 +1,10 @@
 /**
  * 学生空间 worker 进程池（studentHost 网关的转发目标）。
  * - 每个学生最多一个 worker 进程：child_process.fork，独立 SEL_DATA_DIR / SEL_MOBILE_DATA_DIR（目录 0700）。
+ * - 不在启动时为全部学生预热。第一次 ensure 才 fork；空闲 SEL_WORKER_IDLE_MS（缺省 12 分钟）后退出。
+ * - 有正在转发的请求，或 worker 报告仍有识别/打印任务时，不退出。磁盘上的未完成任务下次启动续做。
+ * - SEL_MAX_LIVE_WORKERS（缺省 8，0 不限制）超出时，先请最久未使用且空闲的 worker 退出；都在忙则拒绝本次启动。
+ * - 父进程持有视觉调用和图片处理两把信号量，worker 经 IPC 排队，避免几十个学生同时打满模型和 sharp。
  * - worker 只监听 127.0.0.1 随机端口；端口与内部设备令牌经 IPC ready 回传，父进程据此注入 sel_device 转发。
  * - 启动并发去重（同一学生的并发 ensure 共享同一次启动），启动超时 20 秒。
  * - 崩溃只影响本学生：按 studentId 键控，下一次 ensure 重新拉起，绝不把请求路由到别人的 worker。
@@ -10,9 +14,13 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { aiConcurrency, imageConcurrency, maxLiveWorkers, workerIdleMs } from './limits.js';
+import { PermitPool } from './permits.js';
 
 export const WORKER_START_TIMEOUT_MS = 20_000;
 const STOP_TIMEOUT_MS = 5_000;
+const BUSY_RETRY_MS = 15_000;
+const QUERY_TIMEOUT_MS = 2_000;
 const TOKEN_REFRESH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const STDERR_TAIL_LINES = 20;
 
@@ -28,12 +36,20 @@ export interface StudentWorkerPoolOptions {
   workerScript?: string;
   execArgv?: string[];
   refreshIntervalMs?: number;
+  /** 空闲多久退出。缺省读 SEL_WORKER_IDLE_MS。0 表示不因空闲退出。 */
+  idleMs?: number;
+  /** 同时存活的 worker 上限。缺省读 SEL_MAX_LIVE_WORKERS。0 表示不限制。 */
+  maxLiveWorkers?: number;
+  /** 跨学生视觉模型并发。缺省读 SEL_GLOBAL_AI_CONCURRENCY。 */
+  aiConcurrency?: number;
+  /** 跨学生图片处理并发。缺省读 SEL_GLOBAL_IMAGE_CONCURRENCY。 */
+  imageConcurrency?: number;
   /** worker 报错/异常退出的回调（不写秘密）；缺省静默。 */
   onError?: (studentId: string, message: string) => void;
 }
 
 export class WorkerStartError extends Error {
-  constructor(studentId: string, message: string) {
+  constructor(studentId: string, message: string, readonly reason: 'start' | 'capacity' = 'start') {
     super(`学生空间启动失败：${message}`);
     this.name = 'WorkerStartError';
   }
@@ -43,7 +59,12 @@ interface WorkerEntry {
   child: ChildProcess;
   endpoint: WorkerEndpoint;
   refreshTimer: NodeJS.Timeout | null;
+  idleTimer: NodeJS.Timeout | null;
   stderrTail: string[];
+  lastUsedAt: number;
+  expectedExit: boolean;
+  /** 观察到后台任务后，要等它结束再重新计算空闲时间。 */
+  deferIdle: boolean;
 }
 
 /** 父进程退出兜底：全进程只挂一次 exit 钩子（worker 侧另有 IPC 断开自退，双保险）。 */
@@ -67,13 +88,24 @@ function defaultWorkerScript(): { script: string; execArgv: string[] } {
 export class StudentWorkerPool {
   private readonly entries = new Map<string, WorkerEntry>();
   private readonly starting = new Map<string, Promise<WorkerEndpoint>>();
+  private readonly inflight = new Map<string, number>();
+  private readonly idleStops = new Map<string, Promise<boolean>>();
+  private readonly aiPermits: PermitPool;
+  private readonly imagePermits: PermitPool;
   private readonly startTimeoutMs: number;
   private readonly refreshIntervalMs: number;
+  private readonly idleMs: number;
+  private readonly maxLive: number;
+  private slotsReserved = 0;
   private stopping = false;
 
   constructor(private readonly options: StudentWorkerPoolOptions) {
     this.startTimeoutMs = options.startTimeoutMs ?? WORKER_START_TIMEOUT_MS;
     this.refreshIntervalMs = options.refreshIntervalMs ?? TOKEN_REFRESH_INTERVAL_MS;
+    this.idleMs = options.idleMs ?? workerIdleMs();
+    this.maxLive = options.maxLiveWorkers ?? maxLiveWorkers();
+    this.aiPermits = new PermitPool(options.aiConcurrency ?? aiConcurrency());
+    this.imagePermits = new PermitPool(options.imageConcurrency ?? imageConcurrency());
     livePools.add(this);
     installExitHook();
   }
@@ -95,10 +127,32 @@ export class StudentWorkerPool {
     return !!entry && entry.child.exitCode === null && !entry.child.killed;
   }
 
+  /** 网关开始转发前调用：这段时间不算空闲，也不会被腾位置。 */
+  retain(studentId: string): void {
+    this.inflight.set(studentId, (this.inflight.get(studentId) ?? 0) + 1);
+    const entry = this.entries.get(studentId);
+    if (!entry) return;
+    entry.lastUsedAt = Date.now();
+    entry.deferIdle = false;
+    this.disarm(entry);
+  }
+
+  /** 与 retain 成对。请求结束且没有别的转发时，重新计算空闲时间。 */
+  release(studentId: string): void {
+    const next = (this.inflight.get(studentId) ?? 0) - 1;
+    if (next <= 0) this.inflight.delete(studentId);
+    else this.inflight.set(studentId, next);
+    if (next <= 0) this.armIdle(studentId, this.idleMs);
+  }
+
   /** 取该学生的 worker 端点；没起就拉起（并发去重）。 */
   async ensure(studentId: string): Promise<WorkerEndpoint> {
     if (this.stopping) throw new WorkerStartError(studentId, '进程池正在关闭。');
-    if (this.isRunning(studentId)) return { ...this.entries.get(studentId)!.endpoint };
+    if (this.isRunning(studentId)) {
+      const entry = this.entries.get(studentId)!;
+      entry.lastUsedAt = Date.now();
+      return { ...entry.endpoint };
+    }
     const pending = this.starting.get(studentId);
     if (pending) return pending;
     const start = this.start(studentId);
@@ -107,6 +161,37 @@ export class StudentWorkerPool {
   }
 
   private async start(studentId: string): Promise<WorkerEndpoint> {
+    const reserved = this.maxLive > 0;
+    if (reserved) this.slotsReserved += 1;
+    try {
+      if (this.maxLive > 0) await this.evictUntilFit(studentId);
+      return await this.fork(studentId);
+    } finally {
+      if (reserved) this.slotsReserved -= 1;
+    }
+  }
+
+  private async evictUntilFit(studentId: string): Promise<void> {
+    const skipped = new Set<string>();
+    while (this.entries.size + this.slotsReserved > this.maxLive) {
+      const victim = this.pickVictim(studentId, skipped);
+      if (!victim) throw new WorkerStartError(studentId, '同时打开的学习空间已达上限。', 'capacity');
+      const stopped = await this.idleStop(victim);
+      if (!stopped) skipped.add(victim);
+    }
+  }
+
+  private pickVictim(studentId: string, skipped: ReadonlySet<string>): string | null {
+    let oldest: { id: string; at: number } | null = null;
+    for (const [id, entry] of this.entries) {
+      if (id === studentId || skipped.has(id) || entry.expectedExit) continue;
+      if ((this.inflight.get(id) ?? 0) > 0) continue;
+      if (!oldest || entry.lastUsedAt < oldest.at) oldest = { id, at: entry.lastUsedAt };
+    }
+    return oldest?.id ?? null;
+  }
+
+  private async fork(studentId: string): Promise<WorkerEndpoint> {
     const studentDir = this.options.dirFor(studentId);
     const resolved = this.options.workerScript
       ? { script: this.options.workerScript, execArgv: this.options.execArgv ?? [] }
@@ -174,18 +259,35 @@ export class StudentWorkerPool {
       child.once('exit', onExit);
     });
 
-    const entry: WorkerEntry = { child, endpoint, refreshTimer: null, stderrTail };
+    const entry: WorkerEntry = {
+      child, endpoint, refreshTimer: null, idleTimer: null, stderrTail, lastUsedAt: Date.now(), expectedExit: false, deferIdle: false,
+    };
     // 崩溃/退出：从表里摘除（下一次 ensure 重拉），通知观察者。不做自动重启，避免崩溃风暴。
     child.once('exit', (code, signal) => {
-      if (this.entries.get(studentId) === entry) this.entries.delete(studentId);
+      if (entry.idleTimer) clearTimeout(entry.idleTimer);
       if (entry.refreshTimer) clearInterval(entry.refreshTimer);
-      if (!this.stopping) this.options.onError?.(studentId, `worker 退出（code ${code ?? 'null'} ${signal ?? ''}）`);
+      if (this.entries.get(studentId) === entry) this.entries.delete(studentId);
+      this.aiPermits.dropOwner(studentId);
+      this.imagePermits.dropOwner(studentId);
+      if (!this.stopping && !entry.expectedExit) this.options.onError?.(studentId, `worker 退出（code ${code ?? 'null'} ${signal ?? ''}）`);
     });
-    // 长期运行的内部令牌刷新：worker 重新签发，父进程更新保存的令牌（旧令牌到期前平滑切换）。
     child.on('message', (message: unknown) => {
-      if ((message as { type?: unknown })?.type === 'token' && typeof (message as { token?: unknown }).token === 'string') {
+      if (!message || typeof message !== 'object') return;
+      const type = (message as { type?: unknown }).type;
+      if (type === 'token' && typeof (message as { token?: unknown }).token === 'string') {
         entry.endpoint = { ...entry.endpoint, token: (message as { token: string }).token };
+        return;
       }
+      if (type !== 'acquire' && type !== 'release') return;
+      const kind = (message as { kind?: unknown }).kind;
+      const id = (message as { id?: unknown }).id;
+      if ((kind !== 'ai' && kind !== 'image') || typeof id !== 'string' || !id) return;
+      const pool = kind === 'ai' ? this.aiPermits : this.imagePermits;
+      if (type === 'release') { pool.release(studentId, id); return; }
+      pool.acquire(studentId, id, () => {
+        if (!child.connected) { pool.release(studentId, id); return; }
+        child.send({ type: 'permit', id }, error => { if (error) pool.release(studentId, id); });
+      });
     });
     if (this.refreshIntervalMs > 0) {
       entry.refreshTimer = setInterval(() => {
@@ -195,7 +297,107 @@ export class StudentWorkerPool {
       entry.refreshTimer.unref();
     }
     this.entries.set(studentId, entry);
+    if ((this.inflight.get(studentId) ?? 0) === 0) this.armIdle(studentId, this.idleMs);
     return { ...endpoint };
+  }
+
+  private disarm(entry: WorkerEntry): void {
+    if (!entry.idleTimer) return;
+    clearTimeout(entry.idleTimer);
+    entry.idleTimer = null;
+  }
+
+  private armIdle(studentId: string, delay: number): void {
+    const entry = this.entries.get(studentId);
+    if (!entry || this.idleMs <= 0 || entry.expectedExit) return;
+    this.disarm(entry);
+    entry.idleTimer = setTimeout(() => { void this.onIdle(studentId); }, delay);
+    entry.idleTimer.unref();
+  }
+
+  private async onIdle(studentId: string): Promise<void> {
+    const entry = this.entries.get(studentId);
+    if (!entry || this.stopping || entry.expectedExit) return;
+    entry.idleTimer = null;
+    if ((this.inflight.get(studentId) ?? 0) > 0) return;
+    // 上一轮看到后台任务：先确认它已经结束，再空闲一整段时间，避免任务刚做完就被关掉。
+    if (entry.deferIdle) {
+      entry.deferIdle = false;
+      const busy = await this.queryBusy(entry);
+      if (this.entries.get(studentId) !== entry || entry.expectedExit) return;
+      if ((this.inflight.get(studentId) ?? 0) > 0) return;
+      if (busy) {
+        entry.deferIdle = true;
+        this.armIdle(studentId, Math.min(this.idleMs, BUSY_RETRY_MS));
+        return;
+      }
+      this.armIdle(studentId, this.idleMs);
+      return;
+    }
+    const stopped = await this.idleStop(studentId);
+    if (stopped || !this.entries.has(studentId)) return;
+    const current = this.entries.get(studentId);
+    if (!current || current.expectedExit) return;
+    current.deferIdle = true;
+    this.armIdle(studentId, Math.min(this.idleMs, BUSY_RETRY_MS));
+  }
+
+  /** 仅在没有转发、worker 也报告没有后台任务时退出。忙则留下。 */
+  private idleStop(studentId: string): Promise<boolean> {
+    const existing = this.idleStops.get(studentId);
+    if (existing) return existing;
+    const run = this.idleStopNow(studentId).finally(() => { this.idleStops.delete(studentId); });
+    this.idleStops.set(studentId, run);
+    return run;
+  }
+
+  private async idleStopNow(studentId: string): Promise<boolean> {
+    const entry = this.entries.get(studentId);
+    if (!entry) return true;
+    if ((this.inflight.get(studentId) ?? 0) > 0) return false;
+    const busy = await this.queryBusy(entry);
+    if (this.entries.get(studentId) !== entry) return true;
+    if ((this.inflight.get(studentId) ?? 0) > 0 || busy) return false;
+    entry.expectedExit = true;
+    this.disarm(entry);
+    const child = entry.child;
+    if (child.exitCode !== null || child.killed) return true;
+    const outcome = new Promise<boolean>(resolve => {
+      const finish = (stopped: boolean): void => { cleanup(); resolve(stopped); };
+      const timer = setTimeout(() => { child.kill('SIGKILL'); }, STOP_TIMEOUT_MS);
+      const onMessage = (message: unknown): void => {
+        if ((message as { type?: unknown })?.type === 'stop-refused') finish(false);
+      };
+      const onExit = (): void => finish(true);
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        child.off('message', onMessage);
+        child.off('exit', onExit);
+      };
+      child.on('message', onMessage);
+      child.once('exit', onExit);
+      if (child.connected) child.send({ type: 'stop', force: false }, () => undefined);
+      else child.kill('SIGTERM');
+    });
+    const stopped = await outcome;
+    if (!stopped && this.entries.get(studentId) === entry) entry.expectedExit = false;
+    return stopped;
+  }
+
+  private queryBusy(entry: WorkerEntry): Promise<boolean> {
+    const child = entry.child;
+    if (!child.connected) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const finish = (busy: boolean): void => { cleanup(); resolve(busy); };
+      const timer = setTimeout(() => finish(true), QUERY_TIMEOUT_MS);
+      const onMessage = (message: unknown): void => {
+        if ((message as { type?: unknown })?.type !== 'busy') return;
+        finish((message as { busy?: unknown }).busy === true);
+      };
+      const cleanup = (): void => { clearTimeout(timer); child.off('message', onMessage); };
+      child.on('message', onMessage);
+      child.send({ type: 'query-busy' }, error => { if (error) finish(true); });
+    });
   }
 
   /** 立即换新该学生的内部令牌（测试令牌刷新路径）。 */
@@ -216,12 +418,14 @@ export class StudentWorkerPool {
   async stop(studentId: string): Promise<void> {
     const entry = this.entries.get(studentId);
     if (!entry) return;
+    entry.expectedExit = true;
+    this.disarm(entry);
     this.entries.delete(studentId);
     if (entry.refreshTimer) clearInterval(entry.refreshTimer);
     const child = entry.child;
     if (child.exitCode !== null || child.killed) return;
     const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
-    if (child.connected) child.send({ type: 'stop' }, () => undefined);
+    if (child.connected) child.send({ type: 'stop', force: true }, () => undefined);
     else child.kill('SIGTERM');
     const timed = await Promise.race([
       exited.then(() => true),
