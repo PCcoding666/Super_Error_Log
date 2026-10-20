@@ -31,8 +31,10 @@ export function applyMaterialTextCorrection(store:MaterialStore,questionId:strin
   const next={...fragment,text,revision};store.putFragment(next);const link=currentLink(store,fragment.fragmentId)!;
   store.linkFragment(fragment.fragmentId,revision,{questionId:q.id,attemptId:link.attempt_id},link.revision,{reason:'student_transcription'});
  }
- // Classification edits are not source verification or answer/grade dependencies.
- store.db.prepare('UPDATE material_question SET subject=?,tags_json=?,revision=revision+1 WHERE owner_id=? AND id=?').run(after.subject,JSON.stringify(after.knowledgeTags),store.studentId,q.id);
+ // Only an explicit subject correction establishes stored classification authority.
+ // Editing a transcript must not freeze a subject derived from removable sources.
+ store.db.prepare('UPDATE material_question SET subject=CASE WHEN ? THEN ? ELSE subject END,tags_json=?,revision=revision+1 WHERE owner_id=? AND id=?')
+  .run(Number(changes.some(c=>c.field==='subject')),after.subject,JSON.stringify(after.knowledgeTags),store.studentId,q.id);
  return readQuestion(store,q.id)!.revision;
 }
 

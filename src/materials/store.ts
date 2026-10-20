@@ -4,7 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { newId } from '../db/connection.js';
 import { validateBox } from '../media/images.js';
 import { answersConflict, projectImportedFragment } from './answers.js';
-import { invalidateLinkDependencies, resolveQuestionId } from './queries.js';
+import { effectiveSubject, invalidateLinkDependencies, resolveQuestionId } from './queries.js';
 import type { Fragment, Grade, LinkChange, LinkTarget, QuestionBundle, ReferenceAnswer } from './contracts.js';
 
 type QuestionRow = { id: string; document_id: string | null; revision: number; number: string | null; subject: string | null; tags_json: string; unresolved_json: string };
@@ -124,7 +124,7 @@ export class MaterialStore {
       fragments:fragments.map(f=>({id:f.fragment.fragmentId,revision:f.fragment.revision,source:f.fragment.sourceHash,box:f.fragment.box,link:f.link_revision,attempt:f.attempt_id})),
       answers:parsedAnswers.map(a=>({id:a.id,revision:a.revision,basisKey:a.basisKey})),
     })).digest('hex');
-    return {id,documentId:row.document_id,revision:row.revision,basisKey,number:row.number,subject:row.subject,tags:JSON.parse(row.tags_json),
+    return {id,documentId:row.document_id,revision:row.revision,basisKey,number:row.number,subject:effectiveSubject(this,row.subject,stem),tags:JSON.parse(row.tags_json),
       stem,attempts,teacherMarks:fragments.filter(f=>f.fragment.role==='teacher_mark').map(f=>f.fragment).sort(order),
       answers:parsedAnswers,grades:grades.map(g=>({...JSON.parse(g.content_json),stale:!!g.stale}) as Grade),
       missing,unresolved:JSON.parse(row.unresolved_json),answerConflict:answersConflict(parsedAnswers),itemId:item?.item_id??null};

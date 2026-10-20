@@ -9,8 +9,9 @@
 - 不必先选材料类型、标签或分组，照片持久化确认后可离开；无标签同页可直接整理。整页不明确时一次选择候选，具体题目和作答可后续纠正。
 - 缺题干答题卡可先录手工答案；第一次补齐题干时保留原题/作答身份与原答案历史，新 revision 绑定完整依据，已有明确采用意图保留。双方独立结果历史不能随便合并；后续题干替换/撤销会使受影响答案与批改过期。
 - 拍照、改标签、录答案或刷新不会自动开始付费批改；老师痕迹、学生作答、订正、提供的答案和 AI 建议分开保存。掌握状态仍只由延迟回传规则更新，反思仍由学生提交。
+- 真正未分类的答题卡补入已分类题干后，可从实际当前来源推导缺失学科；撤销/移走唯一来源会撤回分类，显式学科权威保留。默认 mock 算术示例使用支持的“数学”。答案/批改与打印共用三种新旧原图布局的严格 owner/hash/job/media 身份解析。
 - 网页共享学习入口可选择新材料题和历史题并完整打印；旧 API 不返回残缺的新/混合包。打印使用真实来源与选定答案版本，旧 ready 快照不改写。
-- 合成邀请网关验收见 `tests/e2e/materialJourney.spec.ts`、`tests/integration/materialIsolation.test.ts`；原 `materialCapture.spec.ts` 的恢复/ACK/身份用例保持。最终本地 `SEL_AI_MODE=mock npm run verify` 已通过（Vitest 988 通过/5 跳过，Playwright 48 通过/1 跳过，typecheck/build 通过）；截图/点击数据见 `docs/quality/2026-10-20-material-linking.md`。Task10 与整分支最终独立审查尚未完成。
+- 合成邀请网关验收见 `tests/e2e/materialJourney.spec.ts`、`tests/integration/materialIsolation.test.ts`；原 `materialCapture.spec.ts` 的恢复/ACK/身份用例保持。最终本地 `SEL_AI_MODE=mock npm run verify` 已通过（Vitest 1010 通过/5 跳过，Playwright 48 通过/1 跳过，typecheck/build 通过）；截图/点击数据见 `docs/quality/2026-10-20-material-linking.md`。Task10 独立审查已通过；整分支最终审查发现 3 项 Important，本轮已修复，fresh scoped review 尚未进行。本轮单次完整门禁包含 80 个 Vitest 文件；日志 `/tmp/material-final-fix-verify.log`，详细红绿证据见质量记录。
 
 保守兼容边界：历史上传的 immutable fingerprint 若为 NULL，重放返回 409，服务器原材料仍保留，界面提供查看/删除本机草稿；不同账号切换清除旧本机草稿，同账号过期重新登录可恢复。未知学科不猜，跨片段转写仍按单个真实片段提交；真实模型准确率、真机体验和物理打印未由合成测试证明。所有执行裁定原文已保存在质量文档，不能把历史手册当当前能力或上线证据。
 

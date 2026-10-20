@@ -9,7 +9,7 @@ export const PRINT_IMAGE_LIMITS = { regions: 32, pixels: 24000000, bytes: 16 * 1
 /** Hashes identify original bytes in all three layouts: direct legacy files,
  * material uploads, and the mobile store's original beside job.json. A mobile
  * derivative is resolved only through the owned link and matching persisted job media. */
-export function readSourceBytes(store: MaterialStore, region: Pick<SourceRegion, 'assetId' | 'sourceHash'>): Buffer {
+export function originalSourcePath(store: MaterialStore, region: Pick<SourceRegion, 'assetId' | 'sourceHash'>): string {
     const row = store.db.prepare(`SELECT s.id AS source_asset_id,s.storage_path,s.content_hash,a.upload_request_id,a.status FROM material_asset a
     JOIN source_asset s ON s.id=a.source_asset_id JOIN source_batch b ON b.id=s.batch_id
     WHERE a.owner_id=? AND b.student_id=? AND a.id=?`).get(store.studentId, store.studentId, region.assetId) as {
@@ -49,6 +49,12 @@ export function readSourceBytes(store: MaterialStore, region: Pick<SourceRegion,
             filename = path.join(directory, 'source-original.jpg');
         }
     }
+    return filename;
+}
+/** All readers verify the preserved original bytes; resolution never falls back
+ * from a missing original to its normalized derivative. */
+export function readSourceBytes(store: MaterialStore, region: Pick<SourceRegion, 'assetId' | 'sourceHash'>): Buffer {
+    const filename = originalSourcePath(store, region);
     const stat = fs.statSync(filename);
     if (stat.size > 15 * 1024 * 1024)
         throw new Error('原图超过 15 MiB 限制');

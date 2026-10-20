@@ -12,6 +12,7 @@ import { MaterialStore } from '../../src/materials/store.js';
 import { MaterialJobs } from '../../src/materials/jobs.js';
 import { MaterialUploads } from '../../src/materials/uploads.js';
 import { registerMaterialExtraction, extractMaterial } from '../../src/materials/extraction.js';
+import { materialPracticeEligible, setQuestionIncluded } from '../../src/materials/learning.js';
 import type { MaterialProvider } from '../../src/materials/provider.js';
 import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
@@ -46,6 +47,17 @@ describe('material extraction persistence', () => {
     expect(f.store.listQuestions()).toEqual([]);
     expect(f.db.prepare('SELECT count(*) n FROM material_answer').get()).toMatchObject({ n: 0 });
     expect(f.db.prepare('SELECT count(*) n FROM material_grade').get()).toMatchObject({ n: 0 });
+  });
+
+  it('makes the shipped default mock extraction eligible after explicit inclusion', async () => {
+    const f = await fixture();
+    registerMaterialExtraction(f.store, f.jobs, f.uploads, { mode: 'mock' });
+    const saved = await f.uploads.save(f.input);
+    await expect.poll(() => f.jobs.get(saved.job.id)?.state).toBe('succeeded');
+    const q = f.store.listQuestions()[0]!;
+    expect(q.subject).toBe('数学'); expect(q.missing).toEqual([]); expect(q.unresolved).toEqual([]);
+    expect(setQuestionIncluded(f.store,q.id,true,q.revision).itemId).toBeTruthy();
+    expect(materialPracticeEligible(f.store,q.id)).toBe(true);
   });
 
   it('rejects invented source references and leaves incomplete material saved', async () => {

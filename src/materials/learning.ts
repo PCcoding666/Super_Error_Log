@@ -38,7 +38,13 @@ export function syncMaterialLearning(store:MaterialStore):void {
    // Every migrated item retains its original learning authority, including pre-mobile records.
    if(q.itemId&&(store.db.prepare('SELECT 1 FROM mobile_item_link WHERE item_id=?').get(q.itemId)||store.db.prepare("SELECT 1 FROM material_legacy_map WHERE owner_id=? AND source_kind='error_item' AND source_key=?").get(store.studentId,q.itemId))) continue;
    const intent=inclusionIntent(store,q.id),included=intent??automaticMistake(store,q.id);
-   if((!included&&!q.itemId)||q.missing.includes('stem')) continue;
+   if(q.missing.includes('stem')) {
+    // Retain the learning identity/history, but remove classification whose only
+    // supporting stem was moved or undone. Legacy authority was excluded above.
+    if(q.itemId) store.db.prepare('UPDATE error_item SET subject=? WHERE id=?').run(q.subject,q.itemId);
+    continue;
+   }
+   if(!included&&!q.itemId) continue;
    const stem=q.stem.filter(f=>f.role==='question');let itemId=q.itemId;
    if(!itemId){
     const anchor=store.db.prepare(`SELECT s.id,s.batch_id FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.owner_id=? AND a.id=?`).get(store.studentId,stem[0]!.assetId) as {id:string;batch_id:string};

@@ -10,6 +10,7 @@ import { MobileRequestError } from '../mobile/service.js';
 import type { CaptureHints, JobTicket } from './contracts.js';
 import { MaterialJobs } from './jobs.js';
 import { MaterialStore } from './store.js';
+import { originalSourcePath } from './media.js';
 
 type Input = { captureId: string; uploadId: string; filename: string; bytes: Buffer; hints: CaptureHints };
 type Saved = { assetId: string; job: JobTicket; created: boolean };
@@ -45,7 +46,7 @@ export class MaterialUploads {
     const row = this.store.db.prepare(`SELECT s.storage_path,s.content_hash FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.owner_id=? AND a.id=?`)
       .get(this.store.studentId, assetId) as { storage_path: string; content_hash: string } | undefined;
     if (!row) throw new MobileRequestError(404, 'not_found', '材料不存在。');
-    return { normalizedPath: row.storage_path, originalPath: path.join(path.dirname(row.storage_path), 'original'), sourceHash: row.content_hash };
+    return { normalizedPath: row.storage_path, originalPath: originalSourcePath(this.store, { assetId, sourceHash: row.content_hash }), sourceHash: row.content_hash };
   }
   save(input: Input, reservation?: AdmissionReserve): Promise<Saved> {
     const operation = this.mutation.then(() => this.saveLocked(input, reservation));

@@ -110,7 +110,7 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
         mockResult ??= binding.request(`${VERSION}:${source.revision}:mock`, async requestSignal => {
           AbortSignal.any([signal, requestSignal]).throwIfAborted();
           const roles: MaterialRole[] = ['question', 'student_work', 'reference_answer'];
-          return { assetId: source.assetId, revision: source.revision, document: { title: 'Synthetic material', subject: 'math', date: null, printedCode: null, page: 1 },
+          return { assetId: source.assetId, revision: source.revision, document: { title: 'Synthetic material', subject: '数学', date: null, printedCode: null, page: 1 },
           fragments: roles.map((r, i) => ({ ...source, fragmentId: newId('mfr'), role: r, text: ['Synthetic question: 1 + 1 = ?', 'Synthetic student work: 2', 'Synthetic reference answer: 2'][i]!, box: { x: 0, y: i / 3, width: 1, height: 1 / 3 }, number: '1', subpart: null, page: 1, order: i, requiresDiagram: false, check: 'passed' as const, uncertainties: [] })),
           warnings: ['synthetic_mock'], runs: [] };
         });

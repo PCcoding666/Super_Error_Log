@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import type { Fragment, QuestionBundle } from './contracts.js';
+import { SUBJECTS, type Subject } from '../domain/types.js';
+import type { Extraction, Fragment, QuestionBundle } from './contracts.js';
 import type { MaterialStore } from './store.js';
 
 export type CurrentLink = { id: string; fragment_id: string; fragment_revision: number; revision: number; question_id: string | null; attempt_id: string | null; basis_json: string };
@@ -26,6 +27,28 @@ export function diagramCovers(question: Fragment, diagram: Fragment): boolean {
   return diagram.role==='diagram' && diagram.check==='passed' && diagram.uncertainties.length===0 &&
     question.number===diagram.number && question.subpart===diagram.subpart &&
     question.number!==null;
+}
+/** Fill only absent metadata from currently linked stem origins. Never persist the
+ * inference: moving/undoing its supporting links must remove it as well. Stored
+ * classification (including unsupported model output) remains authoritative. */
+export function effectiveSubject(store: MaterialStore, stored: string | null, stem: Fragment[]): string | null {
+  if (stored !== null) return stored;
+  const subjects = new Set<string>();
+  for (const f of stem) {
+    if (f.role !== 'question' || !['passed', 'low'].includes(f.check)) continue;
+    const row = store.db.prepare(`SELECT a.extraction_json,a.revision,s.content_hash FROM material_asset a
+      JOIN source_asset s ON s.id=a.source_asset_id JOIN source_batch b ON b.id=s.batch_id
+      WHERE a.owner_id=? AND b.student_id=? AND a.id=?`).get(store.studentId,store.studentId,f.assetId) as
+      {extraction_json:string|null;revision:number;content_hash:string}|undefined;
+    if (!row?.extraction_json || row.content_hash !== f.sourceHash) continue;
+    const extraction = JSON.parse(row.extraction_json) as Extraction;
+    if (extraction.assetId !== f.assetId || extraction.revision !== row.revision || !SUBJECTS.includes(extraction.document.subject as Subject)) continue;
+    // Transcript corrections retain their actual region's classification origin;
+    // an unrelated fragment or replaced source cannot borrow this page's subject.
+    const fields = ['fragmentId','assetId','sourceHash','role','box','number','subpart'] as const;
+    if (extraction.fragments.some(origin => fields.every(key => isDeepStrictEqual(origin[key],f[key])))) subjects.add(extraction.document.subject!);
+  }
+  return subjects.size === 1 ? [...subjects][0]! : null;
 }
 export function readQuestion(store: MaterialStore, questionId: string): QuestionBundle | null {
   const q=store.getQuestion(resolveQuestionId(store,questionId)); if (!q) return null;

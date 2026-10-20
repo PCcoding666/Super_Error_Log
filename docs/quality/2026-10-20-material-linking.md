@@ -1,6 +1,6 @@
 # 材料关联：本地合成验收记录
 
-记录日期：2026-10-21（Asia/Singapore）；文件名沿用 2026-10-20 的方案日期。分支 `codex/material-linking`，Task10 起点 `39187732739cdfe40a88f47f942aab58ba9183df`。这是本地实现与合成验证，**没有部署**，不代表线上已有这些功能。Task10 独立审查与整分支最终审查尚未进行，结果由后续审查记录补充。
+记录日期：2026-10-21（Asia/Singapore）；文件名沿用 2026-10-20 的方案日期。分支 `codex/material-linking`，Task10 起点 `39187732739cdfe40a88f47f942aab58ba9183df`。这是本地实现与合成验证，**没有部署**，不代表线上已有这些功能。Task10 独立审查已通过；整分支最终审查发现 3 项 Important，已完成本轮修复，fresh scoped review 尚未进行，不预写批准。
 
 ## 本地能力与验证入口
 
@@ -24,7 +24,19 @@
 
 7. **故障注入安装时机。** `materialJourney + materialCapture` 首次联合跑为 24 通过/2 失败：lost-ACK 用例未显示重试，429 用例实际拦截请求数为 0（不是“两次过快”）。诊断显示 `navigator.serviceWorker.controller=false`，但 `enter()` 返回时尚无 `[data-material-capture]`，同 URL 的 consent 重定向仍在提交。根因是测试在旧文档安装 page 拦截的导航竞态；不是生产队列错误。只给 enter 增加真实目标拍照文档可见的等待，无固定 sleep；两个原用例 `--repeat-each=3` 全部 6 通过，原持久化、请求 ID 和至少 1900ms 断言保留。初步 SW 假设已被实测排除；故障注入套件原有 `serviceWorkers: block` 保持，完整门禁仍运行独立 SW/privacy 用例。`/tmp/task10-browser-final-targeted.log`、`/tmp/task10-capture-diagnostic.log`、`/tmp/task10-capture-race-green.log`。
 
-## 验证环境与命令
+## 整分支最终审查修复
+
+审查范围 `6434e478..4a6eb15a` 的结论为 Spec FAIL / Quality CHANGES_REQUIRED：0 Critical、3 Important、0 Minor。原来通过的 988 项 Vitest 与 48 项 Playwright 没有覆盖下列三条路径；本轮逐项先复现，再修复。
+
+1. **真正未分类的答题卡补齐题干后仍不能练习。** `MaterialStore.getQuestion` 现在仅在存储学科为 NULL 时，从当前实际关联的题干来源推导缺失学科。需要同学生 source batch、当前 source hash/提取版本、相同 fragment/asset/role/box/题号/小问；多个支持学科冲突时不选。保持原有 passed/low 学习路径，未知值、failed/unchecked 片段不提升；不写回 `material_question.subject`。因此移走或撤销唯一来源时分类消失，学习摘要同步清除派生分类，原 question/attempt/item 和全部手工答案历史保留。普通转写修改不会把推导结果固化，只有明确学科更正才成为存储权威。10 个回归覆盖强文档、上下文、两方向整页选择、手工答案 pin/历史、学习上下文、冲突/来源/未知值、CAS 与撤销。
+2. **旧原图不能供真实答案/批改读取。** 从 `media.ts` 提取原有 `originalSourcePath` 解析，并让 `MaterialUploads.source` 共用：新上传的 `original`、旧直接原图、旧 mobile job 的 `source-original.jpg` 三种布局使用相同 owner/hash/job/media 身份检查。action provider 仍在读取后核对完整 SHA256，保留原大小/像素/图像预算；没有退回 normalized derivative。11 个合成本地 HTTP 协议用例检验旧题真实迁移后的图形答案与作答批改、新上传、损坏 derivative、原图缺失/改写/外来 owner，以及 job ID/hash/media kind/path/owner link 不符时请求前拒绝。
+3. **默认 mock 使用域外学科 `math`。** 应用内置的已知合成算术示例改为支持值 `数学`；通过实际默认 provider → extract/reconcile → 显式收录检查可练习。真实模型的未知输出规则保持。
+
+红绿证据：`materialClassification + materialExtraction` 初次 **7 失败/7 通过**（`/tmp/material-final-fix-classification-red.log`），初步修复后 14 通过；移除来源后的学习摘要断言 **4 失败/2 通过**（`/tmp/material-final-fix-projection-red.log`）；补入转写后冲突测试的相关 10 文件运行 **2 失败/190 通过**（`/tmp/material-final-fix-targeted.log`），暴露普通转写固化分类，修复后 classification/learning/v2Correct **38 通过**（`/tmp/material-final-fix-classification-final-green.log`）。`materialActionSources` 初次 **3 失败/8 通过**，包括两种旧布局 ENOENT 和外来 source batch 未拒绝（`/tmp/material-final-fix-sources-red.log`）；共用解析后 **11 通过**（`/tmp/material-final-fix-sources-green.log`）。原测试断言未弱化。
+
+最新全量门禁：`SEL_AI_MODE=mock npm run verify` **exit 0**；typecheck/build 通过，Vitest **80 文件、1010 通过/5 跳过**，Playwright **48 通过/1 跳过**。本轮仅运行这一次完整门禁，覆盖最终全部源码/测试；之后只更新证据文字。日志 `/tmp/material-final-fix-verify.log`。`git diff --check` 通过，19 条 Ruling 与原账本逐字一致。本轮使用合成数据/mock/loopback 协议替身，不证明真实模型准确率；fresh scoped review 由控制器后续发起。
+
+## 验证环境与命令（Task10 修复前记录）
 
 Linux 6.18.55，Node v24.19.0，Chromium/headless，手机视口 390×844、桌面 1280×900。所有命令在 `/workspace/work/material-linking`，真实模型配置不参与验证。
 
@@ -55,9 +67,9 @@ Linux 6.18.55，Node v24.19.0，Chromium/headless，手机视口 390×844、桌�
 
 ## 点击与时间的真实含义
 
-主旅程记录实际导航请求、滚动事件与 POST 路径；三次拍完后抵达状态各 1 次站内导航。`requiredLabelClicks=0`、`perQuestionConfirmationClicks=0`、`wholedocumentChoiceSubmissions=1`、`postcaptureStatusNavigation=1`。系统选图单独记 3 次。最终完整门禁记录：脚本 elapsed 4267ms、scrollEvents 3、navigationRequests 34、关联纠正 0、显式答案选择 1；这是有等待/截图的自动化时间，**不是人主动操作时间、真机速度、真实识别准确率或错关联率**。数值来自最终运行的原始 JSON。
+主旅程记录实际导航请求、滚动事件与 POST 路径；三次拍完后抵达状态各 1 次站内导航。`requiredLabelClicks=0`、`perQuestionConfirmationClicks=0`、`wholedocumentChoiceSubmissions=1`、`postcaptureStatusNavigation=1`。系统选图单独记 3 次。Task10 完整门禁（本轮审查修复前）记录：脚本 elapsed 4267ms、scrollEvents 3、navigationRequests 34、关联纠正 0、显式答案选择 1；这是有等待/截图的自动化时间，**不是人主动操作时间、真机速度、真实识别准确率或错关联率**。数值来自最终运行的原始 JSON。
 
-无标签同页旅程也在任何可选标签修改前记录必需标签/逐题确认均 0；最终脚本 elapsed 12123ms；后续专门测试一次可选长标签 API 写入、一次“另记作答”调整和三个失败重试。与主旅程指标分开，不把可选纠正掩饰成必需流程，也不把初始化/合成系统动作计为站内点击。
+无标签同页旅程也在任何可选标签修改前记录必需标签/逐题确认均 0；Task10 脚本 elapsed 12123ms；后续专门测试一次可选长标签 API 写入、一次“另记作答”调整和三个失败重试。与主旅程指标分开，不把可选纠正掩饰成必需流程，也不把初始化/合成系统动作计为站内点击。
 
 ## 尚未验证与保守边界
 
