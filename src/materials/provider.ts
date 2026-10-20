@@ -294,10 +294,28 @@ export function createMaterialActionProvider(options: MaterialProviderOptions, b
 export type MaterialGradeInput={questionId:string;attemptId:string;basisKey:string;stem:Fragment[];work:Fragment[];answers:ReferenceAnswer[]};
 export type MaterialGradeOutput=Pick<Grade,'result'|'findings'|'score'|'run'>;
 export interface MaterialGradingProvider extends MaterialAnswerProvider {grade(input:MaterialGradeInput,signal:AbortSignal):Promise<MaterialGradeOutput>}
-/** Conservative support: explicit conditional criterion and points in verified question text only. */
-export function hasScoringCriteria(f:Fragment):boolean {
- return f.role==='question'&&f.check==='passed'&&!f.uncertainties.length&&/(?:评分标准|评分细则|评分要点|得分条件|rubric|scoring criteria)/iu.test(f.text)&&/(?:写出|列出|计算|求出|答出|证明|正确|完成|说明|推导|解出|identify|show|derive|correct)[^。；;\n]{1,100}(?:得|给|计|可得|award|earn)?\s*\d+(?:\.\d+)?\s*(?:分|points?)/iu.test(f.text);
+type ParsedScoringRubric = { criteria: { condition:string; points:number }[]; total:number };
+/** Deliberately narrow grammar: each clause must state an earning action and its awarded points.
+ * Labels, question types, totals and partially parsed/ambiguous rubrics never authorize scores. */
+function parseScoringRubric(f:Fragment):ParsedScoringRubric|null {
+ if(f.role!=='question'||f.check!=='passed'||f.uncertainties.length)return null;
+ const label=/(?:评分标准|评分细则|评分要点|得分条件)\s*[:：]/u.exec(f.text);
+ if(!label)return null;
+ const clauses=f.text.slice(label.index+label[0].length).split(/[。；;\n]/u).map(s=>s.trim()).filter(Boolean);
+ if(!clauses.length||clauses.length>32)return null;
+ const criteria:ParsedScoringRubric['criteria']=[];
+ for(const clause of clauses){
+  const match=/^((?:写出|列出|计算|求出|答出|证明|完成|说明|推导|解出)[^，,。；;：:\n]{1,80}?)(?:可得|得|给|计)\s*(\d+(?:\.\d+)?)\s*分$/u.exec(clause);
+  if(!match)return null;
+  const condition=match[1]!,points=Number(match[2]);
+  // These describe paper/question accounting or ceilings, not a supported earning condition.
+  if(/(?:本题|题型|题目|计算题|证明题|解答题|总分|满分|总计|合计|最高|最多|至少|至多|或者|或|若|如果)/u.test(condition)||!Number.isFinite(points)||points<=0)return null;
+  criteria.push({condition,points});
+ }
+ const total=criteria.reduce((sum,c)=>sum+c.points,0);
+ return Number.isFinite(total)?{criteria,total}:null;
 }
+export function hasScoringCriteria(f:Fragment):boolean {return parseScoringRubric(f)!==null;}
 export function validateMaterialGrade(value:MaterialGradeOutput,input:{stem:Fragment[];work:Fragment[]}):MaterialGradeOutput {
  const v=record(value);if(!['correct','partial','incorrect','uncertain'].includes(String(v.result))||!Array.isArray(v.findings)||!v.findings.length||v.findings.length>128)return invalid();
  const findings=v.findings.map(raw=>{const f=record(raw),ids=list(f.fragmentIds),text=str(f.text,4000);if(!text.trim()||!ids.length||new Set(ids).size!==ids.length||ids.some(id=>!input.work.some(w=>w.fragmentId===id)))return invalid();return {fragmentIds:ids,text};});
@@ -305,12 +323,9 @@ export function validateMaterialGrade(value:MaterialGradeOutput,input:{stem:Frag
  validateMaterialAnswer({text:'validation',fragmentIds:[],run:{...value.run,stage:'material_answer'}},[]);
  let score:Grade['score']=null;
  if(v.score!==null&&v.score!==undefined){const raw=record(v.score);const ids=list(raw.rubricFragmentIds);if(typeof raw.earned!=='number'||!Number.isFinite(raw.earned)||typeof raw.total!=='number'||!Number.isFinite(raw.total)||raw.total<=0||raw.earned<0||raw.earned>raw.total)return invalid();
-  const rubric=ids.map(id=>input.stem.find(f=>f.fragmentId===id));
-  const total=rubric.reduce((sum,f)=>sum+(f?.text.split(/[。；;\n]/u).reduce((n,line)=>{
-   if(!/(?:写出|列出|计算|求出|答出|证明|正确|完成|说明|推导|解出|identify|show|derive|correct)/iu.test(line))return n;
-   const points=[...line.matchAll(/(\d+(?:\.\d+)?)\s*(?:分|points?)/giu)];return points.length===1?n+Number(points[0]![1]):n;
-  },0)??0),0);
-  if(ids.length&&new Set(ids).size===ids.length&&rubric.every(f=>f&&hasScoringCriteria(f))&&Math.abs(total-raw.total)<1e-8)score={earned:raw.earned,total:raw.total,rubricFragmentIds:ids};
+  const rubric=ids.map(id=>{const f=input.stem.find(f=>f.fragmentId===id);return f?parseScoringRubric(f):null;});
+  const total=rubric.reduce((sum,r)=>sum+(r?.total??0),0);
+  if(ids.length&&new Set(ids).size===ids.length&&rubric.every(r=>r!==null)&&Math.abs(total-raw.total)<1e-8)score={earned:raw.earned,total:raw.total,rubricFragmentIds:ids};
  }
  const uncertain=[...input.stem,...input.work].some(f=>f.check!=='passed'||f.uncertainties.length);
  return {result:uncertain?'uncertain':value.result,findings,score:uncertain||value.result==='uncertain'?null:score,run:value.run};

@@ -20,7 +20,7 @@ import { createMaterialsRouter } from '../../src/web/materialsRouter.js';
 import { CONSENT_VERSION } from '../../src/web/session.js';
 import { saveManualAnswer, requestAnswers, selectAnswerBasis, registerMaterialAnswers } from '../../src/materials/answers.js';
 import { requestGrades, gradeQuestion, registerMaterialGrading } from '../../src/materials/grading.js';
-import { createMaterialActionProvider, validateMaterialGrade } from '../../src/materials/provider.js';
+import { createMaterialActionProvider, validateMaterialGrade, hasScoringCriteria } from '../../src/materials/provider.js';
 import { readQuestion } from '../../src/materials/queries.js';
 import type { Fragment } from '../../src/materials/contracts.js';
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -180,4 +180,19 @@ it('accounts for every document question at capacity and resumes only uncommitte
  const s=setup();s.db.exec("INSERT INTO material_document(id,owner_id) VALUES ('grade-doc','a')");const qs=[question(s),question(s)];for(const q of qs){work(s,q);manual(s,q.id);s.db.prepare("UPDATE material_question SET document_id='grade-doc' WHERE id=?").run(q.id);}const rt=await runtime(s,2),request={requestId:randomUUID(),documentId:'grade-doc'};
  s.db.exec("CREATE TRIGGER fail_second_grade BEFORE UPDATE ON material_action_batch WHEN json_array_length(NEW.result_json,'$.jobs')=2 BEGIN SELECT RAISE(ABORT,'second grade failed'); END");expect(()=>requestGrades(s,rt.jobs,request)).toThrow('second grade failed');expect(s.db.prepare("SELECT count(*) n FROM material_job WHERE kind='grade'").get()).toEqual({n:1});s.db.exec('DROP TRIGGER fail_second_grade');const action=requestGrades(s,rt.jobs,request);expect(action.jobs).toHaveLength(2);expect(requestGrades(s,rt.jobs,request).jobs.map(j=>j.id)).toEqual(action.jobs.map(j=>j.id));
  const blocked=requestGrades(s,rt.jobs,{requestId:randomUUID(),questionIds:qs.map(q=>q.id)});expect(blocked.jobs).toEqual([]);expect(blocked.skipped.map(x=>x.questionId).sort()).toEqual(qs.map(q=>q.id).sort());
+});
+
+it.each([
+ '评分标准：本题为计算题，总分10分。',
+ '评分标准：计算题，总分10分。',
+ '评分细则：本题是计算题，可得10分。',
+ '评分标准：计算题得10分。',
+ '评分标准：计算题答对得10分。',
+ '评分标准：写出答案，本题满分10分。',
+ '评分标准：写出正确公式得5分；计算题总分5分。',
+ '评分标准：计算正确结果，最高可得10分。',
+])('does not treat labels or question totals as earning criteria: %s',text=>{
+ const s=setup(),q=question(s),a=work(s,q),stem={...q.stem,text};
+ expect(hasScoringCriteria(stem)).toBe(false);
+ expect(validateMaterialGrade({...output(a.f),score:{earned:7,total:10,rubricFragmentIds:[stem.fragmentId]}},{stem:[stem],work:[a.f]}).score).toBeNull();
 });
