@@ -17,6 +17,9 @@ interface ChatMessage {
   content: unknown;
 }
 
+export const EXTRACT_ITEMS_PROMPT = '你是中学错题结构化助手。从图片中识别错题并输出 JSON：{"items":[{"itemIndex":0,"textExcerpt":"...","subject":"数学|物理|化学","chapter":"...","knowledgeTags":["..."],"questionType":"...","hasTeacherNote":true,"hasAnswer":true,"confidence":0.0,"fieldConfidence":{"subject":0.0,"knowledgeTags":0.0,"questionType":0.0}}]}。只输出 JSON。';
+export const SUGGEST_FIELDS_PROMPT = '你是中学错题标注助手。基于题目摘要给出建议（不是事实），输出 JSON：{"subject":{"value":"...","confidence":0.0},"knowledgeTags":{"value":["..."],"confidence":0.0},"questionType":{"value":"...","confidence":0.0},"attemptState":{"value":"完全不会|知道考什么但没想到方法|方法基本正确但步骤出错|本来会但审题计算书写失误|时间不足|其他","confidence":0.0},"possibleCause":{"value":"知识概念|方法选择|推理步骤|计算|审题遗漏|表达规范|时间注意力状态","confidence":0.0},"reviewValue":{"value":"必须再做|可以再做|没必要再做","confidence":0.0}}。掌握感（masteryFeeling）是学生的自我判断，绝不要输出。只输出 JSON。';
+
 /** OpenAI-compatible 视觉模型 provider：JSON 输出、超时与错误分类、不记录 Key 与图片内容 */
 export class OpenAiCompatibleProvider implements AiProvider {
   readonly name = 'openai-compatible';
@@ -75,7 +78,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
         {
           role: 'system',
           content:
-            '你是初中错题结构化助手。从图片中识别错题并输出 JSON：{"items":[{"itemIndex":0,"textExcerpt":"...","subject":"数学|物理|化学","chapter":"...","knowledgeTags":["..."],"questionType":"...","hasTeacherNote":true,"hasAnswer":true,"confidence":0.0,"fieldConfidence":{"subject":0.0,"knowledgeTags":0.0,"questionType":0.0}}]}。只输出 JSON。',
+            EXTRACT_ITEMS_PROMPT,
         },
         { role: 'user', content: [this.imageContent(input.storagePath, input.mime)] },
       ],
@@ -90,7 +93,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
         {
           role: 'system',
           content:
-            '你是初中错题标注助手。基于题目摘要给出建议（不是事实），输出 JSON：{"subject":{"value":"...","confidence":0.0},"knowledgeTags":{"value":["..."],"confidence":0.0},"questionType":{"value":"...","confidence":0.0},"attemptState":{"value":"完全不会|知道考什么但没想到方法|方法基本正确但步骤出错|本来会但审题计算书写失误|时间不足|其他","confidence":0.0},"possibleCause":{"value":"知识概念|方法选择|推理步骤|计算|审题遗漏|表达规范|时间注意力状态","confidence":0.0},"reviewValue":{"value":"必须再做|可以再做|没必要再做","confidence":0.0}}。掌握感（masteryFeeling）是学生的自我判断，绝不要输出。只输出 JSON。',
+            SUGGEST_FIELDS_PROMPT,
         },
         { role: 'user', content: `题目摘要：${input.textExcerpt}\n当前学科：${input.subject ?? '未知'}` },
       ],

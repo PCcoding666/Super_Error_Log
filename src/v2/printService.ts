@@ -22,6 +22,7 @@ import { type Coaching, type Diagnosis, type Evidence } from '../ai/evidence.js'
 import { getCoachProvider } from '../ai/index.js';
 import type { CoachProvider } from '../ai/provider.js';
 import { normalizePhoto, type Box } from '../media/images.js';
+import { withProcessImage } from '../mobile/admission.js';
 import { audit } from '../services/eventLog.js';
 import { getEvidence } from '../services/evidenceService.js';
 import { getLearningPractice } from '../learning/queries.js';
@@ -31,7 +32,7 @@ import { MaterialStore } from '../materials/store.js';
 import type { SourceRegion } from '../materials/contracts.js';
 import { PRINT_IMAGE_LIMITS, readNormalizedSource, readSourceBytes } from '../materials/media.js';
 import { ensureStudentProfile } from '../services/studentService.js';
-import { getV2Settings, type PaperLocation } from './settingsService.js';
+import { getV2Settings } from './settingsService.js';
 
 // ---------- 快照形状（手机据此排版） ----------
 
@@ -90,13 +91,6 @@ function rowOf(packetId: string): SnapshotRow | undefined {
 export function normalizeQuestionNumber(raw: string): string {
   const normalized = raw.trim().replace(/^[（(第]+/, '').replace(/[.．、。:：)）题]+$/, '');
   return normalized || raw;
-}
-
-function fallbackNote(paperLocation: PaperLocation, questionNumber: string): string {
-  const number = normalizeQuestionNumber(questionNumber);
-  if (paperLocation === 'school') return `对照原卷第 ${number} 题`;
-  if (paperLocation === 'home') return `回家后对照原卷第 ${number} 题`;
-  return `对照原卷第 ${number} 题（原卷不在手边就回家再对）`;
 }
 
 /** coach 的诊断对象：有复盘取学生确认的归纳与错因；没有则 possibleCause=null。 */
@@ -173,6 +167,9 @@ export function printMaskRects(evidence: Pick<Evidence, 'regions'>, crop: Box, w
  * 落在裁图内的作答/订正/批注/参考答案/未知区域填白（见 printMaskRects），diagram 不遮。
  */
 export async function maskedQuestionCrop(source: Buffer, evidence: Evidence): Promise<Buffer> {
+  return withProcessImage(() => renderMaskedQuestionCrop(source, evidence));
+}
+async function renderMaskedQuestionCrop(source: Buffer, evidence: Evidence): Promise<Buffer> {
   const crop = expandPrintCropMargin(evidence.questionRegion);
   const normalized = await normalizePhoto(source);
   const metadata = await sharp(normalized).metadata();
@@ -202,7 +199,8 @@ function buildSnapshot(
   return {
     packetId, week, preparedAt,
     cover: {
-      title: '本周练习', practiceSlot, rules: [...COVER_RULES],
+      // 封面只留做题日期；practiceSlot 字段保留给旧快照协议，不再写入具体时段。
+      title: '本周练习', practiceSlot: '', rules: [...COVER_RULES],
       itemList: ordered.map(item => ({ shortId: item.shortId, sourceLabel: '原题' })),
     },
     items: ordered,
@@ -212,6 +210,11 @@ function buildSnapshot(
 
 /** 在进程内跑的准备任务（packetId → Promise），保证同一包同时只有一个准备。 */
 const preparing = new Map<string, Promise<void>>();
+
+/** 学生 worker 空闲退出前要问这一下：正在准备的打印快照不能被杀掉，重启后续做。 */
+export function printWorkPending(): boolean {
+  return preparing.size > 0;
+}
 
 interface FrozenPrintItem {
     itemId: string;
@@ -263,6 +266,9 @@ function assertCurrent(manifest: FrozenPrintManifest): void {
     }
 }
 async function maskedRegion(store: MaterialStore, region: SourceRegion, redactions: SourceRegion[], expand: boolean): Promise<Buffer> {
+    return withProcessImage(() => renderMaskedRegion(store, region, redactions, expand));
+}
+async function renderMaskedRegion(store: MaterialStore, region: SourceRegion, redactions: SourceRegion[], expand: boolean): Promise<Buffer> {
     const source = await readNormalizedSource(store, region), meta = await sharp(source).metadata();
     const crop = expand ? expandPrintCropMargin(region.box) : region.box;
     const { left, top, right, bottom } = cropPixelBounds(crop, meta.width!, meta.height!);
@@ -275,6 +281,9 @@ async function maskedRegion(store: MaterialStore, region: SourceRegion, redactio
     return pipeline.jpeg({ quality: 88 }).toBuffer();
 }
 async function combineCrops(crops: Buffer[]): Promise<Buffer> {
+    return withProcessImage(() => renderCombinedCrops(crops));
+}
+async function renderCombinedCrops(crops: Buffer[]): Promise<Buffer> {
     let width = 0, height = 0, bytes = 0;
     const composites: sharp.OverlayOptions[] = [];
     for (const crop of crops) {
@@ -367,7 +376,7 @@ async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
                 answer = { text: null, source: 'none', label: null };
             items.push({ itemId: card.id, shortId: card.shortId, position: card.position, subject: card.subject, knowledgeTags: card.knowledgeTags,
                 mode, stemText: input.context.questionText, cropMedia, diagramMedia, keyStepPrompt: KEY_STEP_PROMPT, checkboxes: [...CHECKBOXES], needsGlance: mode === 'crop' && (unlocated || input.badge === 'low'), glanceReason: mode === 'crop' && (unlocated || input.badge === 'low') ? (unlocated ? GLANCE_REASON_UNLOCATED : GLANCE_REASON_LOW) : null });
-            answerSheet.push({ shortId: card.shortId, hint1: coaching?.hints[0] ?? null, hint2: coaching?.hints[1] ?? null, answer, fallbackNote: fallbackNote(settings.paperLocation, input.context.questionNumber) });
+            answerSheet.push({ shortId: card.shortId, hint1: coaching?.hints[0] ?? null, hint2: coaching?.hints[1] ?? null, answer, fallbackNote: '对照原卷查看解析' });
             db.prepare('UPDATE v2_print_snapshot SET progress_done=?,snapshot_json=? WHERE packet_id=?').run(items.length, JSON.stringify(buildSnapshot(packetId, detail.week, detail.practiceSlot ?? settings.practiceSlot, preparedAt, items, answerSheet)), packetId);
         }
         const final = buildSnapshot(packetId, detail.week, detail.practiceSlot ?? settings.practiceSlot, preparedAt, items, answerSheet);
@@ -377,9 +386,12 @@ async function prepare(packetId: string, coach: CoachProvider): Promise<void> {
             if (JSON.stringify(detail.items.map(i => i.id)) !== JSON.stringify(getLearningPractice(packetId, scope)?.items.map(i => i.id)))
                 throw new Error('练习包内容已变化');
             db.prepare("UPDATE v2_print_snapshot SET status='ready',progress_done=?,progress_total=?,snapshot_json=?,error=NULL,ready_at=? WHERE packet_id=?").run(total, total, JSON.stringify(final), now(), packetId);
-            db.prepare("UPDATE review_packet SET status='generated',generated_at=COALESCE(generated_at,?) WHERE id=?").run(now(), packetId);
-            for (const card of detail.items)
-                db.prepare("UPDATE error_item SET status='packet_generated',updated_at=? WHERE id=? AND status='scheduled'").run(now(), card.id);
+            const cancelled = db.prepare("SELECT 1 FROM practice_task WHERE packet_id=? AND lifecycle='cancelled'").get(packetId);
+            if (!cancelled) {
+                db.prepare("UPDATE review_packet SET status='generated',generated_at=COALESCE(generated_at,?) WHERE id=?").run(now(), packetId);
+                for (const card of detail.items)
+                    db.prepare("UPDATE error_item SET status='packet_generated',updated_at=? WHERE id=? AND status='scheduled'").run(now(), card.id);
+            }
             db.exec('COMMIT');
         }
         catch (error) {
@@ -420,6 +432,11 @@ export type PrintRequestResult =
 export function requestPrint(packetId: string, coach?: CoachProvider, scope:LearningScope='legacy'): PrintRequestResult {
   if (!getLearningPractice(packetId,scope)) return { httpStatus: 404 };
   const db = getDb();
+  if (db.prepare("SELECT 1 FROM practice_task WHERE packet_id=? AND lifecycle='cancelled'").get(packetId)) {
+    const prior = rowOf(packetId);
+    if (prior?.status === 'ready') return { httpStatus: 200, body: { status: 'ready', snapshot: JSON.parse(prior.snapshot_json!) } };
+    return { httpStatus: 200, body: { status: 'failed', error: '这份练习已取消' } };
+  }
   const row = rowOf(packetId);
   if (!row) {
     db.prepare("INSERT INTO v2_print_snapshot (packet_id, status, progress_done, progress_total, created_at) VALUES (?, 'preparing', 0, ?, ?)")

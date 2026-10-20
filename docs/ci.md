@@ -1,8 +1,8 @@
 # 持续集成（GitHub Actions）
 
-工作流文件：`.github/workflows/ci.yml`。每个 PR、以及每次推送到 `codex/ai-error-review-mvp` 或 `main`，都会自动跑 `server`；`ios-unit` 只在改动涉及 iOS 时才跑（见下文「iOS 门控」）。同一个 PR（或分支）有新提交时，旧的运行会被自动取消。
+工作流文件：`.github/workflows/ci.yml`。每个 PR、以及每次推送到 `main`，都会自动跑 `server`；`ios-unit` 只在改动涉及 iOS 时才跑（见下文「iOS 门控」）。同一个 PR 有新提交时，旧检查会被取消；集成分支的运行不会取消正在执行的发布。
 
-**CI 只验证，不部署。** 部署仍然是手动的，步骤见 `deploy/README.md`；这里没有任何部署步骤，也没有任何密钥。
+**用户于 2026-10-15 授权合并后自动上线。** PR 只检查；`main` 的 push 在 `changes`、`server` 成功，且 `ios-unit` 成功或按条件跳过后，调用 `.github/workflows/deploy.yml`。发布使用仅允许该分支的 `production` 环境。备份、失败回退、密钥和操作方式见 [自动发布说明](../deploy/ci/README.md)。PR、标签和其他分支不发布。
 
 ## job 一览
 
@@ -11,6 +11,7 @@
 | `changes` | `ubuntu-24.04` | `dorny/paths-filter@v4` 判断改动是否涉及 `iOS/**` 或 `ci.yml`，输出 `ios`；只读权限 | 不到 1 分钟 |
 | `server` | `ubuntu-24.04`，Node 24 | `npm ci` → `npm run typecheck` → `npm run build` → `npx playwright install --with-deps chromium` → `npm test`（Vitest）→ `npm run test:e2e`（Playwright） | 约 6–10 分钟 |
 | `ios-unit` | `macos-26`，Xcode 26.6 | `swift test --package-path iOS`；仅当 `changes` 的 `ios` 为 `true` | 约 3–6 分钟 |
+| `production / release` | `ubuntu-24.04`，Node 24 | 打包已检查提交，受限 SSH 提交发布，等待服务器备份/切换/启动检查 | 通常约 1–3 分钟 |
 
 `server` 不依赖 `changes`，每次都跑，和 `changes` 并行；`ios-unit` 等 `changes` 跑完再决定跑不跑。耗时是估计值（本机实测整套 `server` 流程约 3 分钟、`swift test` 含首次编译约 35 秒；GitHub 的标准 runner 核数少、启动也要时间，所以按 2–3 倍估）。跑过几次之后以 Actions 页面上的实际耗时为准，并改掉这一栏。
 
@@ -37,7 +38,7 @@
 - **iOS App target 的构建**（`xcodebuild ... -target SuperErrorLog`）。目前只测 Swift 包，视图文件不在包里，所以视图层的编译错误 CI 看不到。
 - **真实模型调用**。一律 mock；真实识别质量只能靠真实照片对照原图验收，CI 不证明。`LiveTourTests` 默认跳过。
 - **真实 Caddy 集成**（`caddyIpEntry.test.ts` 的真实 Caddy 部分）和 **真机/相机/语音**。
-- **部署**。不自动部署；合并到哪个分支都不会触发部署。
+- **生产真实业务验收**。自动发布的启动检查覆盖登录页、静态资源和匿名 API 拒绝，不代表真实模型识别质量或整周学生体验已验收。
 
 ## iOS 门控
 
@@ -49,7 +50,7 @@ macOS runner 在私有仓库按 10 倍计费，所以 `ios-unit` 只在下面两
 怎么判断「改动」：
 
 - **pull_request**：看整个 PR 相对目标分支改了哪些文件（通过 GitHub API），所以 PR 里只要有一次提交碰过 iOS，之后每次推送都会跑。
-- **push**：只看这一次推送相对推送前的提交改了什么（`changes` 里把 `base` 设成当前分支名）。如果不设，会和默认分支 `main` 比较，对长期分支 `codex/ai-error-review-mvp` 来说永远包含 iOS 改动，门控就失效了。
+- **push**：只看这一次推送相对推送前的提交改了什么（`changes` 里把 `base` 设成当前分支名）。`main` 已统一为默认与发布分支；显式使用当前分支，避免未来变更默认分支时比较基准漂移。
 
 不满足条件时 `ios-unit` 仍然出现在检查列表里，状态是 **skipped**。GitHub 分支保护把 skipped 当作通过，所以以后在分支保护里只把 `server` 设为必需检查即可，不会被 `ios-unit` 卡住。
 

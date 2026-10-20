@@ -13,6 +13,7 @@ import type { Server } from 'node:http';
 import sharp from 'sharp';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Coaching, Diagnosis, Evidence } from '../../src/ai/evidence.js';
+import type { LearningContext } from '../../src/learning/contracts.js';
 import type { CoachProvider } from '../../src/ai/provider.js';
 import { getDb, now } from '../../src/db/connection.js';
 import { isoWeekKey } from '../../src/domain/scheduling.js';
@@ -59,9 +60,9 @@ class FixtureVision implements MobileVisionBoundary {
 
 /** 计数 coach：记录每次调用的证据与诊断；failFor 命中的题抛错（不阻塞快照，只留空提示）。 */
 class CountingCoach implements CoachProvider {
-  calls: Array<{ evidence: Evidence; diagnosis: Diagnosis }> = [];
-  failFor: ((evidence: Evidence) => boolean) | null = null;
-  async coachForPrint(evidence: Evidence, diagnosis: Diagnosis): Promise<Coaching> {
+  calls: Array<{ evidence: LearningContext; diagnosis: Diagnosis }> = [];
+  failFor: ((evidence: LearningContext) => boolean) | null = null;
+  async coachForPrint(evidence: LearningContext, diagnosis: Diagnosis): Promise<Coaching> {
     this.calls.push({ evidence, diagnosis });
     if (this.failFor?.(evidence)) throw new Error('注入的 coach 失败');
     return {
@@ -238,6 +239,24 @@ function makeWebPacket(packetId: string): void {
 }
 
 describe('T5 打印快照', () => {
+  it('cancelling while preparing cannot advance a newly selected task or resurrect the cancelled packet',async()=>{
+    let release!:()=>void;
+    let entered=false;
+    const wait=new Promise<void>(resolve=>{release=resolve;});
+    const coach:CoachProvider={coachForPrint:async(e,d)=>{entered=true;await wait;return new CountingCoach().coachForPrint(e,d);}};
+    const {base,auth,dataDir}=await setupApp(coach);
+    const items=await bridgeItems(base,auth,dataDir,[{number:'1',tags:['方程']}]);
+    const first=await makePractice(base,auth,[items[0]!.id]);
+    await fetch(`${base}/v2/practice/${first.id}/print`,{method:'POST',headers:auth});
+    while(!entered)await new Promise(resolve=>setTimeout(resolve,10));
+    const {setTaskLifecycle}=await import('../../src/v2/practiceTasks.js');
+    setTaskLifecycle(first.id,'cancelled');
+    await makePractice(base,auth,[items[0]!.id]);
+    release();
+    await pollPrint(base,auth,first.id);
+    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(items[0]!.id)).toEqual({status:'scheduled'});
+    expect(getDb().prepare('SELECT generated_at FROM review_packet WHERE id=?').get(first.id)).toEqual({generated_at:null});
+  });
   it('RED1 POST 202 → 轮询 ready；快照形状正确；generated_at、包与题目状态流转', async () => {
     const { base, dataDir, auth } = await setupApp();
     const [withDiagram, , mastered] = await bridgeItems(base, auth, dataDir, [
@@ -262,7 +281,7 @@ describe('T5 打印快照', () => {
     expect(typeof snapshot.preparedAt).toBe('string');
     expect(snapshot.cover).toMatchObject({
       title: '本周练习',
-      practiceSlot: '本周内',
+      practiceSlot: '',
       rules: ['不看答案，独立做', '卡住先看一级提示，再看二级', '做完打勾，写上做题日期'],
     });
     expect(snapshot.cover.itemList).toHaveLength(2);
@@ -333,7 +352,7 @@ describe('T5 打印快照', () => {
     expect(snapshot.items[0]!.stemText).toContain('题干');
   });
 
-  it('RED4 答案三种来源；coach 失败提示为空且 fallbackNote 随 paperLocation 变化；每题恰好 1 次 coach', async () => {
+  it('RED4 答案三种来源；coach 失败提示为空，旧原卷位置设置不影响统一提示；每题恰好 1 次 coach', async () => {
     const coach = new CountingCoach();
     coach.failFor = e => e.questionText.includes('失败题');
     const { base, dataDir, auth } = await setupApp(coach);
@@ -360,20 +379,18 @@ describe('T5 打印快照', () => {
     const failed = sheetOf(items[2]!.id);
     expect(failed).toMatchObject({ hint1: null, hint2: null });
     expect(failed.answer).toMatchObject({ text: null, source: 'none' });
-    // fallbackNote 的题号取该题证据里的 questionNumber（从 coach 调用记录回查，避免夹具编号耦合）。
-    const numberOf = (stemFragment: string): string => coach.calls.find(call => call.evidence.questionText.includes(stemFragment))!.evidence.questionNumber;
-    expect(failed.fallbackNote).toBe(`对照原卷第 ${numberOf('失败题：求 y。')} 题`);
+    expect(failed.fallbackNote).toBe('对照原卷查看解析');
 
-    // home / varies：措辞随设置变化。
+    // 已存的 home / varies 偏好同样不改变答案页提示。
     await setPaperLocation(base, auth, 'home');
     const practiceB = await makePractice(base, auth, [items[3]!.id]);
     const snapshotB = await prepareReady(base, auth, practiceB.id);
-    expect(snapshotB.answerSheet[0]!.fallbackNote).toBe(`回家后对照原卷第 ${numberOf('失败题：求 z。')} 题`);
+    expect(snapshotB.answerSheet[0]!.fallbackNote).toBe('对照原卷查看解析');
 
     await setPaperLocation(base, auth, 'varies');
     const practiceC = await makePractice(base, auth, [items[4]!.id]);
     const snapshotC = await prepareReady(base, auth, practiceC.id);
-    expect(snapshotC.answerSheet[0]!.fallbackNote).toBe(`对照原卷第 ${numberOf('失败题：求 w。')} 题（原卷不在手边就回家再对）`);
+    expect(snapshotC.answerSheet[0]!.fallbackNote).toBe('对照原卷查看解析');
 
     // coach 每题恰好 1 次、不重试（含失败题）。
     expect(coach.calls).toHaveLength(5);
@@ -566,7 +583,7 @@ describe('T5 打印快照', () => {
     expect(byItemId.get(diagramMissingLocated.id)).toMatchObject({ mode: 'crop', needsGlance: false, glanceReason: null });
   });
 
-  it('T5R2-F2 fallbackNote 题号规整：带标点/括号的题号印成"第 N 题"', async () => {
+  it('答案页提示不依赖原卷题号，封面不预设练习时间', async () => {
     const { base, dataDir, auth } = await setupApp();
     const items = await bridgeItems(base, auth, dataDir, [
       { tags: ['知识点A'], number: '2.' }, { tags: ['知识点B'], number: '（3）' },
@@ -576,16 +593,17 @@ describe('T5 打印快照', () => {
     const practice = await makePractice(base, auth, items.map(item => item.id));
     const snapshot = await prepareReady(base, auth, practice.id);
     expect(snapshot.answerSheet.map(entry => entry.fallbackNote)).toEqual([
-      '对照原卷第 2 题', '对照原卷第 3 题', '对照原卷第 4 题', '对照原卷第 13 题',
+      '对照原卷查看解析', '对照原卷查看解析', '对照原卷查看解析', '对照原卷查看解析',
     ]);
+    expect(snapshot.cover.practiceSlot).toBe('');
     // 证据里的题号保持原值，不改。
     const row = getDb().prepare('SELECT content_json FROM evidence_record WHERE item_id = ?').get(items[0]!.id) as { content_json: string };
     expect((JSON.parse(row.content_json) as { questionNumber: string }).questionNumber).toBe('2.');
   });
 
   // 2026-10-09 学生网页版（/s/）挂进生产入口：SSR 视图用 react / react-dom，拍照表单上传用 multer。
-  // 三者本来就在 package.json 的 dependencies 里（npm ci --omit=dev 会装）；白名单只加这三个，并另查任何 devDependency 都不可达。
-  it('RED9 生产入口依赖守卫：dist/main.js 可达第三方包只有 express、sharp 与学生网页版的 react、react-dom、multer', () => {
+  // KaTeX 在服务端生成原生 MathML，也必须随 npm ci --omit=dev 安装；仍检查任何 devDependency 都不可达。
+  it('RED9 生产入口依赖守卫：仅可达明确允许的服务端与学生网页版生产依赖', () => {
     const entry = path.resolve('dist/main.js');
     if (!fs.existsSync(entry)) {
       // verify 顺序下测试先于 build 执行时允许跳过；门禁跑 build 后必须真实通过。
@@ -599,15 +617,16 @@ describe('T5 打印快照', () => {
       if (seen.has(resolved) || !fs.existsSync(resolved)) return;
       seen.add(resolved);
       const source = fs.readFileSync(resolved, 'utf8');
-      const imports=moduleImports(source,resolved);
-      for(const spec of imports){
-        if(spec.startsWith('node:'))continue;
-        if(spec.startsWith('.')){visit(path.join(path.dirname(resolved),spec));continue;}
-        const parts=spec.split('/');bare.add(spec.startsWith('@')?parts.slice(0,2).join('/'):parts[0]!);
+      const imports = moduleImports(source, resolved);
+      for (const spec of imports) {
+        if (spec.startsWith('node:')) continue;
+        if (spec.startsWith('.')) { visit(path.join(path.dirname(resolved), spec)); continue; }
+        const parts = spec.split('/');
+        bare.add(spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!);
       }
     };
     visit(entry);
-    const allowed = ['express', 'sharp', 'react', 'react-dom', 'multer'];
+    const allowed = ['express', 'sharp', 'react', 'react-dom', 'multer', 'katex'];
     const manifest = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')) as { dependencies: Record<string, string>; devDependencies: Record<string, string> };
     for (const name of allowed) expect(Object.keys(manifest.dependencies), `${name} 必须是生产依赖`).toContain(name);
     for (const name of bare) {

@@ -9,10 +9,11 @@ import type { RecognitionJob } from '../mobile/contracts.js';
 import type { MobileRecognitionService } from '../mobile/service.js';
 import { getLearningWeek as getWeek } from '../learning/queries.js';
 import type { LearningWeek as V2WeekResponse } from '../learning/contracts.js';
-import { getLearningPractice as getPractice, listLearningPractices as listPractices } from '../learning/queries.js';
+import { getLearningPractice as getPractice, listLearningPractices } from '../learning/queries.js';
 import type { LearningPracticeDetail as PracticeDetail } from '../learning/contracts.js';
 import { getLearningReturnSummary as getReturnSummary } from '../v2/returnService.js';
 import { getPrintStatus } from '../v2/printService.js';
+import { getDb } from '../db/connection.js';
 import { photoFailurePlan, photoState, type PhotoFailurePlan } from './photoPlan.js';
 import { readPhotoMarks, readSkips, type PhotoMarks, type SkipState } from './session.js';
 import { make, makeInput, practicesFrom, type LocalPhoto, type LocalPhotoState, type NextStepAction, type Practice, type Result, type ReturnSummaryEntry } from './weekPlan.js';
@@ -47,6 +48,17 @@ export interface TodayState {
   latestDetail: PracticeDetail | null;
   marks: PhotoMarks;
   skips: SkipState;
+  /** 最近一份练习的练习纸正在准备时是它的 ID（等待中的页面要局部轮询）；否则 null。 */
+  preparingPrintID: string | null;
+}
+
+/**
+ * 练习纸是什么时候开始准备的（v2_print_snapshot.created_at，只读）：等待页上的「已经等了多久」从它算。
+ * 只读现有的一列，不加字段、不改接口。没有这一行时 null。
+ */
+export function printStartedAt(packetId: string): string | null {
+  const row = getDb().prepare('SELECT created_at FROM v2_print_snapshot WHERE packet_id = ?').get(packetId) as { created_at: string } | undefined;
+  return row?.created_at ?? null;
 }
 
 export async function loadPhotos(ctx: WebContext, week: V2WeekResponse, marks: PhotoMarks): Promise<PhotoView[]> {
@@ -66,7 +78,7 @@ export async function loadToday(ctx: WebContext, request: Request): Promise<Toda
   const skips = readSkips(request);
   const week = getWeek(ctx.mobileDataDir);
   const photos = await loadPhotos(ctx, week, marks);
-  const list = listPractices();
+  const list = listLearningPractices();
   const latest = list[0] ?? null;
   const latestDetail = latest ? getPractice(latest.id) : null;
   // 回报只取最近几份已生成练习纸的（WeekPlan 只看最新一份与「上一份」）。
@@ -89,7 +101,7 @@ export async function loadToday(ctx: WebContext, request: Request): Promise<Toda
     weekItemCount: week.items.length, materialSaved: ctx.materials?(ctx.materials.db.prepare('SELECT count(*) n FROM material_asset WHERE owner_id=? AND status!=?').get(ctx.materials.studentId,'legacy') as {n:number}).n:null, localPhotos, practices, preparingPrintID,
     skipped: skips.steps, today: ctx.now(), timeZone: ctx.timeZone,
   }));
-  return { plan, week, photos, practices, latestDetail, marks, skips };
+  return { plan, week, photos, practices, latestDetail, marks, skips, preparingPrintID };
 }
 
 /** 动作在网页上去哪：GET 能到的页面（清单行、链接用）。 */

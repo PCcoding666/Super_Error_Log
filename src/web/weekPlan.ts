@@ -287,8 +287,8 @@ function doneNext(p: Practice): NextStepModel {
 function midweekNext(p: Practice): NextStepModel {
   return model('', null, {
     secondary: [
-      choice('已经做完了？现在录结果', 'pencil', { kind: 'record', practiceID: p.id }),
-      choice('又发了卷子？现在拍', 'camera', { kind: 'capture' }),
+      choice('记录结果', 'pencil', { kind: 'record', practiceID: p.id }),
+      choice('添加错题', 'camera', { kind: 'capture' }),
     ],
   });
 }
@@ -499,7 +499,7 @@ function stepNext(steps: Step[], index: number, input: Input, weekKey: string): 
       // 等 AI 找题：主按钮不可点；周末 B 给一个次要按钮先去录结果。
       const record = steps.find(s => s.kind === 'record' && !s.isDone);
       const secondary = record?.action ? [choice('先录结果', null, record.action)] : [];
-      return model(secondary.length === 0 ? '大约 1–2 分钟。找好了这里会变成下一步' : '大约 1–2 分钟。可以先做下一步',
+      return model(secondary.length === 0 ? '正在处理，题多时会久一些。完成后这里会自动更新' : '正在处理，题多时会久一些。可以先做下一步',
         choice('AI 正在找题…', null, { kind: 'goHome' }), { isEnabled: false, isWaiting: true, secondary });
     }
     case 'choose':

@@ -1,0 +1,67 @@
+name: Deploy production
+
+# Called only after successful main CI. Pull requests never deploy.
+on:
+  workflow_call:
+    secrets:
+      SEL_DEPLOY_SSH_KEY:
+        required: true
+      SEL_DEPLOY_KNOWN_HOSTS:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: super-error-log-production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: production
+      url: https://study.pccoding666.com/s/
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build the verified commit
+        env:
+          SEL_AI_MODE: mock
+          NPM_CONFIG_REPLACE_REGISTRY_HOST: always
+        run: |
+          npm ci
+          npm run build
+          node --input-type=module -e '
+            import fs from "node:fs";
+            fs.writeFileSync("deploy/ci-release.json", JSON.stringify({
+              commit: process.env.GITHUB_SHA,
+              run: [process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT].join("-"),
+              createdAt: new Date().toISOString()
+            }) + "\n");'
+          bash scripts/build-release.sh --version "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --output releases
+
+      - name: Save release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: releases/*.tar.gz
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish and check production
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEL_DEPLOY_HOST: ${{ vars.SEL_DEPLOY_HOST }}
+          SEL_DEPLOY_KEY: ${{ secrets.SEL_DEPLOY_SSH_KEY }}
+          SEL_DEPLOY_KNOWN_HOSTS: ${{ secrets.SEL_DEPLOY_KNOWN_HOSTS }}
+        run: bash deploy/ci/publish.sh

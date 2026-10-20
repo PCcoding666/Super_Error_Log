@@ -16,3 +16,10 @@ playwright-report/
 .DS_Store
 
 releases/
+
+# Local agent work records may contain private execution context.
+.superpowers/
+.workbuddy-ai/
+
+# Python deployment check caches.
+__pycache__/

@@ -212,7 +212,7 @@ describe('规则 2：周中（2–4 天）', () => {
     const result = make(input({ practices: [lastWeekPractice(daysAgo)] }));
     expect(result.stage).toBe('midweek');
     expect(result.next?.primary).toBeNull();
-    expect(titles(result.next?.secondary)).toEqual(['已经做完了？现在录结果', '又发了卷子？现在拍']);
+    expect(titles(result.next?.secondary)).toEqual(['记录结果', '添加错题']);
     expect(result.next?.secondary[0]?.action).toEqual({ kind: 'record', practiceID: 'pkt_last' });
   });
 
@@ -401,7 +401,7 @@ describe('没联网 / 服务器忙 / 连不上', () => {
   it('周中没联网：只留手机上能做的', () => {
     const result = make(input({ connection: 'offline', practices: [lastWeekPractice(3)] }));
     expect(result.stage).toBe('midweek');
-    expect(titles(result.next?.secondary)).toEqual(['又发了卷子？现在拍']);
+    expect(titles(result.next?.secondary)).toEqual(['添加错题']);
     expect(result.next?.caption).toBe('没联网，连上后再继续');
   });
 

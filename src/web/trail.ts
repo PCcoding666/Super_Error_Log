@@ -70,7 +70,12 @@ function consumeTaps(raw: string, deviceId: string | null): { autoRefresh: boole
   let autoRefresh = false;
   for (const entry of parseTapCookie(raw)) {
     if (!firstTime(deviceId, entry.id)) continue;
-    if (entry.role === 'auto') { if (entry.key === 'refresh') autoRefresh = true; continue; }
+    // 页面脚本的自动动作：refresh = 整页重新载入（R1 的做法，旧页面还可能发）；update = 局部轮询发现状态变了、换了一块（一次状态变化记一次）。
+    if (entry.role === 'auto') {
+      if (entry.key === 'refresh') autoRefresh = true;
+      else if (entry.key === 'update') trail('view', entry.route, 'update', deviceId);
+      continue;
+    }
     if (entry.role === 'error') trail('error', entry.route, `client:${entry.key}`, deviceId);
     else trail('tap', entry.route, `${entry.role}.${entry.key}`, deviceId);
   }
@@ -98,10 +103,16 @@ function routeOf(request: Request, response: Response): string {
   return routeTemplate(`/s${request.path}`);
 }
 
+/** 等待页的局部轮询（页面脚本带 x-sel-poll: 1 取同一页）：不算「打开了一页」，状态变了由脚本报一次 update。 */
+export function isPoll(request: Request): boolean {
+  return request.headers['x-sel-poll'] === '1';
+}
+
 /** 每个请求结束时记：看页 / 提交 / 跳过 / 出错。放在路由最前面。 */
 export function trailRecorder() {
   return (request: Request, response: Response, next: NextFunction): void => {
     if (!QUIET.test(request.path) && request.method !== 'HEAD') {
+      const polled = isPoll(request);
       response.on('finish', () => {
         const route = routeOf(request, response);
         const device = typeof response.locals.deviceId === 'string' ? response.locals.deviceId : null;
@@ -110,7 +121,7 @@ export function trailRecorder() {
         if (status >= 400 || code) trail('error', route, code ? `${status}:${code}` : String(status), device);
         if (status >= 400) return;
         if (request.method === 'GET') {
-          if (status === 200 && isPageLoad(request)) {
+          if (status === 200 && isPageLoad(request) && !polled) {
             const view = typeof response.locals.trailView === 'string' ? response.locals.trailView : response.locals.trailRefresh ? 'refresh' : 'open';
             trail('view', route, view, device);
           }

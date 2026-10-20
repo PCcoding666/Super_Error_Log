@@ -1,3 +1,4 @@
+import { categoryForItem } from '../classification/itemCategories.js';
 import { getDb, newId, now } from '../db/connection.js';
 import { isoWeekKey, plannedDateForPacket, PLAN_MAX, PLAN_MIN, selectWeeklyPlan, type PlanCandidate } from '../domain/scheduling.js';
 import { bridgePending } from '../bridge/recognitionToItems.js';
@@ -10,17 +11,20 @@ import type { LearningScope, LearningWeek, LearningPracticeCard, LearningRecomme
 import { getLearningSource, learningEligible, learningIncluded, learningPacketAllowed, learningCard } from './sources.js';
 import { getLegacyWeek } from '../v2/weekService.js';
 
-export function getLearningWeek(mobileDataDir:string, scope:LearningScope='all'):LearningWeek {
- const old=getLegacyWeek(mobileDataDir);
- const convert=(card:typeof old.items[number])=>{const {jobId,...rest}=card;return {...rest,source:{kind:'legacy' as const,jobId}};};
- const result:LearningWeek={...old,items:old.items.filter(c=>getLearningSource(c.id)?.kind==='legacy'&&learningIncluded(c.id)).map(convert),backlog:old.backlog.filter(c=>getLearningSource(c.id)?.kind==='legacy'&&learningIncluded(c.id)).map(convert)};
- if(scope==='legacy')return result;
- const rows=getDb().prepare('SELECT item_id,created_at FROM material_item_link ORDER BY created_at,item_id').all() as {item_id:string;created_at:string}[];
- for(const row of rows){
-  if(getLearningSource(row.item_id)?.kind!=='material'||!learningIncluded(row.item_id))continue;
-  const card=learningCard(row.item_id)!;
-  if(isoWeekKey(new Date(row.created_at))===result.week)result.items.push(card);
-  else if(['ready_for_reflection','eligible_for_review','needs_recheck'].includes(card.status))result.backlog.push(card);
+export function getLearningWeek(mobileDataDir: string, scope: LearningScope = 'all', includeHistory = false): LearningWeek {
+ const old = getLegacyWeek(mobileDataDir, includeHistory);
+ const convert = (card: typeof old.items[number]) => { const { jobId, ...rest } = card; return { ...rest, source: { kind: 'legacy' as const, jobId } }; };
+ const result: LearningWeek = { ...old, items: old.items.filter(c => getLearningSource(c.id)?.kind === 'legacy' && learningIncluded(c.id)).map(convert), backlog: old.backlog.filter(c => getLearningSource(c.id)?.kind === 'legacy' && learningIncluded(c.id)).map(convert) };
+ if (scope === 'legacy') return result;
+ const rows = getDb().prepare('SELECT item_id,created_at FROM material_item_link ORDER BY created_at,item_id').all() as { item_id: string; created_at: string }[];
+ for (const row of rows) {
+  if (getLearningSource(row.item_id)?.kind !== 'material' || !learningIncluded(row.item_id)) continue;
+  const card = learningCard(row.item_id)!;
+  if (includeHistory && card.status === 'archived_not_worth_review') continue;
+  if (isoWeekKey(new Date(row.created_at)) === result.week) {
+   if (card.status === 'archived_not_worth_review') continue;
+   result.items.push(card);
+  } else if (includeHistory || ['ready_for_reflection', 'eligible_for_review', 'needs_recheck'].includes(card.status)) result.backlog.push(card);
  }
  return result;
 }
@@ -46,6 +50,7 @@ function candidateRows(scope: LearningScope): CandidateRow[] {
      AND NOT EXISTS (
        SELECT 1 FROM review_packet_item rpi
        WHERE rpi.item_id = ei.id
+         AND NOT EXISTS (SELECT 1 FROM practice_task pt WHERE pt.packet_id = rpi.packet_id AND pt.lifecycle = 'cancelled')
          AND NOT EXISTS (SELECT 1 FROM review_attempt ra WHERE ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id)
      )`,
   ).all(now()) as CandidateRow[]).filter(row => { const source=getLearningSource(row.id); return source && (scope==='all'||source.kind==='legacy') && learningEligible(row.id); });
@@ -95,7 +100,7 @@ function scoreCandidates(scope:LearningScope): ScoredCandidate[] {
       card: {
         id: row.id,
         shortId: row.short_id,
-        subject: row.subject,
+        ...categoryForItem(row.id),
         knowledgeTags: tags,
         questionExcerpt: row.text_excerpt,
         badge: learningCard(row.id)!.badge,
@@ -147,6 +152,17 @@ export function createLearningPractice(input: unknown, scope:LearningScope='all'
     return { ok: false, httpStatus: 400, message: '请求正文不合法。' };
   }
   const body = input as Record<string, unknown>;
+  const requestKey = body.requestKey;
+  let storedRequestKey: string | null = null;
+  if (requestKey !== undefined) {
+    if (typeof requestKey !== 'string' || !/^[0-9a-f-]{36}$/i.test(requestKey)) {
+      return { ok: false, httpStatus: 400, message: '练习请求标识无效，请重新打开推荐。' };
+    }
+    storedRequestKey = requestKey;
+    const prior = getDb().prepare('SELECT packet_id FROM practice_task WHERE request_key = ?').get(requestKey) as { packet_id: string } | undefined;
+    const detail = prior && getLearningPractice(prior.packet_id, scope);
+    if (detail) return { ok: true, detail };
+  }
   const itemIds = body.itemIds;
   if (!Array.isArray(itemIds) || itemIds.length === 0 || itemIds.some(id => typeof id !== 'string' || id.length === 0)) {
     return { ok: false, httpStatus: 400, message: 'itemIds 必须是非空的题目 ID 数组。' };
@@ -183,6 +199,8 @@ export function createLearningPractice(input: unknown, scope:LearningScope='all'
     db.prepare(
       'INSERT INTO review_packet (id, student_id, week, status, planned_date, practice_slot, created_at) VALUES (?,?,?,?,?,?,?)',
     ).run(packetId, student.id, isoWeekKey(nowDate), 'scheduled', plannedDateForPacket(nowDate), practiceSlot, now());
+    db.prepare('INSERT INTO practice_task(packet_id,request_key,original_statuses,updated_at) VALUES (?,?,?,?)')
+      .run(packetId, storedRequestKey, JSON.stringify(Object.fromEntries(ids.map(id => [id, eligible.get(id)!.row.status]))), now());
     ids.forEach((itemId, index) => {
       const entry = eligible.get(itemId)!;
       // hint/answer 占位，T5 负责生成；v2_tier/v2_reason 冻结建包时的推荐层级与理由。
@@ -245,7 +263,7 @@ export function getLearningPractice(packetId: string, scope:LearningScope='all')
       return {
         id: row.id,
         shortId: row.short_id,
-        subject: row.subject,
+        ...categoryForItem(row.id),
         knowledgeTags: tags,
         questionExcerpt: row.text_excerpt,
         badge: learningCard(row.id)!.badge,
@@ -262,7 +280,7 @@ export function getLearningPractice(packetId: string, scope:LearningScope='all')
 }
 
 /** 最近 8 个含 v2 题的练习包摘要，新的在前。 */
-export function listLearningPractices(scope:LearningScope='all'): PracticeSummary[] {
+export function listLearningPractices(scope: LearningScope = 'all', limit = 8): PracticeSummary[] {
   const rows = getDb().prepare(
     `SELECT rp.id, rp.week, rp.status, rp.practice_slot, rp.created_at, rp.generated_at,
             (SELECT COUNT(*) FROM review_packet_item rpi WHERE rpi.packet_id = rp.id) AS item_count
@@ -270,7 +288,8 @@ export function listLearningPractices(scope:LearningScope='all'): PracticeSummar
      ORDER BY rp.created_at DESC, rp.rowid DESC
 `,
   ).all() as Array<{ id: string; week: string; status: string; practice_slot: string | null; created_at: string; generated_at: string | null; item_count: number }>;
-  return rows.filter(row=>learningPacketAllowed(row.id,scope)).slice(0,8).map(row => ({
+  const matched = rows.filter(row => learningPacketAllowed(row.id, scope));
+  return (limit < 0 ? matched : matched.slice(0, limit)).map(row => ({
     id: row.id,
     week: row.week,
     status: row.status,

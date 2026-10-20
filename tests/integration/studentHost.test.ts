@@ -2,7 +2,7 @@
  * 学生邀请码网关 + 独立学生 worker（2026-10-15 S1）集成测试。
  * 真实网关 + 真实 fork 出来的 worker 进程 + 合成识别（SEL_STUDENT_WORKER_FAKE=1）与 mock 转写：
  * 不假装真实模型、不调真实模型、不读 .env 与 data/。
- * 覆盖：注册表事务/单用/过期/撤销/容量、登录与限速、退出清理、双学生数据隔离、
+ * 覆盖：注册表事务/重复登录/过期/撤销/容量、登录与限速、退出清理、双学生数据隔离、
  * 路径攻击与伪造 cookie/header、body 流转发、worker 崩溃与重启恢复、令牌刷新。
  */
 import crypto from 'node:crypto';
@@ -14,18 +14,20 @@ import type { Server } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import express from 'express';
 import sharp from 'sharp';
-import { afterEach, describe, expect, it } from 'vitest';
-import { formatInviteCode, MAX_STUDENTS, normalizeInviteCode, RegistryError, StudentRegistry } from '../../src/studentHost/registry.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { formatInviteCode, normalizeInviteCode, RegistryError, StudentRegistry } from '../../src/studentHost/registry.js';
 import { runAdminCli } from '../../src/studentHost/admin-cli.js';
 import { createStudentHostGateway, LoginThrottle, SESSION_COOKIE, type StudentHostGateway } from '../../src/studentHost/router.js';
 import { StudentWorkerPool, WorkerStartError } from '../../src/studentHost/workers.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
+import { MOCK_TRANSCRIPT } from '../../src/ai/asr.js';
 
 const roots: string[] = [];
 const gateways: StudentHostGateway[] = [];
 const servers: Server[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(gateways.splice(0).map(gateway => gateway.close()));
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }));
@@ -171,27 +173,25 @@ describe('学生注册表', () => {
     registry.close();
   });
 
-  it('一次性：兑换后重放失败；并发兑换只有一个成功', async () => {
+  it('新码支持重复与并发登录，始终绑定同一个学生；错误提示统一', async () => {
     const registry = StudentRegistry.open(tempRoot('sel-reg-'));
     const { studentId } = registry.createStudent();
     const { code } = registry.issueInvitation(studentId);
-    const [first, second] = await Promise.allSettled([Promise.resolve().then(() => registry.redeem(code)), Promise.resolve().then(() => registry.redeem(code))]);
-    const succeeded = [first, second].filter(r => r.status === 'fulfilled');
-    expect(succeeded).toHaveLength(1);
-    expect(() => registry.redeem(code)).toThrowError(RegistryError);
-    // 失败提示统一，不区分不存在/已用/过期
-    expect(() => registry.redeem(code)).toThrowError('邀请码不正确或已经失效。');
+    const sessions = await Promise.all([Promise.resolve().then(() => registry.redeem(code)), Promise.resolve().then(() => registry.redeem(code))]);
+    expect(sessions.map(session => session.studentId)).toEqual([studentId, studentId]);
+    expect(sessions[0]!.sessionToken).not.toBe(sessions[1]!.sessionToken);
+    expect(registry.redeem(code).studentId).toBe(studentId);
     expect(() => registry.redeem('AAAA-BBBB-CCCC')).toThrowError('邀请码不正确或已经失效。');
     expect(() => registry.redeem('not a code')).toThrowError('邀请码不正确或已经失效。');
     registry.close();
   });
 
-  it('过期邀请码（7 天）与过期会话（30 天）都拒绝', () => {
+  it('过期邀请码（60 天）与过期会话（30 天）都拒绝', () => {
     let now = new Date('2026-10-15T00:00:00Z');
     const registry = StudentRegistry.open(tempRoot('sel-reg-'), { now: () => now });
     const { studentId } = registry.createStudent();
     const { code } = registry.issueInvitation(studentId);
-    now = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000);
+    now = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
     expect(() => registry.redeem(code)).toThrowError('邀请码不正确或已经失效。');
 
     now = new Date('2026-10-15T00:00:00Z');
@@ -202,12 +202,12 @@ describe('学生注册表', () => {
     registry.close();
   });
 
-  it('空间上限：最多 3 个学生，第 4 个拒绝且不产生目录', () => {
+  it('空间上限可配置：设为 3 时第 4 个拒绝且不产生目录', () => {
     const hostDir = tempRoot('sel-reg-');
-    const registry = StudentRegistry.open(hostDir);
-    for (let i = 0; i < MAX_STUDENTS; i += 1) registry.createStudent();
-    expect(() => registry.createStudent()).toThrowError(/最多 3 个/);
-    expect(fs.readdirSync(path.join(hostDir, 'students'))).toHaveLength(MAX_STUDENTS);
+    const registry = StudentRegistry.open(hostDir, { maxStudents: 3 });
+    for (let i = 0; i < 3; i += 1) registry.createStudent();
+    expect(() => registry.createStudent()).toThrowError(/名额暂时已满/);
+    expect(fs.readdirSync(path.join(hostDir, 'students'))).toHaveLength(3);
     // 目录权限 0700
     const studentId = registry.listStudents()[0]!.studentId;
     expect(fs.statSync(registry.studentDir(studentId)).mode & 0o777).toBe(0o700);
@@ -322,10 +322,16 @@ describe('学生网关登录与退出', () => {
     expect(consent.status).toBe(303);
     expect(browser.cookies.has('sel_consent')).toBe(true);
     expect(browser.lastSetCookie.every(line => !line.startsWith('sel_device='))).toBe(true);
+    // The real invitation gateway must pass the preference in both directions.
+    const physics = await browser.get('/s/items?subject=' + encodeURIComponent('物理'));
+    expect(await physics.text()).toContain('切换学科，当前物理');
+    expect(browser.cookies.has('sel_items_subject')).toBe(true);
+    expect(await (await browser.get('/s/items')).text()).toContain('切换学科，当前物理');
     const logout = await browser.post('/s/logout');
     expect(logout.status).toBe(303);
     expect(browser.cookies.has(SESSION_COOKIE)).toBe(false);
     expect(browser.cookies.has('sel_consent')).toBe(false);
+    expect(browser.cookies.has('sel_items_subject')).toBe(false);
     expect(env.registry.authenticate(token)).toBeNull();
     const page = await browser.request('/s/', { headers: { cookie: `${SESSION_COOKIE}=${token}` } });
     expect(page.status).toBe(401);
@@ -359,7 +365,120 @@ describe('登录限速', () => {
 
 // ---------- 网关 + 真实 worker：隔离、代理、生命周期 ----------
 
+function savedPracticeSlot(registry: StudentRegistry, studentId: string): string {
+  const db = new DatabaseSync(path.join(registry.studentDir(studentId), 'app.db'), { readOnly: true });
+  try {
+    return (db.prepare('SELECT practice_slot FROM v2_setting').get() as { practice_slot: string }).practice_slot;
+  } finally {
+    db.close();
+  }
+}
+
 describe('学生 worker 隔离与代理', () => {
+  it('a rejected fix form preserves the session voice context and can transcribe again', async () => {
+    const env = await setupHost();
+    const { browser } = await loginBrowser(env);
+    await browser.post('/s/consent');
+    const upload = await uploadPhoto(browser, await photoBytes('#c1d5ef'));
+    expect(upload.ok).toBe(true);
+    let questionId: string | undefined;
+    await waitFor(async () => {
+      const html = await (await browser.get(`/s/photos/${upload.jobId}`)).text();
+      questionId = /name="questionIds" value="([^"]+)"/.exec(html)?.[1];
+      return questionId !== undefined;
+    });
+    expect((await browser.post(`/s/photos/${upload.jobId}/select`, { questionIds: questionId! })).status).toBe(303);
+    let itemId: string | undefined;
+    await waitFor(async () => {
+      const html = await (await browser.get('/s/items')).text();
+      itemId = /\/s\/items\/(itm_[0-9a-f]{16})/.exec(html)?.[1];
+      return itemId !== undefined;
+    });
+    const contextOf = (html: string): string | undefined => /<meta name="sel-voice-context" content="([0-9a-f]{64})"\s*\/?\s*>/.exec(html)?.[1];
+    const page = await browser.get(`/s/items/${itemId}/fix`);
+    expect(page.status).toBe(200);
+    const context = contextOf(await page.text());
+    expect(context).toBe(crypto.createHash('sha256').update(browser.cookies.get(SESSION_COOKIE)!).digest('hex'));
+    const rejected = await browser.post(`/s/items/${itemId}/fix`, { instruction: '' }, {
+      'x-sel-internal-voice-context': 'f'.repeat(64),
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.headers.get('cache-control')).toBe('private, no-store');
+    const html = await rejected.text();
+    expect(html).toContain('data-endpoint="/s/voice"');
+    expect(contextOf(html)).toBe(context);
+    const voice = await browser.request('/s/voice', {
+      method: 'POST', body: 'SYNTHETIC-FIX-VOICE',
+      headers: { 'content-type': 'audio/webm', 'x-sel-voice-context': contextOf(html)! },
+    });
+    expect(voice.status).toBe(200);
+    expect(await voice.json()).toEqual({ text: MOCK_TRANSCRIPT });
+  }, 120_000);
+
+  it('old-tab voice is rejected after switching students; current context transcribes without persisting audio', async () => {
+    const env = await setupHost();
+    const { browser, studentId: studentA } = await loginBrowser(env);
+    const readContext = async (): Promise<string> => {
+      // A polling read renders the same context without an unrelated finish-time
+      // page-view audit write racing the subsequent voice persistence snapshot.
+      const response = await browser.request('/s/settings', { headers: { 'x-sel-internal-voice-context': 'f'.repeat(64), 'x-sel-poll': '1' } });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      const html = await response.text();
+      const context = /<meta name="sel-voice-context" content="([0-9a-f]{64})"\s*\/?\s*>/.exec(html)?.[1];
+      expect(context).toBe(crypto.createHash('sha256').update(browser.cookies.get(SESSION_COOKIE)!).digest('hex'));
+      expect(html).not.toContain(browser.cookies.get(SESSION_COOKIE)!);
+      return context!;
+    };
+    const contextA = await readContext();
+    const { studentId: studentB } = env.registry.createStudent();
+    const invitationB = env.registry.issueInvitation(studentB);
+    expect((await browser.post('/s/login', { code: invitationB.code })).status).toBe(303);
+    const contextB = await readContext();
+    expect(contextB).not.toBe(contextA);
+    const fileHashes = (): Record<string, string> => {
+      const hashes: Record<string, string> = {};
+      const visit = (dir: string): void => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) visit(full);
+          else if (entry.isFile()) {
+            // SQLite updates shared-memory read marks even for read-only requests.
+            // Keep the filename check; compare persistent data and every other file byte-for-byte.
+            hashes[path.relative(env.hostDir, full)] = entry.name === 'app.db-shm'
+              ? 'sqlite-shared-memory'
+              : crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex');
+          }
+        }
+      };
+      for (const id of [studentA, studentB]) visit(env.registry.studentDir(id));
+      return hashes;
+    };
+    const before = fileHashes();
+    const ensure = vi.spyOn(env.pool, 'ensure');
+    const voice = (context?: string) => browser.request('/s/voice', {
+      method: 'POST', body: 'SYNTHETIC-PRIVATE-VOICE', headers: {
+        'content-type': 'audio/webm', 'x-sel-internal-voice-context': contextB,
+        ...(context === undefined ? {} : { 'x-sel-voice-context': context }),
+      },
+    });
+    for (const context of [contextA, undefined]) {
+      const rejected = await voice(context);
+      expect(rejected.status).toBe(409);
+      expect(await rejected.json()).toMatchObject({ error: { code: 'voice_context_mismatch' } });
+    }
+    expect(ensure).not.toHaveBeenCalled();
+    const accepted = await voice(contextB);
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toEqual({ text: MOCK_TRANSCRIPT });
+    expect(ensure).toHaveBeenCalledExactlyOnceWith(studentB);
+    expect(fileHashes()).toEqual(before);
+    for (const route of ['/s/offline', '/s/sw.js', '/s/assets/app.js']) {
+      const publicResponse = await browser.get(route);
+      expect(await publicResponse.text()).not.toContain(contextB);
+    }
+  }, 120_000);
+
   it('两个学生：各自 worker、各自目录与数据库；设置互不可见', async () => {
     const env = await setupHost();
     const a = await loginBrowser(env);
@@ -368,9 +487,9 @@ describe('学生 worker 隔离与代理', () => {
     expect(saveA.status).toBe(303);
     const saveB = await b.browser.post('/s/settings', { practiceSlot: '乙晚饭后', paperLocation: 'school' });
     expect(saveB.status).toBe(303);
-    expect(await (await a.browser.get('/s/settings')).text()).toContain('甲放学后');
-    expect(await (await a.browser.get('/s/settings')).text()).not.toContain('乙晚饭后');
-    expect(await (await b.browser.get('/s/settings')).text()).toContain('乙晚饭后');
+    // 旧提交入口仍兼容，但精简后的设置页不展示这些历史偏好。
+    expect(savedPracticeSlot(env.registry, a.studentId)).toBe('甲放学后');
+    expect(savedPracticeSlot(env.registry, b.studentId)).toBe('乙晚饭后');
     // 独立进程 ×2、独立目录、各自 app.db
     expect(env.pool.size).toBe(2);
     for (const { studentId } of [a, b]) {
@@ -452,7 +571,7 @@ describe('学生 worker 隔离与代理', () => {
     // A 下一次请求自动重拉，设置还在（独立目录落盘）
     const page = await a.browser.get('/s/settings');
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('甲放学后');
+    expect(savedPracticeSlot(env.registry, a.studentId)).toBe('甲放学后');
     expect(env.pool.isRunning(a.studentId)).toBe(true);
   }, 120_000);
 
@@ -467,7 +586,7 @@ describe('学生 worker 隔离与代理', () => {
     expect((await a.browser.get('/s/settings')).status).toBe(200);
   }, 90_000);
 
-  it('父进程重启：已注册学生的 worker 自动预热，旧会话仍有效、数据还在', async () => {
+  it('父进程重启：不预热 worker，旧会话仍有效，下次打开再拉起且数据还在', async () => {
     const env = await setupHost();
     const a = await loginBrowser(env);
     await a.browser.post('/s/settings', { practiceSlot: '甲放学后', paperLocation: 'home' });
@@ -480,14 +599,39 @@ describe('学生 worker 隔离与代理', () => {
     const pool2 = newPool(registry2);
     const gateway2 = await createStudentHostGateway({ hostDir: env.hostDir, registry: registry2, pool: pool2 });
     gateways.push(gateway2);
-    // 不用等学生打开：创建时预热已拉起 worker
-    await waitFor(async () => pool2.isRunning(a.studentId));
+    expect(pool2.isRunning(a.studentId)).toBe(false);
     const base2 = await serve(gateway2);
     const browser = new Browser(base2);
     const page = await browser.request('/s/settings', { headers: { cookie: `${SESSION_COOKIE}=${oldToken}` } });
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('甲放学后');
+    expect(pool2.isRunning(a.studentId)).toBe(true);
+    expect(savedPracticeSlot(registry2, a.studentId)).toBe('甲放学后');
   }, 120_000);
+
+  it('空闲一段时间后退出 worker，下次请求再拉起，已保存的设置还在', async () => {
+    const hostDir = tempRoot('sel-host-');
+    const registry = StudentRegistry.open(hostDir);
+    const pool = new StudentWorkerPool({
+      dirFor: studentId => registry.studentDir(studentId),
+      env: { SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock' },
+      idleMs: 800,
+      refreshIntervalMs: 0,
+    });
+    const gateway = await createStudentHostGateway({ hostDir, registry, pool });
+    gateways.push(gateway);
+    const base = await serve(gateway);
+    const { studentId } = registry.createStudent();
+    expect(pool.isRunning(studentId)).toBe(false);
+    const browser = new Browser(base);
+    expect((await browser.post('/s/login', { code: registry.issueInvitation(studentId).code })).status).toBe(303);
+    expect(pool.isRunning(studentId)).toBe(false);
+    expect((await browser.post('/s/settings', { practiceSlot: '甲放学后', paperLocation: 'home' })).status).toBe(303);
+    expect(pool.isRunning(studentId)).toBe(true);
+    await waitFor(async () => !pool.isRunning(studentId), 20_000);
+    expect(savedPracticeSlot(registry, studentId)).toBe('甲放学后');
+    expect((await browser.get('/s/settings')).status).toBe(200);
+    expect(pool.isRunning(studentId)).toBe(true);
+  }, 90_000);
 
   it('worker 启动失败：503 页面，不路由到别人', async () => {
     const hostDir = tempRoot('sel-host-');

@@ -1,19 +1,23 @@
 # Super Error Log — 纸错题延迟重做闭环 MVP
 
 面向寄宿制初三学生的错题复习闭环：**周末数字化，工作日纸质复习，下周末结果回传**。
-当前学生用手机网页拍卷子：AI先找题，学生补勾遗漏，再选一小组题、说说为什么错、打印并隔几天重做，回来记录结果。当前原题重做闭环已实现；家长独立网页和变式题尚未接入。
+当前学生用手机网页拍卷子：AI先找题，学生补勾遗漏，练习首页主动建议一小组题，学生查看题目或打印后在纸上重做，拍照提交并确认核对建议；也保留自己选题和直接录结果。当前原题重做闭环已实现；家长独立网页和变式题尚未接入。
 
 ## Codex Cloud 从这里接手
 
-**开发分支：`codex/student-invite-web`。** GitHub默认`main`仍是早期版本。请先读[当前交接说明](docs/CODEX_CLOUD_HANDOFF.md)，里面包含环境安装、代码地图、测试命令和待办。
+**唯一主分支：`main`。** 新任务从最新 `main` 开分支，PR 合并回 `main`；检查通过后自动上线。分支与未合并工作见[分支说明](docs/BRANCHES.md)。请先读[当前交接说明](docs/CODEX_CLOUD_HANDOFF.md)，里面包含环境安装、代码地图、测试命令和待办。
 
-当前线上为 **0.5.0-r2**；用户已确认手机上传成功，真实题目识别质量和完整一周使用仍待验收。[上传热修复记录](docs/quality/2026-10-15-photo-upload-hotfix.md)。
+最近人工发布基线为 **0.5.0-r2**；当前线上版本以 [GitHub Actions](https://github.com/PCcoding666/Super_Error_Log/actions) 的成功发布和服务器 `current/deploy/ci-release.json` 为准。用户已确认手机上传成功，真实题目识别质量和完整一周使用仍待验收。[上传热修复记录](docs/quality/2026-10-15-photo-upload-hotfix.md)。
 
 ## 当前手机入口（学生邀请码）
 
 手机Safari或Android浏览器打开 `https://study.pccoding666.com/s/`，输入自己的邀请码，即可进入独立学习空间；Safari可添加到主屏幕。无需Apple开发者账号安装，更新由服务器发布。语音使用千问ASR 3.1，结果可以编辑，再由学生提交。
 
 本轮设计：[学生邀请码网页版](docs/superpowers/specs/2026-10-15-student-invite-web-design.md)；发布与验收状态：[交付记录](docs/quality/2026-10-15-student-web-release.md)。功能需 `SEL_STUDENT_HOST_ENABLED=1`；受控试用上限3个学生。下方原生App与本机演示说明保留作历史与开发参考。
+
+## 管理后台（开发版本，尚未部署）
+
+新增 `/admin/`，独立管理员登录后查看所有邀请码对应账号的使用、输入/输出 tokens、调用耗时、接口成功率和失败原因。支持按日期、账号、模型、功能筛选；旧数据无法恢复的指标标为“未采集”。管理员密码由服务器 CLI 的 `admin-password` 命令生成，详见[部署和登录说明](deploy/README.md#管理后台账号用量与-ai-性能2026-10-20-开发版本尚未部署)。
 
 ## 历史原生iPhone路径（本轮主要交付为上面的手机版网页）
 
@@ -23,7 +27,7 @@
 
 ## 核心原则
 
-- **AI 建议，学生决定**：AI 只做提取与提示，反思必须由学生本人提交。
+- **AI 建议，学生决定**：AI 做提取、提示和作答初步核对；反思与练习结果必须由学生本人提交。
 - **当场做对不算掌握**：只有延迟 3–7 天的独立重做正确才进入"暂时掌握"，7–14 天确认轮再做对才"稳定掌握"。
 - **家长只见聚合**：家长视图只有完成率、学科掌握度、薄弱标签等聚合数字。
 
@@ -46,7 +50,7 @@ npm run demo        # 生成演示夹具并启动（mock 模式，无需 API Key
 | `npm test` | 单元 + 集成测试（Vitest） |
 | `npm run test:e2e` | E2E 旅程测试 J1–J8（Playwright，端口 3199） |
 | `npm run verify` | typecheck + 单测/集成 + 构建 + E2E 全量验证 |
-| `npm run build && npm start` | 生产构建与启动 |
+| `npm run build && npm start` | 构建并启动旧本机演示；当前生产入口为 `dist/main.js` |
 
 ## 历史本地演示配置（当前生产配置见交接说明和部署文档）
 
@@ -66,7 +70,8 @@ npm run demo        # 生成演示夹具并启动（mock 模式，无需 API Key
 - 隐私：`docs/privacy/PRIVACY_AND_MINOR_DATA.md`
 - 用户手册：`docs/MVP_USER_MANUAL.md`
 - 验证报告：`docs/PRODUCT_VALIDATION_REPORT.md`
-- 工程过程：`.ai/tasks/current/`（状态、决策、风险、测试日志）
+- 当前交接：[Codex Cloud 接手说明](docs/CODEX_CLOUD_HANDOFF.md)；分支规则：[分支说明](docs/BRANCHES.md)
+- 历史工程过程：`.ai/tasks/current/`（保留历史状态、决策、风险和测试日志，不代表当前上线状态）
 
 ## 技术栈
 

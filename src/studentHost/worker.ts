@@ -14,8 +14,9 @@ import type { MobileConfiguration } from '../mobile/configuration.js';
 import type { CloudAssemblyOverrides, CloudAssembly } from '../mobile/cloudAssembly.js';
 import type { PairingManager } from '../mobile/pairing.js';
 import type { InventoryCandidate, MobileVisionBoundary, VisionContext, VisionInventoryResult, VisionQuestionResult } from '../mobile/vision.js';
+import { installParentPermitListener } from './parentPermit.js';
 
-interface ParentMessage { type?: string }
+interface ParentMessage { type?: string; force?: boolean }
 
 function send(message: Record<string, unknown>): void {
   try {
@@ -122,6 +123,12 @@ async function main(): Promise<void> {
   if (!port) throw new Error('worker 未能取得监听端口');
   const running: CloudAssembly = assembly;
   const token = await issueInternalToken(running.pairing);
+  installParentPermitListener();
+  // printService 会连带加载 config（import 时读环境变量），必须等数据目录固定后再动态引入。
+  const busy = async (): Promise<boolean> => {
+    const { printWorkPending } = await import('../v2/printService.js');
+    return running.recognition.hasPendingRecognition() || printWorkPending();
+  };
   send({ type: 'ready', port, token });
 
   process.on('message', (message: ParentMessage) => {
@@ -131,7 +138,18 @@ async function main(): Promise<void> {
         .catch(() => send({ type: 'error', message: '内部令牌刷新失败' }));
       return;
     }
-    if (message?.type === 'stop') void shutdown(0);
+    if (message?.type === 'query-busy') {
+      void busy().then(value => send({ type: 'busy', busy: value })).catch(() => send({ type: 'busy', busy: true }));
+      return;
+    }
+    if (message?.type === 'stop') {
+      if (message.force === true) { void shutdown(0); return; }
+      // 空闲退出：有排队、在跑或等待重试的识别/打印时拒绝，任务留在本学生目录里，下次启动续做。
+      void busy().then(value => {
+        if (value) { send({ type: 'stop-refused' }); return; }
+        void shutdown(0);
+      }).catch(() => send({ type: 'stop-refused' }));
+    }
   });
 }
 

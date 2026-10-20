@@ -21,10 +21,14 @@
     "fixtures:generate": "tsx src/fixtures/generate.ts",
     "demo": "tsx src/fixtures/generate.ts && tsx watch src/server.ts",
     "release:build": "npm run build && scripts/build-release.sh --output releases",
-    "verify": "npm run typecheck && npm run build && npm run test && npm run test:e2e"
+    "verify": "npm run typecheck && npm run build && npm run test && npm run test:e2e",
+    "ui:preview": "tsx scripts/ui-preview/generate.ts",
+    "ui:preview:check": "tsc --project scripts/ui-preview/tsconfig.json --noEmit",
+    "ui:preview:capture": "node scripts/capture-ui-preview.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",
+    "katex": "^0.19.0",
     "multer": "^2.0.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

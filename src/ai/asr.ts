@@ -1,4 +1,6 @@
 import { config } from '../config.js';
+import crypto from 'node:crypto';
+import { recordAiUsage, tokenCount } from '../observability/aiUsage.js';
 
 /**
  * 「说说为什么错」的语音转文字（学生网页版用；iOS App 在手机上本地转写，不走这里）。
@@ -95,24 +97,44 @@ export class BailianTranscriber implements SpeechTranscriber {
     const requestBody = JSON.stringify(this.requestBody(audio, mimeType));
     const timeout = AbortSignal.timeout(this.options.timeoutMs ?? 30_000);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    let response: Response;
+    combined.throwIfAborted();
+    const started = Date.now();
+    let httpStatus: number | null = null;
+    let inputTokens: number | null = null;
+    let outputTokens: number | null = null;
+    let errorCode: string | null = null;
     try {
-      response = await (this.options.fetchImpl ?? fetch)(ASR_NATIVE_ENDPOINT, {
+      const response = await (this.options.fetchImpl ?? fetch)(ASR_NATIVE_ENDPOINT, {
         method: 'POST',
+        redirect: 'error',
         headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' },
         body: requestBody,
         signal: combined,
       });
-    } catch {
+      httpStatus = response.status;
+      let body: unknown;
+      try { body = await response.json(); } catch {
+        if (timeout.aborted || signal?.aborted) throw new Error('aborted');
+        if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`);
+        throw new TranscribeError('invalid_output', '语音转写结果无法解析。');
+      }
+      const usage = (body as { usage?: { input_tokens?: unknown; output_tokens?: unknown } } | null)?.usage;
+      inputTokens = tokenCount(usage?.input_tokens); outputTokens = tokenCount(usage?.output_tokens);
+      if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`);
+      const text = extractText(body);
+      if (text === null) throw new TranscribeError('invalid_output', '语音转写结果里没有文字。');
+      return text;
+    } catch (error) {
+      errorCode = signal?.aborted ? 'cancelled' : timeout.aborted ? 'timeout'
+        : httpStatus === 429 ? 'rate_limited' : error instanceof TranscribeError ? error.kind : 'provider_error';
       if (timeout.aborted) throw new TranscribeError('timeout', '语音转写超时。');
+      if (error instanceof TranscribeError) throw error;
       throw new TranscribeError('provider_error', '暂时连不上语音转写服务。');
+    } finally {
+      recordAiUsage({ id: crypto.randomUUID(), startedAt: new Date(started).toISOString(), operation: 'asr',
+        model: this.options.model, provider: 'bailian', source: 'live', status: errorCode ? 'failed' : 'succeeded',
+        inputTokens, outputTokens, durationMs: Date.now() - started, httpStatus, errorCode });
     }
-    if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`);
-    let body: unknown;
-    try { body = await response.json(); } catch { throw new TranscribeError('invalid_output', '语音转写结果无法解析。'); }
-    const text = extractText(body);
-    if (text === null) throw new TranscribeError('invalid_output', '语音转写结果里没有文字。');
-    return text;
   }
 }
 

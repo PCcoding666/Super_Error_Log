@@ -7,28 +7,30 @@
  * - 转发：其余 /s/* 按会话找到学生，流式代理到该学生的独立 worker 进程。
  *   - 禁止旧 /s/pair（绕过新登录的口子）与任何含编码/穿越字符的路径，绝不转发到 /v1 /v2。
  *   - 请求头白名单重建：过滤用户带来的 sel_device、authorization 与转发头；注入只有父进程知道的内部
- *     sel_device 令牌与真实 IP（父进程可信 Caddy 规则）。原始 Host 保留。
- *   - 响应 Set-Cookie 只放行业务 cookie（sel_consent/sel_photos/sel_skip/sel_a2hs），
+ *     sel_device 令牌、真实 IP 与账号身份标签 x-sel-internal-account-role（只是元数据，来自注册表，
+ *     浏览器带来的同名头一律丢弃）。原始 Host 保留。
+ *   - 响应 Set-Cookie 只放行业务 cookie（见 BUSINESS_COOKIES），
  *     绝不把内部 sel_device 或 sel_student 发给浏览器；含学生数据的响应一律 no-store。
  *   - 请求体流式转发（不解析 multipart）；有限超时；客户端断连取消上游请求（POST 不自动重放）。
  */
 import http from 'node:http';
+import crypto from 'node:crypto';
 import express, { Router, type Request, type Response } from 'express';
+import { isAccountRole } from './accountRole.js';
 import { RegistryError, StudentRegistry, resolveStudentHostDir } from './registry.js';
 import { StudentWorkerPool, WorkerStartError } from './workers.js';
-import { CLIENT_SCRIPT, SERVICE_WORKER, STYLES, iconPng, manifest } from '../web/assets.js';
-import { OfflinePage } from '../web/views/today.js';
+import { registerStaticAssets } from '../web/staticAssets.js';
 import { COOKIE, clearCookie, readCookies, setCookie } from '../web/session.js';
 import { TRAIL_COOKIE } from '../web/trail.js';
 import type { RateLimiter } from '../mobile/rateLimit.js';
 import { sendHtml } from '../views/render.js';
-import { HostErrorPage, LoginPage } from './loginView.js';
+import { HostErrorPage, LoginPage, RegistrationPage, RegistrationCompletePage } from './loginView.js';
 
 /** 前台会话 cookie（Path=/s）；与学生 worker 内部的 sel_device 设备令牌完全分开。 */
 export const SESSION_COOKIE = 'sel_student';
 
 /** 允许在浏览器与 worker 之间来回的业务 cookie（不含 sel_device / sel_student）。 */
-const BUSINESS_COOKIES: ReadonlySet<string> = new Set([COOKIE.consent, COOKIE.photos, COOKIE.skip, COOKIE.a2hs, TRAIL_COOKIE]);
+const BUSINESS_COOKIES: ReadonlySet<string> = new Set([COOKIE.consent, COOKIE.photos, COOKIE.skip, COOKIE.a2hs, COOKIE.itemsSubject, TRAIL_COOKIE]);
 
 const SECURITY_HEADERS: Record<string, string> = {
   'content-security-policy': "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
@@ -96,7 +98,7 @@ function safeRelativeUrl(rawUrl: string): string | null {
   if (!pathname.startsWith('/')) return null;
   if (pathname.includes('%') || pathname.includes('\\') || pathname.includes('..') || pathname.includes('\0')) return null;
   if (pathname === '/pair' || pathname.startsWith('/pair/')) return null;
-  if (pathname === '/login' || pathname === '/logout') return null;
+  if (/^\/(?:login|logout|register)\/?$/i.test(pathname)) return null;
   return rawUrl;
 }
 
@@ -125,13 +127,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   const registry = options.registry ?? StudentRegistry.open(options.hostDir ?? resolveStudentHostDir());
   const pool = options.pool ?? new StudentWorkerPool({ dirFor: studentId => registry.studentDir(studentId) });
   const throttle = new LoginThrottle();
+  const registrationThrottle = new LoginThrottle();
   let built: Router | null = null;
 
-  // 重启恢复：父进程重启后预热已注册学生的 worker（识别/打印的 pending 任务由 worker 启动时的恢复扫描续做）。
-  // 每个空间独立拉起，单个失败不影响其他；失败的空间等学生下次打开时还会重拉。
-  for (const student of registry.listStudents()) {
-    void pool.ensure(student.studentId).catch(() => undefined);
-  }
+  // 不在启动时为每个已注册学生拉起进程。第一次打开再 fork；空闲后由进程池退出。
+  // 未完成的识别和打印留在该学生自己的目录里，下次启动时的恢复扫描会续做。
 
   const buildRouter = (deps: StudentHostGatewayDeps): Router => {
     const r = Router();
@@ -141,25 +141,42 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
 
     r.use((_request, response, next) => {
       for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.setHeader(name, value);
-      // 网关直出的页面/资源也不进 HTTP 缓存（静态壳由 Service Worker 显式缓存，不靠 HTTP 缓存）。
+      // 默认禁止缓存；公开静态壳由共享注册函数单独设置缓存策略。
       response.setHeader('cache-control', 'private, no-store');
       next();
     });
 
     // ---------- 公开资源（无学生数据；与 worker 同一份静态壳） ----------
-    r.get('/manifest.webmanifest', (_request, response) => { response.type('application/manifest+json').send(JSON.stringify(manifest())); });
-    r.get('/sw.js', (_request, response) => { response.type('text/javascript').send(SERVICE_WORKER); });
-    r.get('/assets/app.css', (_request, response) => { response.type('text/css').send(STYLES); });
-    r.get('/assets/app.js', (_request, response) => { response.type('text/javascript').send(CLIENT_SCRIPT); });
-    const icon = (size: number, maskable = false) => async (_request: Request, response: Response): Promise<void> => {
-      response.type('image/png').send(await iconPng(size, maskable));
-    };
-    r.get('/assets/icon-192.png', icon(192));
-    r.get('/assets/icon-512.png', icon(512));
-    r.get('/assets/icon-maskable-512.png', icon(512, true));
-    r.get('/assets/apple-touch-icon.png', icon(180));
-    r.get('/offline', (_request, response) => { sendHtml(response, OfflinePage()); });
+    registerStaticAssets(r);
     r.get('/login', (_request, response) => response.redirect(303, '/s/'));
+
+    // ---------- 公开注册（只接受姓名和手机号，不能指定账号身份或学生 ID） ----------
+    r.get('/register', (_request, response) => sendHtml(response, RegistrationPage({})));
+    r.post('/register', form, (request, response) => {
+      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      const ip = deps.ipOf(request);
+      const blocked = registrationThrottle.blockedSeconds(ip);
+      if (blocked > 0) {
+        response.setHeader('retry-after', String(blocked));
+        response.status(429);
+        sendHtml(response, RegistrationPage({ retryAfterSeconds: blocked }));
+        return;
+      }
+      // 成功也计数；注册与登录使用独立额度，填错注册资料不会锁住已有账号登录。
+      registrationThrottle.record(ip);
+      const name = typeof request.body?.name === 'string' ? request.body.name : '';
+      const phone = typeof request.body?.phone === 'string' ? request.body.phone : '';
+      try {
+        const registration = registry.registerStudent(name, phone);
+        response.status(201);
+        response.setHeader('referrer-policy', 'no-referrer');
+        sendHtml(response, RegistrationCompletePage(registration));
+      } catch (error) {
+        if (!(error instanceof RegistryError)) throw error;
+        response.status(error.code === 'capacity_full' ? 503 : 400);
+        sendHtml(response, RegistrationPage({ error: error.message }));
+      }
+    });
 
     // ---------- 登录（兑换邀请码） ----------
     r.post('/login', form, (request, response) => {
@@ -239,6 +256,12 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         return;
       }
       response.locals.studentId = session.studentId;
+      // Bind a page's recording to this browser session without exposing the bearer token.
+      response.locals.voiceContext = crypto.createHash('sha256').update(token!).digest('hex');
+      // 账号身份标签：每请求从注册表现读，set-role 后下一个请求即生效，不用重新登录/重启。
+      // 只是元数据，不参与鉴权；浏览器/查询串/表单里的任何「role」都不会被采信。
+      response.locals.accountRole = registry.getAccountRole(session.studentId);
+      registry.recordActivity(session.studentId);
       next();
     });
 
@@ -247,24 +270,55 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       const studentId = String(response.locals.studentId);
       // 业务 POST 的同源校验在进 worker 之前完成（被拒不触达 worker）。
       if (request.method === 'POST' && isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      // Express routes accept case differences and a trailing slash. Check the same variants.
+      if (request.method === 'POST' && /^\/voice\/?$/i.test(request.path)) {
+        const context = request.headers['x-sel-voice-context'];
+        const expected = String(response.locals.voiceContext);
+        if (typeof context !== 'string' || !/^[0-9a-f]{64}$/.test(context)
+          || !crypto.timingSafeEqual(Buffer.from(context), Buffer.from(expected))) {
+          response.status(409).json({ error: { code: 'voice_context_mismatch', message: '登录状态已改变，请刷新页面后重新录音。' } });
+          return;
+        }
+      }
       const relUrl = safeRelativeUrl(request.url);
       if (relUrl === null) { response.status(404).type('text/plain').send('not found'); return; }
-      void proxyToWorker(request, response, studentId, relUrl, deps);
+      void proxyToWorker(request, response, studentId, relUrl, deps).catch(() => {
+        if (!response.headersSent) response.status(503).type('text/plain').send('暂时进不去');
+      });
     });
 
     return r;
   };
 
   const proxyToWorker = async (request: Request, response: Response, studentId: string, relUrl: string, deps: StudentHostGatewayDeps): Promise<void> => {
+    let retained = false;
+    const releaseWorker = (): void => {
+      if (!retained) return;
+      retained = false;
+      pool.release(studentId);
+    };
+    const failClosed = (error: unknown): void => {
+      releaseWorker();
+      const capacity = error instanceof WorkerStartError && error.reason === 'capacity';
+      const detail = capacity
+        ? '现在同时打开的人比较多，等一两分钟再试。'
+        : error instanceof WorkerStartError ? '你的学习空间正在准备中，等半分钟再试。' : '服务器暂时没准备好，过一会儿再试。';
+      if (!response.headersSent) {
+        if (capacity) response.setHeader('retry-after', '60');
+        response.status(503);
+        sendHtml(response, HostErrorPage({ title: capacity ? '人有点多' : '暂时进不去', detail }));
+      } else response.destroy();
+    };
     let endpoint;
     try {
+      pool.retain(studentId);
+      retained = true;
       endpoint = await pool.ensure(studentId);
     } catch (error) {
-      const detail = error instanceof WorkerStartError ? '你的学习空间正在准备中，等半分钟再试。' : '服务器暂时没准备好，过一会儿再试。';
-      if (!response.headersSent) { response.status(503); sendHtml(response, HostErrorPage({ title: '暂时进不去', detail })); }
+      failClosed(error);
       return;
     }
-    if (response.writableEnded || request.destroyed) return;
+    if (response.writableEnded || request.destroyed) { releaseWorker(); return; }
 
     // 请求头白名单重建：用户带来的 sel_device / authorization / 转发头一律丢弃。
     const headers: Record<string, string> = {
@@ -281,6 +335,15 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     if (typeof request.headers['user-agent'] === 'string') headers['user-agent'] = request.headers['user-agent'];
     if (typeof request.headers['content-type'] === 'string') headers['content-type'] = request.headers['content-type'];
     if (typeof request.headers['content-length'] === 'string') headers['content-length'] = request.headers['content-length'];
+    if (request.headers['x-sel-poll'] === '1') headers['x-sel-poll'] = '1';
+    // Never forward a client-supplied internal context; only the authenticated gateway creates it.
+    // Form POSTs can render a page again after validation errors, including its VoiceBox.
+    if ((request.method === 'GET' || request.method === 'POST') && !/^\/voice\/?$/i.test(request.path)) {
+      headers['x-sel-internal-voice-context'] = String(response.locals.voiceContext);
+    }
+    // 账号身份标签：只由父进程按注册表下发（上面头白名单重建时浏览器带来的同名头已被丢弃）。
+    const accountRole = response.locals.accountRole;
+    if (isAccountRole(accountRole)) headers['x-sel-internal-account-role'] = accountRole;
     const clientCookies = readCookies(request);
     const cookieParts = [...BUSINESS_COOKIES]
       .filter(name => clientCookies[name] !== undefined)
@@ -312,8 +375,10 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         upstreamResponse.pipe(response);
       },
     );
+    upstream.on('close', releaseWorker);
     upstream.on('timeout', () => upstream.destroy(new Error('学生空间响应超时')));
     upstream.on('error', () => {
+      releaseWorker();
       if (!response.headersSent) { response.status(502); sendHtml(response, HostErrorPage({ title: '暂时连不上', detail: '你的学习空间刚断了一下，稍等再试。' })); return; }
       response.destroy();
     });

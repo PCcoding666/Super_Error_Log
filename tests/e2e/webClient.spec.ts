@@ -6,13 +6,14 @@
  * 系统相机 / 相册（选一张）、选题页与录结果页上的勾选（页面内容本身）。
  * 周末 B：把记录整体往前挪 7 天（= 过了一周），先拍、再录上周练习纸的结果、勾没批改的页、选题、
  * 用语音（Chromium 的假麦克风 → mock 转写）说一道为什么错，打印，回到今天。
+ * 文件最后是 quality round 2 的行为：局部轮询、关掉脚本时的 meta refresh、减少动态效果、录音反馈、服务器忙页、选项断行。
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import { PDFDocument } from 'pdf-lib';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Browser, type BrowserContextOptions, type Page } from '@playwright/test';
 
 const WEB = 'http://127.0.0.1:3196';
 const CONTROL = 'http://127.0.0.1:3197';
@@ -62,263 +63,572 @@ async function trailLines(request: import('@playwright/test').APIRequestContext)
   return rows.map(row => `${row.kind} ${row.route}#${row.action}`);
 }
 
+/**
+ * 整段流程里的页面报错与控制台 error（含未处理的 promise 拒绝，例如跨文档过渡被跳过时的 AbortError）。
+ * 返回一个数组，流程走完断言它是空的；每条带上当时的路由模板，方便定位。
+ */
+function collectErrors(page: Page): string[] {
+  const errors: string[] = [];
+  const where = (): string => new URL(page.url()).pathname.replace(/pkt_[0-9a-f]+/, ':pid').replace(/itm_[0-9a-f]+/, ':itemId');
+  page.on('pageerror', error => errors.push(`pageerror @${where()} ${String(error).slice(0, 160)}`));
+  page.on('console', message => { if (message.type() === 'error') errors.push(`console @${where()} ${message.text().slice(0, 160)}`); });
+  return errors;
+}
+
 async function stubPrint(page: Page): Promise<void> {
   await page.addInitScript(() => {
     window.print = () => { window.dispatchEvent(new Event('afterprint')); };
   });
 }
 
-test('周末 A：只按底部下一步按钮，从配对走到「这周的事做完了」（J7 网页版）', async ({ page, request }) => {
-  const { link } = await (await request.get(`${CONTROL}/pairing-link`)).json() as { link: string };
-  await stubPrint(page);
-
-  // 连接：打开配对链接 → 确认页 → 点一下连接。
-  await page.goto(link.replace('https://study.pccoding666.com', WEB));
-  await next(page, '连接这台手机');
-  await expect(page.getByTestId('flash-ok')).toHaveText('连上了 ✓');
-  await expect(page.getByTestId('install-hint')).toBeVisible();
-
-  // 第 1 步：拍第一页（第一次上传前先看说明）。
-  await expect(page.getByTestId('today-header')).toHaveText('今天大约 13 分钟，一共 5 步');
-  await expect(page.getByTestId('next-step-caption')).toHaveText('第 1 步，共 5 步 · 大约 2 分钟');
-  await expect(secondary(page, 'skipShoot')).toHaveText('这周没发卷子，跳过');
-  await next(page, '拍第一页');
-  await expect(page.getByTestId('consent')).toContainText('照片上可能有你的名字和字迹');
-  await next(page, '同意，上传');
-  await expect(page.locator('#camera-input')).toHaveAttribute('capture', 'environment');
-  await expect(page.locator('#camera-input')).toHaveAttribute('accept', 'image/*');
-  await shoot(page, await synthetic('#f2cfc6', 900), 'page-1.jpg');
-  await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张', { timeout: 20_000 });
-
-  // 第 2 步：AI 找题（等待时主按钮不可点）→ 找完了下一步自己变成第 3 步。
-  await next(page, '拍完了，下一步');
-  await expect(page).toHaveURL(/\/s\/photos$/);
-  await waitForPrimary(page, '下一步：选这周要练的题');
-  await expect(page.getByTestId('photo-row-1')).toContainText('找到 3 道有红叉的题');
+test('三栏：手机看题、跳过、直接核对、恢复进度与可选打印', async ({browser}) => {
+  const page = await pairedPage(browser);
+  const errors = collectErrors(page);
+  await expect(page.getByRole('heading', {name:'错题本',exact:true})).toBeVisible();
+  await expect(page.getByTestId('root-tabs')).toContainText('错题录入');
+  await upload(page,'#efb7b2');
+  await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
+  await page.goto(`${WEB}/s/choose`);
   await primary(page).click();
-
-  // 第 3 步：选题（推荐默认全选）。
-  await expect(page.getByTestId('next-step-caption')).toHaveText('第 3 步，共 5 步 · 大约 1 分钟');
-  await expect(page.getByTestId('choose-row')).toHaveCount(3);
-  await next(page, '就练这 3 道');
-
-  // 第 4 步：说说为什么错 → 点下一步按钮旁边的「跳过，直接打印」。
-  await expect(page.getByTestId('next-step-caption')).toHaveText('第 1 道，共 3 道');
-  await expect(secondary(page, 'skipWhy')).toHaveText('跳过，直接打印');
-  await secondary(page, 'skipWhy').click();
-
-  // 第 5 步：准备好后出现 A4 预览，下一步按钮是「打印」；打印后变成「打印好了，回到今天」。
-  await expect(page).toHaveURL(/\/s\/print\/pkt_/);
-  await waitForPrimary(page, '打印');
-  await expect(page.getByTestId('print-preview')).toBeVisible();
-  await expect(page.getByTestId('sheet')).toContainText('做完再看');
-  const sheetUrl = await page.getByTestId('sheet-link').getAttribute('href');
-  await primary(page).click();
-  await next(page, '打印好了，回到今天');
-
-  // 回到今天：这周的事做完了；没有主按钮，只留「没打出来？现在打印」。
-  await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
-  await expect(page.getByTestId('today-done')).toContainText('下个周末打开错题本，录一下做的结果。');
-  await expect(page.getByTestId('next-step-caption')).toHaveText('下次打开：下个周末，录结果');
-  await expect(secondary(page, 'print')).toHaveText('没打出来？现在打印');
-  await expect(primary(page)).toHaveCount(0);
-
-  // 练习纸用浏览器打印成 A4 PDF：封面、题目页、答案页。
-  await page.goto(`${WEB}${sheetUrl}`);
-  await page.emulateMedia({ media: 'print' });
-  const pdf = await PDFDocument.load(await page.pdf({ format: 'A4', printBackground: true }));
-  expect(pdf.getPageCount()).toBeGreaterThanOrEqual(3);
-  const { width, height } = pdf.getPage(0).getSize();
-  expect(Math.abs(width - 595.3)).toBeLessThan(2);   // A4 = 210 × 297 mm
-  expect(Math.abs(height - 841.9)).toBeLessThan(2);
-  await page.emulateMedia({ media: 'screen' });
-
-  // 没联网 / 服务器连不上：Service Worker 只缓存了外壳，导航失败时给离线页（不含任何学生数据）。
-  await page.goto(`${WEB}/s/`);
-  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
-  await page.reload();
-  await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
-  await page.context().setOffline(true);
-  await page.goto(`${WEB}/s/items`);
-  // Playwright 的断网模拟不改 navigator.onLine，所以这里是「连不上服务器」那一版（真断网时脚本换成「没联网」）。
-  await expect(page.getByTestId('offline-title')).toHaveText(/没联网|连不上服务器/);
-  await expect(page.locator('html')).toHaveClass(/\bjs\b/);
-  await expect(primary(page)).toHaveText('再试一次');
-  const cached = await page.evaluate(async () => {
-    const keys = await caches.keys();
-    const urls = (await Promise.all(keys.map(async key => (await (await caches.open(key)).keys()).map(r => new URL(r.url).pathname)))).flat();
-    return urls.sort();
-  });
-  expect(cached).toEqual(['/s/assets/app.css', '/s/assets/app.js', '/s/assets/icon-192.png', '/s/offline']);
-  await page.context().setOffline(false);
-
-  // 互动记录：页面脚本记下的点按（跳页的随下一个请求带来，拍照 / 打印这类不跳页的立刻发 HEAD）和服务器上判定的看页、提交、跳过。
-  await expect.poll(async () => (await trailLines(request)).filter(line => line.startsWith('tap ')).length).toBeGreaterThan(5);
-  const lines = await trailLines(request);
-  expect(lines).toEqual(expect.arrayContaining([
-    'tap /s/pair#primary.pair',
-    'tap /s/#primary.capture',
-    'tap /s/capture#primary.consent',
-    'tap /s/capture#primary.capture',
-    'tap /s/why/:pid#secondary.skipWhy',
-    'tap /s/print/:pid#primary.print',
-    'view /s/#open',
-    'view /s/photos#open',
-    'submit /s/consent#submit',
-    'submit /s/choose#submit',
-    'skip /s/skip#why',
-  ]));
-  expect(lines.join('\n')).not.toMatch(/pkt_|itm_[0-9a-f]|code=/);
-
-  await page.context().storageState({ path: STATE });
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  const practice = page.url();
+  await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await expect(page.getByTestId('practice-answer')).toHaveCount(0);
+  const first = await page.getByTestId('practice-question').getAttribute('data-item');
+  await page.getByRole('button',{name:'跳过，之后再做'}).click();
+  await expect(page.getByTestId('practice-question')).not.toHaveAttribute('data-item',first!);
+  await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
+  await expect(page.getByRole('link',{name:'拍照上传作答',exact:true})).toBeVisible();
+  await page.getByRole('link',{name:'不上传，直接核对'}).click();
+  await expect(page.getByTestId('practice-answer')).toBeVisible();
+  await page.getByRole('button',{name:'做对了',exact:true}).click();
+  await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
+  await page.goto(`${WEB}/s/practices`);
+  await page.getByTestId('practice-latest').getByRole('link',{name:'查看题目',exact:true}).click();
+  await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
+  await page.getByRole('link',{name:'打印练习',exact:true}).click();
+  await expect(page.locator('.sheet .answers')).toHaveCount(0);
+  await page.getByLabel('附答案与解析').check();
+  await page.getByRole('button',{name:'更新打印预览'}).click();
+  await expect(page.locator('.sheet .answers')).toHaveCount(1);
+  await page.getByRole('link',{name:'记录纸上练习结果'}).click();
+  await expect(page.getByRole('heading',{name:'记录纸上练习结果'})).toBeVisible();
+  await page.getByRole('button',{name:'做错了',exact:true}).click();
+  await page.goto(practice);
+  await expect(page.getByText(/已记录 2 道结果/)).toBeVisible();
+  expect(errors).toEqual([]);
+  await page.context().storageState({path:STATE});
+  await page.context().close();
 });
 
-test.describe('下个周末', () => {
-  test.use({ storageState: STATE });
+test('手写拍照为可选步骤，上传后可回看照片和识别文字', async ({browser},testInfo) => {
+  const page = await pairedPage(browser);
+  await upload(page,'#f3b0b4');
+  await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
+  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
+  await page.getByRole('link',{name:'拍照上传作答',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'上传手写作答',exact:true})).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath('handwriting-upload.png'),fullPage:true});
+  await page.locator('#camera-input').setInputFiles({name:'broken.jpg',mimeType:'image/jpeg',buffer:Buffer.from('broken image')});
+  await expect(page.locator('[data-upload-message]')).toContainText('读不了');
+  await page.locator('#camera-input').setInputFiles({name:'work.jpg',mimeType:'image/jpeg',buffer:await synthetic('#fefefe',900)});
+  await expect(page.getByRole('heading',{name:'手写作答'})).toBeVisible({timeout:20000});
+  await expect(page.getByAltText('本次手写作答')).toBeVisible();
+  await expect(page.getByText('合成测试作答：x = 1')).toBeVisible();
+  await page.getByRole('button',{name:'做对了',exact:true}).click();
+  await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
+  await page.context().close();
+});
 
-  test('周末 B：先拍新卷子，趁 AI 找题录上周的结果，再勾、选、用语音说一道、打印', async ({ page, request }) => {
-    expect((await request.post(`${CONTROL}/time-travel?days=7`)).ok()).toBe(true);
-    await stubPrint(page);
+test('无脚本：三栏入口、选题、逐题核对和打印选项仍然可用', async ({browser}) => {
+  const page = await pairedPage(browser,{javaScriptEnabled:false});
+  await page.getByTestId('tab-capture').click();
+  await page.locator('#camera-input').setInputFiles({name:'plain.jpg',mimeType:'image/jpeg',buffer:await synthetic('#f5acaf',920)});
+  await page.getByRole('button',{name:'上传这张'}).click();
+  await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
+  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
+  await page.getByRole('link',{name:'不上传，直接核对'}).click();
+  await page.getByRole('button',{name:'做错了',exact:true}).click();
+  await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
+  await page.context().close();
+});
+
+test('主动推荐到纸上作答，多张拍照、关联题号和一次确认；手机和 iPad 均可用', async ({browser},testInfo)=>{
+  const page=await pairedPage(browser);
+  const errors=collectErrors(page);
+  await upload(page,'#f1acbc');
+  await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/,{timeout:30000});
+  // Previous tests leave tasks pending. Pause them explicitly, keeping their results intact.
+  await page.goto(`${WEB}/s/practices`);
+  while(await page.getByTestId('practice-latest').count()){
+    await page.getByText('调整这次练习',{exact:true}).click();
+    await page.getByRole('button',{name:'稍后再做',exact:true}).click();
+  }
+  await expect(page.getByTestId('practice-recommendation')).toBeVisible();
+  await page.getByRole('button',{name:/就练这 \d 道/}).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  const practice=page.url();
+  await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await expect(page.getByText('在白纸上写题号和过程，做完后拍照交到这里。')).toBeVisible();
+  await page.getByRole('link',{name:'拍照交练习',exact:true}).click();
+  await expect(page.locator('#library-input')).toHaveAttribute('multiple','');
+  const image=await synthetic('#fefefe',900);
+  await page.locator('#library-input').setInputFiles([{name:'page1.jpg',mimeType:'image/jpeg',buffer:image},{name:'page2.jpg',mimeType:'image/jpeg',buffer:image}]);
+  await expect(page.getByRole('heading',{name:'已保存 2 张'})).toBeVisible({timeout:20000});
+  await page.getByRole('button',{name:'照片交齐了，查看反馈'}).click();
+  await expect(page.getByRole('heading',{name:'待你确认',exact:true})).toBeVisible({timeout:20000});
+  await expect(page.getByText('还没有记录作答结果。',{exact:false})).toBeVisible();
+  await page.getByLabel('对应题号').selectOption({label:'第 1 题'});
+  await page.getByRole('button',{name:'关联这道题'}).click();
+  await expect(page.getByRole('heading',{name:'这段作答还没确定题号'})).toHaveCount(0);
+  await page.getByLabel('这次是否用过提示或参考帮助').selectOption('independent');
+  await page.getByTestId('submission-question').first().getByLabel('确认结果').selectOption('correct');
+  for(const width of [390,820,320]){
+    await page.setViewportSize({width,height:1000});
+    if(width===320)await page.evaluate(()=>document.documentElement.style.fontSize='200%');
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({path:testInfo.outputPath(`practice-feedback-${width}.png`),fullPage:true});
+  }
+  await page.getByRole('button',{name:'确认以上结果'}).click();
+  await expect(page.getByRole('heading',{name:'已记录 1 道结果'})).toBeVisible();
+  await page.goto(`${WEB}/s/practices`);
+  await expect(page.getByTestId('practice-latest')).toContainText('已记录 1 道结果');
+  await page.getByRole('link',{name:'查看待确认结果',exact:true}).click();
+  await expect(page).toHaveURL(practice+'/feedback');
+  expect(errors).toEqual([]);await page.context().close();
+});
+
+test('整份作答部分上传失败只补传失败照片，关闭脚本仍可继续交下一页',async({browser})=>{
+  const page=await pairedPage(browser);
+  await upload(page,'#eebac9');await page.goto(`${WEB}/s/photos`);
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/,{timeout:30000});
+  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await page.waitForURL(/\/s\/practice\/pkt_/);
+  const practice=page.url();await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
+  await page.getByRole('link',{name:'拍照交练习',exact:true}).click();
+  const keys:string[]=[];
+  await page.route('**/s/practice/*/submission',async route=>{
+    keys.push(/name="key"\r\n\r\n([^\r]+)/.exec(route.request().postData()??'')?.[1]??'');
+    if(keys.length===2)await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{message:'合成网络故障，请重试'}})});
+    else await route.continue();
+  });
+  const image=await synthetic('#fefefe',900);
+  await page.locator('#library-input').setInputFiles([{name:'first.jpg',mimeType:'image/jpeg',buffer:image},{name:'second.jpg',mimeType:'image/jpeg',buffer:image}]);
+  await expect(page.locator('[data-upload-message]')).toContainText('1 张失败');
+  await expect(page.locator('[data-upload-state="succeeded"]')).toHaveCount(1);
+  await page.getByRole('button',{name:'只重试失败照片（1 张）'}).click();
+  await expect(page.getByRole('heading',{name:'已保存 2 张'})).toBeVisible({timeout:20000});
+  expect(keys).toHaveLength(3);expect(keys[0]).not.toBe('');expect(keys[1]).toBe(keys[2]);expect(keys[0]).not.toBe(keys[1]);
+  await page.context().close();
+  const plain=await pairedPage(browser,{javaScriptEnabled:false});
+  await plain.goto(practice+'/submit');
+  await plain.locator('#camera-input').setInputFiles({name:'third.jpg',mimeType:'image/jpeg',buffer:image});
+  await plain.getByRole('button',{name:'上传这张',exact:true}).click();
+  await expect(plain.getByRole('heading',{name:'已保存 3 张'})).toBeVisible();
+  await plain.context().close();
+});
+
+const DEVICE: BrowserContextOptions = {
+  viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: IPHONE_SAFARI, locale: 'zh-CN', permissions: ['microphone'],
+};
+
+async function fault(query: string): Promise<void> {
+  const response = await fetch(`${CONTROL}/fault?${query}`, { method: 'POST' });
+  if (!response.ok) throw new Error(`fault ${query}: ${response.status} ${await response.text()}`);
+}
+
+async function allTrail(): Promise<string[]> {
+  const rows = await (await fetch(`${CONTROL}/trail`)).json() as Array<{ kind: string; route: string; action: string }>;
+  return rows.map(row => `${row.kind} ${row.route}#${row.action}`);
+}
+const count = (lines: string[], line: string): number => lines.filter(entry => entry === line).length;
+
+/** 新开一台「手机」并连上（点配对链接 → 连接这台手机）；同意过上传说明。 */
+async function pairedPage(browser: Browser, options: BrowserContextOptions = {}): Promise<Page> {
+  const context = await browser.newContext({ ...DEVICE, ...options });
+  const page = await context.newPage();
+  const { link } = await (await fetch(`${CONTROL}/pairing-link`)).json() as { link: string };
+  await page.goto(link.replace('https://study.pccoding666.com', WEB));
+  await primary(page).click();
+  await page.waitForURL(/\/s\/\?paired=1$/);
+  const consent = await page.request.post(`${WEB}/s/consent`, { headers: { origin: WEB }, maxRedirects: 0 });
+  expect(consent.status()).toBe(303);
+  return page;
+}
+
+/** 拍一张（开着脚本：选好就上传）。返回这一周现在一共几张。 */
+async function upload(page: Page, color: string): Promise<number> {
+  await page.goto(`${WEB}/s/capture`);
+  const before = await page.getByTestId('photo-tile').count();
+  await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic(color, 900 + before) });
+  await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1, { timeout: 20_000 });
+  // A tile is appended before the upload batch redirects. Wait for the fresh form
+  // so the caller's next navigation cannot race with location.replace('/s/capture').
+  await expect(page.locator('#upload-form')).not.toHaveAttribute('data-upload-pending', { timeout: 20_000 });
+  await page.waitForLoadState('load');
+  return before + 1;
+}
+
+test('拍照页识别结束后自动移除正在找题提示', async ({ browser }) => {
+  const page = await pairedPage(browser);
+  await fault('vision=hold');
+  try {
+    const number = await upload(page, '#f0c1b8');
+    const status = page.locator('[data-live="capture-status"]');
+    await expect(status).toHaveText('照片已收到，正在找题。');
+    await fault('vision=release');
+    await expect(status).toBeEmpty({ timeout: 15000 });
+    await expect(page.getByTestId('photo-tile').nth(number - 1)).toContainText('找好了');
+  } finally {
+    await fault('vision=release');
+    await page.context().close();
+  }
+});
+
+test('等 AI 时局部轮询：只换状态区域（不整页刷新、标题和页面上的东西都还是原来那个），状态变了只记一次 update', async ({ browser }) => {
+  const page = await pairedPage(browser);
+  await fault('vision=hold');
+  const number = await upload(page, '#f2cfc6');
+  const row = page.getByTestId(`photo-row-${number}`);
+  const navigations: string[] = [];
+  let polls = 0;
+  page.on('request', request => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url());
+    if (request.headers()['x-sel-poll'] === '1') polls += 1;
+  });
+  await page.goto(`${WEB}/s/photos`);
+  await expect(row).toContainText('照片已收到，正在找题。');
+  await expect(page.locator('body')).toHaveAttribute('data-poll', '3');
+  await expect(page.getByTestId('wait-line')).toContainText(/已经等了 \d+ 秒 · 找好了这一页会自己更新/);
+  // Start after navigation has settled. Chromium/SW can issue more than one
+  // initial navigation request; the invariant here is no new page-view writes
+  // during polling, not how many requests opened the page in the first place.
+  const before = await allTrail();
+  expect(before).toContain('view /s/photos#open');
+  // 打上记号：整页刷新的话，这些记号都会没了。
+  await page.evaluate(() => { (window as unknown as { __mark: number }).__mark = 1; (document.querySelector('h1') as unknown as { __mark: number }).__mark = 1; });
+  const loadedAt = navigations.length;
+  // 等两轮轮询：状态没变，什么都不换。
+  await expect.poll(() => polls, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
+  const waited = await page.getByTestId('wait-line').innerText();
+  await fault('vision=release');
+  await expect(row).toContainText('已新增 3 道错题', { timeout: 30_000 });
+  await expect(page.locator('body')).not.toHaveAttribute('data-poll', /.*/, { timeout: 15_000 });
+  expect(await page.evaluate(() => [(window as unknown as { __mark?: number }).__mark, (document.querySelector('h1') as unknown as { __mark?: number }).__mark])).toEqual([1, 1]);
+  expect(navigations.length - loadedAt).toBe(0);
+  expect(waited).toMatch(/已经等了 \d+ 秒/);
+  await expect(page.getByTestId('wait-line')).toHaveCount(0);
+  await expect(page.locator('[data-announcer]')).not.toBeEmpty();
+  // 互动记录：加载完成后轮询不再记看页；换了几次就记几条 update，比轮询次数少；没有整页刷新。
+  await expect.poll(async () => count(await allTrail(), 'view /s/photos#update') - count(before, 'view /s/photos#update')).toBeGreaterThanOrEqual(1);
+  const after = await allTrail();
+  const updates = count(after, 'view /s/photos#update') - count(before, 'view /s/photos#update');
+  expect(count(after, 'view /s/photos#open')).toBe(count(before, 'view /s/photos#open'));
+  expect(updates).toBeLessThan(polls);
+  expect(count(after, 'view /s/photos#refresh')).toBe(count(before, 'view /s/photos#refresh'));
+  await page.context().close();
+});
+
+test('轮询遇到 503 和挂起仍能恢复；待重试的照片和当前页面不丢', async ({ browser }) => {
+  test.setTimeout(90_000);
+  const page = await pairedPage(browser);
+  await fault('vision=hold');
+  try {
+    await upload(page, '#d8e3c9');
+    let failedUpload = false;
+    await page.route('**/s/capture', async route => {
+      if (route.request().method() === 'POST' && !failedUpload) { failedUpload = true; await route.abort('connectionfailed'); }
+      else await route.continue();
+    });
+    await page.locator('#library-input').setInputFiles({ name: 'retry.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#b0d3e0', 800) });
+    await expect(page.locator('[data-upload-retry]')).toBeVisible();
+    await page.evaluate(() => { (window as unknown as { marker: string }).marker = 'keep-upload'; });
+    let polls = 0;
+    await page.route('**/s/capture', async route => {
+      if (route.request().headers()['x-sel-poll'] !== '1') { await route.fallback(); return; }
+      polls += 1;
+      if (polls === 1) await route.fulfill({ status: 503, body: 'temporary' });
+      else if (polls === 2) { /* no headers/body: client must time out */ }
+      else await route.continue();
+    });
+    await expect.poll(() => polls, { timeout: 55_000 }).toBeGreaterThanOrEqual(3);
+    expect(await page.evaluate(() => (window as unknown as { marker: string }).marker)).toBe('keep-upload');
+    await expect(page.locator('[data-upload-retry]')).toBeVisible();
+    const before = await page.getByTestId('photo-tile').count();
+    await page.locator('[data-upload-retry]').click();
+    await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1);
+  } finally { await fault('vision=release'); await page.context().close(); }
+});
+
+test.describe('关掉脚本（等 AI 的页面）', () => {
+  test('等 AI 的页面退回 <meta refresh>：自己整页刷新，找好了就不再刷新', async ({ browser }) => {
+    const page = await pairedPage(browser, { javaScriptEnabled: false });
+    await fault('vision=hold');
+    await page.goto(`${WEB}/s/capture`);
+    const before = await page.getByTestId('photo-tile').count();
+    await page.locator('#camera-input').setInputFiles({ name: 'page.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f0c8c0', 760 + before) });
+    await page.getByRole('button', { name: '上传这张' }).click();
+    await expect(page.getByTestId('photo-tile')).toHaveCount(before + 1);
+    const row = page.getByTestId(`photo-row-${before + 1}`);
+    let loads = 0;
+    page.on('load', () => { loads += 1; });
+    await page.goto(`${WEB}/s/photos`);
+    await expect(page.locator('meta[http-equiv=refresh]')).toHaveAttribute('content', '3');
+    await expect(row).toContainText('照片已收到，正在找题。');
+    await expect.poll(() => loads, { timeout: 12_000 }).toBeGreaterThanOrEqual(2);
+    await fault('vision=release');
+    await expect(row).toContainText('已新增 3 道错题', { timeout: 30_000 });
+    await expect(page.locator('meta[http-equiv=refresh]')).toHaveCount(0);
+    await page.context().close();
+  });
+});
+
+test('减少动态效果：样式里的动效、过渡全关，页间保持原生跳转；不减少时保留状态动效', async ({ browser }) => {
+  const probe = async (reducedMotion: 'reduce' | 'no-preference') => {
+    const page = await pairedPage(browser, { reducedMotion });
+    await page.addInitScript(() => {
+      addEventListener('pagereveal', event => { (window as unknown as { __vt: boolean }).__vt = Boolean((event as Event & { viewTransition?: unknown }).viewTransition); });
+    });
     await page.goto(`${WEB}/s/`);
+    const styles = await page.evaluate(() => {
+      const main = document.querySelector('main')!;
+      const make = (html: string): HTMLElement => { const box = document.createElement('div'); box.innerHTML = html; main.appendChild(box); return box.firstElementChild as HTMLElement; };
+      const rise = make('<p class="m-rise">x</p>');
+      const pop = make('<span class="m-pop tick">✓</span>');
+      const bar = make('<div class="progress"><i></i></div>').querySelector('i')!;
+      const meter = make('<span class="meter"><i></i></span>');
+      const read = (el: Element) => { const cs = getComputedStyle(el); return { animation: cs.animationName, duration: cs.animationDuration, transition: cs.transitionDuration, display: cs.display }; };
+      return { rise: read(rise), pop: read(pop), progress: read(bar), meter: read(meter) };
+    });
+    // 跨文档过渡：点「这周的错题」跳到下一页，看新的一页是不是带着过渡出来的。
+    await Promise.all([page.waitForURL(/\/s\/items$/), page.getByTestId('tab-items').click()]);
+    await page.waitForLoadState('load');
+    // pagereveal 在新的一页第一次画出来之前发生（有过渡时会晚于 load 一点），等它到。
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __vt?: boolean }).__vt ?? null), { timeout: 5_000 }).not.toBeNull();
+    const viewTransition = await page.evaluate(() => (window as unknown as { __vt?: boolean }).__vt ?? null);
+    await page.context().close();
+    return { ...styles, viewTransition };
+  };
+  const reduced = await probe('reduce');
+  expect(reduced.rise.animation).toBe('none');
+  expect(reduced.pop.animation).toBe('none');
+  expect(reduced.progress.transition).toBe('0s');
+  expect(reduced.meter.display).toBe('none');
+  expect(reduced.viewTransition).toBe(false);
+  const normal = await probe('no-preference');
+  expect(normal.rise).toMatchObject({ animation: 'rise', duration: '0.3s' });
+  expect(normal.pop).toMatchObject({ animation: 'pop', duration: '0.3s' });
+  expect(normal.progress.transition).toBe('0.3s');
+  expect(normal.meter.display).not.toBe('none');
+  expect(normal.viewTransition).toBe(false);
+});
 
-    await expect(page.getByTestId('today-header')).toHaveText('今天大约 16 分钟，一共 6 步');
-    await expect(page.getByTestId('today-step-record')).toContainText('录练习纸的结果');
-    await expect(page.getByTestId('next-step-caption')).toHaveText('第 1 步，共 6 步 · 大约 2 分钟');
-
-    // 拍一张没批改的答题卡页（同意过，不再问）。
-    await next(page, '拍第一页');
-    await expect(page).toHaveURL(/\/s\/capture$/);
-    await shoot(page, await synthetic('#c6cff2', 820), 'page-2.jpg');
-    await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张', { timeout: 20_000 });
-
-    // 「拍完了，下一步」去录上周练习纸的结果（第 2 步）。
-    await next(page, '拍完了，下一步');
-    await expect(page).toHaveURL(/\/s\/record\/pkt_/);
-    await expect(page.getByTestId('record-day')).toHaveCount(7);
-    await expect(page.locator('input[name=date]:checked')).toHaveCount(0);
-    await page.getByTestId('record-day').nth(3).click();
-    await next(page, '下一步');
-    await expect(page.getByTestId('next-step-caption')).toHaveText('第 1 道，共 3 道');
-    await page.getByTestId('completion-independent').click();
-    await page.getByTestId('correct-yes').click();
-    await next(page, '下一道');
-    await page.getByTestId('completion-hint1').click();
-    await page.getByTestId('correct-yes').click();
-    await next(page, '下一道');
-    await expect(page.getByTestId('correct-yes')).toBeHidden();
-    await page.getByTestId('completion-not_solved').click();
-    await next(page, '提交 3 道结果');
-
-    // 这次的结果：隔了几天独立做对 = 真会了；看提示、没做出来 = 下次再练。
-    await expect(page.getByTestId('results-head')).toHaveText('3 道里，独立做对 1 道');
-    await expect(page.locator('main')).toContainText('真会了 ✓（1 道）');
-    await expect(page.locator('main')).toContainText('下次再练（2 道）');
-    await waitForPrimary(page, '下一步：勾出做错的题');
+test.describe('说说为什么错：录音时的反馈，选项断行', () => {
+  test('开着麦克风：音量条在动、计时在走、按钮是「说完了」、底部主按钮先不能点；转写失败录音还在，「再转一次」用同一段；360/375/390 px 选项没有单字孤行', async ({ browser }) => {
+    const page = await pairedPage(browser);
+    // 模拟麦克风：一个 440 Hz 的正弦波（有音量），换掉浏览器的 getUserMedia。
+    await page.addInitScript(() => {
+      navigator.mediaDevices.getUserMedia = async () => {
+        const ac = new AudioContext();
+        const osc = ac.createOscillator();
+        const gain = ac.createGain();
+        gain.gain.value = 0.6;
+        osc.frequency.value = 440;
+        osc.connect(gain);
+        const destination = ac.createMediaStreamDestination();
+        gain.connect(destination);
+        osc.start();
+        return destination.stream;
+      };
+    });
+    await upload(page, '#efc4bc');
+    await page.goto(`${WEB}/s/photos`);
+    await expect(page.locator('body')).not.toHaveAttribute('data-poll', /.*/, { timeout: 30_000 });
+    await page.goto(`${WEB}/s/choose`);
+    await expect(primary(page)).toHaveText(/^就练这 \d 道$/);
     await primary(page).click();
-
-    // 勾出没批改的页上的 2 道。
-    await expect(page.getByTestId('pick-candidate')).toHaveCount(3);
-    await page.getByTestId('pick-candidate').nth(0).click();
-    await page.getByTestId('pick-candidate').nth(2).click();
-    await next(page, '把这 2 道加入错题本');
-    await expect(page).toHaveURL(/\/s\/photos$/);
-    await waitForPrimary(page, '下一步：选这周要练的题');
+    await page.waitForURL(/\/s\/practice\/pkt_[0-9a-f]+$/);
+    await page.goto(page.url().replace('/s/practice/', '/s/why/'));
     await primary(page).click();
-
-    // 选题：新勾的 2 道 + 上周没练会的。
-    const rows = await page.getByTestId('choose-row').count();
-    expect(rows).toBeGreaterThanOrEqual(2);
-    await next(page, /^就练这 \d 道$/);
-
-    // 说说为什么错：第一道用语音（假麦克风 → mock 转写放进文本框，他改完自己点「说完了」）。
-    await next(page, '开始');
-    await expect(page.getByTestId('ai-question')).toBeVisible();
+    await page.waitForURL(/\/s\/why\/pkt_[0-9a-f]+\/itm_[0-9a-f]+$/);
     await expect(page.getByTestId('voice')).toBeVisible();
+
     await page.getByTestId('voice-button').click();
-    await expect(page.getByTestId('voice-button')).toHaveText('正在听…再点一下结束');
-    await page.waitForTimeout(1200);
+    await expect(page.getByTestId('voice-button')).toHaveText('说完了');
+    await expect(page.getByTestId('voice-meter')).toBeVisible();
+    await expect(primary(page)).toHaveText('正在听你说…');
+    await expect(primary(page)).toBeDisabled();
+    await expect.poll(async () => Number(await page.getByTestId('voice-meter').getAttribute('data-level')), { timeout: 5_000 }).toBeGreaterThan(0);
+    await expect(page.getByTestId('voice-timer')).toHaveText(/^0:0[1-9]$/, { timeout: 5_000 });
     await page.getByTestId('voice-button').click();
     await expect(page.locator('#answer-text')).toHaveValue('我以为移项不用变号，就直接抄过去了。', { timeout: 15_000 });
     await expect(page.getByTestId('voice-note')).toHaveText('转好了，看一眼，不对就改');
-    await next(page, '说完了');
-    // mock 会再问一句：不回答，直接选。
-    await secondary(page, 'skipQuestion').click();
-    await expect(page.getByTestId('missing')).toHaveText('还差：有没有把握');
-    await expect(primary(page)).toBeDisabled();
-    await page.getByText('现在做应该会').click();
-    await expect(page.getByTestId('missing')).toHaveText('');
-    await primary(page).click();
-    // 其余几道：不回答，这道跳过。
-    await page.waitForURL(/\/s\/why\/pkt_[0-9a-f]+(\/itm_[0-9a-f]+)?$/);
-    for (let guard = 0; guard < 12 && /\/s\/why\/pkt_[0-9a-f]+\/itm_/.test(page.url()); guard += 1) {
-      const before = page.url();
-      const button = before.endsWith('/confirm') ? secondary(page, 'pass') : secondary(page, 'skipQuestion');
-      await Promise.all([page.waitForURL(url => url.toString() !== before), button.click()]);
+    await expect(page.getByTestId('voice-live')).toBeHidden();
+    await expect(primary(page)).toHaveText('说完了');
+    await expect(primary(page)).toBeEnabled();
+
+    // 转写失败：刚才那段录音留在页面里，「再转一次」用同一段，不用重新说。
+    await fault('asr=fail');
+    await page.getByTestId('voice-button').click();
+    await expect(page.getByTestId('voice-button')).toHaveText('说完了');
+    await page.waitForTimeout(1_200);
+    await page.getByTestId('voice-button').click();
+    await expect(page.getByTestId('voice-retry')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('voice-note')).toHaveText('这次没转成文字。刚才的录音还在：点「再转一次」，或者直接打字。');
+    await expect(primary(page)).toBeEnabled();
+    await fault('asr=ok');
+    let posts = 0;
+    page.on('request', request => { if (request.url().endsWith('/s/voice') && request.method() === 'POST') posts += 1; });
+    await page.getByTestId('voice-retry').click();
+    await expect(page.locator('#answer-text')).toHaveValue('我以为移项不用变号，就直接抄过去了。 我以为移项不用变号，就直接抄过去了。', { timeout: 15_000 });
+    expect(posts).toBe(1);
+    await expect(page.getByTestId('voice-retry')).toBeHidden();
+    // 互动记录：转写失败（client:voice_502）和「再转一次」的点按都记下了，只有路由模板和固定的键。
+    await expect.poll(async () => (await allTrail()).includes('tap /s/why/:pid/:itemId#content.voice-retry')).toBe(true);
+    expect(await allTrail()).toContain('error /s/why/:pid/:itemId#client:voice_502');
+
+    // 确认屏的选项（两列）：360 / 375 / 390 px 都没有单字孤行（「推理中间断 / 了」这类）。
+    await page.getByTestId('next-step-secondary-skipQuestion').click();
+    await page.waitForURL(/\/confirm$/);
+    for (const width of [360, 375, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.reload();
+      const orphans = await page.evaluate(() => {
+        const found: string[] = [];
+        for (const el of document.querySelectorAll('.choice > span, legend, .field-label, .btn, .caption')) {
+          if ((el as HTMLElement).offsetWidth < 2 || el.closest('.hidden')) continue;
+          const lines: Array<{ mid: number; text: string }> = [];
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode()) {
+            const node = walker.currentNode as Text;
+            for (let i = 0; i < node.data.length; i += 1) {
+              if (/\s/.test(node.data[i]!)) continue;
+              const range = document.createRange(); range.setStart(node, i); range.setEnd(node, i + 1);
+              const rect = range.getClientRects()[0]; if (!rect || rect.width === 0) continue;
+              const mid = rect.top + rect.height / 2;
+              const line = lines.find(entry => Math.abs(entry.mid - mid) < 6);
+              if (line) line.text += node.data[i]; else lines.push({ mid, text: node.data[i]! });
+            }
+          }
+          if (lines.length > 1 && lines.some(line => [...line.text].length === 1)) found.push(lines.map(line => line.text).join(' / '));
+        }
+        return found;
+      });
+      expect(orphans, `${width} px`).toEqual([]);
     }
-    await expect(page.getByTestId('why-done')).toContainText('说了 1 道');
-    await next(page, '下一步：打印练习纸');
-
-    await waitForPrimary(page, '打印');
-    await primary(page).click();
-    await next(page, '打印好了，回到今天');
-    await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
-    await expect(primary(page)).toHaveCount(0);
-
-    // 做完以后又拍了一张（门槛 G3）：「勾出做错的题」说明新题去了哪里，下一步是回到今天，不再带去选题。
-    await page.goto(`${WEB}/s/capture`);
-    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('add-page').click()]);
-    await chooser.setFiles({ name: 'page-3.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f0c8c0', 760) });
-    await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张', { timeout: 20_000 });
-    await next(page, '拍完了，下一步');
-    await expect(page).toHaveURL(/\/s\/photos$/);
-    await expect(page.getByTestId('photos-after-week')).toContainText('新拍的题下个周末再选');
-    await expect(page.getByTestId('photo-new-2')).toHaveText('新拍的');
-    await expect(page.getByTestId('photo-new-1')).toHaveCount(0);
-    await expect(page.getByTestId('photos-after-week')).toContainText('下个周末选题时，它们会出现在里面');
-    await expect(primary(page)).toHaveText('回到今天');
-    await next(page, '回到今天');
-    await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
-    fs.rmSync(STATE, { force: true });
+    await page.context().close();
   });
 });
 
-test.describe('关掉脚本', () => {
-  test.use({ javaScriptEnabled: false });
-
-  test('没有脚本也能走：配对、拍照上传、录结果、选题、跳过、打开练习纸、回到今天', async ({ page, request }) => {
-    expect((await request.post(`${CONTROL}/time-travel?days=7`)).ok()).toBe(true);
-    const { link } = await (await request.get(`${CONTROL}/pairing-link`)).json() as { link: string };
-    await page.goto(link);
-    await next(page, '连接这台手机');
-    await expect(page.getByTestId('today-header')).toHaveText('今天大约 16 分钟，一共 6 步');
-    await next(page, '拍第一页');
-    await next(page, '同意，上传');
-    // 没有脚本：选好照片后点「上传这张」（表单提交）。
-    await page.locator('#camera-input').setInputFiles({ name: 'page-3.jpg', mimeType: 'image/jpeg', buffer: await synthetic('#f5d2c0', 760) });
-    await page.getByRole('button', { name: '上传这张' }).click();
-    await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
-    // 录上一份练习纸的结果：每道都是一屏表单，答案放在隐藏字段里带到最后一次提交。
-    await next(page, '拍完了，下一步');
-    await expect(page).toHaveURL(/\/s\/record\/pkt_/);
-    await page.getByTestId('record-day').last().click();
-    await next(page, '下一步');
-    for (let guard = 0; guard < 9 && /\/s\/record\//.test(page.url()); guard += 1) {
-      await page.getByTestId('completion-not_done').click();
-      await primary(page).click();
+/** 页面上的短句按字分行：单字孤行（多行时某一行只有一个字）、标点落在行首（，。、；：！？）」等）或行尾（（「等）。 */
+async function lineReport(page: Page): Promise<{ orphans: string[]; punctuation: string[] }> {
+  return page.evaluate(() => {
+    const orphans: string[] = []; const punctuation: string[] = [];
+    const sel = '.btn, .choice > span, h1, h2, legend, .step-title, .step-detail, .caption, .caption-flow, summary, .more, .more-inline, .link-btn, .field-label, .card-title, .rhythm li, .flash, .chip, .tag, .wait-line, .meta-line';
+    for (const el of document.querySelectorAll(sel)) {
+      const box = el.getBoundingClientRect(); const cs = getComputedStyle(el);
+      if (box.width < 2 || cs.display === 'none' || cs.visibility === 'hidden' || el.closest('.hidden') || el.closest('.sheet') || el.closest('.visually-hidden')) continue;
+      const lines: Array<{ mid: number; text: string }> = [];
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text;
+        for (let i = 0; i < node.data.length; i += 1) {
+          if (/\s/.test(node.data[i]!)) continue;
+          const range = document.createRange(); range.setStart(node, i); range.setEnd(node, i + 1);
+          const rect = range.getClientRects()[0]; if (!rect || rect.width === 0) continue;
+          const mid = rect.top + rect.height / 2;
+          const line = lines.find(entry => Math.abs(entry.mid - mid) < 6);
+          if (line) line.text += node.data[i]; else lines.push({ mid, text: node.data[i]! });
+        }
+      }
+      lines.sort((a, b) => a.mid - b.mid);
+      const shown = lines.map(line => line.text).join(' / ');
+      if (lines.length > 1 && lines.some(line => [...line.text].length === 1)) orphans.push(shown);
+      lines.forEach((line, i) => {
+        if (i > 0 && /^[，。、；：！？）」』】]/.test(line.text)) punctuation.push(`行首 ${shown}`);
+        if (i < lines.length - 1 && /[（「『【]$/.test(line.text)) punctuation.push(`行尾 ${shown}`);
+      });
     }
-    await expect(page.getByTestId('results-head')).toContainText('独立做对 0 道');
-    // 找题中的页面靠 <meta refresh> 自己刷新。
-    await page.goto(`${WEB}/s/photos`);
-    await waitForPrimary(page, '下一步：选这周要练的题', 60_000);
-    await primary(page).click();
-    await next(page, /^就练这 \d 道$|^把勾出的题加入错题本$|^就练这/);
-    await secondary(page, 'skipWhy').click();
-    // 准备中靠 <meta refresh>；就绪后「打印」是去单独练习纸页的链接（用 Safari 的分享 → 打印）。
-    await waitForPrimary(page, '打印', 60_000);
-    await primary(page).click();
-    await expect(page).toHaveURL(/\/sheet$/);
-    await expect(page.getByTestId('sheet')).toContainText('做完再看');
-    await next(page, '打印好了，回到今天');
-    await expect(page.getByTestId('today-done-title')).toContainText('这周的事做完了');
+    return { orphans, punctuation };
   });
+}
+
+test('页面缩放 200%（195×422 CSS px）：没有单字孤行或标点落行首，固定导航不超过半屏，当前操作完整可见', async ({ browser }) => {
+  const page = await pairedPage(browser, { viewport: { width: 195, height: 422 }, deviceScaleFactor: 6 });
+  await page.goto(`${WEB}/s/practices`);
+  const hrefs = await page.getByTestId('practice-row').evaluateAll(rows => rows.map(row => row.getAttribute('href') ?? ''));
+  const printed = hrefs.map(href => /\/s\/(?:record|results|practice)\/(pkt_[0-9a-f]+)/.exec(href)?.[1]).find(Boolean);
+  expect(printed).toBeTruthy();
+  for (const path of ['/s/', '/s/settings', '/s/choose', `/s/print/${printed}`, `/s/print/${printed}/sheet`, '/s/practices']) {
+    await page.goto(`${WEB}${path}`);
+    const inlinePrimary = page.locator('.next-bar-inline [data-testid=next-step-primary]');
+    if (await inlinePrimary.count()) await inlinePrimary.scrollIntoViewIfNeeded();
+    const report = await lineReport(page);
+    expect(report.orphans, `${path} 单字孤行`).toEqual([]);
+    expect(report.punctuation, `${path} 标点落在行首 / 行尾`).toEqual([]);
+    const layout = await page.evaluate(() => {
+      const bar = document.querySelector('.tab-bar, .next-bar:not(.next-bar-inline)')?.getBoundingClientRect();
+      const primary = document.querySelector('[data-testid=next-step-primary]');
+      const p = primary ? primary.getBoundingClientRect() : null;
+      return { barShare: bar ? bar.height / innerHeight : null, overflow: document.documentElement.scrollWidth - innerWidth, primaryVisible: p ? p.top >= 0 && p.bottom <= innerHeight + 1 : null };
+    });
+    if (path === '/s/settings') {
+      expect(layout.barShare, '设置页不再有固定操作栏').toBeNull();
+    } else {
+      expect(layout.barShare, `${path} 保留导航`).not.toBeNull();
+      expect(layout.barShare, `${path} 底栏占视口`).toBeLessThanOrEqual(0.5);
+    }
+    expect(layout.overflow, `${path} 横向溢出`).toBeLessThanOrEqual(0);
+    expect(layout.primaryVisible, `${path} 主按钮`).not.toBe(false);
+  }
+  // 打印回来以后（底栏最高的时候）：说明挪到内容最后，底栏只留「再打印」和主按钮。
+  await page.goto(`${WEB}/s/print/${printed}`);
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+  await expect(page.getByTestId('next-step-primary')).toHaveText('打印好了，记录结果');
+  await expect(page.getByTestId('next-step-caption')).toBeHidden();
+  await expect(page.locator('[data-caption-flow]')).toContainText('打印机没反应');
+  const share = await page.evaluate(() => document.querySelector('.next-bar')!.getBoundingClientRect().height / innerHeight);
+  expect(share).toBeLessThanOrEqual(0.5);
+  expect((await lineReport(page)).orphans).toEqual([]);
+  await page.context().close();
+});
+
+test('服务器忙：还没连上的人看到「等一会儿再试；还是不行，请大人给一个新的二维码或链接」，连接过期的人不被说成「还没连上」', async ({ browser }) => {
+  // 还没连上：连接失败太多次（每个 IP 每分钟 10 次）。
+  const stranger = await browser.newContext(DEVICE);
+  const page = await stranger.newPage();
+  let busy = false;
+  for (let attempt = 0; attempt < 14 && !busy; attempt += 1) {
+    await page.goto(`${WEB}/s/`);
+    await page.locator('#connect-link').fill('https://example.invalid/s/pair?code=nope');
+    await Promise.all([page.waitForLoadState('load'), primary(page).click()]);
+    busy = (await page.locator('h1').innerText()) === '服务器有点忙';
+  }
+  expect(busy).toBe(true);
+  await expect(page.getByTestId('busy-note')).toHaveText('还没连上服务器。等一会儿再试；还是不行，请大人给一个新的二维码或链接。');
+  await expect(primary(page)).toHaveText('过一会儿再试');
+  await stranger.close();
+
+  // 连接过期：cookie 还在但已经无效（鉴权失败太多次，每个 IP 每分钟 30 次）。
+  const expired = await browser.newContext(DEVICE);
+  const expiredPage = await expired.newPage();
+  let status = 0;
+  for (let attempt = 0; attempt < 40 && status !== 429; attempt += 1) {
+    await expired.addCookies([{ name: 'sel_device', value: 'expired-or-revoked-token', url: `${WEB}/s/` }]);
+    status = (await expiredPage.goto(`${WEB}/s/`))!.status();
+  }
+  expect(status).toBe(429);
+  await expect(expiredPage.getByTestId('busy-note')).toHaveText('连接过期了，要请大人给一个新的二维码或链接。照片和错题都还在服务器上。');
+  await expect(expiredPage.locator('main')).not.toContainText('还没连上');
+  await expired.close();
 });

@@ -1,3 +1,7 @@
+# 自动发布入口（2026-10-15）
+
+用户已批准集成分支合并后自动上线，见 [GitHub 自动发布](ci/README.md)。下面的手动步骤保留给首次装机和人工维护；日常修改通过 PR → CI → 自动发布。
+
 # 云端部署手册（广州 ECS 239 · cgroup v1 · study.pccoding666.com）
 
 发布包由 `npm run release:build` 产出（白名单打包，详见 `scripts/release-whitelist.txt`）。
@@ -57,7 +61,8 @@ SEL_MOBILE_AI_MODEL_INVENTORY=<模型名>
 SEL_MOBILE_AI_MODEL_TRANSCRIBE=<模型名>
 SEL_MOBILE_AI_MODEL_VERIFY=<模型名>
 SEL_MOBILE_AI_MODEL_GROUND=<模型名>
-SEL_MOBILE_AI_TIMEOUT_MS=1800000
+# 单次视觉模型调用超时。缺省 90000（90 秒），与 SEL_AI_TIMEOUT_MS 对齐；同题同阶段最多 3 次（首次 + 两次重试）。
+SEL_MOBILE_AI_TIMEOUT_MS=90000
 # v2.0 T2 单进程装配（dist/main.js）新增必填：
 # SEL_AI_MODE=bailian：/v2 与主入口共用同一配置入口，缺省 mock 会 fail-hard 拒绝启动。
 # SEL_DATA_DIR：/v2 的 node:sqlite 库（app.db）所在目录，必须与 SEL_MOBILE_DATA_DIR 相同。
@@ -82,7 +87,7 @@ SEL_AI_MODEL=<模型名>
 参考 `.env.example`；缺任何必填项服务启动会直接失败（fail-hard，不静默降级 mock）。
 `SEL_MOBILE_HOST` 只允许 `127.0.0.1`——公网入口只有 Caddy。
 v2.0 T2 起入口为 `dist/main.js`：同一端口（3101）同时服务 `/v1` 识别与 `/v2` 手机接口（均设备令牌鉴权）。
-**云端公网入口不挂旧的 Web 看板**（`/parent`、`/trends`、`/items` 等一律 404；Web 看板待有登录方案后再设计）。唯一的网页是学生网页版 `/s/`（设备令牌 cookie 鉴权，只有学生自己的页面，见 §10）。
+**云端公网入口不挂旧的 Web 看板**（`/parent`、`/trends`、`/items` 等一律 404；Web 看板待有登录方案后再设计）。学生网页版为 `/s/`（见 §10）；启用学生邀请码 host 的开发版本另有独立登录的只读管理后台 `/admin/`（见文末说明）。
 旧的 `dist/mobile/server.js` 仅保留给开发调试，不再作为线上入口。
 
 `/v2` 使用 Web 的 AI 配置（`SEL_AI_BASE_URL`、`SEL_AI_API_KEY`、`SEL_AI_MODEL*`），与上面的 `SEL_MOBILE_AI_*` 配置为同值；
@@ -136,9 +141,15 @@ systemctl daemon-reload && systemctl enable --now super-error-log-caddy
 ## 5. 部署验收（服务器实测，直接读内核接口）
 
 ```bash
-# cgroup v1 实测（systemctl show 不是内核读回）：
-cat /sys/fs/cgroup/memory/system.slice/super-error-log.service/memory.limit_in_bytes   # 期望 1073741824
-cat /sys/fs/cgroup/cpu/system.slice/super-error-log.service/cpu.cfs_quota_us          # 期望 150000（150% × 100000 period）
+# cgroup v1 实测（systemctl show 不是内核读回）。先确认这台机器用的是哪一档，再对数字。
+# 推荐档（4 核 / 8 GB，单元文件默认值）：
+#   memory.limit_in_bytes = 4294967296
+#   cpu.cfs_quota_us = 300000（300% × 100000 period）
+# 当前广州小机（已安装 small-box.conf）：
+#   memory.limit_in_bytes = 1073741824
+#   cpu.cfs_quota_us = 150000（150% × 100000 period）
+cat /sys/fs/cgroup/memory/system.slice/super-error-log.service/memory.limit_in_bytes
+cat /sys/fs/cgroup/cpu/system.slice/super-error-log.service/cpu.cfs_quota_us
 cat /sys/fs/cgroup/cpu/system.slice/super-error-log.service/cpu.cfs_period_us          # 期望 100000
 
 # 监听端口：服务只应 127.0.0.1:3101 + admin socket；443 属 Caddy，80 仍属原服务
@@ -185,9 +196,41 @@ cp -p /etc/super-error-log/env /root/backup-sel-env-$(date +%Y%m%d-%H%M)
 
 ## 7. 资源语义（重要）
 
-- `MemoryLimit=1G`：cgroup v1 内核级上限（含 sharp 原生缓冲）。
-- **768 MiB 是应用层准入阈值**（`AdmissionController` 在云端模式拒绝新照片上传）：
-  它防的是任务积压，**不宣称内核在 768MiB 节流**。两者独立生效，先到先限。
+单元文件 `deploy/systemd/super-error-log.service` 的默认值是 **4 核 / 8 GB 推荐档**：`MemoryMax=4G`、`MemoryLimit=4G`（systemd 239 的 cgroup v1 读 `MemoryLimit`）、`CPUQuota=300%`。父子进程和全部学生 worker 共用这一份 cgroup。
+
+当前广州机器是 **2 核 / 1.8 GB**。自动发布不会安装单元文件。人工发布到这台机器时，必须在重启前装上 `deploy/systemd/super-error-log.service.d/small-box.conf`（`MemoryMax=1G`、`CPUQuota=150%`），并在 `/etc/super-error-log/env` 写上小机档：
+
+```
+SEL_MAX_STUDENTS=100
+SEL_WORKER_IDLE_MS=720000
+SEL_MAX_LIVE_WORKERS=3
+SEL_GLOBAL_AI_CONCURRENCY=1
+SEL_GLOBAL_IMAGE_CONCURRENCY=1
+SEL_SERVICE_MEMORY_MIB=1024
+```
+
+只换 4G 单元、不装 drop-in，会让 cgroup 上限高于物理内存。只改代码、不改环境，学生 worker 会按 4G 预算估算自己的准入阈值。
+
+应用层 RSS 准入（超过后暂停接收新识别任务，内存回落再恢复）按下面计算，**不是内核节流，也不再是固定 768MiB**：
+
+- `SEL_RSS_ADMISSION_MIB` 若设置了，就用它（64–8192）。
+- 否则看 `SEL_SERVICE_MEMORY_MIB`（缺省 4096，对应推荐档的 4G）。
+- 主进程：预算的 60%，夹在 256–512 MiB。缺省 512 MiB。
+- 学生 worker：预算的一半 ÷ `SEL_MAX_LIVE_WORKERS`（至少按 1 份），夹在 192–512 MiB。推荐档缺省 256 MiB；小机档 192 MiB。
+
+容量相关环境变量（未写则用缺省）：
+
+| 变量 | 缺省 | 含义 |
+| --- | --- | --- |
+| `SEL_MAX_STUDENTS` | 100 | 注册表里最多多少个学生空间。打开注册表时读取，降低后不删除已有账号 |
+| `SEL_WORKER_IDLE_MS` | 720000 | 空闲多久退出 worker。0 表示不因空闲退出 |
+| `SEL_MAX_LIVE_WORKERS` | 8 | 同时存活的学生进程。0 表示不限制。超出时先请最久没用且空闲的退出；都在忙则本次 503 |
+| `SEL_GLOBAL_AI_CONCURRENCY` | 2 | 所有学生加起来，同时进行的视觉模型调用 |
+| `SEL_GLOBAL_IMAGE_CONCURRENCY` | 2 | 所有学生加起来，同时进行的 sharp 等重图片处理 |
+| `SEL_SERVICE_MEMORY_MIB` | 4096 | 估算 RSS 准入用的服务预算，应与 cgroup 内存上限同一量级 |
+| `SEL_MOBILE_AI_TIMEOUT_MS` | 90000 | 单次移动端模型调用超时 |
+
+学生空间仍是一人一进程、一人一个 SQLite。启动时不为已注册学生预热。第一次打开才拉起；空闲退出前若还有正在转发的请求、排队或在跑的识别、或正在准备的打印，就留下。磁盘上没做完的任务，下次拉起时继续。
 
 ## 8. 证书存储迁移与安全回滚（需单独批准执行）
 
@@ -466,8 +509,43 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 
 ## 学生邀请码手机版网页（2026-10-15）
 
-学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。受控试用最多3个学生空间，父子进程共用systemd的1GB内存上限；容量不足明确报错，不共享学生档案。
+学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。注册上限缺省 100（`SEL_MAX_STUDENTS`，与自助注册同一处读取）。进程不按注册人数常驻：第一次打开才启动，空闲约 12 分钟后退出；同时存活的进程缺省最多 8 个（小机请改成 3）。视觉调用和重图片处理由父进程限流，缺省各 2 路（小机请改成 1）。学生之间不共享档案。容量相关变量和两档 cgroup 限制见 §7。本改动会让自动发布拒绝，须走人工发布，见 `docs/quality/2026-10-20-fifty-students.md`。
 
-管理员以服务用户运行 `dist/studentHost/admin-cli.js create|list|invite <studentId>|revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。没有公网管理员页面。
+管理员以服务用户运行 `dist/studentHost/admin-cli.js create [role] | list | invite <studentId> | set-role <studentId> <role> | revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。管理后台使用独立管理员密码，不能使用学生邀请码登录。
+
+账号身份（role）只是标签：`student`/`parent`/`teacher`/`admin`，新建缺省 `student`，老账号迁移后一律 `student`。身份只能由管理员在本机用 `set-role` 修改；浏览器、网页表单、查询串都不能改身份，身份也不参与任何鉴权——每个账号仍是自己独立的空间、会话和数据。家长/老师/管理员的专属权限与账号关系尚未实现：非学生身份登录看到的仍是同一套错题本学习功能，设置页会注明「专属功能后续开放」。
 
 本轮部署检查与回滚见 `docs/quality/2026-10-15-student-web-release.md`（源码文档不随生产包部署）。关闭flag/回滚旧包不会删除新的学生目录。
+
+
+## 管理后台：账号用量与 AI 性能（2026-10-20 开发版本，尚未部署）
+
+在已启用 `SEL_STUDENT_HOST_ENABLED=1` 的同一服务上提供 `/admin/`。Caddy 现有整站反代已覆盖该路径，无需增加端口。只有 host 主进程提供后台，学生 worker 和旧单学生部署不提供。
+
+部署包含本功能的代码后，由服务器管理员以服务用户运行一次下列命令，生成管理密码：
+
+```sh
+sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-host \
+  /opt/super-error-log/node-v24/bin/node \
+  /opt/super-error-log/current/dist/studentHost/admin-cli.js admin-password
+```
+
+`SEL_STUDENT_HOST_DIR` 必须和运行中的应用相同。命令只打印一次随机密码；复制到密码管理器，不写入仓库或公开日志。打开 `https://study.pccoding666.com/admin/` 输入该密码。再次运行同一命令会重置密码，并立即注销所有旧管理会话，不影响学生会话与学习记录。管理会话有效期12小时；默认没有密码，不能登录。无需为初始化/轮换密码重启服务。
+
+后台功能：
+
+- 所有邀请码的独立编号、所属账号、创建/兑换/到期状态；编号不是登录原码。旧邀请码只存哈希，不能还原。
+- 每账号的累计录入题目照片、错题、练习包、已生成打印包、复盘、重做次数，以及最近活跃时间。题目照片统计不包含练习作答或反思附件。
+- 按账号、UTC+8日期、模型、功能筛选输入/输出 tokens、调用次数、接口成功率、平均与P95耗时；调用明细每页50条，汇总覆盖全部筛选结果。
+- 失败区分超时、取消、限流、网络/服务错误、配置认证错误和无效响应；不暴露模型原始错误正文、学生内容、音频、图片或密钥。
+
+统计口径与覆盖：
+
+- 新采集写入每学生目录的 `ai-usage.db`，一次实际 HTTP 尝试算一次调用，重试分别计数。Mock 不发模型请求，不计为真实用量。
+- 输入/输出 token 采用供应商实际返回的 usage。未知为“未采集”；已报告 tokens 是可计量部分，不能当作供应商完整账单。
+- 耗时从发出请求到读取并解析响应完成，不包括排队或后续业务处理；平均和P95仅使用有耗时的样本，P95采用最近秩（向上取整第95百分位）。
+- 接口成功表示请求及客户端响应解析成功，不等同于识别准确、业务完整性检查通过或学生掌握。失败调用已返回的 usage 仍计入已知用量。
+- 历史视觉 attempts 日志按白名单恢复元数据，并按调用ID和新采集去重。旧日志没有耗时就不能补算；旧文本/语音调用未完整记录。进程被强制终止、未写入的调用无法重建。后台标明历史来源、用量采集比例及读取/写入异常。
+- “已生成打印包”统计 ready 快照，不是实际纸张打印次数。最近活跃由登录/有效页面访问与已有活动记录推得；升级前没有记录的访问无法追溯。
+
+`admin.db` 在 host 目录保存 scrypt 密码派生值和会话哈希；管理 cookie 与学生 cookie 独立。学习库以只读连接查询，不启动/恢复学生 worker。无需新环境变量或运行时依赖。回滚旧代码时这些新增统计文件会被忽略，额外注册表列不改变旧邀请码兑换规则。

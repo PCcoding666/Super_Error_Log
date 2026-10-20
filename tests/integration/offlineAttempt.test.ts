@@ -51,7 +51,7 @@ function insertFixtureData(): void {
   const db = getDb();
   db.prepare(
     `INSERT INTO student_profile (id, nickname, grade, subjects, weekend_pref, created_at)
-     VALUES ('stu_dates', '日期测试', '初三', '["数学"]', '周六', '2026-08-01T00:00:00.000Z')`,
+     VALUES ('stu_dates', '日期测试', '初中', '["数学"]', '周六', '2026-08-01T00:00:00.000Z')`,
   ).run();
   db.prepare(
     `INSERT INTO source_batch (id, student_id, status, created_at)

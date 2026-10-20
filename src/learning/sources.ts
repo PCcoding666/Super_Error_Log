@@ -1,3 +1,4 @@
+import { categoryForItem } from '../classification/itemCategories.js';
 import { ensureStudentProfile } from '../services/studentService.js';
 import { getDb } from '../db/connection.js';
 import { getEvidence } from '../services/evidenceService.js';
@@ -61,7 +62,7 @@ export function learningCard(itemId:string):LearningCard|null {
  let low=false;
  if(source.kind==='legacy')low=(getDb().prepare('SELECT confidence_badge FROM evidence_record WHERE item_id=?').get(itemId) as {confidence_badge:string}|undefined)?.confidence_badge==='low';
  else {const store=materialStoreForItem(itemId)!;const q=readQuestion(store,source.questionId)!;low=q.missing.includes('stem')||q.missing.includes('diagram')||!SUBJECTS.includes(q.subject as Subject)||q.unresolved.length>0||effectiveQuestionStem(store,q.id).some(f=>f.check!=='passed'||f.uncertainties.length);}
- return {id:row.id,shortId:row.short_id,subject:row.subject,knowledgeTags:JSON.parse(row.knowledge_tags),questionExcerpt:row.text_excerpt,badge:low?'low':'ok',status:row.status,cropUrl:source.kind==='legacy'?`/v2/items/${itemId}/crop`:`/s/img/item/${itemId}`,source};
+ return {id:row.id,shortId:row.short_id,...categoryForItem(row.id),knowledgeTags:JSON.parse(row.knowledge_tags),questionExcerpt:row.text_excerpt,badge:low?'low':'ok',status:row.status,cropUrl:source.kind==='legacy'?`/v2/items/${itemId}/crop`:`/s/img/item/${itemId}`,source};
 }
 export function legacyCard<T extends LearningCard>(card:T):Omit<T,'source'> & {jobId:string} {
  if(card.source.kind!=='legacy')throw new Error('legacy source required');const {source,...rest}=card;return {...rest,jobId:source.jobId};

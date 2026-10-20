@@ -32,7 +32,7 @@ export function loadMobileConfiguration(root = process.cwd()): MobileConfigurati
   if (Object.values(models).some(value => !value.trim())) throw new Error('移动识别缺少一个或多个阶段模型配置');
   const pairingToken = process.env.SEL_MOBILE_PAIRING_TOKEN ?? '';
   if (mode === 'loopback' && pairingToken.length < 16) throw new Error('回环模式需要至少16个字符的 SEL_MOBILE_PAIRING_TOKEN；云端模式改用设备令牌，不使用共享令牌');
-  const timeoutMs = Number(process.env.SEL_MOBILE_AI_TIMEOUT_MS ?? 1_800_000);
+  const timeoutMs = Number(process.env.SEL_MOBILE_AI_TIMEOUT_MS ?? 90_000);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error('SEL_MOBILE_AI_TIMEOUT_MS 必须是正整数毫秒');
   const port = Number(process.env.SEL_MOBILE_PORT ?? 3101);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error('SEL_MOBILE_PORT 不合法');

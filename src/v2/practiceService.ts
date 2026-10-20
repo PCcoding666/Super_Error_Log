@@ -6,6 +6,8 @@ export interface PracticeCard {
   id: string;
   shortId: string | null;
   subject: string | null;
+  grade?: string;
+  chapter?: string;
   knowledgeTags: string[];
   questionExcerpt: string | null;
   badge: 'ok' | 'low';
@@ -59,4 +61,4 @@ export function createPractice(input:unknown):CreatePracticeResult {
 export function getPractice(id:string):PracticeDetail|null {
  const r=getLearningPractice(id,'legacy');return r?{...r,items:r.items.map(legacyCard)}:null;
 }
-export function listPractices():PracticeSummary[] {return listLearningPractices('legacy');}
+export function listPractices(limit = 8): PracticeSummary[] { return listLearningPractices('legacy', limit); }

@@ -22,6 +22,9 @@ import type { MobileVisionBoundary } from './vision.js';
 import { MaterialStore } from '../materials/store.js';
 import type { MaterialJobs } from '../materials/jobs.js';
 import type { MaterialUploads } from '../materials/uploads.js';
+import type { MobileRecognitionService } from './service.js';
+import { AdminAuth } from '../admin/auth.js';
+import { createAdminRouter } from '../admin/router.js';
 
 /** 测试与本机试用的替身（合成识别、固定转写）；生产入口 main.ts 不传。 */
 export interface CloudAssemblyOverrides {
@@ -37,6 +40,8 @@ export interface CloudAssembly {
   admin: AdminServerHandle | null;
   /** 设备令牌管理（学生空间 worker 用它签发只有父进程知道的内部令牌）。 */
   pairing: PairingManager;
+  /** 本进程的识别队列。学生 worker 用它判断能否空闲退出。 */
+  recognition: MobileRecognitionService;
   listen(): Promise<void>;
   /** 实际监听的端口（configuration.port 传 0 时由系统分配）；未监听返回 null。 */
   boundPort(): number | null;
@@ -71,6 +76,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
   const studentHost: StudentHostGateway | null = process.env.SEL_STUDENT_HOST_ENABLED === '1'
     ? await createStudentHostGateway({ hostDir: resolveStudentHostDir(configuration.dataDir) })
     : null;
+  const adminAuth = studentHost ? AdminAuth.open(studentHost.registry.hostDir) : null;
   const app = await createMobileApp({
     materialStore, configureMaterials: overrides.configureMaterials ?? ((jobs, uploads) => { registerMaterialExtraction(materialStore, jobs, uploads, materialOptions); registerMaterialAnswers(materialStore, jobs, uploads, materialOptions); registerMaterialGrading(materialStore, jobs, uploads, materialOptions); }),
     dataDir: configuration.dataDir, vision: overrides.vision ?? new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true,
@@ -80,6 +86,9 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     webClient: studentHost
       ? deps => studentHost.router({ limiter: deps.limiter, ipOf: deps.ipOf, originScheme: 'https:' })
       : deps => createWebClientRouter({ ...deps, mobileDataDir: configuration.dataDir, transcriber, studentHostWorker: process.env.SEL_STUDENT_WORKER === '1' }),
+    adminWeb: studentHost && adminAuth
+      ? ({ ipOf }) => createAdminRouter({ registry: studentHost.registry, auth: adminAuth, ipOf, originScheme: 'https:' })
+      : undefined,
   });
   let server: Awaited<ReturnType<typeof app.listen>> | null = null;
   const listen = (): Promise<void> => new Promise((resolve, reject) => {
@@ -110,7 +119,8 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
       });
       server = null;
     });
+    adminAuth?.close();
     if (errors.length) throw new AggregateError(errors, 'Cloud service shutdown failed after attempting all resource cleanup.');
   };
-  return { configuration, admin, pairing, listen, boundPort, close };
+  return { configuration, admin, pairing, recognition: app.locals.mobileRecognitionService as MobileRecognitionService, listen, boundPort, close };
 }

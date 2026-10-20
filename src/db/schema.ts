@@ -1,8 +1,11 @@
+import { CLASSIFICATION_SCHEMA_SQL } from './classificationSchema.js';
+import { PRACTICE_SUBMISSION_SCHEMA_SQL } from './practiceSubmissionSchema.js';
+
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS student_profile (
   id TEXT PRIMARY KEY,
   nickname TEXT NOT NULL,
-  grade TEXT NOT NULL DEFAULT '初三',
+  grade TEXT NOT NULL DEFAULT '初中',
   subjects TEXT NOT NULL DEFAULT '["数学","物理","化学"]',
   weekend_pref TEXT DEFAULT '周六上午',
   created_at TEXT NOT NULL
@@ -141,6 +144,8 @@ CREATE TABLE IF NOT EXISTS review_packet_item (
   answer_text TEXT,
   PRIMARY KEY (packet_id, item_id)
 );
+CREATE INDEX IF NOT EXISTS idx_error_diagnosis_item ON error_diagnosis(item_id);
+CREATE INDEX IF NOT EXISTS idx_review_packet_item_item ON review_packet_item(item_id);
 
 CREATE TABLE IF NOT EXISTS review_attempt (
   id TEXT PRIMARY KEY,
@@ -284,4 +289,40 @@ CREATE TABLE IF NOT EXISTS v2_print_basis (
   scope TEXT NOT NULL CHECK(scope IN ('all','legacy')),
   manifest_json TEXT NOT NULL
 );
+${CLASSIFICATION_SCHEMA_SQL}
+
+CREATE TABLE IF NOT EXISTS practice_progress (
+  packet_id TEXT PRIMARY KEY REFERENCES review_packet(id) ON DELETE CASCADE,
+  cursor_item TEXT
+);
+CREATE TABLE IF NOT EXISTS practice_task (
+  packet_id TEXT PRIMARY KEY REFERENCES review_packet(id) ON DELETE CASCADE,
+  lifecycle TEXT NOT NULL DEFAULT 'active' CHECK(lifecycle IN ('active','paused','cancelled')),
+  request_key TEXT UNIQUE,
+  original_statuses TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS practice_question_progress (
+  packet_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  hint_level INTEGER NOT NULL DEFAULT 0 CHECK(hint_level BETWEEN 0 AND 2),
+  PRIMARY KEY(packet_id, item_id),
+  FOREIGN KEY(packet_id,item_id) REFERENCES review_packet_item(packet_id,item_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS practice_work (
+  id TEXT PRIMARY KEY,
+  packet_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  request_key TEXT NOT NULL UNIQUE,
+  source_hash TEXT NOT NULL,
+  image BLOB NOT NULL,
+  status TEXT NOT NULL,
+  text TEXT,
+  uncertain INTEGER NOT NULL DEFAULT 1,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(packet_id,item_id) REFERENCES review_packet_item(packet_id,item_id) ON DELETE CASCADE
+);
+${PRACTICE_SUBMISSION_SCHEMA_SQL}
 `;

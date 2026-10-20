@@ -13,8 +13,9 @@ import { RateLimiter } from '../../src/mobile/rateLimit.js';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-invite-browser-'));
 const registry = StudentRegistry.open(root);
-const students = [registry.createStudent().studentId, registry.createStudent().studentId];
+const students = [registry.createStudent().studentId, registry.createStudent('admin').studentId];
 const codes = students.map(id => registry.issueInvitation(id).code);
+const reloginCodes = students.map(id => registry.issueInvitation(id).code);
 // Third code reauthenticates A without deleting A's pending browser namespace.
 codes.push(registry.issueInvitation(students[0]!).code);
 const control = path.join(root, 'material-control.json');
@@ -27,7 +28,7 @@ app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: req => req.sock
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-process.send?.({ base, codes });
+process.send?.({ base, codes, reloginCodes });
 let stopping = false;
 async function stop() {
   if (stopping) return;

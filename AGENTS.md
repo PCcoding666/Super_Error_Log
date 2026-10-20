@@ -4,9 +4,9 @@ This file provides guidance to the AI agent when working with code in this repos
 
 ## Current handoff (2026-10-15)
 
-Read `docs/CODEX_CLOUD_HANDOFF.md` first for the current product, entry points, verification evidence, and pending acceptance. The active delivery branch is `codex/student-invite-web`; its PR base is `codex/ai-error-review-mvp`. `main` is an old snapshot. `.ai/tasks/current/` and early PRD/manual files contain historical status, not the current release state.
+Read `docs/CODEX_CLOUD_HANDOFF.md` first for the current product, entry points, verification evidence, and pending acceptance. `main` is the sole authoritative development and production branch. Create a short-lived `codex/<task>` branch from current `origin/main` and open its PR against `main`. See `docs/BRANCHES.md` for preserved unmerged work and archived designs. `.ai/tasks/current/` and early PRD/manual files contain historical status, not the current release state.
 
-Primary student surface: mobile browser `/s/`, per-student invitation login, server-owned learning records. Production release: `0.5.0-r2`; the user has confirmed successful real-phone photo upload. iOS is retained but is not the current distribution path.
+Primary student surface: mobile browser `/s/`, per-student invitation login, server-owned learning records. The last manual release baseline is `0.5.0-r2`; after CI/CD activation, read the latest successful production Action and server release manifest for the current version. The user has confirmed successful real-phone photo upload. iOS is retained but is not the current distribution path.
 
 ## What this is
 
@@ -31,7 +31,7 @@ Primary student surface: mobile browser `/s/`, per-student invitation login, ser
 - `data/`, `data-e2e/`, `dist/`, `test-results/` are local artifacts — don't commit. Never commit `.superpowers/`, real student photos/audio, invitation codes, session tokens, or `.env` secrets.
 - Upload compatibility: browser converts decodable images (including HEIC on supported Safari) to a real JPEG, longest edge 4096. Preserve timeout/retry/idempotency behavior in `src/web/photoUpload.ts`; server limits still apply.
 - Current v2 flow does not require students to verify every question. Low-confidence evidence is retained with original crops and print warnings; do not reinterpret older manual-verification docs as a request to add a compulsory confirmation gate.
-- GitHub CI uses synthetic data/mock providers and does not deploy. Future production writes/deployments require user authorization for that change.
+- GitHub CI uses synthetic data/mock providers. The user approved automatic deployment after a green push to `main`; see `deploy/ci/README.md`. PRs, tags and other branches never deploy. Production data cleanup, credential changes, and incompatible database migrations still require separate authorization. Review deployment/workflow changes carefully.
 
 ## Style & commits
 
