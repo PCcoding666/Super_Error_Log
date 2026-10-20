@@ -186,3 +186,39 @@ it('question details retain raw reference-answer evidence without presenting a v
 });
 
 it('known-upload replay still reserves a multipart parsing slot before reading the body',async()=>{const f=await fixture();const c=await(await f.post('/materials/captures',{requestId:randomUUID()})).json();const uploadId=randomUUID();expect((await f.upload(c.id,uploadId)).status).toBe(200);expect(f.admission.tryAcquireUploadSlot('upload').accepted).toBe(true);try{expect((await f.upload(c.id,uploadId)).status).toBe(429)}finally{f.admission.releaseUploadSlot('upload')}expect((await f.upload(c.id,uploadId)).status).toBe(200);});
+
+it('keeps original replay identity through hint edits, clearing and whole-page document assignment', async () => {
+    const f = await fixture();
+    const capture = await (await f.post('/materials/captures', { requestId: randomUUID() })).json();
+    const uploadId = randomUUID();
+    const saved = await (await f.upload(capture.id, uploadId)).json();
+    for (const hints of [{ label: 'later label', roles: ['reference_answer'], marking: 'unmarked' }, {}]) {
+        expect((await f.post(`/materials/assets/${saved.assetId}/hints`, hints)).status).toBe(200);
+        const replay = await f.upload(capture.id, uploadId);
+        expect(replay.status).toBe(200);
+        expect(await replay.json()).toMatchObject({ assetId: saved.assetId, job: { id: saved.job.id }, created: false });
+        expect(JSON.parse((f.db.prepare('SELECT hints_json FROM material_asset').get() as { hints_json: string }).hints_json)).toEqual(hints);
+    }
+    expect((await f.post(`/materials/assets/${saved.assetId}/document`, { newDocument: true, expectedRevision: 1 })).status).toBe(200);
+    const before = f.db.prepare('SELECT document_id,hints_json,upload_request_fingerprint FROM material_asset').get();
+    expect((await f.upload(capture.id, uploadId)).status).toBe(200);
+    expect(f.db.prepare('SELECT document_id,hints_json,upload_request_fingerprint FROM material_asset').get()).toEqual(before);
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
+    expect(f.db.prepare('SELECT count(*) n FROM material_job').get()).toEqual({ n: 1 });
+});
+
+it('returns an actionable 409 for pre-fingerprint saved uploads without guessing or duplicating', async () => {
+    const f = await fixture();
+    const capture = await (await f.post('/materials/captures', { requestId: randomUUID() })).json();
+    const uploadId = randomUUID();
+    const saved = await (await f.upload(capture.id, uploadId)).json();
+    f.db.exec('DROP TRIGGER material_upload_fingerprint_immutable; ALTER TABLE material_asset DROP COLUMN upload_request_fingerprint');
+    expect((await f.post(`/materials/assets/${saved.assetId}/hints`, { label: 'edited before migration' })).status).toBe(200);
+    migrateMaterials(f.db);
+    const replay = await f.upload(capture.id, uploadId);
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toMatchObject({ error: { code: 'upload_identity_unavailable', message: expect.stringMatching(/已保留在服务器.*查看已经保存的材料.*删除这条待传记录/) } });
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
+    expect(f.db.prepare('SELECT count(*) n FROM material_job').get()).toEqual({ n: 1 });
+    expect((await fetch(f.base + `/materials/assets/${saved.assetId}/image`)).status).toBe(200);
+});

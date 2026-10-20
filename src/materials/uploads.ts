@@ -56,10 +56,12 @@ export class MaterialUploads {
     if (!Buffer.isBuffer(input.bytes) || input.bytes.length === 0) throw new MobileRequestError(400, 'invalid_image', '照片无法读取，请重新选择。');
     if (input.bytes.length > 15 * 1024 * 1024) throw new MobileRequestError(413, 'payload_too_large', '照片超过 15 MiB 限制。');
     const hash = createHash('sha256').update(input.bytes).digest('hex');
-    const existing = this.store.db.prepare(`SELECT a.id,a.capture_id,a.hints_json,s.content_hash FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.owner_id=? AND a.upload_request_id=?`)
-      .get(this.store.studentId, input.uploadId) as { id: string; capture_id: string; hints_json: string; content_hash: string } | undefined;
+    const fingerprint = createHash('sha256').update(canonical({ captureId: input.captureId, contentHash: hash, hints: input.hints })).digest('hex');
+    const existing = this.store.db.prepare('SELECT id,upload_request_fingerprint FROM material_asset WHERE owner_id=? AND upload_request_id=?')
+      .get(this.store.studentId, input.uploadId) as { id: string; upload_request_fingerprint: string | null } | undefined;
     if (existing) {
-      if (existing.content_hash !== hash || existing.capture_id !== input.captureId || canonical(JSON.parse(existing.hints_json)) !== canonical(input.hints)) throw new MobileRequestError(409, 'idempotency_conflict', '这个上传请求已保存其他内容，请使用新的上传请求。');
+      if (existing.upload_request_fingerprint === null) throw new MobileRequestError(409, 'upload_identity_unavailable', '这张照片已保留在服务器，但旧上传信息无法核对。请先查看已经保存的材料，再删除这条待传记录；不用重新拍照。');
+      if (existing.upload_request_fingerprint !== fingerprint) throw new MobileRequestError(409, 'idempotency_conflict', '这个上传请求已保存其他内容，请使用新的上传请求。');
       const job = this.store.db.prepare("SELECT id,kind,state FROM material_job WHERE owner_id=? AND asset_id=? AND kind='extract' AND request_id=?").get(this.store.studentId, existing.id, input.uploadId) as JobTicket | undefined;
       if (!job) throw new MobileRequestError(503, 'storage_unavailable', '材料任务暂时无法读取。');
       return { assetId: existing.id, job, created: false };
@@ -99,8 +101,8 @@ export class MaterialUploads {
         }
         this.store.db.prepare('INSERT INTO source_asset(id,batch_id,filename,mime,size,content_hash,status,storage_path,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
           .run(sourceId, batchId, input.filename, 'image/jpeg', input.bytes.length, hash, 'saved', path.join(finalDirectory, 'normalized.jpg'), new Date().toISOString());
-        this.store.db.prepare('INSERT INTO material_asset(id,owner_id,capture_id,source_asset_id,document_id,upload_request_id,hints_json) VALUES (?,?,?,?,?,?,?)')
-          .run(assetId, this.store.studentId, input.captureId, sourceId, input.hints.documentId ?? null, input.uploadId, canonical(input.hints));
+        this.store.db.prepare('INSERT INTO material_asset(id,owner_id,capture_id,source_asset_id,document_id,upload_request_id,hints_json,upload_request_fingerprint) VALUES (?,?,?,?,?,?,?,?)')
+          .run(assetId, this.store.studentId, input.captureId, sourceId, input.hints.documentId ?? null, input.uploadId, canonical(input.hints), fingerprint);
         this.store.db.prepare('UPDATE source_batch SET total_files=total_files+1 WHERE id=? AND student_id=?').run(batchId, this.store.studentId);
       } });
       return { assetId, job, created: true };

@@ -50,6 +50,38 @@ describe('durable material uploads', () => {
     await expect(f.uploads.save({ ...f.input, hints: { label: 'edited' } })).rejects.toMatchObject({ status: 409 });
     expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
   });
+  it('keeps an immutable original fingerprint after mutable hints and document context change', async () => {
+    const f = await fixture();
+    const questionId = f.store.createQuestion().id, attemptId = f.store.createAttempt(questionId).id;
+    const input = { ...f.input, hints: { label: 'original', questionId, attemptId } };
+    const first = await f.uploads.save(input);
+    const row = f.db.prepare('SELECT upload_request_fingerprint FROM material_asset WHERE id=?').get(first.assetId) as { upload_request_fingerprint: string };
+    expect(row.upload_request_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(() => f.db.prepare('UPDATE material_asset SET upload_request_fingerprint=? WHERE id=?').run('changed', first.assetId)).toThrow(/immutable/);
+    f.db.prepare('UPDATE material_asset SET hints_json=? WHERE id=?').run(JSON.stringify({ label: 'edited' }), first.assetId);
+    const retry = await f.uploads.save({ ...input, hints: { attemptId, questionId, label: 'original' } });
+    expect(retry).toMatchObject({ assetId: first.assetId, job: { id: first.job.id }, created: false });
+    expect(f.db.prepare('SELECT hints_json FROM material_asset WHERE id=?').get(first.assetId)).toEqual({ hints_json: '{"label":"edited"}' });
+    const changed = await sharp({ create: { width: 24, height: 16, channels: 3, background: '#000' } }).jpeg().toBuffer();
+    for (const different of [{ ...input, bytes: changed }, { ...input, captureId: f.store.createCapture(randomUUID()).id }, { ...input, hints: { label: 'edited' } }, { ...input, hints: { ...input.hints, attemptId: f.store.createAttempt(questionId).id } }]) {
+      await expect(f.uploads.save(different)).rejects.toMatchObject({ status: 409, code: 'idempotency_conflict' });
+    }
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
+    expect(f.db.prepare('SELECT count(*) n FROM material_job').get()).toEqual({ n: 1 });
+  });
+  it('migrates pre-fingerprint uploads without inventing identity from edited hints', async () => {
+    const f = await fixture(); const saved = await f.uploads.save(f.input);
+    // Recreate the exact old-schema boundary, where no historical original hints were stored.
+    f.db.exec('DROP TRIGGER IF EXISTS material_upload_fingerprint_immutable; ALTER TABLE material_asset DROP COLUMN upload_request_fingerprint');
+    f.db.prepare('UPDATE material_asset SET hints_json=? WHERE id=?').run('{"label":"already edited"}', saved.assetId);
+    migrateMaterials(f.db); migrateMaterials(f.db);
+    expect(f.db.prepare('SELECT upload_request_fingerprint,hints_json FROM material_asset').get()).toEqual({ upload_request_fingerprint: null, hints_json: '{"label":"already edited"}' });
+    await expect(f.uploads.save(f.input)).rejects.toMatchObject({ status: 409, code: 'upload_identity_unavailable', message: expect.stringContaining('已保留在服务器') });
+    await expect(f.uploads.save({ ...f.input, hints: { label: 'already edited' } })).rejects.toMatchObject({ status: 409, code: 'upload_identity_unavailable' });
+    expect(readFileSync(f.uploads.source(saved.assetId).originalPath)).toEqual(f.input.bytes);
+    expect(f.db.prepare('SELECT count(*) n FROM material_job').get()).toEqual({ n: 1 });
+    expect(f.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+  });
   it('deduplicates physical files but preserves explicitly separate uploads and attempts', async () => {
     const f = await fixture(); const first = await f.uploads.save(f.input);
     const question = f.store.createQuestion().id; const attempt = f.store.createAttempt(question).id;

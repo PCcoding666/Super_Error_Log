@@ -109,6 +109,15 @@ export function migrateMaterials(db: DatabaseSync): void {
   // Link decisions have their own CAS counter: they never change extraction/source identity.
   const assetColumns=db.prepare('PRAGMA table_info(material_asset)').all() as {name:string}[];
   if (!assetColumns.some(column=>column.name==='link_revision')) db.exec('ALTER TABLE material_asset ADD COLUMN link_revision INTEGER NOT NULL DEFAULT 1 CHECK(link_revision > 0)');
+  // Old hints may already have been edited. NULL means the original request is
+  // unknown; never backfill a replay identity from current display/link metadata.
+  if (!assetColumns.some(column=>column.name==='upload_request_fingerprint')) db.exec('ALTER TABLE material_asset ADD COLUMN upload_request_fingerprint TEXT');
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS material_upload_fingerprint_immutable
+    BEFORE UPDATE OF upload_request_fingerprint ON material_asset
+    WHEN NEW.upload_request_fingerprint IS NOT OLD.upload_request_fingerprint
+    BEGIN SELECT RAISE(ABORT,'upload request fingerprint is immutable'); END;
+  `);
   // Old tables do not have composite owner keys. Validate those boundaries without changing old rows.
   for (const operation of ['INSERT', 'UPDATE'] as const) {
     db.exec(`

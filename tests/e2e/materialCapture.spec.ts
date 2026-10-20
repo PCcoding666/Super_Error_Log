@@ -289,7 +289,7 @@ test('namespace recheck rate limits pause and resume rather than discard drafts'
 });
 
 test('malformed successful upload responses never acknowledge a saved photo',async({page,gateway})=>{
- await enter(page,gateway);await page.route('**/s/materials/uploads**',route=>route.fulfill({status:200,contentType:'application/json',body:'{"ok":true,"assetId":"made-up","job":{}}'}));await page.locator('#camera-input').setInputFiles(await jpeg());await expect(page.getByRole('button',{name:'重试',exact:true})).toBeVisible();await expect(page.getByText('照片已保存，可以先离开',{exact:true})).toHaveCount(0);
+ await page.route('**/s/materials/uploads**',route=>route.fulfill({status:200,contentType:'application/json',body:'{"ok":true,"assetId":"made-up","job":{}}'}));await enter(page,gateway);await page.locator('#camera-input').setInputFiles(await jpeg());await expect(page.getByRole('button',{name:'重试',exact:true})).toBeVisible();await expect(page.getByText('照片已保存，可以先离开',{exact:true})).toHaveCount(0);
 });
 
 test('later draft-update quota failure does not resurrect an acknowledged raw blob',async({page,gateway})=>{
@@ -302,4 +302,98 @@ test('later draft-update failure still deletes its earlier raw row and reports f
  await enter(page,gateway);await page.route('**/s/materials/uploads**',route=>route.abort());await page.locator('#camera-input').setInputFiles(await jpeg());await expect(page.getByRole('button',{name:'重试',exact:true})).toBeVisible();
  await page.evaluate(()=>{const remove=IDBObjectStore.prototype.delete;IDBObjectStore.prototype.delete=function(key){IDBObjectStore.prototype.delete=remove;throw new DOMException('synthetic deletion failure','UnknownError')}});await page.getByRole('button',{name:'删除待传',exact:true}).click();await expect(page.locator('[data-queue-warning]')).toHaveText('没能删除，请重试。');await expect(page.locator('[data-upload-queue] li')).toHaveCount(1);
  await page.getByRole('button',{name:'删除待传',exact:true}).click();await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);await page.reload();await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);await expect(page.getByTestId('photo-count')).toHaveText('已拍 0 张');
+});
+
+test('restore-time quota failure uploads readable drafts with identical IDs and prepared bytes', async ({ page, gateway }) => {
+    await page.route('**/s/materials/uploads**', route => route.abort());
+    await enter(page, gateway);
+    await page.locator('#camera-input').setInputFiles(await jpeg());
+    await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible();
+    const pending = await page.evaluate(() => new Promise<{ uploadId: string; captureId: string; prepared: boolean; bytes: number[] }>((resolve, reject) => {
+        const open = indexedDB.open('sel-material-drafts', 1);
+        open.onsuccess = () => { const read = open.result.transaction('uploads').objectStore('uploads').getAll(); read.onsuccess = async () => { const row = read.result[0]; resolve({ uploadId: row.uploadId, captureId: row.captureId, prepared: row.prepared, bytes: Array.from(new Uint8Array(await row.blob.arrayBuffer())) }); open.result.close(); }; read.onerror = () => reject(read.error); };
+    }));
+    expect(pending.prepared).toBe(true);
+    await page.unroute('**/s/materials/uploads**');
+    let replayId = '', replayBody: Buffer | null = null;
+    await page.route('**/s/materials/uploads**', async route => { replayId = route.request().headers()['x-upload-id']!; replayBody = route.request().postDataBuffer(); await route.continue(); });
+    await page.addInitScript(() => { IDBObjectStore.prototype.put = function () { throw new DOMException('synthetic restore quota', 'QuotaExceededError'); }; });
+    await page.reload();
+    await expect(page.locator('[data-queue-warning]')).toContainText('逐张直传');
+    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
+    expect(replayId).toBe(pending.uploadId);
+    expect(replayBody!.includes(Buffer.from(pending.bytes))).toBe(true);
+    expect(replayBody!.includes(Buffer.from(pending.captureId))).toBe(true);
+    await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);
+    expect(await page.evaluate(() => new Promise<number>((resolve, reject) => {
+        const open = indexedDB.open('sel-material-drafts', 1);
+        open.onsuccess = () => { const count = open.result.transaction('uploads').objectStore('uploads').count(); count.onsuccess = () => { resolve(count.result); open.result.close(); }; count.onerror = () => reject(count.error); };
+    }))).toBe(0);
+    await page.reload();
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
+    await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);
+    // The account was never paused: new captures still work with the same storage failure.
+    await page.locator('#camera-input').setInputFiles(await jpeg());
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张');
+});
+
+test('lost acknowledgement replays after optional hints and document edits without reverting metadata', async ({ page, gateway }) => {
+    let saved: { assetId: string; job: { id: string } } | undefined;
+    await page.route('**/s/materials/uploads**', async route => { saved = await (await route.fetch()).json(); await route.abort(); });
+    await enter(page, gateway);
+    await page.locator('#camera-input').setInputFiles(await jpeg());
+    await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible();
+    const namespace = await page.locator('[data-material-capture]').getAttribute('data-draft-namespace');
+    const headers = { accept: 'application/json', 'x-draft-namespace': namespace! };
+    expect((await page.request.post(gateway.base + `/s/materials/assets/${saved!.assetId}/hints`, { headers, data: { label: 'later label', roles: ['reference_answer'], marking: 'unmarked' } })).status()).toBe(200);
+    expect((await page.request.post(gateway.base + `/s/materials/assets/${saved!.assetId}/document`, { headers, data: { newDocument: true, expectedRevision: 1 } })).status()).toBe(200);
+    await page.unroute('**/s/materials/uploads**');
+    let replay: typeof saved;
+    await page.route('**/s/materials/uploads**', async route => { const response = await route.fetch(); replay = await response.json(); await route.fulfill({ response }); });
+    await page.reload();
+    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
+    expect(replay).toMatchObject({ assetId: saved!.assetId, job: { id: saved!.job.id }, created: false });
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
+    await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);
+    await page.goto(gateway.base + '/s/materials');
+    await expect(page.getByRole('heading', { name: '照片 1 · later label' })).toBeVisible();
+});
+
+test('a temporary restore preflight failure recovers without claiming an account change', async ({ page, gateway }) => {
+    await page.route('**/s/materials/uploads**', route => route.abort());
+    await enter(page, gateway);
+    await page.locator('#camera-input').setInputFiles(await jpeg());
+    await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible();
+    await page.unroute('**/s/materials/uploads**');
+    let failed = false;
+    await page.route('**/s/materials/session', route => {
+        if (!failed) { failed = true; return route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }); }
+        return route.continue();
+    });
+    await page.reload();
+    await expect(page.locator('[data-queue-warning]')).toContainText('暂时无法恢复');
+    await expect(page.locator('[data-queue-message]')).not.toContainText('登录状态');
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
+});
+
+test('unverifiable legacy upload identity retains the server photo and offers local cleanup without retrying', async ({ page, gateway }) => {
+    let requests = 0;
+    // HTTP migration behavior is covered by materialRoutes; inject its exact terminal response here.
+    await page.route('**/s/materials/uploads**', async route => {
+        requests++;
+        await route.fetch();
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'upload_identity_unavailable', message: '这张照片已保留在服务器，但旧上传信息无法核对。请先查看已经保存的材料，再删除这条待传记录；不用重新拍照。' } }) });
+    });
+    await enter(page, gateway);
+    await page.locator('#camera-input').setInputFiles(await jpeg());
+    await expect(page.locator('[data-upload-queue]')).toContainText('已保留在服务器');
+    await expect(page.getByRole('button', { name: '重试', exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(page.locator('[data-upload-queue]')).toContainText('删除这条待传记录');
+    expect(requests).toBe(1);
+    await page.getByRole('button', { name: '删除待传', exact: true }).click();
+    await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
 });
