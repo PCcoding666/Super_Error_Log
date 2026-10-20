@@ -20,7 +20,8 @@ type QuestionMeta={id:string;document_id:string|null;unresolved_json:string};
 type AssetMeta={id:string;document_id:string|null;hints_json:string;link_revision:number};
 type Alias={source_key:string;question_id:string;details_json:string};
 type Metadata={questions:QuestionMeta[];assets:AssetMeta[];aliases:Alias[]};
-type Operation={id:string;eventIds:string[];before:Metadata;after:Metadata};
+type QuestionState=QuestionMeta&{revision:number;canonicalId:string};
+type Operation={id:string;eventIds:string[];before:Metadata;after:Metadata;questionStates?:QuestionState[]};
 type Event={id:string;fragment_id:string;fragment_revision:number;revision:number;question_id:string|null;attempt_id:string|null;before_question_id:string|null;before_attempt_id:string|null;before_fragment_revision:number|null;basis_json:string};
 function metadata(store:MaterialStore):Metadata {
   return {
@@ -42,6 +43,28 @@ function delta(before:Metadata,after:Metadata):[Metadata,Metadata] {
   }
   return [a,b];
 }
+function affectedQuestions(events:Event[],before:Metadata,after:Metadata):Set<string> {
+  return new Set([
+    ...events.flatMap(event=>[event.question_id,event.before_question_id]),
+    ...[before,after].flatMap(meta=>[...meta.questions.map(question=>question.id),...meta.aliases.flatMap(alias=>[alias.source_key,alias.question_id])]),
+  ].filter((id):id is string=>id!==null));
+}
+function questionState(store:MaterialStore,id:string):QuestionState {
+  const row=store.db.prepare('SELECT id,document_id,unresolved_json,revision FROM material_question WHERE owner_id=? AND id=?').get(store.studentId,id) as (QuestionMeta&{revision:number})|undefined;
+  if (!row) throw conflict();
+  return {...row,canonicalId:resolveQuestionId(store,id)};
+}
+function checkQuestionState(store:MaterialStore,op:Operation,events:Event[],history:Event[]):void {
+  if (op.questionStates) {
+    for (const state of op.questionStates) if (JSON.stringify(questionState(store,state.id))!==JSON.stringify(state)) throw conflict();
+  } else {
+    // Older journals predate question snapshots. Later events on any involved
+    // question make their inverse unsafe even if the original fragments stayed put.
+    const affected=affectedQuestions(events,op.before,op.after);
+    const last=history.findIndex(event=>event.id===events.at(-1)!.id);
+    if (history.slice(last+1).some(event=>affected.has(event.question_id??'')||affected.has(event.before_question_id??''))) throw conflict();
+  }
+}
 function operation(store:MaterialStore,run:()=>void):LinkChange[] {
   const start=linkRevision(store); const before=metadata(store); run();
   const events=store.db.prepare('SELECT * FROM material_link_event WHERE owner_id=? AND rowid>? ORDER BY rowid').all(store.studentId,start) as Event[];
@@ -52,7 +75,8 @@ function operation(store:MaterialStore,run:()=>void):LinkChange[] {
     if (previous) store.db.prepare('UPDATE material_asset SET link_revision=link_revision+1 WHERE owner_id=? AND id=? AND link_revision=?').run(store.studentId,id,previous.link_revision);
   }
   const [oldMeta,newMeta]=delta(before,metadata(store));
-  const op:Operation={id:newId('mop'),eventIds:events.map(e=>e.id),before:oldMeta,after:newMeta};
+  const op:Operation={id:newId('mop'),eventIds:events.map(e=>e.id),before:oldMeta,after:newMeta,
+    questionStates:[...affectedQuestions(events,oldMeta,newMeta)].sort().map(id=>questionState(store,id))};
   for (const event of events) store.db.prepare('UPDATE material_link_event SET basis_json=?,decision=? WHERE owner_id=? AND id=?').run(JSON.stringify({...JSON.parse(event.basis_json),operationId:op.id,...(event===events[0]?{operation:op}:{})}),'manual',store.studentId,event.id);
   const revision=linkRevision(store);
   return events.map(e=>({id:e.id,questionId:e.question_id??e.before_question_id??'',revision}));
@@ -136,6 +160,14 @@ export function assignDocument(store:MaterialStore,input:{assetId:string;documen
   });
 }
 function restoreMetadata(store:MaterialStore,from:Metadata,to:Metadata):void {
+  for (const row of from.questions) {
+    const current=store.db.prepare('SELECT id,document_id,unresolved_json FROM material_question WHERE owner_id=? AND id=?').get(store.studentId,row.id);
+    if (JSON.stringify(current)!==JSON.stringify(row)) throw conflict();
+  }
+  for (const key of new Set([...from.aliases,...to.aliases].map(alias=>alias.source_key))) {
+    const current=store.db.prepare("SELECT source_key,question_id,details_json FROM material_legacy_map WHERE owner_id=? AND source_kind='question_alias' AND source_key=?").get(store.studentId,key);
+    if (JSON.stringify(current)!==JSON.stringify(from.aliases.find(alias=>alias.source_key===key))) throw conflict();
+  }
   for (const row of from.assets) {
     const current=store.db.prepare('SELECT id,document_id,hints_json,link_revision FROM material_asset WHERE owner_id=? AND id=?').get(store.studentId,row.id);
     if (JSON.stringify(current)!==JSON.stringify(row)) throw conflict();
@@ -157,6 +189,7 @@ export function undoLink(store:MaterialStore,changeId:string,expectedRevision:nu
     const op=JSON.parse(events[0]!.basis_json).operation as Operation|undefined;
     const groups=new Map<string,Event[]>(); for (const row of events) groups.set(row.fragment_id,[...(groups.get(row.fragment_id)??[]),row]);
     for (const [id,rows] of groups) if (currentLink(store,id)?.id!==rows.at(-1)!.id) throw conflict();
+    if (op) checkQuestionState(store,op,events,history);
     const changes=operation(store,()=>{
       if (op) restoreMetadata(store,op.after,op.before);
       for (const [id,rows] of groups) {

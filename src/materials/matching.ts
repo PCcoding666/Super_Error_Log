@@ -36,11 +36,18 @@ function allFragments(store:MaterialStore,q:QuestionBundle):Fragment[] {
 }
 function compatible(store:MaterialStore,q:QuestionBundle,fragments:Fragment[],explicitAttempt?:string):boolean {
   const existing=allFragments(store,q).filter(f=>!fragments.some(n=>n.fragmentId===f.fragmentId));
+  // Stem scope is authoritative. Before a stem arrives, use the substantive
+  // provisional material; an unrelated unscoped annotation cannot widen it.
+  const stems=existing.filter(f=>f.role==='question');
+  const work=existing.filter(f=>f.role==='student_work'||f.role==='correction');
+  const scopeEvidence=stems.length?stems:work.length?work:existing.filter(f=>f.role==='diagram'||f.role==='reference_answer');
   for (const f of fragments) {
     if (existing.some(e=>e.role==='question'&&f.role==='question'&&e.subpart===f.subpart&&e.text.trim()!==f.text.trim())) return false;
     if ((f.role==='student_work'||f.role==='correction')&&!explicitAttempt&&existing.some(e=>e.role==='student_work'&&e.assetId!==f.assetId)) return false;
-    // Number alone cannot place a named subpart into unrelated known subparts.
-    if (f.subpart!==null&&existing.length&&existing.every(e=>e.subpart!==null&&e.subpart!==f.subpart)&&!explicitAttempt) return false;
+    // Null never covers a named scope (or vice versa). An explicit selected
+    // attempt can carry a user-authorized continuation across subparts.
+    const scopedMaterial=f.role!=='teacher_mark'&&f.role!=='unknown'||f.subpart!==null;
+    if (!explicitAttempt&&existing.length&&scopedMaterial&&!scopeEvidence.some(e=>e.subpart===f.subpart)) return false;
   }
   return true;
 }
@@ -133,6 +140,19 @@ export function reconcileAsset(store:MaterialStore,assetId:string):{linked:numbe
         }
         store.linkFragment(f.fragmentId,f.revision,{questionId,attemptId:f.role==='student_work'||f.role==='correction'?attemptId:null},0,{reason:reason?'provisional':documentId?'document':'cooccurrence',documentId}); linked++;
       }
+    }
+    // A locally anchored question needs no document choice. Unknown-document work on
+    // another image still has no local stem and remains pending; manual splits are respected.
+    const localTargets=new Map<string,Fragment[]>();
+    for (const fragment of fragments) {
+      const target=currentLink(store,fragment.fragmentId)?.question_id; if (!target) continue;
+      const id=resolveQuestionId(store,target); localTargets.set(id,[...(localTargets.get(id)??[]),fragment]);
+    }
+    for (const [id,local] of localTargets) {
+      const question=readQuestion(store,id)!;
+      const unresolved=local.some(fragment=>fragment.role==='question')?question.unresolved.filter(reason=>reason!=='document'):question.unresolved;
+      if (unresolved.length!==question.unresolved.length) setUnresolved(store,id,unresolved);
+      if (unresolved.length) pending.add(id); else pending.delete(id);
     }
     return {linked,pending:[...pending]};
   });

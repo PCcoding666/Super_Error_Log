@@ -35,6 +35,10 @@ function target(store: MaterialStore, fragmentId: string) {
   return store.db.prepare('SELECT question_id,attempt_id FROM material_link_event WHERE owner_id=? AND fragment_id=? ORDER BY revision DESC LIMIT 1').get(store.studentId,fragmentId) as {question_id:string;attempt_id:string|null};
 }
 function only(store: MaterialStore) { return store.listQuestions()[0]!; }
+function materialAssetSnapshot(store:MaterialStore,id:string) {
+  return store.db.prepare('SELECT document_id,hints_json,link_revision FROM material_asset WHERE id=?').get(id);
+}
+
 
 describe('material linking', () => {
   it('adds the independent link counter to existing material databases idempotently', () => {
@@ -47,9 +51,29 @@ describe('material linking', () => {
   });
   it('links unlabelled same-page roles without assigning a document from title alone', () => {
     const store=setup(); const page=asset(store,[{}, {role:'student_work',text:'Work'}, {role:'teacher_mark',text:'Teacher'}],null);
-    expect(reconcileAsset(store,page.id).linked).toBe(3);
+    expect(reconcileAsset(store,page.id)).toEqual({linked:3,pending:[]});
     const q=readQuestion(store,only(store).id)!;
-    expect(q.documentId).toBeNull(); expect(q.stem).toHaveLength(1); expect(q.attempts[0]!.fragments).toHaveLength(1); expect(q.teacherMarks).toHaveLength(1);
+    expect(q.documentId).toBeNull(); expect(q.unresolved).toEqual([]); expect(q.missing).toEqual([]); expect(q.stem).toHaveLength(1); expect(q.attempts[0]!.fragments).toHaveLength(1); expect(q.teacherMarks).toHaveLength(1);
+  });
+  it('keeps a standalone question usable while separate-image work without document evidence remains pending', () => {
+    const store=setup(); const page=asset(store,[{}, {role:'student_work',text:'Local work'}],null);
+    expect(reconcileAsset(store,page.id).pending).toEqual([]); const local=only(store);
+    const work=asset(store,[{role:'student_work',text:'Unattributed work'}],null); const result=reconcileAsset(store,work.id);
+    const provisional=target(store,work.fragments[0]!.fragmentId).question_id;
+    expect(provisional).not.toBe(local.id); expect(result.pending).toContain(provisional);
+    expect(readQuestion(store,provisional)!.unresolved).toContain('document');
+    expect(readQuestion(store,local.id)!.unresolved).toEqual([]);
+    expect(reconcileAsset(store,page.id)).toEqual({linked:0,pending:[]});
+  });
+  it('clears only document ambiguity when a recovered same-page stem completes its provisional work', () => {
+    const store=setup(); const page=asset(store,[{role:'student_work',text:'Local work'}],null);
+    expect(reconcileAsset(store,page.id).pending).toHaveLength(1); const provisional=only(store);
+    store.putFragment({...page.fragments[0]!,fragmentId:`${page.id}-stem`,role:'question',text:'Question',order:1});
+    expect(reconcileAsset(store,page.id).pending).toEqual([]);
+    expect(readQuestion(store,provisional.id)!.unresolved).toEqual([]); expect(readQuestion(store,provisional.id)!.missing).toEqual([]);
+    store.db.prepare('UPDATE material_question SET unresolved_json=? WHERE id=?').run(JSON.stringify(['document','learning_conflict']),provisional.id);
+    reconcileAsset(store,page.id);
+    expect(readQuestion(store,provisional.id)!.unresolved).toEqual(['learning_conflict']);
   });
   it.each([false,true])('completes the same provisional question in either capture order (%s)', reverse => {
     const store=setup(); const work={role:'student_work' as const,text:'Original work'};
@@ -63,7 +87,7 @@ describe('material linking', () => {
   it('does not merge same-number papers or title/label-only pages', () => {
     const store=setup(); for (const code of ['A','B',null,null]) { const page=asset(store,[{}],code,{label:'same'}); reconcileAsset(store,page.id); }
     expect(store.listQuestions()).toHaveLength(4); expect(new Set(store.listQuestions().filter(q=>q.documentId).map(q=>q.id)).size).toBe(2);
-    expect(store.listQuestions().filter(q=>!q.documentId).every(q=>q.unresolved.includes('document'))).toBe(true);
+    expect(store.listQuestions().filter(q=>!q.documentId).every(q=>q.unresolved.length===0)).toBe(true);
   });
   it('requires unique code and compatible content and full subpart scope', () => {
     const store=setup(); const a=asset(store,[{text:'First'}]); reconcileAsset(store,a.id);
@@ -71,6 +95,35 @@ describe('material linking', () => {
     expect(store.listQuestions()).toHaveLength(2);
     const work=asset(store,[{role:'student_work',subpart:'b',text:'b solution'}]); expect(reconcileAsset(store,work.id).pending).not.toEqual([]);
     expect(target(store,work.fragments[0]!.fragmentId).question_id).not.toBe(target(store,a.fragments[0]!.fragmentId).question_id);
+  });
+  it.each([
+    {name:'unscoped teacher sibling',sibling:'teacher_mark' as const,workScope:'b'},
+    {name:'unscoped reference sibling',sibling:'reference_answer' as const,workScope:'b'},
+    {name:'unknown incoming work scope',sibling:null,workScope:null},
+    {name:'different incoming work scope',sibling:null,workScope:'b'},
+  ])('does not infer named-scope compatibility from $name', ({sibling,workScope}) => {
+    const store=setup(); const page=asset(store,[{subpart:'a',text:'Question a'},...(sibling?[{role:sibling,subpart:null,text:'Unscoped annotation'}]:[])]);
+    reconcileAsset(store,page.id); const original=only(store);
+    const work=asset(store,[{role:'student_work',subpart:workScope,text:'Separate solution'}]);
+    const result=reconcileAsset(store,work.id); const workTarget=target(store,work.fragments[0]!.fragmentId).question_id;
+    expect(workTarget).not.toBe(original.id); expect(result.pending).toContain(workTarget);
+    expect(readQuestion(store,workTarget)!.unresolved).toContain('association');
+    expect(readQuestion(store,original.id)!.attempts).toEqual([]);
+  });
+  it.each(['b',null])('does not infer reverse-order scope from provisional work %s and an unscoped annotation', workScope => {
+    const store=setup(); const work=asset(store,[{role:'student_work',subpart:workScope,text:'Original solution'},{role:'teacher_mark',subpart:null,text:'Tick'}]);
+    reconcileAsset(store,work.id); const original=only(store);
+    const stem=asset(store,[{subpart:'a',text:'Question a'}]); const result=reconcileAsset(store,stem.id);
+    const stemTarget=target(store,stem.fragments[0]!.fragmentId).question_id;
+    expect(stemTarget).not.toBe(original.id); expect(result.pending).toContain(stemTarget);
+    expect(readQuestion(store,original.id)!.stem).toEqual([]);
+  });
+  it('accepts an exact named scope despite irrelevant unscoped annotations', () => {
+    const store=setup(); const page=asset(store,[{subpart:'a'},{role:'teacher_mark',subpart:null,text:'Tick'}]);
+    reconcileAsset(store,page.id); const original=only(store);
+    const work=asset(store,[{role:'student_work',subpart:'a',text:'Solution a'}]);
+    expect(reconcileAsset(store,work.id).pending).toEqual([]);
+    expect(target(store,work.fragments[0]!.fragmentId).question_id).toBe(original.id);
   });
   it('joins distinct subparts across pages only with an explicit selected attempt', () => {
     const store=setup(); const first=asset(store,[{subpart:'a'}, {role:'student_work',subpart:'a',text:'A'}]); reconcileAsset(store,first.id); const q=only(store);
@@ -136,6 +189,57 @@ describe('material linking', () => {
     relink(store,{fragmentIds:[fragmentId],target:{questionId:other.id,attemptId:null},expectedRevision:linkRevision(store)});
     expect(()=>assignDocument(store,{assetId:page.id,documentId:q.documentId!,expectedRevision:1})).toThrow(expect.objectContaining({status:409}));
     expect(target(store,fragmentId).question_id).toBe(other.id);
+  });
+  it.each(['student_work','reference_answer'] as const)('rejects document undo after later related %s was associated under the new document', role => {
+    const store=setup(); const page=asset(store,[{}],'D'); reconcileAsset(store,page.id); const original=only(store);
+    const other=asset(store,[{number:'20'}],'E'); reconcileAsset(store,other.id);
+    const documentId=readQuestion(store,target(store,other.fragments[0]!.fragmentId).question_id)!.documentId!;
+    const change=assignDocument(store,{assetId:page.id,documentId,expectedRevision:assetLinkRevision(store,page.id)})[0]!;
+    const later=asset(store,[{role,text:'Later E evidence'}],'E'); expect(reconcileAsset(store,later.id).pending).toEqual([]);
+    expect(target(store,later.fragments[0]!.fragmentId).question_id).toBe(original.id);
+    const snapshot=JSON.stringify({question:readQuestion(store,original.id),links:store.db.prepare('SELECT * FROM material_link_event ORDER BY rowid').all(),asset:materialAssetSnapshot(store,page.id)});
+    expect(()=>undoLink(store,change.id,linkRevision(store))).toThrow(expect.objectContaining({status:409}));
+    expect(JSON.stringify({question:readQuestion(store,original.id),links:store.db.prepare('SELECT * FROM material_link_event ORDER BY rowid').all(),asset:materialAssetSnapshot(store,page.id)})).toBe(snapshot);
+    expect(readQuestion(store,original.id)!.documentId).toBe(documentId);
+    expect(store.db.prepare('SELECT document_id FROM material_asset WHERE id=?').get(later.id)).toEqual({document_id:documentId});
+  });
+  it.each([false,true])('rejects alias-restoring undo after later related evidence, including older journals (%s)', legacy => {
+    const store=setup(); const work=asset(store,[{role:'student_work'}],null); reconcileAsset(store,work.id); const original=only(store);
+    const stem=asset(store,[{}],'E'); reconcileAsset(store,stem.id); const stemId=target(store,stem.fragments[0]!.fragmentId).question_id;
+    const documentId=readQuestion(store,stemId)!.documentId!;
+    const change=assignDocument(store,{assetId:work.id,documentId,expectedRevision:assetLinkRevision(store,work.id)})[0]!;
+    if (legacy) {
+      const row=store.db.prepare('SELECT basis_json FROM material_link_event WHERE id=?').get(change.id) as {basis_json:string}; const basis=JSON.parse(row.basis_json);
+      delete basis.operation.questionStates;
+      store.db.prepare('UPDATE material_link_event SET basis_json=? WHERE id=?').run(JSON.stringify(basis),change.id);
+    }
+    const later=asset(store,[{role:'reference_answer',text:'Later answer'}],'E'); reconcileAsset(store,later.id);
+    expect(target(store,later.fragments[0]!.fragmentId).question_id).toBe(original.id);
+    const aliases=store.db.prepare("SELECT * FROM material_legacy_map WHERE source_kind='question_alias'").all(); const revision=linkRevision(store);
+    expect(()=>undoLink(store,change.id,revision)).toThrow(expect.objectContaining({status:409}));
+    expect(store.db.prepare("SELECT * FROM material_legacy_map WHERE source_kind='question_alias'").all()).toEqual(aliases);
+    expect(readQuestion(store,stemId)!.id).toBe(original.id); expect(linkRevision(store)).toBe(revision);
+  });
+  it('rejects restoring question metadata after a later metadata change without fragment edits', () => {
+    const store=setup(); const page=asset(store,[{}],'D'); reconcileAsset(store,page.id); const original=only(store);
+    const other=asset(store,[{number:'20'}],'E'); reconcileAsset(store,other.id); const documentId=readQuestion(store,target(store,other.fragments[0]!.fragmentId).question_id)!.documentId!;
+    const change=assignDocument(store,{assetId:page.id,documentId,expectedRevision:assetLinkRevision(store,page.id)})[0]!;
+    store.db.prepare('UPDATE material_question SET unresolved_json=? WHERE id=?').run(JSON.stringify(['later_conflict']),original.id);
+    expect(()=>undoLink(store,change.id,linkRevision(store))).toThrow(expect.objectContaining({status:409}));
+    expect(readQuestion(store,original.id)!.unresolved).toEqual(['later_conflict']);
+  });
+  it('allows undo and redo with refreshed tokens after genuinely unrelated edits', () => {
+    const store=setup(); const page=asset(store,[{}],'D'); reconcileAsset(store,page.id); const original=only(store);
+    const other=asset(store,[{number:'20'}],'E'); reconcileAsset(store,other.id); const documentId=readQuestion(store,target(store,other.fragments[0]!.fragmentId).question_id)!.documentId!;
+    const change=assignDocument(store,{assetId:page.id,documentId,expectedRevision:assetLinkRevision(store,page.id)})[0]!;
+    const unrelated=asset(store,[{number:'30'}],'F'); reconcileAsset(store,unrelated.id); const destination=store.createQuestion({number:'30'});
+    relink(store,{fragmentIds:[unrelated.fragments[0]!.fragmentId],target:{questionId:destination.id,attemptId:null},expectedRevision:linkRevision(store)});
+    const inverse=undoLink(store,change.id,linkRevision(store));
+    expect(readQuestion(store,original.id)!.documentId).toBe(original.documentId);
+    expect(target(store,unrelated.fragments[0]!.fragmentId).question_id).toBe(destination.id);
+    undoLink(store,inverse.id,linkRevision(store));
+    expect(readQuestion(store,original.id)!.documentId).toBe(documentId);
+    expect(target(store,unrelated.fragments[0]!.fragmentId).question_id).toBe(destination.id);
   });
   it('does not overwrite later overlapping changes on undo and rolls back invalid batches', () => {
     const store=setup(); const page=asset(store,[{number:'1'},{number:'2'},{number:'3'}]); reconcileAsset(store,page.id);
