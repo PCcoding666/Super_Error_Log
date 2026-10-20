@@ -2,11 +2,15 @@ import { AiError } from './errors.js';
 import type { Stage } from './evidence.js';
 import sharp from 'sharp';
 import crypto from 'node:crypto';
+import { recordAiUsage, tokenCount } from '../observability/aiUsage.js';
 
 export type ModelStage = Stage | 'crop_inventory' | 'crop_verify' | 'mobile_inventory' | 'mobile_transcribe' | 'mobile_verify' | 'mobile_ground';
 export interface StageRun { stage: ModelStage; model: string; durationMs: number; promptTokens: number | null; completionTokens: number | null; maxTokens: number; thinking: false; promptVersion: string }
 export interface StageResult<T> { value: T; run: StageRun }
 export interface ChatTrace {
+  usageId?: string;
+  startedAt?: string;
+  durationMs?: number;
   stage: ModelStage;
   model: string;
   request: Record<string, unknown>;
@@ -101,7 +105,7 @@ export class ChatClient {
     o.signal?.throwIfAborted();
     await o.beforeRequest?.();
     o.signal?.throwIfAborted();
-    const started = Date.now(); const controller = new AbortController();
+    const started = Date.now(); const usageId = crypto.randomUUID(); const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), o.timeoutMs);
     let raw: string | null = null; let httpStatus: number | null = null;
     let usage = { prompt_tokens: null as number | null, completion_tokens: null as number | null };
@@ -116,6 +120,10 @@ export class ChatClient {
       httpStatus = res.status;
       const received = await readResponse(res); raw = received.raw;
       if (received.overflow) throw new AiError('invalid_json', '模型响应过大');
+      // A failed HTTP call may still carry billable usage; retain it before classifying status.
+      let body: { choices?: Array<{ finish_reason?: string; message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } } | null = null;
+      try { body = JSON.parse(raw); } catch { /* classified after HTTP status */ }
+      usage = { prompt_tokens: tokenCount(body?.usage?.prompt_tokens), completion_tokens: tokenCount(body?.usage?.completion_tokens) };
       if (res.status === 429) throw new AiError('rate_limited', '模型服务限流');
       if (!res.ok) {
         if (res.status === 401) throw new AiError('unsupported', '模型认证失败');
@@ -124,24 +132,27 @@ export class ChatClient {
         throw new AiError('unsupported', `模型请求不受支持 HTTP ${res.status}`);
       }
       if (!raw) throw new AiError('invalid_json', '模型响应为空');
-      let body: { choices?: Array<{ finish_reason?: string; message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
-      try { body = JSON.parse(raw); } catch { throw new AiError('invalid_json', '模型响应不是 JSON'); }
-      const tokens = (n: unknown) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : null;
-      usage = { prompt_tokens: tokens(body.usage?.prompt_tokens), completion_tokens: tokens(body.usage?.completion_tokens) };
+      if (!body || typeof body !== 'object') throw new AiError('invalid_json', '模型响应不是 JSON 对象');
       const choice = body.choices?.[0];
       if (choice?.finish_reason !== 'stop' || typeof choice.message?.content !== 'string') throw new AiError('invalid_json', '模型输出被截断、拒绝或缺少正文');
       let value: unknown; try { value = JSON.parse(choice.message.content); } catch { throw new AiError('invalid_json', '模型正文不符合 JSON 契约'); }
       return { value, run: { stage, model, durationMs: Date.now() - started, promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, maxTokens, thinking: false, promptVersion: PROMPT_VERSION } };
     } catch (e) {
-      if (o.signal?.aborted) throw o.signal.reason;
+      if (o.signal?.aborted) { reportedError = { kind: 'cancelled', message: '调用已取消' }; throw o.signal.reason; }
       if (e instanceof AiError) { reportedError = { kind: e.kind, message: e.message }; throw e; }
       // Provider exceptions may contain echoed user material/credentials. Never propagate them.
       const safe = new AiError(controller.signal.aborted ? 'timeout' : 'provider_error', controller.signal.aborted ? '模型调用超时' : '模型连接失败');
       reportedError = { kind: safe.kind, message: safe.message }; throw safe;
     } finally {
       clearTimeout(timer);
+      const durationMs = Date.now() - started;
+      const startedAt = new Date(started).toISOString();
+      recordAiUsage({ id: usageId, startedAt, durationMs, operation: stage, model,
+        provider: o.bailianOnly ? 'bailian' : 'openai-compatible', source: 'live',
+        status: reportedError ? 'failed' : 'succeeded', inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens,
+        httpStatus, errorCode: reportedError?.kind ?? null });
       const safeRaw = raw === null ? null : (o.apiKey ? raw.split(o.apiKey).join('[REDACTED]') : raw);
-      await o.trace?.({ stage, model, request, responseRaw: safeRaw, httpStatus, usage, error: reportedError });
+      await o.trace?.({ usageId, startedAt, durationMs, stage, model, request, responseRaw: safeRaw, httpStatus, usage, error: reportedError });
     }
   }
 }
