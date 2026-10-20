@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  aiConcurrency, imageConcurrency, maxLiveWorkers, maxStudentsLimit, rssAdmissionThresholdBytes, workerIdleMs,
+  aiConcurrency, imageConcurrency, maxLiveWorkers, rssAdmissionThresholdBytes, workerIdleMs,
 } from '../../src/studentHost/limits.js';
 
 const MIB = 1024 * 1024;
@@ -8,7 +8,6 @@ const MIB = 1024 * 1024;
 describe('student host capacity limits', () => {
   it('uses the 4-core defaults when the environment is empty', () => {
     const env = {} as NodeJS.ProcessEnv;
-    expect(maxStudentsLimit(env)).toBe(50);
     expect(workerIdleMs(env)).toBe(12 * 60 * 1000);
     expect(maxLiveWorkers(env)).toBe(8);
     expect(aiConcurrency(env)).toBe(2);
@@ -26,7 +25,6 @@ describe('student host capacity limits', () => {
   it('accepts zero for idle exit and the live-worker cap, and rejects junk', () => {
     expect(workerIdleMs({ SEL_WORKER_IDLE_MS: '0' } as NodeJS.ProcessEnv)).toBe(0);
     expect(maxLiveWorkers({ SEL_MAX_LIVE_WORKERS: '0' } as NodeJS.ProcessEnv)).toBe(0);
-    expect(() => maxStudentsLimit({ SEL_MAX_STUDENTS: '0' } as NodeJS.ProcessEnv)).toThrow(/SEL_MAX_STUDENTS/);
     expect(() => aiConcurrency({ SEL_GLOBAL_AI_CONCURRENCY: '99' } as NodeJS.ProcessEnv)).toThrow(/SEL_GLOBAL_AI_CONCURRENCY/);
   });
 });

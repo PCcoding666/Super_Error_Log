@@ -201,7 +201,7 @@ cp -p /etc/super-error-log/env /root/backup-sel-env-$(date +%Y%m%d-%H%M)
 当前广州机器是 **2 核 / 1.8 GB**。自动发布不会安装单元文件。人工发布到这台机器时，必须在重启前装上 `deploy/systemd/super-error-log.service.d/small-box.conf`（`MemoryMax=1G`、`CPUQuota=150%`），并在 `/etc/super-error-log/env` 写上小机档：
 
 ```
-SEL_MAX_STUDENTS=50
+SEL_MAX_STUDENTS=100
 SEL_WORKER_IDLE_MS=720000
 SEL_MAX_LIVE_WORKERS=3
 SEL_GLOBAL_AI_CONCURRENCY=1
@@ -222,7 +222,7 @@ SEL_SERVICE_MEMORY_MIB=1024
 
 | 变量 | 缺省 | 含义 |
 | --- | --- | --- |
-| `SEL_MAX_STUDENTS` | 50 | 注册表里最多多少个学生空间 |
+| `SEL_MAX_STUDENTS` | 100 | 注册表里最多多少个学生空间。打开注册表时读取，降低后不删除已有账号 |
 | `SEL_WORKER_IDLE_MS` | 720000 | 空闲多久退出 worker。0 表示不因空闲退出 |
 | `SEL_MAX_LIVE_WORKERS` | 8 | 同时存活的学生进程。0 表示不限制。超出时先请最久没用且空闲的退出；都在忙则本次 503 |
 | `SEL_GLOBAL_AI_CONCURRENCY` | 2 | 所有学生加起来，同时进行的视觉模型调用 |
@@ -509,7 +509,7 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 
 ## 学生邀请码手机版网页（2026-10-15）
 
-学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。注册上限缺省 50（`SEL_MAX_STUDENTS`）。进程不按注册人数常驻：第一次打开才启动，空闲约 12 分钟后退出；同时存活的进程缺省最多 8 个（小机请改成 3）。视觉调用和重图片处理由父进程限流，缺省各 2 路（小机请改成 1）。学生之间不共享档案。容量相关变量和两档 cgroup 限制见 §7。本改动会让自动发布拒绝，须走人工发布，见 `docs/quality/2026-10-20-fifty-students.md`。
+学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。注册上限缺省 100（`SEL_MAX_STUDENTS`，与自助注册同一处读取）。进程不按注册人数常驻：第一次打开才启动，空闲约 12 分钟后退出；同时存活的进程缺省最多 8 个（小机请改成 3）。视觉调用和重图片处理由父进程限流，缺省各 2 路（小机请改成 1）。学生之间不共享档案。容量相关变量和两档 cgroup 限制见 §7。本改动会让自动发布拒绝，须走人工发布，见 `docs/quality/2026-10-20-fifty-students.md`。
 
 管理员以服务用户运行 `dist/studentHost/admin-cli.js create [role] | list | invite <studentId> | set-role <studentId> <role> | revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。管理后台使用独立管理员密码，不能使用学生邀请码登录。
 

@@ -98,7 +98,7 @@ describe('independent administrator dashboard', () => {
     const cookie = await adminCookie();
     const page = await get('/', cookie); const html = await page.text();
     expect(html).toContain(a.studentId); expect(html).toContain(b.studentId); expect(html).toContain('321'); expect(html).toContain('超时');
-    expect(html).toContain('已兑换'); expect(html).toContain('未兑换'); expect(html).toContain('未采集');
+    expect(html).toContain('可重复登录'); expect(html).toContain('可使用'); expect(html).toContain('未采集');
     expect(html).not.toContain(invite.code); expect(html).not.toMatch(/code_hash|token_hash|responseRaw/);
     const filtered = await get(`/?studentId=${b.studentId}`, cookie); const filteredHtml = await filtered.text();
     expect(filteredHtml).not.toContain('voice-model</td>'); expect(filteredHtml).toContain('没有符合筛选条件的调用');

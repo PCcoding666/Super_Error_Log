@@ -132,6 +132,27 @@ it('revalidates legacy and stale assets while keeping current static shell resou
   expect(env.starts()).toBe(0);
 });
 
+it('answers at once when the worker pool cannot take the request', async () => {
+  const reg = registry();
+  const pool = {
+    ensure: () => new Promise(() => undefined),
+    retain: () => { throw new Error('retain failed'); },
+    release: () => undefined,
+    stopAll: async () => {},
+  } as unknown as StudentWorkerPool;
+  const gateway = await createStudentHostGateway({ registry: reg, pool });
+  const app = express();
+  app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: () => '192.0.2.1' }));
+  const base = await listen(http.createServer(app));
+  const code = invite(reg);
+  const cookie = `sel_student=${reg.redeem(code).sessionToken}`;
+  const started = Date.now();
+  const response = await fetch(base + '/s/settings', { headers: { cookie }, signal: AbortSignal.timeout(3000) });
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(response.status).toBe(503);
+  expect(await response.text()).toContain('暂时进不去');
+});
+
 it('does not make private routes public with the static shell', async () => {
   const env = await setup();
   for (const route of ['/s/settings', '/s/img/item/itm_0000000000000000', '/s/pair']) {

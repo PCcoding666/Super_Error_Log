@@ -145,13 +145,17 @@ export class StudentWorkerPool {
     if (next <= 0) this.armIdle(studentId, this.idleMs);
   }
 
-  /** 取该学生的 worker 端点；没起就拉起（并发去重）。 */
+  /** 取该学生的 worker 端点；没起就拉起（并发去重）。正在空闲退出的进程不拿来转发。 */
   async ensure(studentId: string): Promise<WorkerEndpoint> {
     if (this.stopping) throw new WorkerStartError(studentId, '进程池正在关闭。');
+    const exiting = this.entries.get(studentId);
+    if (exiting?.expectedExit) await this.idleStops.get(studentId);
     if (this.isRunning(studentId)) {
       const entry = this.entries.get(studentId)!;
-      entry.lastUsedAt = Date.now();
-      return { ...entry.endpoint };
+      if (!entry.expectedExit) {
+        entry.lastUsedAt = Date.now();
+        return { ...entry.endpoint };
+      }
     }
     const pending = this.starting.get(studentId);
     if (pending) return pending;

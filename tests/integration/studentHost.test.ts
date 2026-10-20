@@ -2,7 +2,7 @@
  * 学生邀请码网关 + 独立学生 worker（2026-10-15 S1）集成测试。
  * 真实网关 + 真实 fork 出来的 worker 进程 + 合成识别（SEL_STUDENT_WORKER_FAKE=1）与 mock 转写：
  * 不假装真实模型、不调真实模型、不读 .env 与 data/。
- * 覆盖：注册表事务/单用/过期/撤销/容量、登录与限速、退出清理、双学生数据隔离、
+ * 覆盖：注册表事务/重复登录/过期/撤销/容量、登录与限速、退出清理、双学生数据隔离、
  * 路径攻击与伪造 cookie/header、body 流转发、worker 崩溃与重启恢复、令牌刷新。
  */
 import crypto from 'node:crypto';
@@ -15,8 +15,7 @@ import { DatabaseSync } from 'node:sqlite';
 import express from 'express';
 import sharp from 'sharp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { formatInviteCode, MAX_STUDENTS, normalizeInviteCode, RegistryError, StudentRegistry } from '../../src/studentHost/registry.js';
-import { maxStudentsLimit } from '../../src/studentHost/limits.js';
+import { formatInviteCode, normalizeInviteCode, RegistryError, StudentRegistry } from '../../src/studentHost/registry.js';
 import { runAdminCli } from '../../src/studentHost/admin-cli.js';
 import { createStudentHostGateway, LoginThrottle, SESSION_COOKIE, type StudentHostGateway } from '../../src/studentHost/router.js';
 import { StudentWorkerPool, WorkerStartError } from '../../src/studentHost/workers.js';
@@ -173,27 +172,25 @@ describe('学生注册表', () => {
     registry.close();
   });
 
-  it('一次性：兑换后重放失败；并发兑换只有一个成功', async () => {
+  it('新码支持重复与并发登录，始终绑定同一个学生；错误提示统一', async () => {
     const registry = StudentRegistry.open(tempRoot('sel-reg-'));
     const { studentId } = registry.createStudent();
     const { code } = registry.issueInvitation(studentId);
-    const [first, second] = await Promise.allSettled([Promise.resolve().then(() => registry.redeem(code)), Promise.resolve().then(() => registry.redeem(code))]);
-    const succeeded = [first, second].filter(r => r.status === 'fulfilled');
-    expect(succeeded).toHaveLength(1);
-    expect(() => registry.redeem(code)).toThrowError(RegistryError);
-    // 失败提示统一，不区分不存在/已用/过期
-    expect(() => registry.redeem(code)).toThrowError('邀请码不正确或已经失效。');
+    const sessions = await Promise.all([Promise.resolve().then(() => registry.redeem(code)), Promise.resolve().then(() => registry.redeem(code))]);
+    expect(sessions.map(session => session.studentId)).toEqual([studentId, studentId]);
+    expect(sessions[0]!.sessionToken).not.toBe(sessions[1]!.sessionToken);
+    expect(registry.redeem(code).studentId).toBe(studentId);
     expect(() => registry.redeem('AAAA-BBBB-CCCC')).toThrowError('邀请码不正确或已经失效。');
     expect(() => registry.redeem('not a code')).toThrowError('邀请码不正确或已经失效。');
     registry.close();
   });
 
-  it('过期邀请码（7 天）与过期会话（30 天）都拒绝', () => {
+  it('过期邀请码（60 天）与过期会话（30 天）都拒绝', () => {
     let now = new Date('2026-10-15T00:00:00Z');
     const registry = StudentRegistry.open(tempRoot('sel-reg-'), { now: () => now });
     const { studentId } = registry.createStudent();
     const { code } = registry.issueInvitation(studentId);
-    now = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000);
+    now = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
     expect(() => registry.redeem(code)).toThrowError('邀请码不正确或已经失效。');
 
     now = new Date('2026-10-15T00:00:00Z');
@@ -204,25 +201,16 @@ describe('学生注册表', () => {
     registry.close();
   });
 
-  it('空间上限：缺省 50，可用环境变量改小，超出拒绝且不产生目录', () => {
-    expect(MAX_STUDENTS).toBeGreaterThan(3);
-    expect(MAX_STUDENTS).toBe(50);
-    expect(maxStudentsLimit({})).toBe(50);
-    const previous = process.env.SEL_MAX_STUDENTS;
-    process.env.SEL_MAX_STUDENTS = '4';
-    try {
-      const hostDir = tempRoot('sel-reg-');
-      const registry = StudentRegistry.open(hostDir);
-      for (let i = 0; i < 4; i += 1) registry.createStudent();
-      expect(() => registry.createStudent()).toThrowError(/最多 4 个/);
-      expect(fs.readdirSync(path.join(hostDir, 'students'))).toHaveLength(4);
-      const studentId = registry.listStudents()[0]!.studentId;
-      expect(fs.statSync(registry.studentDir(studentId)).mode & 0o777).toBe(0o700);
-      registry.close();
-    } finally {
-      if (previous === undefined) delete process.env.SEL_MAX_STUDENTS;
-      else process.env.SEL_MAX_STUDENTS = previous;
-    }
+  it('空间上限可配置：设为 3 时第 4 个拒绝且不产生目录', () => {
+    const hostDir = tempRoot('sel-reg-');
+    const registry = StudentRegistry.open(hostDir, { maxStudents: 3 });
+    for (let i = 0; i < 3; i += 1) registry.createStudent();
+    expect(() => registry.createStudent()).toThrowError(/名额暂时已满/);
+    expect(fs.readdirSync(path.join(hostDir, 'students'))).toHaveLength(3);
+    // 目录权限 0700
+    const studentId = registry.listStudents()[0]!.studentId;
+    expect(fs.statSync(registry.studentDir(studentId)).mode & 0o777).toBe(0o700);
+    registry.close();
   });
 
   it('退出与撤销：revokeSession 使单个会话失效；revoke-sessions 全撤', () => {

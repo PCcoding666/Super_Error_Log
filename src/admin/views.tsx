@@ -81,9 +81,9 @@ export function AdminDashboard(report: AdminReport): ReactNode {
             <p className="small subtle">新采集最早记录：{time(account.firstCollectedAt)}<br />可恢复的历史识别调用：{account.legacyCalls} 次</p></details></td></tr>)}</tbody></table>
         {report.accounts.length === 0 && <p className="empty">还没有符合条件的账号。</p>}</div>
       <details className="invite-details"><summary>查看全部邀请码对应关系</summary><p className="small subtle">展示邀请码编号，不是登录原码。历史原码未保存，无法还原。</p>
-        <div className="table-scroll"><table><thead><tr><th scope="col">邀请码编号</th><th scope="col">对应账号</th><th scope="col">状态</th><th scope="col">创建时间</th><th scope="col">兑换时间</th><th scope="col">到期时间</th></tr></thead>
+        <div className="table-scroll"><table><thead><tr><th scope="col">邀请码编号</th><th scope="col">对应账号</th><th scope="col">状态</th><th scope="col">创建时间</th><th scope="col">首次登录时间</th><th scope="col">到期时间</th></tr></thead>
           <tbody>{report.accounts.flatMap(account => account.invitations.map(invitation => <tr key={invitation.invitationId}><td className="mono">{invitation.invitationId}</td><td>{account.label}</td>
-            <td><span className={`badge ${invitation.status === 'redeemed' ? 'success' : ''}`}>{({ pending: '未兑换', redeemed: '已兑换', expired: '已过期' })[invitation.status]}</span></td>
+            <td><span className={`badge ${invitation.status === 'redeemed' ? 'success' : ''}`}>{({ pending: '可使用', active: '可重复登录', redeemed: '已兑换（旧码）', expired: '已过期' })[invitation.status]}</span></td>
             <td>{time(invitation.createdAt)}</td><td>{invitation.redeemedAt ? time(invitation.redeemedAt) : '—'}</td><td>{time(invitation.expiresAt)}</td></tr>))}</tbody></table></div></details>
     </section>
     <section className="panel" id="performance"><div className="section-heading"><div><h2>调用性能</h2><p className="subtle small">耗时包含请求、响应读取与解析，不含排队。接口成功不代表题目识别正确。</p></div></div>

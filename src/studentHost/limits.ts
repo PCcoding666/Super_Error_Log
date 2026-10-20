@@ -3,7 +3,6 @@
  * 这里只解析数字，不启动进程，也不打开数据库。
  */
 
-export const DEFAULT_MAX_STUDENTS = 50;
 export const DEFAULT_WORKER_IDLE_MS = 12 * 60 * 1000;
 export const DEFAULT_MAX_LIVE_WORKERS = 8;
 export const DEFAULT_AI_CONCURRENCY = 2;
@@ -20,11 +19,6 @@ function readInt(env: NodeJS.ProcessEnv, name: string, fallback: number, min: nu
     throw new Error(`${name} 必须是 ${min} 到 ${max} 的整数`);
   }
   return value;
-}
-
-/** 注册表里最多允许多少个学生空间。SEL_MAX_STUDENTS 缺省 50。 */
-export function maxStudentsLimit(env: NodeJS.ProcessEnv = process.env): number {
-  return readInt(env, 'SEL_MAX_STUDENTS', DEFAULT_MAX_STUDENTS, 1, 500);
 }
 
 /** worker 空闲多久后退出。0 表示不因空闲退出。缺省 12 分钟。 */

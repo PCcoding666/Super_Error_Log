@@ -17,6 +17,12 @@ process.on('message', (message: unknown) => {
   if (body.type === 'set-busy') { busy = body.busy === true; return; }
   if (body.type === 'stop') {
     if (busy && body.force !== true) { send({ type: 'stop-refused' }); return; }
+    const delay = Number(process.env.SEL_FAKE_STOP_DELAY_MS ?? '0');
+    if (delay > 0) {
+      send({ type: 'stopping' });
+      setTimeout(() => process.exit(0), delay);
+      return;
+    }
     process.exit(0);
   }
   if (body.type === 'please-acquire') { send({ type: 'acquire', kind: body.kind, id: body.id }); return; }

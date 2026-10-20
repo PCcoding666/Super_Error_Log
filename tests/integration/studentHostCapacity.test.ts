@@ -86,6 +86,23 @@ describe('lazy workers and the global AI permit', () => {
     full.release('a');
   });
 
+  it('does not hand a new request to a worker that is already exiting', async () => {
+    const shared = pool({ idleMs: 150, env: { SEL_FAKE_STOP_DELAY_MS: '800' } });
+    await shared.ensure('a');
+    const first = childOf(shared, 'a');
+    const stopping = new Promise<void>(resolve => {
+      first.on('message', (message: unknown) => {
+        if ((message as { type?: string }).type === 'stopping') resolve();
+      });
+    });
+    await stopping;
+    shared.retain('a');
+    await shared.ensure('a');
+    expect(childOf(shared, 'a').pid).not.toBe(first.pid);
+    expect(shared.isRunning('a')).toBe(true);
+    shared.release('a');
+  });
+
   it('queues a second vision permit until the first student releases it', async () => {
     const shared = pool({ aiConcurrency: 1 });
     await shared.ensure('a');
