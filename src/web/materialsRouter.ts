@@ -1,3 +1,4 @@
+import { requestGrades } from '../materials/grading.js';
 import { saveManualAnswer, importAnswerText, requestAnswers, selectAnswerBasis, selectedAnswerIds } from '../materials/answers.js';
 import express, { Router, type Request, type Response } from 'express';
 import multer from 'multer';
@@ -15,7 +16,7 @@ import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } 
 import { MobileRequestError } from '../mobile/service.js';
 import { sendHtml } from '../views/render.js';
 import { hasConsent } from './session.js';
-import { MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialConsentPage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
+import { MaterialGradeActionPage, MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialConsentPage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const roles: MaterialRole[] = ['question', 'diagram', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown'];
 const text = (v: unknown): string => typeof v === 'string' ? v : '';
@@ -207,7 +208,7 @@ export function createMaterialsRouter(options: {
         const q = store.getQuestion(text(req.params.id));
         if (!q)
             throw new MobileRequestError(404, 'not_found', '题目不存在。');
-        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, question: q, answerJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='answer' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], selectedAnswerIds: selectedAnswerIds(store,q.id), questions: store.listQuestions(), revision: linkRevision(store), materials: (store.db.prepare('SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)').all(store.studentId, q.id) as {
+        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, question: q, gradeJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='grade' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], answerJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='answer' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], selectedAnswerIds: selectedAnswerIds(store,q.id), questions: store.listQuestions(), revision: linkRevision(store), materials: (store.db.prepare('SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)').all(store.studentId, q.id) as {
                 content_json: string;
             }[]).map(row => JSON.parse(row.content_json) as Fragment) }));
     });
@@ -265,6 +266,14 @@ export function createMaterialsRouter(options: {
             return changes;
         });
         result(req, res, { ok: true, changes });
+    });
+    r.post('/materials/grades', (req,res) => {
+        if(('documentId' in req.body)===('questionIds' in req.body))bad();
+        let attemptByQuestion:Record<string,string>|undefined;
+        if(req.body.attemptByQuestion!==undefined){if(!req.body.attemptByQuestion||typeof req.body.attemptByQuestion!=='object'||Array.isArray(req.body.attemptByQuestion))bad();attemptByQuestion=req.body.attemptByQuestion;}
+        if(req.body.attemptId){const ids=list(req.body.questionIds);if(ids.length!==1||attemptByQuestion)bad();attemptByQuestion={[ids[0]!]:text(req.body.attemptId)};}
+        const action=requestGrades(store,jobs,{...('documentId' in req.body?{requestId:text(req.body.requestId),documentId:text(req.body.documentId)}:{requestId:text(req.body.requestId),questionIds:list(req.body.questionIds)}),...(attemptByQuestion?{attemptByQuestion}:{})});
+        if(json(req))res.json({ok:true,...action});else sendHtml(res,MaterialGradeActionPage({namespace:draftNamespace,action}));
     });
     r.post('/materials/answers/manual', (req,res) => result(req,res,{ok:true,answer:saveManualAnswer(store,{questionId:text(req.body.questionId),subpart:text(req.body.subpart)||null,text:text(req.body.text),claimedSource:text(req.body.claimedSource)||null,expectedRevision:revision(req.body.expectedRevision)})}));
     r.post('/materials/answers/import', (req,res) => { const imported=importAnswerText(store,text(req.body.documentId),text(req.body.text)); if(json(req))res.json({ok:true,...imported});else sendHtml(res, MaterialAnswerActionPage({namespace:draftNamespace,imported})); });

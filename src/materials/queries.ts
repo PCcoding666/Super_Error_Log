@@ -65,6 +65,13 @@ export function effectiveFragmentCheck(store:MaterialStore,questionId:string,fra
   return f.check;
 }
 
+/** Derived action input only: retain raw extraction/history in storage. The sole promoted case
+ * is association-only missing_diagram backed by effectiveFragmentCheck's durable provenance. */
+export function effectiveQuestionStem(store:MaterialStore,questionId:string):Fragment[] {
+ const q=readQuestion(store,questionId);if(!q)throw new Error('question not found');
+ return q.stem.map(f=>f.check==='low'&&effectiveFragmentCheck(store,q.id,f.fragmentId)==='passed'?{...f,check:'passed',uncertainties:[]}:structuredClone(f));
+}
+
 type FragmentDependency = { id:string; revision:number; sourceHash:string; box:Fragment['box']; linkRevision:number; questionId:string; attemptId:string|null };
 export type MaterialDependencies = { version:1; kind:'answer'|'grade'; questionId:string; attemptId:string|null; answerIds:string[]; fragments:FragmentDependency[]; answers:{id:string;revision:number;basisKey:string;stale:boolean}[] };
 export type MaterialBasis = { basisKey:string; dependencies:MaterialDependencies };
