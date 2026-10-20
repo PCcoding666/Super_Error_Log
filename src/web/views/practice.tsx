@@ -684,7 +684,7 @@ export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
       <h1>练习</h1><a className="btn primary" href="/s/choose">新建练习</a>
       {!latest ? <section className="card"><p>还没有练习。选了题就会出现在这里。</p></section> : (
         <>
-          <p className="lead">选择一份练习继续，或新建练习。</p>
+          <p className="lead practice-intro">选择一份练习继续，或新建练习。</p>
           <section className="card" data-testid="practice-latest">
             <h2 className="section-label">最近一份</h2>
             <ul className="list"><li><PracticeLink practice={latest} showIds={!latest.items?.length} /></li></ul>
