@@ -40,7 +40,7 @@ import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } 
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { CoachProvider, CorrectionProvider, FollowupProvider } from '../ai/provider.js';
 import { isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
-import { getWeek, discardV2Item, isV2Item, restoreV2Item, type V2WeekItem } from '../v2/weekService.js';
+import { getWeek, getRegisteredPhotos, discardV2Item, isV2Item, restoreV2Item, type V2WeekItem } from '../v2/weekService.js';
 import { getItemFullCrop } from '../v2/fullCrop.js';
 import { getV2Settings, updateV2Settings } from '../v2/settingsService.js';
 import { createPractice, getPractice, listPractices, recommendPractice, type PracticeCard, type PracticeDetail } from '../v2/practiceService.js';
@@ -454,24 +454,25 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // ---------- 勾出做错的题 ----------
   r.get('/photos', page(async (request, response) => {
     const state = await loadToday(ctx, request);
-    const refresh = state.photos.some(photo => photo.state === 'finding');
+    const history = await loadPhotos(ctx, { ...state.week, photos: getRegisteredPhotos(ctx.mobileDataDir, true) }, state.marks);
+    const refresh = history.some(photo => photo.state === 'finding');
     const err = request.query.err === 'retry' ? '这次没重试成功，过一会儿再试。' : null;
     // 刚从勾选面板加了题回来：说一声加了几道，那一张的那一行浮上来（只是两个小数字，不带任何 ID）。
-    const addedPhoto = state.photos.find(photo => photo.number === Number(str(request.query.n)));
+    const addedPhoto = history.find(photo => photo.number === Number(str(request.query.n)));
     const added = /^[1-9]\d?$/.test(str(request.query.added)) && addedPhoto && addedPhoto.itemCount > 0 ? { count: addedPhoto.itemCount, number: addedPhoto.number } : null;
-    const photos = state.photos.filter(photo => !(photo.dismissed && photo.failure));
+    const photos = history.filter(photo => !(photo.dismissed && photo.failure));
     const needsPick = photos.find(photo => photo.state === 'needsPick');
     const bar: BarModel = {
       caption: '', primary: needsPick
-        ? {title: `勾第 ${needsPick.number} 张`, key:'openPick', href:`/s/photos/${needsPick.jobId}`}
+        ? {title: '勾出错题', key:'openPick', href:`/s/photos/${needsPick.jobId}`}
         : {title:'查看错题', key:'items', href:'/s/items'},
       secondary: [{title:'继续录入',key:'capture',href:'/s/capture'}],
     };
-    render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, newSince: state.latestDetail?.generatedAt ?? null, added, now: ctx.now(), flash: { err } }));
+    render(response, PhotosPage({ photos, bar, refresh, itemCount: state.week.items.length, newSince: state.latestDetail?.generatedAt ?? null, added, now: ctx.now(), timeZone: ctx.timeZone, flash: { err } }));
   }));
 
   const weekPhoto = async (request: Request, jobId: string) => {
-    const week = getWeek(ctx.mobileDataDir);
+    const week = { ...getWeek(ctx.mobileDataDir), photos: getRegisteredPhotos(ctx.mobileDataDir, true) };
     if (!week.photos.some(photo => photo.jobId === jobId)) throw new NotFound();
     const photos = await loadPhotos(ctx, week, readPhotoMarks(request));
     return { week, photo: photos.find(photo => photo.jobId === jobId)! };
@@ -479,18 +480,18 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   r.get('/photos/:jobId', page(async (request, response) => {
     const { photo } = await weekPhoto(request, requireMatch(String(request.params.jobId), UUID));
-    render(response, PickPage({ photo }));
+    render(response, PickPage({ photo, timeZone: ctx.timeZone }));
   }));
 
   r.post('/photos/:jobId/select', form, page(async (request, response) => {
     const jobId = requireMatch(String(request.params.jobId), UUID);
     const { photo } = await weekPhoto(request, jobId);
     const ids = list(request.body?.questionIds).filter(id => UUID.test(id));
-    if (ids.length === 0) { failed(response, 'none_picked'); render(response, PickPage({ photo, error: '先勾出做错的题。' }), 400); return; }
+    if (ids.length === 0) { failed(response, 'none_picked'); render(response, PickPage({ photo, error: '先勾出做错的题。', timeZone: ctx.timeZone }), 400); return; }
     const chosen = [...new Set(ids)].slice(0, 30);
     try { await options.service.select(jobId, chosen); }
     catch (error) {
-      if (error instanceof MobileRequestError) { failed(response, 'select_failed'); render(response, PickPage({ photo, error: error.message }), error.status); return; }
+      if (error instanceof MobileRequestError) { failed(response, 'select_failed'); render(response, PickPage({ photo, error: error.message, timeZone: ctx.timeZone }), error.status); return; }
       throw error;
     }
     response.redirect(303, `/s/photos?added=${chosen.length}&n=${photo.number}`);
@@ -501,7 +502,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const { week } = await weekPhoto(request, jobId);
     const marks = readPhotoMarks(request);
     marks[kind].add(jobId);
-    writePhotoMarks(request, response, marks, week.photos.map(photo => photo.jobId));
+    writePhotoMarks(request, response, marks, week.photos.map(photo => photo.jobId), { kind, id: jobId });
     response.redirect(303, '/s/photos');
   });
   r.post('/photos/:jobId/none', markPhoto('pickDone'));

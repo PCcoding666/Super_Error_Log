@@ -186,7 +186,7 @@ describe('三栏入口', () => {
     await browser.post('/s/consent');
     const capture = await browser.text('/s/capture');
     expect(capture).toContain('<h1>错题录入</h1>');
-    expect(capture).toContain('查看上传记录');
+    expect(capture).toContain('已上传记录');
     expect(await browser.text('/s/practices')).toContain('自己选题');
   });
 });
@@ -326,6 +326,51 @@ describe('连接：链接配对 → httpOnly cookie；没有 cookie 只看到连
   });
 });
 
+
+describe('录入与上传记录分开', () => {
+  it('已有照片不会挤占录入页，拍照入口和历史入口仍可直接使用', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const { jobId } = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
+
+    const capture = await browser.text('/s/capture');
+    expect(capture).not.toContain('data-photo-grid');
+    expect(capture).not.toContain('/s/img/photo/');
+    expect(capture).toMatch(/<label[^>]*for="camera-input"[^>]*data-testid="next-step-primary"/);
+    expect(capture).toContain('新增录入');
+    expect(capture).toContain('已上传记录');
+
+    const history = await browser.text('/s/photos');
+    expect(history).toContain('已上传记录');
+    expect(history).toContain(`src="/s/img/photo/${jobId}"`);
+    expect(history).toContain(`href="/s/img/photo/${jobId}?full=1"`);
+    expect(history.replace(/<[^>]+>/g, '')).not.toMatch(/第\s*1\s*张/);
+    expect(history.replace(/<[^>]+>/g, '')).toContain('已新增 3 道错题');
+  });
+
+  it('历史照片跨周保留，最新上传排在前面，旧照片仍能打开和补勾', async () => {
+    const env = await setup();
+    const browser = await pairBrowser(env);
+    await browser.post('/s/consent');
+    const { jobId: older } = await (await uploadPhoto(browser, await photo('#b0c0ed'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(older)).status === 'completed');
+    getDb().prepare('UPDATE v2_photo SET registered_at = ? WHERE job_id = ?').run(new Date(Date.now() - 14 * 86400000).toISOString(), older);
+    const { jobId: newer } = await (await uploadPhoto(browser, await photo('#edc0b0'))).json() as { jobId: string };
+    await waitFor(async () => (await env.service.getJob(newer)).status === 'completed');
+
+    const history = await browser.text('/s/photos');
+    expect(history).toContain(`src="/s/img/photo/${older}"`);
+    expect(history.indexOf(`src="/s/img/photo/${newer}"`)).toBeLessThan(history.indexOf(`src="/s/img/photo/${older}"`));
+    expect((await browser.get(`/s/photos/${older}`)).status).toBe(200);
+    const oldJob = await env.service.getJob(older);
+    expect((await browser.post(`/s/photos/${older}/select`, { questionIds: [oldJob.questions[0]!.id] })).status).toBe(303);
+    await waitFor(async () => (await env.service.getJob(older)).questions[0]!.status !== 'unselected');
+    expect((await browser.get(`/s/img/photo/${older}`)).status).toBe(200);
+  });
+});
+
 describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 共用准入', () => {
   it('今天页等待找题时自动刷新并提供查看进度；完成后停止刷新', async () => {
     const env = await setup();
@@ -426,15 +471,15 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
 });
 
 describe('勾出做错的题：没批改的页由学生勾，勾了才精读', () => {
-  it('没批改痕迹的页：今天说「勾第 1 张」，勾 2 道后进错题本；「这页没有做错的题」只记在 cookie', async () => {
+  it('没批改痕迹的页：今天说「勾出错题」，勾 2 道后进错题本；「这页没有做错的题」只记在 cookie', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
     await browser.post('/s/consent');
     const { jobId } = await (await uploadPhoto(browser, await photo('#c8d0f0'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
     const today = await browser.visibleText('/s/photos');
-    expect(today).toContain('勾第 1 张');
-    expect(today).toContain('勾第 1 张');
+    expect(today).toContain('勾出错题');
+    expect(today).toContain('勾出错题');
     expect((await browser.text('/s/photos')).replace(/<[^>]+>/g, '')).toContain('这页没有批改痕迹，点这里勾出错题');
     const pick = await browser.text(`/s/photos/${jobId}`);
     const ids = [...pick.matchAll(/name="questionIds" value="([^"]+)"/g)].map(match => match[1]!);
@@ -442,11 +487,11 @@ describe('勾出做错的题：没批改的页由学生勾，勾了才精读', (
     const candidate = await browser.get(`/s/img/cand/${jobId}/${ids[0]}`);
     expect(candidate.headers.get('content-type')).toBe('image/jpeg');
     expect((await browser.post(`/s/photos/${jobId}/select`, { questionIds: [] })).status).toBe(400);
-    // 加完回到勾出做错的题：带两个小数字（加了几道、第几张），页面上说一声「第 1 张：2 道加进错题本了」。
+    // 加完回到勾出做错的题：带两个小数字（加了几道、第几张），页面上说一声「2 道加进错题本了」。
     expect((await browser.post(`/s/photos/${jobId}/select`, { questionIds: ids.slice(0, 2) })).headers.get('location')).toBe('/s/photos?added=2&n=1');
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed' && (await env.service.getJob(jobId)).questions.filter(q => q.status === 'ready').length === 2);
     const added = (await browser.text('/s/photos?added=99&n=1')).replace(/<[^>]+>/g, '');
-    expect(added).toContain('第 1 张：2 道加进错题本了 ✓');
+    expect(added).toContain('2 道加进错题本了 ✓');
     expect(await browser.text('/s/photos?added=x&n=1')).not.toContain('data-testid="photos-added"');
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed' && (await env.service.getJob(jobId)).questions.filter(q => q.status === 'ready').length === 2);
     expect(await browser.visibleText('/s/photos')).toContain('还有 1 道没勾');
