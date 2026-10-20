@@ -1,4 +1,5 @@
 import { CLASSIFICATION_SCHEMA_SQL } from './classificationSchema.js';
+import { PRACTICE_SUBMISSION_SCHEMA_SQL } from './practiceSubmissionSchema.js';
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS student_profile (
@@ -316,4 +317,5 @@ CREATE TABLE IF NOT EXISTS practice_work (
   created_at TEXT NOT NULL,
   FOREIGN KEY(packet_id,item_id) REFERENCES review_packet_item(packet_id,item_id) ON DELETE CASCADE
 );
+${PRACTICE_SUBMISSION_SCHEMA_SQL}
 `;
