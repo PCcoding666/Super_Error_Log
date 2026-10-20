@@ -45,7 +45,7 @@ export class MaterialJobs {
     return JSON.parse(row.input_json).execution ?? { stages: {}, retryRequestIds: [] };
   }
 
-  enqueue(kind: MaterialJobKind, targetId: string, requestId: string, basisKey: string, options: { reservation?: AdmissionReserve; persist?: () => void } = {}): JobTicket {
+  enqueue(kind: MaterialJobKind, targetId: string, requestId: string, basisKey: string, options: { reservation?: AdmissionReserve; persist?: () => void; input?: unknown; dependencies?: unknown; persistJob?: (job:JobTicket)=>void } = {}): JobTicket {
     validateRequestId(requestId);
     const prior = this.store.db.prepare(`SELECT * FROM material_job WHERE owner_id=? AND request_id=? AND kind=? AND ${kind === 'extract' ? 'asset_id' : 'question_id'}=?`)
       .get(this.store.studentId, requestId, kind, targetId) as JobRow | undefined;
@@ -61,8 +61,9 @@ export class MaterialJobs {
       this.store.transaction(() => {
         // Upload rows and their job commit together; ownership moves only after RELEASE succeeds.
         options.persist?.();
-        this.store.db.prepare(`INSERT INTO material_job(id,owner_id,request_id,kind,question_id,asset_id,basis_key) VALUES (?,?,?,?,?,?,?)`)
-          .run(id, this.store.studentId, requestId, kind, kind === 'extract' ? null : targetId, kind === 'extract' ? targetId : null, basisKey);
+        this.store.db.prepare(`INSERT INTO material_job(id,owner_id,request_id,kind,question_id,asset_id,basis_key,input_json,dependencies_json) VALUES (?,?,?,?,?,?,?,?,?)`)
+          .run(id, this.store.studentId, requestId, kind, kind === 'extract' ? null : targetId, kind === 'extract' ? targetId : null, basisKey,JSON.stringify(options.input??{}),JSON.stringify(options.dependencies??[]));
+        options.persistJob?.({id,kind,state:'queued'});
       });
     } catch (error) {
       if (this.admission && !supplied) this.admission.releaseJobCapacity();

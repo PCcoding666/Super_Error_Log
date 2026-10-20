@@ -1,3 +1,4 @@
+import { registerMaterialAnswers } from '../materials/answers.js';
 import { config } from '../config.js';
 import { assertMaterialProviderConfigured, type MaterialProviderOptions } from '../materials/provider.js';
 import { registerMaterialExtraction } from '../materials/extraction.js';
@@ -70,7 +71,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     ? await createStudentHostGateway({ hostDir: resolveStudentHostDir(configuration.dataDir) })
     : null;
   const app = await createMobileApp({
-    materialStore, configureMaterials: overrides.configureMaterials ?? ((jobs, uploads) => registerMaterialExtraction(materialStore, jobs, uploads, materialOptions)),
+    materialStore, configureMaterials: overrides.configureMaterials ?? ((jobs, uploads) => { registerMaterialExtraction(materialStore, jobs, uploads, materialOptions); registerMaterialAnswers(materialStore, jobs, uploads, materialOptions); }),
     dataDir: configuration.dataDir, vision: overrides.vision ?? new BailianMobileVision(configuration.vision), mode: 'cloud', pairing, cloudProxy: true,
     v2Router: ({ limiter }) => createV2Router({ mobileDataDir: configuration.dataDir, transcriber, limiter }),
     // 学生网页版 /s/（2026-10-09）：同一进程、同一端口、同一 Caddy 站点。

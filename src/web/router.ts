@@ -302,9 +302,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const useMaterials = options.materials && !(process.env.NODE_ENV === 'test' && process.env.SEL_STUDENT_WORKER_FAKE === '1' && process.env.SEL_E2E_LEGACY_CAPTURE === '1');
   if (useMaterials && options.materials) {
     const namespace = options.materials.store.getWorkspace().draftNamespace;
-    r.use(form, (request, response, next) => {
+    r.use((request,response,next) => request.path.startsWith('/materials/answers/') ? next() : form(request,response,next), (request, response, next) => {
       response.locals.draftNamespace = namespace;
-      if (request.method === 'POST' && request.is('application/x-www-form-urlencoded') && request.body?.namespace !== namespace) { response.status(409).send('登录的账号已变化，请重新打开页面。'); return; }
+      if (request.method === 'POST' && !request.path.startsWith('/materials/answers/') && request.is('application/x-www-form-urlencoded') && request.body?.namespace !== namespace) { response.status(409).send('登录的账号已变化，请重新打开页面。'); return; }
       next();
     });
     r.use(createMaterialsRouter({ ...options.materials, draftNamespace: namespace, admission: options.admission }));

@@ -7,6 +7,7 @@ import os from 'node:os';
 import { SCHEMA_SQL } from '../../src/db/schema.js';
 import { migrateBridgeSchema } from '../../src/db/connection.js';
 import { migrateMaterials } from '../../src/materials/schema.js';
+import { backfillImportedAnswers } from '../../src/materials/answers.js';
 import { backfillLegacyMaterials } from '../../src/materials/legacy.js';
 import { MaterialStore } from '../../src/materials/store.js';
 import type { Evidence } from '../../src/ai/evidence.js';
@@ -128,4 +129,10 @@ describe('legacy materials',()=>{
     expect(question.missing).not.toContain('work');
   });
 
+});
+
+it('projects legacy reference text once and reopens without changing answer IDs or source history',()=>{
+ let {db}=fixture();const content=JSON.parse((db.prepare('SELECT content_json FROM evidence_record WHERE item_id=?').get('item-1') as {content_json:string}).content_json) as Evidence;
+ content.regions.push({id:'reference',kind:'reference_answer',box:{x:0,y:0,width:1,height:1},confidence:.8,cleanForPrint:false});content.observations.push({id:'answer',kind:'reference_answer',regionId:'reference',text:'Legacy reference',confidence:.8});db.prepare('UPDATE evidence_record SET content_json=? WHERE item_id=?').run(JSON.stringify(content),'item-1');const before=snapshot(db);migrateMaterials(db);backfillLegacyMaterials(db);let store=new MaterialStore(db,'student');const q=store.listQuestions().find(q=>q.itemId==='item-1')!;expect(q.answers).toHaveLength(1);const id=q.answers[0]!.id;const saved=db.prepare('SELECT * FROM material_answer').all();const revision=store.getQuestion(q.id)!.revision;backfillImportedAnswers(store);
+ const file=(db.prepare('PRAGMA database_list').get() as {file:string}).file;db.close();dbs.splice(dbs.indexOf(db),1);db=new DatabaseSync(file);dbs.push(db);db.exec('PRAGMA foreign_keys=ON');migrateMaterials(db);backfillLegacyMaterials(db);store=new MaterialStore(db,'student');backfillImportedAnswers(store);expect(db.prepare('SELECT * FROM material_answer').all()).toEqual(saved);expect(store.getQuestion(q.id)!.revision).toBe(revision);expect(store.getQuestion(q.id)!.answers[0]!.id).toBe(id);expect(snapshot(db)).toEqual(before);
 });

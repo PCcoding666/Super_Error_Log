@@ -73,6 +73,29 @@ export function migrateMaterials(db: DatabaseSync): void {
       PRIMARY KEY(id,revision), UNIQUE(owner_id,id,revision),
       FOREIGN KEY(owner_id,question_id) REFERENCES material_question(owner_id,id)
     );
+    CREATE TABLE IF NOT EXISTS material_answer_operation (
+      owner_id TEXT NOT NULL, operation_id TEXT NOT NULL, basis_key TEXT NOT NULL, answer_id TEXT NOT NULL, revision INTEGER NOT NULL,
+      PRIMARY KEY(owner_id,operation_id), FOREIGN KEY(owner_id,answer_id,revision) REFERENCES material_answer(owner_id,id,revision)
+    );
+    CREATE TABLE IF NOT EXISTS material_answer_selection (
+      owner_id TEXT NOT NULL, question_id TEXT NOT NULL, answers_json TEXT NOT NULL,
+      PRIMARY KEY(owner_id,question_id), FOREIGN KEY(owner_id,question_id) REFERENCES material_question(owner_id,id)
+    );
+    CREATE TABLE IF NOT EXISTS material_answer_import (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, document_id TEXT NOT NULL, original_text TEXT NOT NULL,
+      pending_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(owner_id,document_id) REFERENCES material_document(owner_id,id)
+    );
+    CREATE TABLE IF NOT EXISTS material_answer_origin (
+      owner_id TEXT NOT NULL, answer_id TEXT NOT NULL, revision INTEGER NOT NULL, import_id TEXT,
+      PRIMARY KEY(owner_id,answer_id,revision), FOREIGN KEY(owner_id,answer_id,revision) REFERENCES material_answer(owner_id,id,revision),
+      FOREIGN KEY(import_id) REFERENCES material_answer_import(id)
+    );
+    CREATE TABLE IF NOT EXISTS material_action_batch (
+      owner_id TEXT NOT NULL REFERENCES material_workspace(owner_id), kind TEXT NOT NULL CHECK(kind IN ('answer','grade')),
+      request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, result_json TEXT,
+      PRIMARY KEY(owner_id,kind,request_id)
+    );
     CREATE TABLE IF NOT EXISTS material_grade (
       id TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0), owner_id TEXT NOT NULL,
       attempt_id TEXT NOT NULL, basis_key TEXT NOT NULL, dependencies_json TEXT NOT NULL DEFAULT '[]',

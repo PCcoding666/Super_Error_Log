@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { newId } from '../db/connection.js';
 import { validateEvidence, type Evidence } from '../ai/evidence.js';
-import type { Fragment, MaterialRole, ReferenceAnswer } from './contracts.js';
+import type { Fragment, MaterialRole } from './contracts.js';
 import { MaterialStore } from './store.js';
 
 type LegacyRow = {
@@ -70,12 +70,6 @@ function mapEvidence(store:MaterialStore,row:LegacyRow,assetId:string,questionId
   const link=(fragment:Fragment,basis:Record<string,unknown>)=>{
     const attemptId=isWork(fragment.role)?attempt!.id:null;
     store.linkFragment(fragment.fragmentId,revision,{questionId,attemptId},0,{source:'legacy',...basis});
-    if (fragment.role==='reference_answer' && fragment.text.trim()) {
-      const answer:ReferenceAnswer={id:newId('man'),questionId,subpart:null,revision:1,source:'imported',text:fragment.text,
-        claimedSource:null,fragmentIds:[fragment.fragmentId],basisKey:store.getQuestion(questionId)!.basisKey,stale:false,run:null};
-      store.db.prepare('INSERT INTO material_answer(id,revision,owner_id,question_id,source,basis_key,dependencies_json,content_json) VALUES (?,?,?,?,?,?,?,?)')
-        .run(answer.id,answer.revision,store.studentId,questionId,answer.source,answer.basisKey,JSON.stringify([{fragmentId:fragment.fragmentId,revision}]),JSON.stringify(answer));
-    }
   };
   // A visual region survives even when no text could be transcribed. Group all text for
   // that region so multiple observations do not produce duplicate visual fragments.

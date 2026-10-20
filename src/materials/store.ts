@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { newId } from '../db/connection.js';
 import { validateBox } from '../media/images.js';
+import { answersConflict, projectImportedFragment } from './answers.js';
 import { invalidateLinkDependencies, resolveQuestionId } from './queries.js';
 import type { Fragment, Grade, LinkChange, LinkTarget, QuestionBundle, ReferenceAnswer } from './contracts.js';
 
@@ -82,6 +83,7 @@ export class MaterialStore {
       }
       const source=this.db.prepare('SELECT content_json FROM material_fragment WHERE owner_id=? AND id=? AND revision=?').get(this.studentId,fragmentId,fragmentRevision) as {content_json:string};
       invalidateLinkDependencies(this,[...new Set([old?.question_id,target?.questionId].filter((v):v is string=>!!v))],JSON.parse(source.content_json),[...new Set([old?.attempt_id,target?.attemptId].filter((v):v is string=>!!v))]);
+      projectImportedFragment(this,fragmentId);
       return {id,questionId:target?.questionId??old?.question_id??'',revision};
     });
   }
@@ -123,6 +125,6 @@ export class MaterialStore {
     return {id,documentId:row.document_id,revision:row.revision,basisKey,number:row.number,subject:row.subject,tags:JSON.parse(row.tags_json),
       stem,attempts,teacherMarks:fragments.filter(f=>f.fragment.role==='teacher_mark').map(f=>f.fragment).sort(order),
       answers:parsedAnswers,grades:grades.map(g=>({...JSON.parse(g.content_json),stale:!!g.stale}) as Grade),
-      missing,unresolved:JSON.parse(row.unresolved_json),answerConflict:parsedAnswers.some(a=>!a.stale&&parsedAnswers.some(b=>!b.stale&&a.subpart===b.subpart&&a.text.trim()!==b.text.trim())),itemId:item?.item_id??null};
+      missing,unresolved:JSON.parse(row.unresolved_json),answerConflict:answersConflict(parsedAnswers),itemId:item?.item_id??null};
   }
 }

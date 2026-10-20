@@ -182,7 +182,7 @@ it('question details retain raw reference-answer evidence without presenting a v
     const html = await (await fetch(f.base + '/materials/questions/' + q.id)).text();
     expect(html).toContain('Synthetic reference evidence');
     expect(html).toContain('待核验');
-    expect(f.db.prepare('SELECT count(*) n FROM material_answer').get()).toEqual({ n: 0 });
+    expect(f.db.prepare('SELECT source FROM material_answer').get()).toEqual({ source: 'imported' });
 });
 
 it('known-upload replay still reserves a multipart parsing slot before reading the body',async()=>{const f=await fixture();const c=await(await f.post('/materials/captures',{requestId:randomUUID()})).json();const uploadId=randomUUID();expect((await f.upload(c.id,uploadId)).status).toBe(200);expect(f.admission.tryAcquireUploadSlot('upload').accepted).toBe(true);try{expect((await f.upload(c.id,uploadId)).status).toBe(429)}finally{f.admission.releaseUploadSlot('upload')}expect((await f.upload(c.id,uploadId)).status).toBe(200);});

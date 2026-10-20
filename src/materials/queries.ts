@@ -106,3 +106,6 @@ export function invalidateLinkDependencies(store:MaterialStore,questionIds:strin
     }
   }
 }
+
+/** Historical versions remain readable; no answer projection or model work occurs here. */
+export function answerHistory(store:MaterialStore,questionId:string,page=0):{answer:import('./contracts.js').ReferenceAnswer;createdAt:string}[]{const q=readQuestion(store,questionId);if(!q)return [];return (store.db.prepare('SELECT content_json,stale,created_at FROM material_answer WHERE owner_id=? AND question_id=? ORDER BY rowid DESC LIMIT 20 OFFSET ?').all(store.studentId,q.id,Math.max(0,page)*20) as {content_json:string;stale:number;created_at:string}[]).map(row=>({answer:{...JSON.parse(row.content_json),stale:!!row.stale},createdAt:row.created_at}));}

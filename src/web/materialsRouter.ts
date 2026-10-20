@@ -1,3 +1,4 @@
+import { saveManualAnswer, importAnswerText, requestAnswers, selectAnswerBasis, selectedAnswerIds } from '../materials/answers.js';
 import express, { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
@@ -8,13 +9,13 @@ import type { MaterialUploads } from '../materials/uploads.js';
 import type { MaterialJobs } from '../materials/jobs.js';
 import type { CaptureHints, MaterialRole, Fragment } from '../materials/contracts.js';
 import { assignDocument, assetLinkRevision, linkRevision, relink, relinkNewAttempt, undoLink } from '../materials/links.js';
-import { latestFragments } from '../materials/queries.js';
+import { answerHistory, latestFragments } from '../materials/queries.js';
 import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
 import { sendHtml } from '../views/render.js';
 import { hasConsent } from './session.js';
-import { MaterialCapturePage, MaterialConsentPage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
+import { MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialConsentPage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const roles: MaterialRole[] = ['question', 'diagram', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown'];
 const text = (v: unknown): string => typeof v === 'string' ? v : '';
@@ -96,6 +97,7 @@ export function createMaterialsRouter(options: {
         next();
     });
     r.use((req, res, next) => { res.setHeader('cache-control', 'private, no-store'); next(); });
+    r.use('/materials/answers', express.json({ limit: '512kb' }), express.urlencoded({ extended: false, limit: '512kb', parameterLimit: 400 }));
     r.use(express.json({ limit: '64kb' }), express.urlencoded({ extended: false, limit: '64kb', parameterLimit: 400 }));
     r.use((req, res, next) => {
         try {
@@ -199,11 +201,13 @@ export function createMaterialsRouter(options: {
         const asset = { ...row, hints: JSON.parse(row.hints_json), fragments: latestFragments(store, id) };
         sendHtml(res, MaterialMatchPage({ namespace: draftNamespace, asset, candidates: assets(page, id), page, hasMore: (page + 1) * 8 < assetCount() - 1 }));
     });
+    r.get('/materials/answers/imports', (req,res) => {const page=pageNumber(req.query.page);const imports=store.db.prepare('SELECT original_text,pending_json,created_at FROM material_answer_import WHERE owner_id=? ORDER BY rowid DESC LIMIT 20 OFFSET ?').all(store.studentId,page*20) as {original_text:string;pending_json:string;created_at:string}[];sendHtml(res,MaterialImportHistoryPage({imports,page}));});
+    r.get('/materials/questions/:id/answers', (req,res) => {const q=store.getQuestion(text(req.params.id));if(!q)throw new MobileRequestError(404,'not_found','题目不存在。');const page=pageNumber(req.query.page);sendHtml(res,MaterialAnswerHistoryPage({questionId:q.id,history:answerHistory(store,q.id,page),page}));});
     r.get('/materials/questions/:id', (req, res) => {
         const q = store.getQuestion(text(req.params.id));
         if (!q)
             throw new MobileRequestError(404, 'not_found', '题目不存在。');
-        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, question: q, questions: store.listQuestions(), revision: linkRevision(store), materials: (store.db.prepare('SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)').all(store.studentId, q.id) as {
+        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, question: q, answerJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='answer' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], selectedAnswerIds: selectedAnswerIds(store,q.id), questions: store.listQuestions(), revision: linkRevision(store), materials: (store.db.prepare('SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)').all(store.studentId, q.id) as {
                 content_json: string;
             }[]).map(row => JSON.parse(row.content_json) as Fragment) }));
     });
@@ -262,6 +266,10 @@ export function createMaterialsRouter(options: {
         });
         result(req, res, { ok: true, changes });
     });
+    r.post('/materials/answers/manual', (req,res) => result(req,res,{ok:true,answer:saveManualAnswer(store,{questionId:text(req.body.questionId),subpart:text(req.body.subpart)||null,text:text(req.body.text),claimedSource:text(req.body.claimedSource)||null,expectedRevision:revision(req.body.expectedRevision)})}));
+    r.post('/materials/answers/import', (req,res) => { const imported=importAnswerText(store,text(req.body.documentId),text(req.body.text)); if(json(req))res.json({ok:true,...imported});else sendHtml(res, MaterialAnswerActionPage({namespace:draftNamespace,imported})); });
+    r.post('/materials/answers/generate', (req,res) => { if(('documentId' in req.body)===('questionIds' in req.body))bad(); const action=requestAnswers(store,jobs,'documentId' in req.body?{requestId:text(req.body.requestId),documentId:text(req.body.documentId)}:{requestId:text(req.body.requestId),questionIds:list(req.body.questionIds)}); if(json(req))res.json({ok:true,...action});else sendHtml(res,MaterialAnswerActionPage({namespace:draftNamespace,action})); });
+    r.post('/materials/answers/basis', (req,res) => {selectAnswerBasis(store,text(req.body.questionId),list(req.body.answerIds),revision(req.body.expectedRevision));result(req,res,{ok:true});});
     r.post('/materials/links', (req, res) => { const input = { fragmentIds: list(req.body.fragmentIds), questionId: text(req.body.questionId), expectedRevision: revision(req.body.expectedRevision) }; const change = req.body.newAttempt === '1' || req.body.newAttempt === true ? relinkNewAttempt(store, input) : relink(store, { ...input, target: { questionId: input.questionId, attemptId: text(req.body.attemptId) || null } }); result(req, res, { ok: true, change }); });
     r.post('/materials/links/:id/undo', (req, res) => result(req, res, { ok: true, change: undoLink(store, text(req.params.id), revision(req.body.expectedRevision)) }));
     r.post('/materials/jobs/:id/retry', (req, res) => {
@@ -270,7 +278,7 @@ export function createMaterialsRouter(options: {
         result(req, res, { ok: true, job: jobs.retry(text(req.params.id), req.body.requestId) });
     });
     r.use(((err: unknown, req: Request, res: Response, _next: express.NextFunction) => {
-        const status = err instanceof MobileRequestError ? err.status : err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE' ? 413 : err instanceof SyntaxError || err instanceof multer.MulterError ? 400 : 500;
+        const status = err instanceof MobileRequestError ? err.status : (err as {type?:string})?.type === 'entity.too.large' ? 413 : err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE' ? 413 : err instanceof SyntaxError || err instanceof multer.MulterError ? 400 : 500;
         const message = err instanceof MobileRequestError ? err.message : status === 413 ? '照片超过 15 MB，请换一张。' : status === 400 ? '照片或填写的内容不完整，请重选后再试。' : '暂时没保存好，请稍后再试。';
         res.status(status);
         if (json(req))
