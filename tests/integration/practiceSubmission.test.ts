@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getDb, now } from '../../src/db/connection.js';
 import { createPractice } from '../../src/v2/practiceService.js';
+import { revealPracticeHint } from '../../src/v2/practiceProgress.js';
 import { attachWork } from '../../src/v2/practiceWork.js';
 import { setTaskLifecycle } from '../../src/v2/practiceTasks.js';
 import { attachSubmission, submissionState, submissionImage, reviewSubmission, assignFinding, confirmSubmission } from '../../src/v2/practiceSubmission.js';
@@ -106,16 +107,27 @@ describe('durable whole-task paper submission',()=>{
  it('caps each task at twelve photos and rejects changed retry payloads',async()=>{
    const {p}=prepared(1),bytes=await photo(),key=crypto.randomUUID();
    await attachSubmission(p.id,key,bytes);
+   await expect(attachSubmission(p.id,crypto.randomUUID(),Buffer.alloc(15*1024*1024+1))).rejects.toThrow('15 MB');
    await expect(attachSubmission(p.id,key,Buffer.from('changed'))).rejects.toThrow('标识');
    for(let i=1;i<12;i++)await attachSubmission(p.id,crypto.randomUUID(),bytes);
    await expect(attachSubmission(p.id,crypto.randomUUID(),bytes)).rejects.toThrow('12 张');
    expect(submissionState(p.id).photos).toHaveLength(12);
+ });
+ it('uses student help overrides and persisted hints instead of inferring independent work',async()=>{
+   const {p,ids}=prepared(2);await attachSubmission(p.id,crypto.randomUUID(),await photo());await reviewSubmission(p.id,reviewer);
+   revealPracticeHint(p.id,ids[0]!,2);
+   expect(confirmSubmission(p.id,{revision:1,performedOn:now().slice(0,10),help:'independent',results:[{itemId:ids[0],outcome:'correct'},{itemId:ids[1],outcome:'correct',help:'helped'}]})).toMatchObject({ok:true});
+   const rows=getDb().prepare('SELECT item_id,completion,hint_level FROM review_attempt WHERE packet_id=?').all(p.id);
+   expect(rows).toEqual(expect.arrayContaining([{item_id:ids[0],completion:'hint_used',hint_level:2},{item_id:ids[1],completion:'hint_used',hint_level:1}]));
  });
  it('normalizes incomplete, uncertain, unsupported and unreferenced grades to unresolved',()=>{
    const questions=[{number:1,itemId:'one',stem:'x=1',reference:null,uncertain:false,images:[]}];
    const result=validatePracticeReview({findings:[finding(1)]},questions,1);
    expect(result.findings[0]?.suggestedCorrect).toBeNull();
    expect(()=>validatePracticeReview({findings:[finding(2)]},questions,1)).toThrow();
+   expect(()=>validatePracticeReview({findings:[finding(1),finding(1)]},questions,1)).toThrow();
+   expect(()=>validatePracticeReview({findings:[{...finding(1),complete:'yes'}]},questions,1)).toThrow();
+   expect(()=>validatePracticeReview({findings:[finding(1,[])]},questions,1)).toThrow();
    expect(()=>validatePracticeReview({findings:[finding(1,[2])]},questions,1)).toThrow();
    expect(validatePracticeReview({findings:[{...finding(1),complete:false}]},[{...questions[0]!,reference:'x=1'}],1).findings[0]?.suggestedCorrect).toBeNull();
  });
