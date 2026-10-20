@@ -112,6 +112,10 @@ async function main(): Promise<void> {
       await extractMaterial(jobs.store, provider, jobId, signal);
     });
   }
+  if (process.env.SEL_E2E_MATERIAL_FIXTURE) {
+    if (!fake) throw new Error('Material fixture requires synthetic test worker');
+    configureMaterials = (await import(process.env.SEL_E2E_MATERIAL_FIXTURE)).configureMaterials;
+  }
   assembly = await assembleCloudService(configuration, { ...(vision ? { vision } : {}), ...(configureMaterials ? { configureMaterials } : {}), adminServer: false });
   await assembly.listen();
   const port = assembly.boundPort();

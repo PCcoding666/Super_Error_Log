@@ -35,7 +35,8 @@ export function questionIncluded(store:MaterialStore,questionId:string):boolean 
 export function syncMaterialLearning(store:MaterialStore):void {
  store.transaction(()=>{
   for(const q of store.listQuestions()) {
-   if(q.itemId&&store.db.prepare('SELECT 1 FROM mobile_item_link WHERE item_id=?').get(q.itemId)) continue;
+   // Every migrated item retains its original learning authority, including pre-mobile records.
+   if(q.itemId&&(store.db.prepare('SELECT 1 FROM mobile_item_link WHERE item_id=?').get(q.itemId)||store.db.prepare("SELECT 1 FROM material_legacy_map WHERE owner_id=? AND source_kind='error_item' AND source_key=?").get(store.studentId,q.itemId))) continue;
    const intent=inclusionIntent(store,q.id),included=intent??automaticMistake(store,q.id);
    if((!included&&!q.itemId)||q.missing.includes('stem')) continue;
    const stem=q.stem.filter(f=>f.role==='question');let itemId=q.itemId;

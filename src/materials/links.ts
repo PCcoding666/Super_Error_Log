@@ -137,6 +137,7 @@ export function assignDocument(store:MaterialStore,input:{assetId:string;documen
       if (changed.changes!==1) throw conflict();
       const fragments=latestFragments(store,input.assetId);
       const ids=[...new Set(fragments.map(f=>currentLink(store,f.fragmentId)?.question_id).filter((v):v is string=>!!v))];
+      const afterLinks:(()=>void)[]=[];
       for (let id of ids) {
         id=resolveQuestionId(store,id); const q=readQuestion(store,id)!;
         // A page-level choice must not move evidence on other pages to a new document silently.
@@ -151,13 +152,14 @@ export function assignDocument(store:MaterialStore,input:{assetId:string;documen
         const candidates=store.listQuestions().filter(c=>c.id!==id&&c.documentId===input.documentId&&q.number!==null&&c.number===q.number);
         store.db.prepare('UPDATE material_question SET document_id=?,unresolved_json=?,revision=revision+1 WHERE owner_id=? AND id=?').run(input.documentId,JSON.stringify(q.unresolved.filter(r=>r!=='document')),store.studentId,id);
         if (candidates.length===1) {
-          const merged=mergeQuestions(store,id,candidates[0]!.id);
+          const merged=mergeQuestions(store,id,candidates[0]!.id,afterLinks);
           if (!merged) store.db.prepare('UPDATE material_question SET unresolved_json=? WHERE owner_id=? AND id=?').run(JSON.stringify([...new Set([...readQuestion(store,id)!.unresolved,'association'])]),store.studentId,id);
         } else if (candidates.length>1) store.db.prepare('UPDATE material_question SET unresolved_json=? WHERE owner_id=? AND id=?').run(JSON.stringify([...q.unresolved.filter(r=>r!=='document'),'association']),store.studentId,id);
       }
       reconcileAsset(store,input.assetId);
       // Document confirmation changes link provenance even when the destination remains the same.
       for (const f of fragments) { const old=currentLink(store,f.fragmentId); if (old) store.linkFragment(f.fragmentId,old.fragment_revision,old.question_id?{questionId:old.question_id,attemptId:old.attempt_id}:null,old.revision,{reason:'document_assignment',documentId:input.documentId}); }
+      for(const complete of afterLinks)complete();
     });
   });
 }

@@ -54,6 +54,8 @@ async function enter(page: Page, gateway: {
     await page.getByRole('button', { name: '进入我的错题本' }).click();
     await page.goto(gateway.base + '/s/capture');
     await page.getByRole('button', { name: '同意，上传', exact: true }).click();
+    // Consent redirects back to the same URL. Wait for the new capture document before installing request interception.
+    await expect(page.locator('[data-material-capture]')).toBeVisible();
 }
 async function jpeg() { return { name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: '#fff' } }).jpeg().toBuffer() }; }
 test('finishes continuous and multi-photo capture without a per-photo picker', async ({ page, gateway }) => {

@@ -424,3 +424,34 @@ it.each(['manual','selection'])('does not merge independent photo-question histo
  if(kind==='manual')saveManualAnswer(store,{questionId:photoId,subpart:null,text:'Independent manual',claimedSource:null,expectedRevision:pq.revision});else selectAnswerBasis(store,photoId,[pq.answers[0]!.id],pq.revision);
  assignDocument(store,{assetId:photo.id,documentId:q.documentId!,expectedRevision:assetLinkRevision(store,photo.id)});expect(target(store,photo.fragments[0]!.fragmentId).question_id).toBe(photoId);expect(readQuestion(store,photoId)!.unresolved).toContain('result_history_conflict');expect(store.listQuestions()).toHaveLength(2);
 });
+
+it('keeps the answer-card identity and manual answer when its first independent stem page is associated',()=>{
+ const store=setup();const card=asset(store,[{role:'student_work',text:'x=3'}],null);reconcileAsset(store,card.id);const q=only(store);const attemptId=q.attempts[0]!.id;
+ const answer=saveManualAnswer(store,{questionId:q.id,subpart:null,text:'x=2',claimedSource:'老师答案',expectedRevision:q.revision});
+ const stem=asset(store,[{role:'question',text:'Solve x+1=3'}],'D');reconcileAsset(store,stem.id);const stemId=target(store,stem.fragments[0]!.fragmentId).question_id;
+ assignDocument(store,{assetId:card.id,documentId:readQuestion(store,stemId)!.documentId!,expectedRevision:assetLinkRevision(store,card.id)});
+ expect(store.listQuestions()).toHaveLength(1);
+ const joined=readQuestion(store,q.id)!;expect(joined.id).toBe(q.id);expect(joined.stem).toHaveLength(1);expect(joined.unresolved).toEqual([]);expect(joined.attempts[0]!.id).toBe(attemptId);expect(joined.answers.find(a=>a.id===answer.id)).toMatchObject({text:'x=2',stale:false});
+});
+
+it.each([false,true])('first stem completion preserves a manual pin, every stem fragment and history, then undo invalidates the completed basis (%s)',assignStem=>{
+ const store=setup();const card=asset(store,[{role:'student_work',text:'Work'}],assignStem?'D':null);reconcileAsset(store,card.id);const q=only(store);const attempt=q.attempts[0]!.id;
+ const answer=saveManualAnswer(store,{questionId:q.id,subpart:null,text:'Manual',claimedSource:'Teacher',expectedRevision:q.revision});selectAnswerBasis(store,q.id,[answer.id],readQuestion(store,q.id)!.revision);
+ const stem=asset(store,[{text:'Question',requiresDiagram:true},{role:'diagram',text:'Diagram'}],assignStem?null:'D');reconcileAsset(store,stem.id);const stemId=target(store,stem.fragments[0]!.fragmentId).question_id;
+ const changes=assignDocument(store,{assetId:assignStem?stem.id:card.id,documentId:(assignStem?readQuestion(store,q.id):readQuestion(store,stemId))!.documentId!,expectedRevision:1});
+ const joined=readQuestion(store,q.id)!;expect(joined.stem).toHaveLength(2);expect(joined.answers.find(a=>a.id===answer.id)).toMatchObject({revision:2,stale:false,text:'Manual',claimedSource:'Teacher'});expect(joined.attempts[0]!.id).toBe(attempt);
+ expect(JSON.parse((store.db.prepare('SELECT answers_json FROM material_answer_selection WHERE question_id=?').get(q.id) as {answers_json:string}).answers_json)).toEqual([{id:answer.id,revision:2}]);
+ expect(answerHistory(store,q.id).map(h=>h.answer.revision)).toEqual([2,1]);
+ undoLink(store,changes[0]!.id,linkRevision(store));expect(readQuestion(store,q.id)!.stem).toHaveLength(0);expect(readQuestion(store,q.id)!.attempts[0]!.id).toBe(attempt);expect(readQuestion(store,q.id)!.answers[0]!.stale).toBe(true);expect(answerHistory(store,q.id)).toHaveLength(2);
+});
+it('does not treat a previously removed known stem as a first completion',()=>{
+ const store=setup();const page=asset(store,[{}, {role:'student_work'}],'D');reconcileAsset(store,page.id);const q=only(store);const f=page.fragments[0]!;store.linkFragment(f.fragmentId,1,null);
+ const answer=saveManualAnswer(store,{questionId:q.id,subpart:null,text:'Answer after removing stem',claimedSource:null,expectedRevision:readQuestion(store,q.id)!.revision});
+ const stem=asset(store,[{text:'A different question'}],null);reconcileAsset(store,stem.id);assignDocument(store,{assetId:stem.id,documentId:q.documentId!,expectedRevision:1});expect(store.listQuestions()).toHaveLength(2);expect(readQuestion(store,q.id)!.unresolved).toContain('result_history_conflict');expect(answerHistory(store,q.id)[0]!.answer.revision).toBe(answer.revision);
+});
+
+it.each(['context','document'])('first completion via direct %s reconciliation retains the early manual answer and pin',mode=>{
+ const store=setup();const card=asset(store,[{role:'student_work'}],mode==='document'?'D':null);reconcileAsset(store,card.id);const q=only(store);const answer=saveManualAnswer(store,{questionId:q.id,subpart:null,text:'2',claimedSource:null,expectedRevision:q.revision});selectAnswerBasis(store,q.id,[answer.id],readQuestion(store,q.id)!.revision);
+ const stem=asset(store,[{text:'1+1=?'},{role:'diagram',text:'diagram'}],mode==='document'?'D':null,mode==='context'?{questionId:q.id}:{});reconcileAsset(store,stem.id);expect(store.listQuestions()).toHaveLength(1);expect(readQuestion(store,q.id)!.answers[0]).toMatchObject({id:answer.id,revision:2,stale:false});
+ const changed={...stem.fragments[0]!,revision:2,text:'2+2=?'};store.putFragment(changed);store.linkFragment(changed.fragmentId,2,{questionId:q.id,attemptId:null});expect(readQuestion(store,q.id)!.answers[0]!.stale).toBe(true);
+});

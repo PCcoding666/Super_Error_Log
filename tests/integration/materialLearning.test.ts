@@ -46,7 +46,7 @@ describe('material learning',()=>{
   const item=setQuestionIncluded(store,question,true,store.getQuestion(question)!.revision).itemId!;
   const before=getLearningContext(item)!;expect(before.context.observations[0]).toMatchObject({id:work.fragmentId,regionId:null});
   expect((await askFollowup(item)).ok).toBe(true);expect(db.prepare('SELECT * FROM error_diagnosis WHERE item_id=?').all(item)).toHaveLength(0);
-  const changed=directCorrection(item,{revision:before.revision,changes:[{field:'questionText',before:'求 2+2',after:'计算 2+2'}]});expect(changed.ok).toBe(true);
+  const changed=directCorrection(item,{revision:before.revision,changes:[{field:'questionText',before:'求 2+2',after:'计算 2+2'}]});expect(changed.ok).toBe(true);expect(db.prepare('SELECT text_excerpt FROM error_item WHERE id=?').get(item)).toEqual({text_excerpt:'计算 2+2'});
   expect(store.getQuestion(question)!.stem[0]!.sourceHash).toBe('hash');expect(db.prepare('SELECT * FROM material_fragment WHERE id=?').all(store.getQuestion(question)!.stem[0]!.fragmentId)).toHaveLength(2);
   expect(submitV2Reflection(item,{attemptState:'',cause:'',masteryFeeling:1}).ok).toBe(false);
   expect(submitV2Reflection(item,{attemptState:ATTEMPT_STATES[0],cause:CAUSES[0],masteryFeeling:1,summary:'我需要检查计算'}).ok).toBe(true);

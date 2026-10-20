@@ -9,6 +9,7 @@ import { migrateBridgeSchema } from '../../src/db/connection.js';
 import { migrateMaterials } from '../../src/materials/schema.js';
 import { backfillImportedAnswers } from '../../src/materials/answers.js';
 import { backfillLegacyMaterials } from '../../src/materials/legacy.js';
+import { syncMaterialLearning } from '../../src/materials/learning.js';
 import { MaterialStore } from '../../src/materials/store.js';
 import type { Evidence } from '../../src/ai/evidence.js';
 const dirs: string[] = []; const dbs: DatabaseSync[] = [];
@@ -42,6 +43,7 @@ describe('legacy materials',()=>{
     const q=questions.find(q=>q.itemId==='item-1')!;
     expect(q.stem[0]!.text).toBe('求 x'); expect(q.attempts[0]!.fragments[0]!.text).toBe('x=2');
     expect(q.stem[0]!.check).toBe('unchecked');
+    syncMaterialLearning(store);const preMobile=questions.find(q=>q.itemId==='item-4')!;const fragment=preMobile.stem[0]!;store.linkFragment(fragment.fragmentId,fragment.revision,{questionId:preMobile.id,attemptId:null});expect(snapshot(db)).toEqual(beforeLegacyRows);
     expect(db.prepare('SELECT count(*) n FROM material_job').get()).toEqual({n:0});
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   });
