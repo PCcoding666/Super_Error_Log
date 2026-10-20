@@ -22,7 +22,8 @@ export function tokenCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-const ERRORS = new Set(['timeout', 'cancelled', 'rate_limited', 'provider_error', 'unsupported', 'invalid_json', 'invalid_output', 'interrupted', 'internal']);
+const ERRORS = new Set(['timeout', 'cancelled', 'rate_limited', 'provider_error', 'unsupported', 'invalid_json', 'invalid_output', 'interrupted', 'internal',
+  'network', 'authentication', 'permission', 'output_truncated']);
 export function safeErrorCode(value: unknown): string {
   return typeof value === 'string' && ERRORS.has(value) ? value : 'unknown';
 }

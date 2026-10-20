@@ -14,7 +14,8 @@ export const OPERATIONS: Record<string, string> = {
   crop_inventory: '原图清单', crop_verify: '裁图核验',
 };
 const ERRORS: Record<string, string> = { timeout: '调用超时', cancelled: '调用取消', rate_limited: '服务限流', provider_error: '服务或网络错误',
-  unsupported: '配置、认证或请求不支持', invalid_json: '响应 JSON 无效', invalid_output: '响应格式无效', interrupted: '调用中断', internal: '内部错误', unknown: '未记录原因' };
+  unsupported: '配置、认证或请求不支持', invalid_json: '响应 JSON 无效', invalid_output: '响应格式无效', interrupted: '调用中断', internal: '内部错误',
+  network: '网络错误', authentication: '服务认证失败', permission: '服务权限不足', output_truncated: '响应输出被截断', unknown: '未记录原因' };
 const errorLabel = (code: string | null) => code ? ERRORS[code] ?? '未记录原因' : '—';
 const operation = (name: string) => OPERATIONS[name] ?? name;
 
@@ -55,10 +56,10 @@ export function AdminDashboard(report: AdminReport): ReactNode {
       <div className="refresh"><span className="small subtle">更新于 {time(new Date().toISOString())}</span><a className="button secondary" href={adminLink(filters)}>刷新数据</a></div></div>
     {warnings.length > 0 && <div className="notice warning" role="status"><strong>部分统计不完整</strong><ul>{warnings.map((message, i) => <li key={i}>{message}</li>)}</ul></div>}
     <form method="get" action="/admin/" className="filters" aria-label="统计筛选">
-      <label>账号<select name="studentId" defaultValue={filters.studentId}><option value="">全部账号</option>{report.accountOptions.map(account => <option key={account.studentId} value={account.studentId}>{account.label} · {account.studentId.slice(0, 8)}</option>)}</select></label>
+      <label>账号<select aria-label="账号" name="studentId" defaultValue={filters.studentId}><option value="">全部账号</option>{report.accountOptions.map(account => <option key={account.studentId} value={account.studentId}>{account.label} · {account.studentId.slice(0, 8)}</option>)}</select></label>
       <label>开始日期<input type="date" name="from" defaultValue={filters.from} /></label><label>结束日期<input type="date" name="to" defaultValue={filters.to} /></label>
-      <label>模型<select name="model" defaultValue={filters.model}><option value="">全部模型</option>{[...new Set([...report.models, ...(filters.model ? [filters.model] : [])])].map(model => <option key={model}>{model}</option>)}</select></label>
-      <label>功能<select name="operation" defaultValue={filters.operation}><option value="">全部功能</option>{[...new Set([...report.operations, ...(filters.operation ? [filters.operation] : [])])].map(name => <option key={name} value={name}>{operation(name)}</option>)}</select></label>
+      <label>模型<select aria-label="模型" name="model" defaultValue={filters.model}><option value="">全部模型</option>{[...new Set([...report.models, ...(filters.model ? [filters.model] : [])])].map(model => <option key={model}>{model}</option>)}</select></label>
+      <label>功能<select aria-label="功能" name="operation" defaultValue={filters.operation}><option value="">全部功能</option>{[...new Set([...report.operations, ...(filters.operation ? [filters.operation] : [])])].map(name => <option key={name} value={name}>{operation(name)}</option>)}</select></label>
       <div className="filter-actions"><button type="submit">应用筛选</button><a href="/admin/">重置</a></div>
     </form>
     <section className="metrics" aria-label="调用概览">

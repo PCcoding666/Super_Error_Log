@@ -21,7 +21,8 @@ export function createAdminRouter({ registry, auth, ipOf, originScheme }: AdminR
   router.use((request, response, next) => {
     response.set({
       'cache-control': 'private, no-store', pragma: 'no-cache', 'x-content-type-options': 'nosniff',
-      'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer',
+      // no-referrer makes browser form POST Origin "null", defeating legitimate strict-origin login.
+      'x-frame-options': 'DENY', 'referrer-policy': 'same-origin',
       'content-security-policy': "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
     });
     if (request.method === 'POST') {

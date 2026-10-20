@@ -297,10 +297,19 @@ export class StudentRegistry {
   }
 
   recordActivity(studentId: string): void {
-    const now = this.now();
-    // At most one write per account per minute, including when browsers poll.
-    this.db.prepare('UPDATE students SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)')
-      .run(now.toISOString(), studentId, new Date(now.getTime() - 60_000).toISOString());
+    // This observer must neither delay nor fail an authenticated student request.
+    // All operations here are synchronous, so the normal timeout is restored before any other caller runs.
+    try {
+      try {
+        this.db.exec('PRAGMA busy_timeout = 0');
+        const now = this.now();
+        const cutoff = new Date(now.getTime() - 60_000).toISOString();
+        const row = this.db.prepare('SELECT last_seen_at FROM students WHERE id = ?').get(studentId) as { last_seen_at: string | null } | undefined;
+        if (!row || (row.last_seen_at !== null && row.last_seen_at >= cutoff)) return;
+        this.db.prepare('UPDATE students SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)')
+          .run(now.toISOString(), studentId, cutoff);
+      } finally { this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`); }
+    } catch { /* Best-effort metadata: a later request can update it after contention/storage recovery. */ }
   }
 
   listInvitations(): InvitationRecord[] {

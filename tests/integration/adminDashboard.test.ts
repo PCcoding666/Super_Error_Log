@@ -111,4 +111,10 @@ describe('independent administrator dashboard', () => {
     auth.close(); auth = AdminAuth.open(root, { now: () => clock });
     expect(auth.authenticate(token)).toBe(true);
   });
+  it('does not create a session for a password reset during asynchronous verification', async () => {
+    const old = auth.rotatePassword();
+    const pending = auth.login(old);
+    auth.rotatePassword();
+    expect(await pending).toBeNull();
+  });
 });

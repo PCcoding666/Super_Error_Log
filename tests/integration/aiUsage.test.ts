@@ -99,4 +99,17 @@ describe('AI usage metadata at the actual provider boundary', () => {
     fs.mkdirSync(path.join(root, 'ai-usage.db'));
     await expect((await client()).call('diagnose', [])).resolves.toMatchObject({ value: { ok: true } });
   });
+  it('records ASR timeout and invalid output with sanitized error codes', async () => {
+    const timeout = new BailianTranscriber({ apiKey: 'private-api-key', model: 'asr-test', timeoutMs: 20,
+      fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
+        init!.signal!.addEventListener('abort', () => reject(new Error('private-provider-error')), { once: true });
+      }) });
+    await expect(timeout.transcribe(Buffer.from('audio'), 'audio/mp4')).rejects.toMatchObject({ kind: 'timeout' });
+    expect(rows()[0]).toMatchObject({ status: 'failed', error_code: 'timeout', input_tokens: null, output_tokens: null });
+    const invalid = new BailianTranscriber({ apiKey: 'private-api-key', model: 'asr-test', fetchImpl: async () =>
+      new Response(JSON.stringify({ usage: { input_tokens: 6, output_tokens: 0 }, output: {} })) });
+    await expect(invalid.transcribe(Buffer.from('audio'), 'audio/mp4')).rejects.toMatchObject({ kind: 'invalid_output' });
+    expect(rows().find(row => row.error_code === 'invalid_output')).toMatchObject({ input_tokens: 6, output_tokens: 0, status: 'failed' });
+    expect(JSON.stringify(rows())).not.toContain('private-provider-error');
+  });
 });

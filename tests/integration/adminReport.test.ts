@@ -86,6 +86,35 @@ describe('admin account and usage report', () => {
     expect(JSON.stringify(report)).not.toMatch(/private-prompt|private-response|messages|responseRaw/);
     expect(report.accounts[0]!.legacyCalls).toBe(1);
   });
+  it('preserves controlled historical failure reasons without retaining raw errors', async () => {
+    const a = registry.createStudent();
+    for (const code of ['network', 'authentication', 'permission', 'output_truncated', 'private-unknown-error']) {
+      legacy(a.studentDir, { error: { code, message: 'private-error-body' } });
+    }
+    const report = await readAdminReport(registry, parseAdminFilters({}));
+    expect(report.records.map(row => row.errorCode).sort()).toEqual(['authentication', 'network', 'output_truncated', 'permission', 'unknown']);
+    expect(JSON.stringify(report)).not.toMatch(/private-error-body|private-unknown-error/);
+  });
+  it('keeps activity tracking nonblocking and best-effort while the registry has a writer lock', () => {
+    const a = registry.createStudent();
+    const invitation = registry.issueInvitation(a.studentId);
+    const session = registry.redeem(invitation.code);
+    const writer = new DatabaseSync(path.join(root, 'registry.db'));
+    try {
+      for (const lastSeen of [new Date().toISOString(), null]) {
+        writer.prepare('UPDATE students SET last_seen_at = ? WHERE id = ?').run(lastSeen, a.studentId);
+        writer.exec('BEGIN IMMEDIATE');
+        try {
+          const started = performance.now();
+          expect(registry.authenticate(session.sessionToken)?.studentId).toBe(a.studentId);
+          expect(() => registry.recordActivity(a.studentId)).not.toThrow();
+          expect(performance.now() - started).toBeLessThan(1000);
+        } finally { writer.exec('ROLLBACK'); }
+      }
+      registry.recordActivity(a.studentId);
+      expect(registry.listStudents()[0]!.lastActiveAt).not.toBeNull();
+    } finally { writer.close(); }
+  }, 15_000);
   it('reports broken stores as unavailable, and refuses linked data files', async () => {
     const a = registry.createStudent(); const b = registry.createStudent();
     fs.writeFileSync(path.join(a.studentDir, 'ai-usage.db'), 'broken');
@@ -116,6 +145,41 @@ describe('admin account and usage report', () => {
     expect(report.accounts[0]).toMatchObject({ label: '小林', lastActiveAt: '2026-10-20T05:00:00.000Z',
       activity: { photos: 2, items: 1, packets: 1, printed: 1, reflections: 1, returns: 1 } });
     expect(JSON.stringify(report)).not.toContain('private-student-words');
+  });
+  it('migrates old invitation records without changing redemption or public IDs on reopen', () => {
+    registry.close();
+    fs.rmSync(path.join(root, 'registry.db'));
+    const db = new DatabaseSync(path.join(root, 'registry.db'));
+    const studentId = crypto.randomUUID();
+    const code = '0123456789AB';
+    db.exec(`CREATE TABLE students(id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+      CREATE TABLE invitations(code_hash TEXT PRIMARY KEY, student_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, redeemed_at TEXT);`);
+    db.prepare('INSERT INTO students VALUES (?, ?)').run(studentId, '2026-01-01T00:00:00.000Z');
+    db.prepare('INSERT INTO invitations VALUES (?, ?, ?, ?, NULL)').run(crypto.createHash('sha256').update(code).digest('hex'), studentId,
+      '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z');
+    db.close();
+    registry = StudentRegistry.open(root, { now: () => new Date('2026-10-20T00:00:00.000Z') });
+    const id = registry.listInvitations()[0]!.invitationId;
+    expect(registry.redeem(code).studentId).toBe(studentId);
+    registry.close();
+    registry = StudentRegistry.open(root);
+    expect(registry.listInvitations()[0]).toMatchObject({ invitationId: id, status: 'redeemed' });
+    expect(() => registry.redeem(code)).toThrow();
+  });
+  it('shows expired invitations and malformed legacy data explicitly without double-counting refreshes', async () => {
+    const a = registry.createStudent();
+    const folder = path.join(a.studentDir, 'jobs', crypto.randomUUID(), 'attempts'); fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'broken.json'), '{');
+    legacy(a.studentDir);
+    const before = await readAdminReport(registry, parseAdminFilters({}));
+    const after = await readAdminReport(registry, parseAdminFilters({}));
+    expect(before.summary.calls).toBe(1); expect(after.summary.calls).toBe(1);
+    expect(after.accounts[0]!.warnings).toContain('部分历史调用记录无法读取，当前合计可能不完整。');
+    registry.close();
+    registry = StudentRegistry.open(root, { now: () => new Date('2026-01-01T00:00:00.000Z') });
+    registry.issueInvitation(a.studentId);
+    registry.close(); registry = StudentRegistry.open(root, { now: () => new Date('2026-01-09T00:00:00.000Z') });
+    expect(registry.listInvitations()[0]!.status).toBe('expired');
   });
   it.each([{ from: '2026-02-30' }, { to: 'yesterday' }, { from: '2026-10-21', to: '2026-10-20' },
     { page: '-1' }, { page: '1 OR 1=1' }, { model: ['a', 'b'] }, { studentId: '../../other' }])('rejects malformed filters: %j', query => {

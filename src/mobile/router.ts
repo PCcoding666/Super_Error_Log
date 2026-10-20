@@ -24,6 +24,8 @@ export interface CreateMobileAppOptions {
   v2Router?: (deps: { limiter: RateLimiter | null }) => express.Router;
   /** 学生网页版（/s/，仅云端模式）：同源挂载，复用同一个识别 service、配对、限流与准入。 */
   webClient?: (deps: WebClientDeps) => express.Router;
+  /** Host-only administrator surface. It owns separate authentication. */
+  adminWeb?: (deps: Pick<WebClientDeps, 'ipOf'>) => express.Router;
 }
 
 export interface WebClientDeps {
@@ -277,6 +279,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
   if (options.webClient && mode === 'cloud') {
     app.use('/s', options.webClient({ service, pairing: options.pairing!, limiter, admission, ipOf }));
   }
+  if (options.adminWeb && mode === 'cloud') app.use('/admin', options.adminWeb({ ipOf }));
   app.use((_request, response) => response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }));
   const errors: ErrorRequestHandler = (error, request, response, _next) => {
     if (response.headersSent) return;
