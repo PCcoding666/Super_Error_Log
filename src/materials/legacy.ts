@@ -6,7 +6,7 @@ import { MaterialStore } from './store.js';
 
 type LegacyRow = {
   id: string; student_id: string; asset_id: string; batch_id: string;
-  content_hash: string; content_json: string | null; evidence_revision: number | null;
+  content_hash: string; content_json: string | null; evidence_revision: number | string | null;
   verified: number | null; confidence_badge: string | null;
   job_id: string | null; question_id: string | null; question_revision: number | null;
 };
@@ -36,49 +36,59 @@ export function backfillLegacyMaterials(db: DatabaseSync): { mapped: number } {
       let evidence:Evidence|null=null;
       let issue:string|null=null;
       if (row.content_json===null) issue='legacy_evidence_missing';
-      else { try { evidence=validateEvidence(JSON.parse(row.content_json)); } catch { issue='legacy_evidence_invalid'; } }
-      const question=store.createQuestion({number:evidence?.questionNumber,subject:evidence?.subject,tags:evidence?.knowledgeTags,unresolved:issue?[issue]:[]});
+      else if (typeof row.evidence_revision!=='number' || !Number.isSafeInteger(row.evidence_revision) || row.evidence_revision<1) {
+        issue='legacy_evidence_revision_invalid';
+      } else { try { evidence=validateEvidence(JSON.parse(row.content_json)); } catch { issue='legacy_evidence_invalid'; } }
+      const question=store.createQuestion({number:evidence?.questionNumber,subject:evidence?.subject,tags:evidence?.knowledgeTags,unresolved:issue?[issue]:evidence?.uncertainties??[]});
       db.prepare('INSERT INTO material_item_link(owner_id,question_id,item_id) VALUES (?,?,?)').run(row.student_id,question.id,row.id);
       db.prepare('INSERT INTO material_legacy_map(owner_id,source_kind,source_key,question_id,details_json) VALUES (?,?,?,?,?)')
         .run(row.student_id,'error_item',row.id,question.id,JSON.stringify({itemId:row.id,sourceAssetId:row.asset_id,evidenceRevision:row.evidence_revision,
           mobile:row.job_id?{jobId:row.job_id,questionId:row.question_id,revision:row.question_revision}:null,issue}));
-      if (evidence) mapEvidence(store,row,asset.id,question.id,evidence);
+      if (evidence) mapEvidence(store,row,asset.id,question.id,evidence,row.evidence_revision as number);
       mapped++;
     });
   }
   return {mapped};
 }
 
-function mapEvidence(store:MaterialStore,row:LegacyRow,assetId:string,questionId:string,evidence:Evidence):void {
-  const revision=row.evidence_revision??1;
+function mapEvidence(store:MaterialStore,row:LegacyRow,assetId:string,questionId:string,evidence:Evidence,revision:number):void {
   // A historical successful AI call is not a passed content check. Preserve low-confidence warnings.
   const check:Fragment['check']=row.confidence_badge==='low'?'low':row.verified===1?'passed':'unchecked';
   let order=0;
   const put=(role:MaterialRole,text:string,box:Fragment['box'],uncertainties:string[]=[])=>{
+    const combinedUncertainties=[...evidence.uncertainties,...uncertainties];
     const fragment:Fragment={assetId,fragmentId:newId('mfr'),revision,box,sourceHash:row.content_hash,
       role,text,number:evidence.questionNumber,subpart:null,page:null,order:order++,requiresDiagram:role==='question'&&evidence.requiresDiagram,
-      check:uncertainties.length && check==='passed'?'unchecked':check,uncertainties:[...evidence.uncertainties,...uncertainties]};
+      check:combinedUncertainties.length && check==='passed'?'unchecked':check,uncertainties:combinedUncertainties};
     store.putFragment(fragment); return fragment;
   };
   const stem=put('question',evidence.questionText,evidence.questionRegion);
   store.linkFragment(stem.fragmentId,revision,{questionId,attemptId:null},0,{source:'legacy',itemId:row.id});
-  for (const region of evidence.regions.filter(r=>r.kind==='diagram')) {
-    const diagram=put('diagram','',region.box);
-    store.linkFragment(diagram.fragmentId,revision,{questionId,attemptId:null},0,{source:'legacy',regionId:region.id});
-  }
-  const hasAttempt=evidence.observations.some(o=>o.kind==='student_work'||o.kind==='correction');
+  const isWork=(kind:string)=>kind==='student_work'||kind==='correction';
+  const hasAttempt=evidence.regions.some(r=>isWork(r.kind))||evidence.observations.some(o=>isWork(o.kind));
   const attempt=hasAttempt?store.createAttempt(questionId):null;
-  for (const observation of evidence.observations) {
-    const region=evidence.regions.find(r=>r.id===observation.regionId);
-    const fragment=put(observation.kind==='teacher_note'?'teacher_mark':observation.kind,observation.text,region?.box??evidence.questionRegion,
-      region?[]:['legacy_observation_region_missing']);
-    const attemptId=observation.kind==='student_work'||observation.kind==='correction'?attempt!.id:null;
-    store.linkFragment(fragment.fragmentId,revision,{questionId,attemptId},0,{source:'legacy',observationId:observation.id});
-    if (observation.kind==='reference_answer') {
-      const answer:ReferenceAnswer={id:newId('man'),questionId,subpart:null,revision:1,source:'imported',text:observation.text,
+  const link=(fragment:Fragment,basis:Record<string,unknown>)=>{
+    const attemptId=isWork(fragment.role)?attempt!.id:null;
+    store.linkFragment(fragment.fragmentId,revision,{questionId,attemptId},0,{source:'legacy',...basis});
+    if (fragment.role==='reference_answer' && fragment.text.trim()) {
+      const answer:ReferenceAnswer={id:newId('man'),questionId,subpart:null,revision:1,source:'imported',text:fragment.text,
         claimedSource:null,fragmentIds:[fragment.fragmentId],basisKey:store.getQuestion(questionId)!.basisKey,stale:false,run:null};
       store.db.prepare('INSERT INTO material_answer(id,revision,owner_id,question_id,source,basis_key,dependencies_json,content_json) VALUES (?,?,?,?,?,?,?,?)')
         .run(answer.id,answer.revision,store.studentId,questionId,answer.source,answer.basisKey,JSON.stringify([{fragmentId:fragment.fragmentId,revision}]),JSON.stringify(answer));
     }
+  };
+  // A visual region survives even when no text could be transcribed. Group all text for
+  // that region so multiple observations do not produce duplicate visual fragments.
+  for (const region of evidence.regions) {
+    const observations=evidence.observations.filter(o=>o.regionId===region.id);
+    const fragment=put(region.kind==='teacher_note'?'teacher_mark':region.kind,
+      observations.map(o=>o.text).join('\n'),region.box,
+      observations.length===0 && region.kind!=='diagram'?['legacy_region_text_missing']:[]);
+    link(fragment,{regionId:region.id,observationIds:observations.map(o=>o.id),confidence:region.confidence,cleanForPrint:region.cleanForPrint});
+  }
+  for (const observation of evidence.observations.filter(o=>o.regionId===null)) {
+    const fragment=put(observation.kind==='teacher_note'?'teacher_mark':observation.kind,observation.text,evidence.questionRegion,
+      ['legacy_observation_region_missing']);
+    link(fragment,{observationId:observation.id});
   }
 }
