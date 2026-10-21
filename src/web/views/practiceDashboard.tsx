@@ -4,7 +4,7 @@ import { weekRangeText } from '../format.js';
 import { Page } from './layout.js';
 
 /** Fields the dashboard actually renders. Legacy practice cards and learning cards both satisfy this. */
-interface DashboardItem { id: string; subject?: string | null; knowledgeTags: string[]; reason: string }
+interface DashboardItem { id: string; subject?: string | null; knowledgeTags: string[]; reason: string; questionExcerpt?: string | null; chapter?: string | null; shortId?: string | null }
 interface DashboardPractice { id: string; week: string; items: DashboardItem[] }
 interface DashboardRecommendation { recommended: DashboardItem[]; others?: DashboardItem[]; notes?: string[]; limits?: { min: number; max: number } }
 
@@ -43,16 +43,25 @@ export function PracticeDashboardPage(props: {tasks:DashboardTask[]; activeId:st
         <form method="post" action={`/s/practice/${active.practice.id}/cancel`}><input type="hidden" name="next" value="choose"/><button className="btn">换一组题</button></form>
         <form method="post" action={`/s/practice/${active.practice.id}/cancel`}><button className="link-btn">取消剩余练习</button></form>
       </div><p className="hint">换题或取消会保留已记录的结果，剩余题以后仍可安排。</p></details>
-    </section> : cards.length ? <section className="card" data-testid="practice-recommendation">
-      <p className="eyebrow">为你准备的建议</p><h2>这次建议练 {cards.length} 道</h2>
-      <p>先练一小组，在白纸上完成；需要时也可以打印。</p>
-      <ul className="list">{cards.map((item,index)=><li className="row" key={item.id}><span className="row-text">
-        <b>第 {index+1} 题 · {item.subject??'练习'} · {item.knowledgeTags[0]??'错题重做'}</b><span className="meta-line muted">为什么练：{item.reason}</span>
-      </span></li>)}</ul>
-      <form method="post" action="/s/practices/start" data-wait="正在准备这次练习…"><input type="hidden" name="key" value={props.requestKey}/><button className="btn primary" type="submit">就练这 {cards.length} 道</button></form>
-      <a className="more" href="/s/choose">调整题目和题量</a>
+    </section> : cards.length ? <section data-testid="practice-recommendation">
+      <p className="lead">先练一小组，在白纸上完成；需要时也可以打印。</p>
+      <h2 className="group-label">这次建议练 {cards.length} 道</h2>
+      <ul className="inset-group notebook-list">{cards.map(item=><li className="notebook-entry" key={item.id}><a className="row notebook-card" href={`/s/items/${item.id}`}>
+        <span className="notebook-line">
+          <img className="notebook-thumb" src={`/s/img/item/${item.id}?s=thumb`} alt="" loading="lazy" />
+          <span className="row-text">
+            <span className="excerpt">{item.questionExcerpt || item.knowledgeTags[0] || '错题重做'}</span>
+            <span className="meta-line muted">{[item.knowledgeTags[0] || item.chapter, item.subject].filter(Boolean).join(' · ') || '练习'}</span>
+            <span className="meta-line muted">为什么练：{item.reason}</span>
+          </span>
+          <span className="chev" aria-hidden="true">›</span>
+        </span>
+      </a></li>)}</ul>
+      <p className="group-footer">隔几天独立做对，才计入掌握。</p>
+      <a className="practice-adjust" href="/s/choose">调整题目和题量<span className="chev" aria-hidden="true">›</span></a>
+      <form className="practice-cta" method="post" action="/s/practices/start" data-wait="正在准备这次练习…"><input type="hidden" name="key" value={props.requestKey}/><button className="btn primary" type="submit">就练这 {cards.length} 道</button></form>
     </section> : <section className="card"><h2>现在没有需要新增的练习</h2><p>可以继续下面暂缓的任务，或到错题本选题。到了复习时间，这里会给你建议。</p><a className="btn" href="/s/">查看错题本</a><a className="more" href="/s/capture">录入新错题</a></section>}
-    <a className="more" href="/s/choose">自己选题</a>
+    {cards.length && !active ? null : <a className="more" href="/s/choose">自己选题</a>}
     {history.length>0?<details className="card" data-testid="practice-history"><summary>练习记录（{history.length}）</summary>
       <ul className="list">{history.map(task=><li className="row" key={task.practice.id}><span className="row-text">
         <a data-testid="practice-row" href={`/s/practice/${task.practice.id}${task.recorded>=task.practice.items.length?'/feedback':''}`}><b>{weekRangeText(task.practice.week,'short')} · {task.practice.items.length} 道</b></a>

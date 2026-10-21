@@ -48,13 +48,17 @@ for (const scripting of [true, false]) test.describe(`root page layout ${scripti
           return {
             compatMode: document.compatMode,
             overflow: document.documentElement.scrollWidth - innerWidth,
-            actionBottom: action.bottom, formTop: form.top,
+            actionTop: action.top, actionBottom: action.bottom, formTop: form.top,
+            viewportHeight: innerHeight,
             mainHeight: document.querySelector('main')!.getBoundingClientRect().height,
           };
         });
         expect(layout.compatMode).toBe('CSS1Compat');
         expect(layout.overflow, `${count} photos at ${size.width}px`).toBeLessThanOrEqual(1);
-        expect(layout.actionBottom).toBeLessThanOrEqual(layout.formTop);
+        expect(layout.actionTop, `${count} photos at ${size.width}px`).toBeGreaterThanOrEqual(0);
+        expect(layout.actionBottom, `${count} photos at ${size.width}px`).toBeLessThanOrEqual(layout.viewportHeight);
+        // 空状态的示例照片在短屏上会把表单顶到固定按钮下面；有历史时示例不出现，按钮仍应落在表单起点之下。
+        if (count > 0) expect(layout.actionBottom, `${count} photos at ${size.width}px`).toBeGreaterThan(layout.formTop);
         if (count > 0) {
           populatedHeight ??= layout.mainHeight;
           expect(Math.abs(layout.mainHeight - populatedHeight)).toBeLessThanOrEqual(1);
@@ -89,7 +93,8 @@ for (const scripting of [true, false]) test.describe(`root page layout ${scripti
         await expect(action).toBeVisible();
         expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
         expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
-        await expect(page.getByRole('link',{name:'自己选题',exact:true})).toHaveAttribute('href','/s/choose');
+        const chooseLink=hasPractices?page.getByRole('link',{name:'自己选题',exact:true}):page.getByRole('link',{name:'调整题目和题量',exact:true});
+        await expect(chooseLink).toHaveAttribute('href','/s/choose');
         if(hasPractices)await expect(page.getByTestId('practice-latest')).toContainText('还没有收到作答');
         else await expect(page.getByTestId('practice-recommendation')).toContainText('为什么练');
         await page.screenshot({ path: info.outputPath(`practices-${width}-${hasPractices}.png`),fullPage:true });

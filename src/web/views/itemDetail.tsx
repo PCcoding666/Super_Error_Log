@@ -50,9 +50,9 @@ export function ItemDetailPage(props: ItemDetailProps): ReactNode {
     {props.error ? <Problem title="暂时不能开始" detail={props.error} /> : null}
     {props.images?.length ? props.images.map(fragment => <figure key={fragment.fragmentId}>
       <a href={`/s/materials/assets/${fragment.assetId}/image`} target="_blank" rel="noreferrer" className="photo-link learning-photo"><img className="crop big" loading="lazy" src={`/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}`} alt="这道题的材料" /></a>
-      <figcaption className="hint">{fragment.page ? `第 ${fragment.page} 页 · ` : ''}点开查看这张原图</figcaption>
-    </figure>) : <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link learning-photo" data-key="item-full-photo" aria-label="打开整题原图（新窗口）"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /></a>}
-    <p className="hint">整题照片 · 点开查看原图并放大；照片未显示时可阅读下面的题目。</p>
+      <figcaption className="hint">{fragment.page ? `第 ${fragment.page} 页 · ` : ''}查看原图</figcaption>
+    </figure>) : <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link learning-photo" data-key="item-full-photo" aria-label="打开整题原图（新窗口）"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /><span className="hint">查看原图</span></a>}
+    <p className="hint">照片未显示时可阅读下面的题目。</p>
     {props.item.source?.kind === 'material' && props.item.source.questionId ? <a className="more" href={`/s/materials/questions/${props.item.source.questionId}`}>查看这道题的全部材料与批改来源</a> : null}
     <section className="card" aria-labelledby="learning-question">
       <h2 id="learning-question" className="card-title">题目</h2>
@@ -61,24 +61,28 @@ export function ItemDetailPage(props: ItemDetailProps): ReactNode {
       {evidence?.badge === 'low' ? <p className="tone-orange" data-testid="low-hint">{quoted('字可能认错了：对照上面的照片看一眼，不对就点「改一下」。')}</p> : null}
       {item.knowledgeTags.length ? <p className="small muted">细知识点：{item.knowledgeTags.join('、')}</p> : null}
     </section>
-    {groups.length ? <section className="card learning-evidence" aria-label="原作答与订正">{groups.map(group => <details key={group.title}><summary>{group.title}</summary>{group.notes.map(note => <AnswerText key={note.id} text={note.text} teacherNote={note.kind === 'teacher_note'} />)}</details>)}</section> : null}
-    <section className="card" aria-labelledby="learning-reflection" data-testid="item-reflection">
-      <h2 id="learning-reflection" className="card-title">我的错因与提醒</h2>
-      {reflection ? <>
-        <p className="small muted">我确认的记录 · <time dateTime={reflection.createdAt}>{localDayText(new Date(reflection.createdAt),props.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)}</time></p>
-        {reflection.summary ? <p className="pre reflection-summary">{reflection.summary}</p> : <p className="muted">这次没有填写文字提醒。</p>}
-        <dl className="learning-reflection"><dt>当时怎么了</dt><dd>{reflection.attemptState}</dd><dt>错在哪</dt><dd>{reflection.cause}</dd><dt>当时的把握</dt><dd>{MASTERY_FEELING_LABEL[reflection.masteryFeeling]}</dd></dl>
-      </> : <p className="muted">还没有已确认的错因记录。可以先重做，之后再记下自己的发现。</p>}
-      {props.reflectionPracticeId ? <a className="more" href={`/s/why/${props.reflectionPracticeId}/${item.id}`}>{reflection ? '回看或补充错因' : '记下我的错因（可选）'}</a> : null}
+    <section className="inset-group learning-stack">
+      {groups.length ? <section className="learning-evidence" aria-label="原作答与订正">{groups.map(group => <details className="disclosure" key={group.title}><summary>{group.title}</summary><div className="disclosure-body">{group.notes.map(note => <AnswerText key={note.id} text={note.text} teacherNote={note.kind === 'teacher_note'} />)}</div></details>)}</section> : null}
+      <section aria-labelledby="learning-reflection" data-testid="item-reflection">
+        <h2 id="learning-reflection" className="stack-label">我的错因与提醒</h2>
+        {reflection ? <>
+          <p className="small muted">我确认的记录 · <time dateTime={reflection.createdAt}>{localDayText(new Date(reflection.createdAt),props.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone)}</time></p>
+          {reflection.summary ? <p className="pre reflection-summary">{reflection.summary}</p> : <p className="muted">这次没有填写文字提醒。</p>}
+          <dl className="learning-reflection"><dt>当时怎么了</dt><dd>{reflection.attemptState}</dd><dt>错在哪</dt><dd>{reflection.cause}</dd><dt>当时的把握</dt><dd>{MASTERY_FEELING_LABEL[reflection.masteryFeeling]}</dd></dl>
+        </> : <p className="muted">还没有已确认的错因记录。可以先重做，之后再记下自己的发现。</p>}
+        {props.reflectionPracticeId ? <a className="more" href={`/s/why/${props.reflectionPracticeId}/${item.id}`}>{reflection ? '回看或补充错因' : '记下我的错因（可选）'}</a> : null}
+      </section>
+      <section aria-labelledby="learning-history" data-testid="item-practice-history">
+        <div className="stack-row"><h2 id="learning-history" className="stack-label">练习记录</h2><span className="muted">{props.practiceHistory?.length ? `${props.practiceHistory.length} 次` : '还没有'}</span></div>
+        {props.practiceHistory?.length ? <><p className="small muted">最近的在前 · 日期是你记录的实际作答日</p><ol className="list learning-history">{props.practiceHistory.map(record => <li key={record.id}><a className="row" href={`/s/practice/${record.id}?item=${item.id}${record.correct === null ? '' : '&view=check'}`}><span className="row-text"><span>{attemptLabel(record)}</span><span className="meta-line muted">{record.performed_at ? <time dateTime={record.performed_at}>{record.performed_at}</time> : '尚未记录作答日期'} · {record.correct === null ? '继续练习' : '查看作答'}</span></span><span className="chev" aria-hidden="true">›</span></a></li>)}</ol></> : <p className="muted">重做后，实际结果会留在这里。</p>}
+      </section>
+      <details className="disclosure nav-disclosure learning-management"><summary>题目信息与管理</summary>
+        <div className="disclosure-body">
+          {evidence ? <a className="more" href={itemContextUrl(item,returnTo,'/fix')} data-key="fix">字认错了？改一下</a> : null}
+          <a className="more" href={itemContextUrl(item,returnTo,'/category')}>修改分类</a>
+          {props.canDiscard ? <form method="post" action={`/s/items/${item.id}/discard`}><input type="hidden" name="returnTo" value={returnTo} /><button className="link-btn" type="submit" data-testid="next-step-secondary-discard" data-key="discard">这不是错题</button></form> : null}
+        </div>
+      </details>
     </section>
-    <section className="card" aria-labelledby="learning-history" data-testid="item-practice-history">
-      <h2 id="learning-history" className="card-title">练习记录</h2>
-      {props.practiceHistory?.length ? <><p className="small muted">最近的在前 · 日期是你记录的实际作答日</p><ol className="list learning-history">{props.practiceHistory.map(record => <li key={record.id}><a className="row" href={`/s/practice/${record.id}?item=${item.id}${record.correct === null ? '' : '&view=check'}`}><span className="row-text"><span>{attemptLabel(record)}</span><span className="meta-line muted">{record.performed_at ? <time dateTime={record.performed_at}>{record.performed_at}</time> : '尚未记录作答日期'} · {record.correct === null ? '继续练习' : '查看作答'}</span></span><span className="chev" aria-hidden="true">›</span></a></li>)}</ol></> : <p className="muted">还没有练习记录。重做后，实际结果会留在这里。</p>}
-    </section>
-    <details className="card learning-management"><summary>题目信息与管理</summary>
-      {evidence ? <a className="more" href={itemContextUrl(item,returnTo,'/fix')} data-key="fix">字认错了？改一下</a> : null}
-      <a className="more" href={itemContextUrl(item,returnTo,'/category')}>修改分类</a>
-      {props.canDiscard ? <form method="post" action={`/s/items/${item.id}/discard`}><input type="hidden" name="returnTo" value={returnTo} /><button className="link-btn" type="submit" data-testid="next-step-secondary-discard" data-key="discard">这不是错题</button></form> : null}
-    </details>
   </Page>;
 }

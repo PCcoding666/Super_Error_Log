@@ -118,14 +118,14 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   await page.goto(gateway.base + '/s/');
   await page.reload();
   await expect(add).toBeVisible();
-  await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
+  await expect(page).toHaveTitle(/^错题本 · /);
   await page.goto(gateway.base + '/s/settings');
   await page.getByRole('button', { name: '退出登录', exact: true }).click();
   await expect(page.getByRole('heading', { name: '输入邀请码' })).toBeVisible();
   await page.getByLabel('12 位邀请码').fill(gateway.reloginCodes[0]!);
   await page.getByRole('button', { name: '进入我的错题本' }).click();
   await expect(add).toBeVisible();
-  await expect(page.getByRole('heading',{name:'错题本',exact:true})).toBeVisible();
+  await expect(page).toHaveTitle(/^错题本 · /);
   await page.goto(gateway.base + printPath);
   await expect(page.getByTestId('print-summary')).toContainText('这张练习纸上有 5 道题');
   expect(paperMarkup(await (await page.request.get(gateway.base + sheetPath)).text())).toBe(beforeSheet);
@@ -471,6 +471,6 @@ test('upload entry stays in the first screen and history shows compact previews'
   await expect(popup).toHaveURL(/\/s\/img\/photo\/[^?]+\?full=1$/);
   await popup.close();
   await expect(page).toHaveURL(/\/s\/photos$/);
-  await page.getByRole('navigation', { name: '错题录入视图' }).getByRole('link', { name: '新增录入', exact: true }).click();
+  await page.getByRole('link', { name: '新增录入', exact: true }).click();
   await expect(page.getByTestId('next-step-primary')).toBeInViewport();
 });

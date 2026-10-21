@@ -56,12 +56,15 @@ function ChooseRow(props: { card: PracticeCard; checked: boolean }): ReactNode {
     <label className="choice pick" data-testid="choose-row">
       <input type="checkbox" name="itemIds" value={card.id} defaultChecked={props.checked} />
       <span className="grow">
-        <img className="crop" src={`/s/img/item/${card.id}?s=list`} alt={card.shortId ?? '题目裁图'} loading="lazy" />
-        <span className="excerpt">{card.questionExcerpt ?? ''}</span>
-        <span className="meta-line muted">{[card.grade, card.subject, card.chapter].filter(Boolean).join(' · ')}</span>
-        <span className="meta-line muted">为什么选它：{card.reason}</span>
-        {card.badge === 'low' ? <span className="meta-line tone-orange">字可能认错了 · 点开看看</span> : null}
+        <img className="notebook-thumb" src={`/s/img/item/${card.id}?s=thumb`} alt="" loading="lazy" />
+        <span className="row-text">
+          <span className="excerpt">{card.questionExcerpt || card.shortId || '题目'}</span>
+          <span className="meta-line muted">{[card.chapter || card.knowledgeTags[0], card.subject].filter(Boolean).join(' · ')}</span>
+          <span className="meta-line muted">为什么选它：{card.reason}</span>
+          {card.badge === 'low' ? <span className="meta-line tone-orange">字可能认错了 · 点开看看</span> : null}
+        </span>
       </span>
+      <span className="mark" aria-hidden="true">✓</span>
     </label>
   );
 }
@@ -99,14 +102,19 @@ export function ChoosePage(props: { recommend: RecommendResponse; practiceSlot: 
         <section className="card"><p>现在没有可以练的题。先录入错题，或者等 AI 找完题。</p></section>
       ) : (
         <form method="post" action="/s/choose" id="choose-form" data-pick-count="" data-max={String(recommend.limits.max)} data-min="1" data-wait="正在建练习…">
-          <p className="lead">{selected ? `已选中 ${n} 道，点一下可以去掉或加上。` : `AI 先帮你选了 ${n} 道，点一下可以去掉或加上。`}建议 {recommend.limits.min}–{recommend.limits.max} 道，最多 {recommend.limits.max} 道。</p>
+          <p className="lead">{selected ? `已选中 ${n} 道，点一下可以去掉或加上。` : 'AI 先帮你选了这几道，点一下可以去掉或加上。'}</p>
+          <p className="page-subtitle">已选 {n} 道 · 建议 {recommend.limits.min}–{recommend.limits.max} 道</p>
           <p className={`tone-orange${n > recommend.limits.max ? '' : ' hidden'}`} data-max-warning="" role="status">最多 {recommend.limits.max} 道。想加这道，先去掉一道。</p>
+          <div className="inset-group choose-list">
+            {recommend.recommended.map(card => <ChooseRow key={card.id} card={card} checked={selected ? selected.has(card.id) : true} />)}
+          </div>
           {recommend.notes.length > 0 ? <div className="notes" data-testid="choose-notes">{recommend.notes.map(note => <p key={note}>{plainNote(note)}</p>)}</div> : null}
-          {recommend.recommended.map(card => <ChooseRow key={card.id} card={card} checked={selected ? selected.has(card.id) : true} />)}
           {recommend.others.length > 0 ? (
             <details open={selected ? recommend.others.some(card => selected.has(card.id)) : undefined}>
               <summary data-key="choose-others">其他可以选的（{recommend.others.length}）</summary>
-              {recommend.others.map(card => <ChooseRow key={card.id} card={card} checked={selected ? selected.has(card.id) : false} />)}
+              <div className="inset-group choose-list">
+                {recommend.others.map(card => <ChooseRow key={card.id} card={card} checked={selected ? selected.has(card.id) : false} />)}
+              </div>
             </details>
           ) : null}
 
@@ -712,12 +720,15 @@ export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?:
     <Page title="设置" showSettings={false} bodyClass="settings-page">
       <h1>设置</h1>
       {props.error ? <Problem title="设置没有保存" detail={props.error} /> : null}
-      <form method="post" action="/s/settings/grade" className="category-filter">
-        <label htmlFor="student-grade">我的学段</label>
-        <select id="student-grade" name="grade" defaultValue={props.grade ?? '初中'}>{stageChoices(props.grade).map(grade => <option key={grade} value={grade}>{grade}</option>)}</select>
-        <button type="submit" className="link-btn">保存学段</button>
+      <form method="post" action="/s/settings/grade" className="inset-group" data-submit-on-change="">
+        <div className="popup-row">
+          <label htmlFor="student-grade">我的学段</label>
+          <span className="popup-value"><select id="student-grade" name="grade" defaultValue={props.grade ?? '初中'}>{stageChoices(props.grade).map(grade => <option key={grade} value={grade}>{grade}</option>)}</select></span>
+        </div>
+        <button type="submit" className="btn secondary no-js-only">保存学段</button>
       </form>
-      <p className="hint">新收录的题目默认使用这个学段。已有题目的学段可在题目详情里单独修改。</p>
+      <p className="hint group-footer">新收录的题目默认使用这个学段。已有题目的学段可在题目详情里单独修改。</p>
+      <div className="inset-group">
       <dl className="settings-list">
         {props.accountRole ? (
           <div className="settings-row">
@@ -734,6 +745,7 @@ export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?:
         </div>
       </dl>
       <a className="settings-link" href="/s/install" data-key="settings-install"><Phrased text="怎么放到主屏幕" /><span className="chev" aria-hidden="true">›</span></a>
+      </div>
       {props.studentHostWorker ? (
         <form method="post" action="/s/logout" className="settings-logout">
           <button className="link-btn" type="submit" data-testid="logout" data-key="logout">退出登录</button>
