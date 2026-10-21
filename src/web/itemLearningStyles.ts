@@ -18,8 +18,9 @@ export const ITEM_LEARNING_STYLES = `
 .item-learning .disclosure>summary::-webkit-details-marker{display:none}
 .item-learning .disclosure>summary::before{content:"";width:7px;height:7px;flex:none;border-right:1.8px solid var(--muted);border-bottom:1.8px solid var(--muted);transform:rotate(-45deg)}
 .item-learning .disclosure[open]>summary::before{transform:rotate(45deg)}
-.item-learning .nav-disclosure>summary{justify-content:space-between}
+.item-learning .nav-disclosure>summary{justify-content:space-between;scroll-margin-bottom:calc(var(--bar-h, 200px) + 24px)}
 .item-learning .nav-disclosure>summary::before{display:none}
+.item-learning .nav-disclosure>summary::after{content:"›";margin-left:auto;color:var(--muted);font-size:var(--fs-4);font-weight:400;line-height:1}
 .item-learning .disclosure-body{padding:0 0 8px 22px}
 .item-learning .learning-management summary{min-width:44px}
 .item-learning .learning-management .more{display:flex;align-items:center;min-height:44px;min-width:44px}

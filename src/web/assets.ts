@@ -65,8 +65,8 @@ button,a,label,summary{touch-action:manipulation}
 .top .toolbar-group>.toolbar-button,.top .toolbar-group>a.toolbar-button,.toolbar-group summary{width:44px;height:44px;border:0;box-shadow:none;background:transparent;border-radius:22px;padding:0;margin:0}
 @supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){.toolbar-group{background:var(--bar);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}}
 @media (prefers-reduced-transparency:reduce),(prefers-contrast:more){.toolbar-group{background:var(--bar-solid);-webkit-backdrop-filter:none;backdrop-filter:none}}
-.subject-switch{position:relative;min-width:0;color:var(--ink)}
-.subject-switch>summary{display:flex;align-items:center;gap:4px;list-style:none;padding:0;min-height:var(--tap);font-size:inherit;font-weight:inherit;letter-spacing:inherit;line-height:inherit;border-radius:var(--r-1);color:var(--ink)}
+.subject-switch{position:relative;display:inline-block;max-width:100%;min-width:0;color:var(--ink);vertical-align:top}
+.subject-switch>summary{display:inline-flex;align-items:center;gap:4px;width:auto;max-width:100%;list-style:none;padding:0;min-height:var(--tap);font-size:inherit;font-weight:inherit;letter-spacing:inherit;line-height:inherit;border-radius:var(--r-1);color:var(--ink)}
 .subject-switch>summary::-webkit-details-marker,.filter-chip>summary::-webkit-details-marker,.filter-pop>summary::-webkit-details-marker{display:none}
 .subject-switch>summary>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .subject-switch>summary .nav-icon{width:22px;height:22px}
@@ -78,7 +78,7 @@ button,a,label,summary{touch-action:manipulation}
 .notebook-page .top,.notebook-page main{max-width:960px}
 .notebook-page.has-tabbar{padding-bottom:calc(11rem + env(safe-area-inset-bottom))}
 .notebook-title{position:relative;min-height:44px}
-.notebook-title h1{margin-bottom:0}
+.notebook-title h1{display:flex;margin-bottom:0}
 .page-subtitle{margin:2px 0 16px;color:var(--muted);font-size:var(--fs-2);line-height:1.4}
 .notebook-page .link-btn{display:inline-flex;align-items:center;min-height:44px;min-width:44px;padding:8px 12px}
 .practice-fab{position:fixed;right:max(16px,calc(50vw - 460px));bottom:calc(6.9rem + env(safe-area-inset-bottom));z-index:14;width:auto;flex:0 0 auto;min-height:52px;padding:0 22px;box-shadow:0 8px 24px rgba(0,102,214,.28)}
@@ -116,6 +116,7 @@ button,a,label,summary{touch-action:manipulation}
 .notebook-thumb{width:52px;height:52px;flex:none;object-fit:cover;border-radius:10px;background:var(--surround)}
 .notebook-card .row-text{min-width:0;flex:1}
 .notebook-card .excerpt{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;font-size:var(--fs-3)}
+.notebook-card .meta-line,.choose-list .meta-line,.list .meta-line{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-wrap:nowrap}
 .notebook-status{flex:none;font-size:var(--fs-1);font-weight:600;white-space:nowrap}
 .notebook-selection-page{padding-bottom:calc(max(var(--bar-h,0px),12rem) + env(safe-area-inset-bottom))}
 .notebook-selection-page .caption-flow{display:none}
@@ -464,7 +465,9 @@ html:has(body.has-tabbar){scroll-padding-bottom:calc(6.625rem + env(safe-area-in
 .choose-list .choice.pick+.choice.pick{box-shadow:inset 0 1px 0 var(--line)}
 .choose-list .choice.pick:has(input:checked){border-color:transparent;background:transparent;box-shadow:inset 0 1px 0 var(--line)}
 .choose-list .choice.pick:first-child:has(input:checked){box-shadow:none}
-.choose-list .choice.pick .grow{display:flex;align-items:center;gap:12px}
+.choose-list .choice.pick .grow{display:flex;align-items:center;gap:12px;min-width:0}
+.choose-list .choice.pick .row-text{min-width:0}
+.choose-list .excerpt{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .choose-list .choice.pick .notebook-thumb{margin:0}
 .choose-list .mark{width:28px;flex:none;text-align:center;color:var(--accent);font-size:1.35rem;font-weight:700;visibility:hidden}
 .choose-list .choice.pick:has(input:checked) .mark{visibility:visible}

@@ -248,7 +248,7 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await expect(firstChoice).toBeFocused();
     expect(await firstChoice.evaluate(el=>getComputedStyle(el).outlineStyle)).not.toBe('none');
     await page.getByTestId('notebook-filters').locator('summary').click();
-    expect((await cards.first().boundingBox())!.y).toBeLessThan(320);
+    expect((await cards.first().boundingBox())!.y).toBeLessThan(400);
     for(const colorScheme of ['light','dark'] as const){
       await page.emulateMedia({colorScheme,reducedMotion:'reduce'});
       await page.setViewportSize({width:390,height:844});

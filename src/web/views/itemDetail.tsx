@@ -76,7 +76,7 @@ export function ItemDetailPage(props: ItemDetailProps): ReactNode {
         <div className="stack-row"><h2 id="learning-history" className="stack-label">练习记录</h2><span className="muted">{props.practiceHistory?.length ? `${props.practiceHistory.length} 次` : '还没有'}</span></div>
         {props.practiceHistory?.length ? <><p className="small muted">最近的在前 · 日期是你记录的实际作答日</p><ol className="list learning-history">{props.practiceHistory.map(record => <li key={record.id}><a className="row" href={`/s/practice/${record.id}?item=${item.id}${record.correct === null ? '' : '&view=check'}`}><span className="row-text"><span>{attemptLabel(record)}</span><span className="meta-line muted">{record.performed_at ? <time dateTime={record.performed_at}>{record.performed_at}</time> : '尚未记录作答日期'} · {record.correct === null ? '继续练习' : '查看作答'}</span></span><span className="chev" aria-hidden="true">›</span></a></li>)}</ol></> : <p className="muted">重做后，实际结果会留在这里。</p>}
       </section>
-      <details className="disclosure nav-disclosure learning-management"><summary>题目信息与管理<span className="chev" aria-hidden="true">›</span></summary>
+      <details className="disclosure nav-disclosure learning-management"><summary>题目信息与管理</summary>
         <div className="disclosure-body">
           {evidence ? <a className="more" href={itemContextUrl(item,returnTo,'/fix')} data-key="fix">字认错了？改一下</a> : null}
           <a className="more" href={itemContextUrl(item,returnTo,'/category')}>修改分类</a>
