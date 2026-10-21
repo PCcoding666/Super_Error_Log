@@ -94,7 +94,13 @@ export interface PageProps {
   pollSeconds?: number;
   flash?: { ok?: string | null; err?: string | null };
   bodyClass?: string;
+  /** Replaces the lone settings button, so a page can group toolbar symbols. */
+  topTrailing?: ReactNode;
   children: ReactNode;
+}
+
+export function SettingsButton(): ReactNode {
+  return <a className="toolbar-button" href="/s/settings" title="设置" data-testid="settings-link" data-key="settings"><svg className="nav-icon settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 3-.7 2.4-2 .9-2.2-.6-2 3.4 1.6 1.8v2.2l-1.6 1.8 2 3.4 2.2-.6 2 .9L9 21h4l.7-2.4 2-.9 2.2.6 2-3.4-1.6-1.8v-2.2l1.6-1.8-2-3.4-2.2.6-2-.9L13 3Z" /><circle cx="11" cy="12" r="3" /></svg><span className="visually-hidden">设置</span></a>;
 }
 
 /** 学生网页版的页面外壳：PWA 头信息、顶部返回、内容、底部下一步按钮。没有任何第三方资源。 */
@@ -130,7 +136,7 @@ export function Page(props: PageProps): ReactNode {
         <header className={`top${back ? '' : ' top-root'}`}>
           {props.topLeading}
           {back ? <a className="toolbar-button" href={back.href} title={back.label} data-testid="back-link" data-key="back"><svg className="nav-icon chev-left" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m14 5-7 7 7 7" /></svg><span className="visually-hidden">{back.label}</span></a> : null}
-          {props.showSettings === false ? <span /> : <a className="toolbar-button" href="/s/settings" title="设置" data-testid="settings-link" data-key="settings"><svg className="nav-icon settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 3-.7 2.4-2 .9-2.2-.6-2 3.4 1.6 1.8v2.2l-1.6 1.8 2 3.4 2.2-.6 2 .9L9 21h4l.7-2.4 2-.9 2.2.6 2-3.4-1.6-1.8v-2.2l1.6-1.8-2-3.4-2.2.6-2-.9L13 3Z" /><circle cx="11" cy="12" r="3" /></svg><span className="visually-hidden">设置</span></a>}
+          {props.topTrailing ?? (props.showSettings === false ? <span /> : <SettingsButton />)}
         </header>
         <main>
           {props.flash?.ok ? <div className="flash" role="status" data-testid="flash-ok">{props.flash.ok}</div> : null}

@@ -182,7 +182,8 @@ describe('三栏入口', () => {
     const env = await setup();
     const browser = await pairBrowser(env);
     const home = await browser.text('/s/');
-    expect(home).toContain('<h1>错题本</h1>');
+    expect(home).toContain('<title>错题本 · ');
+    expect(home).toContain('data-testid="subject-switch"');
     expect(home).toContain('错题录入');
     expect(home).toContain('href="/s/practices"');
     expect(home).not.toContain('纸上练习');
@@ -268,7 +269,8 @@ describe('连接：链接配对 → httpOnly cookie；没有 cookie 只看到连
     expect(other.cookies.has('sel_device')).toBe(false);
     const today = await browser.text('/s/?paired=1');
     expect(today).toContain('连上了 ✓');
-    expect(today).toContain('<h1>错题本</h1>');
+    expect(today).toContain('<title>错题本 · ');
+    expect(today).toContain('data-testid="subject-switch"');
   });
 
   it('非本机主机名一律 Secure（生产只走 HTTPS）', async () => {
@@ -340,7 +342,8 @@ describe('录入与上传记录分开', () => {
     expect(capture).not.toContain('data-photo-grid');
     expect(capture).not.toContain('/s/img/photo/');
     expect(capture).toMatch(/<label[^>]*for="camera-input"[^>]*data-testid="next-step-primary"/);
-    expect(capture).toContain('新增录入');
+    expect(capture).toContain('href="/s/photos"');
+    expect(capture).toContain('aria-label="已上传记录"');
     expect(capture).toContain('已上传记录');
 
     const history = await browser.text('/s/photos');
@@ -582,7 +585,8 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const sheet = await browser.text(`/s/print/${packetId}/sheet`);
     const home = await browser.text('/s/');
     expect(home).toContain('data-testid="tab-capture"');
-    expect(home).toContain('<h1>错题本</h1>');
+    expect(home).toContain('<title>错题本 · ');
+    expect(home).toContain('data-testid="subject-switch"');
     let release!: () => void;
     env.vision.gate = new Promise<void>(resolve => { release = resolve; });
     env.vision.questionCount = 2;
@@ -1423,7 +1427,7 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
     const job = await (await uploadPhoto(browser, await photo('#f0d0c8', 2400))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
     const items = await browser.text('/s/items');
-    const itemId = /\/s\/img\/item\/(itm_[0-9a-f]+)\?scope=full&amp;s=big/.exec(items)![1]!;
+    const itemId = /\/s\/img\/item\/(itm_[0-9a-f]+)\?s=thumb/.exec(items)![1]!;
     const size = async (path: string): Promise<{ width: number; height: number; bytes: number; cache: string | null }> => {
       const response = await browser.get(path);
       const buffer = Buffer.from(await response.arrayBuffer());
@@ -1488,7 +1492,8 @@ describe('年级、学科、章节分类', () => {
     expect(browse).toContain('data-testid="notebook-filters"');
     expect(browse).toMatch(/<details[^>]*data-testid="notebook-filters"[^>]*>/);
     expect(browse).not.toMatch(/<details[^>]*data-testid="notebook-filters"[^>]*open/);
-    expect(browse).toContain(`scope=full&amp;s=big`);
+    expect(browse).toContain('s=thumb');
+    expect(browse).not.toContain('scope=full');
     expect(browse).toContain(`id="item-${rows[0]!.id}"`);
     const filtered = await browser.text('/s/items?grade=初中&subject=数学&chapter=方程&status=needs_recheck&q=完整题干');
     expect(filtered).toContain(`id="item-${rows[0]!.id}"`);
@@ -1498,8 +1503,8 @@ describe('年级、学科、章节分类', () => {
     expect(unknown).toContain(`id="item-${rows[2]!.id}"`);
     await browser.get('/s/items?grade=高中&subject=数学');
     const remembered = await browser.text('/s/items');
-    expect(remembered).toContain('<option selected="">初中</option>');
-    expect(remembered).not.toContain('>高中</option>');
+    expect(remembered).toContain('data-filter="grade" data-value="初中" aria-current="true"');
+    expect(remembered).not.toContain('data-value="高中"');
   });
 
   it('creates practice from the exact individual selection and keeps empty, over-limit and stale choices recoverable', async () => {
@@ -1599,20 +1604,20 @@ describe('年级、学科、章节分类', () => {
       await browser.post(`/s/items/${rows[0]!.id}/category`, { grade: '高中', subject: '物理', chapter: '求导数' });
       await browser.post(`/s/items/${rows[1]!.id}/category`, { grade: '初中', subject: '物理', chapter: '力' });
       const physics = await browser.text(`/s/items?subject=${encodeURIComponent('物理')}&grade=${encodeURIComponent('全部')}`);
-      expect(physics).toContain('>全部</option>');
-      expect(physics).toContain('>初中</option>');
-      expect(physics).toContain('>高中</option>');
-      for (const absent of ['初一', '初二', '初三', '高一', '高二', '高三']) expect(physics).not.toContain(`>${absent}</option>`);
+      expect(physics).toContain('data-filter="grade" data-value="全部"');
+      expect(physics).toContain('data-filter="grade" data-value="初中"');
+      expect(physics).toContain('data-filter="grade" data-value="高中"');
+      for (const absent of ['初一', '初二', '初三', '高一', '高二', '高三']) expect(physics).not.toContain(`data-value="${absent}"`);
       const senior = await browser.text(`/s/items?subject=${encodeURIComponent('物理')}&grade=${encodeURIComponent('高中')}`);
       expect(senior).toContain(`id="item-${rows[0]!.id}"`);
       expect(senior).not.toContain(`id="item-${rows[1]!.id}"`);
       const chemistry = await browser.text(`/s/items?subject=${encodeURIComponent('化学')}`);
       expect(chemistry).toContain('还没有化学错题');
-      expect(chemistry).toContain('>全部</option>');
-      expect(chemistry).not.toContain('>初中</option>');
+      expect(chemistry).toContain('data-filter="grade" data-value="全部"');
+      expect(chemistry).not.toContain('data-filter="grade" data-value="初中"');
       const math = await browser.text(`/s/items?subject=${encodeURIComponent('数学')}`);
-      expect(math).toContain('<option selected="">初中</option>');
-      expect(math).not.toContain('>全部</option>');
+      expect(math).toContain('data-filter="grade" data-value="初中" aria-current="true"');
+      expect(math).not.toContain('data-filter="grade" data-value="全部"');
       expect((await browser.post('/s/settings/grade', { grade: '高中' })).status).toBe(303);
       expect((await uploadPhoto(browser, await photo('#c83030', 640))).status).toBe(200);
       await waitFor(async () => {
@@ -1753,7 +1758,7 @@ describe('single-question learning detail', () => {
     expect(library).toContain('管理原章节');
     expect(library).toContain('name="subject" value="管理原学科"');
     expect(library).toContain('这个学段还没有管理原学科错题');
-    expect(library).toContain('<option selected="">初中</option>');
+    expect(library).toContain('data-filter="grade" data-value="初中" aria-current="true"');
     expect(library).toContain('清除筛选');
     expect(library).toContain('保留的选择');
   });

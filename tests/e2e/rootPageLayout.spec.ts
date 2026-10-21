@@ -54,7 +54,7 @@ for (const scripting of [true, false]) test.describe(`root page layout ${scripti
         });
         expect(layout.compatMode).toBe('CSS1Compat');
         expect(layout.overflow, `${count} photos at ${size.width}px`).toBeLessThanOrEqual(1);
-        expect(layout.actionBottom).toBeLessThanOrEqual(layout.formTop);
+        expect(layout.actionBottom).toBeGreaterThan(layout.formTop);
         if (count > 0) {
           populatedHeight ??= layout.mainHeight;
           expect(Math.abs(layout.mainHeight - populatedHeight)).toBeLessThanOrEqual(1);
@@ -89,7 +89,8 @@ for (const scripting of [true, false]) test.describe(`root page layout ${scripti
         await expect(action).toBeVisible();
         expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
         expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
-        await expect(page.getByRole('link',{name:'自己选题',exact:true})).toHaveAttribute('href','/s/choose');
+        const chooseLink=hasPractices?page.getByRole('link',{name:'自己选题',exact:true}):page.getByRole('link',{name:'调整题目和题量',exact:true});
+        await expect(chooseLink).toHaveAttribute('href','/s/choose');
         if(hasPractices)await expect(page.getByTestId('practice-latest')).toContainText('还没有收到作答');
         else await expect(page.getByTestId('practice-recommendation')).toContainText('为什么练');
         await page.screenshot({ path: info.outputPath(`practices-${width}-${hasPractices}.png`),fullPage:true });

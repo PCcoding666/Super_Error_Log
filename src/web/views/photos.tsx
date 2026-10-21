@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { CAPTURE_EXAMPLE_PAGE, CAPTURE_EXAMPLE_QUESTION } from '../captureExamples.js';
 import type { PhotoView } from '../state.js';
 import { pickMoreCount, unselectedQuestions } from '../photoPlan.js';
-import { Page, NextBar, Phrased, Problem, WaitLine, quoted, type BarModel } from './layout.js';
+import { Page, Phrased, Problem, SettingsButton, WaitLine, quoted, type BarModel } from './layout.js';
 
 export function CaptureExamples(): ReactNode {
   return (
@@ -16,13 +16,11 @@ export function CaptureExamples(): ReactNode {
   );
 }
 
-function CaptureTabs(props: { active: 'capture' | 'history' }): ReactNode {
-  return (
-    <nav className="capture-tabs" aria-label="错题录入视图">
-      <a href="/s/capture" aria-current={props.active === 'capture' ? 'page' : undefined}>新增录入</a>
-      <a href="/s/photos" aria-current={props.active === 'history' ? 'page' : undefined}>已上传记录</a>
-    </nav>
-  );
+function CaptureToolbar(): ReactNode {
+  return <nav className="toolbar-group" aria-label="错题录入视图">
+    <a className="toolbar-button" href="/s/photos" aria-label="已上传记录" title="已上传记录" data-key="uploaded-photos"><svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 8v5l3 2" /></svg></a>
+    <SettingsButton />
+  </nav>;
 }
 
 function uploadedAt(photo: PhotoView, timeZone = 'Asia/Shanghai'): string {
@@ -33,23 +31,15 @@ function uploadedAt(photo: PhotoView, timeZone = 'Asia/Shanghai'): string {
 
 export function CapturePage(props: { photos: PhotoView[]; next: { title: string; href: string } | null; caption: string; flash?: { ok?: string | null; err?: string | null } }): ReactNode {
   const has = props.photos.length > 0;
-  const bar: BarModel = {
-    caption: props.caption,
-    primary: { title: '拍照录入', key: 'capture', labelFor: 'camera-input' },
-    secondary: [{ title: '从相册选', key: 'library', labelFor: 'library-input' }],
-  };
   return (
-    <Page title="错题录入" tab="capture" bodyClass="capture-page" flash={props.flash} pollSeconds={props.photos.some(photo => photo.state === 'finding') ? 4 : undefined}>
+    <Page title="错题录入" tab="capture" bodyClass="capture-page" flash={props.flash} topTrailing={<CaptureToolbar />} pollSeconds={props.photos.some(photo => photo.state === 'finding') ? 4 : undefined}>
       <h1>错题录入</h1>
-      <CaptureTabs active="capture" />
-      <div className="capture-actions"><NextBar model={bar} inline /></div>
+      <p className="lead">整页拍下批改过的卷子，AI 会帮你找出错题。</p>
       {has ? null : <CaptureExamples />}
       <form method="post" action="/s/capture" encType="multipart/form-data" data-upload="" data-capture-upload="" data-photo-count={props.photos.length} id="upload-form">
         <input id="camera-input" className="visually-hidden" type="file" name="photo" accept="image/*" capture="environment" data-testid="camera-input" />
         {/* 脚本启动后启用相册多选；无脚本时仍用原有单张表单。 */}
         <input id="library-input" className="visually-hidden" type="file" name="photo" accept="image/*" data-testid="library-input" />
-        <p className="js-only small muted">从相册可以一次选多张，上传后可继续录入。</p>
-        <p className="no-js-only small muted">{quoted('选好照片后点「上传这张」。')}</p>
         <button className="btn no-js-only" type="submit" data-key="upload-nojs">上传这张</button>
         <div className="hidden" data-upload-progress=""><div className="progress" role="progressbar" aria-label="整批上传进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={0}><i /></div></div>
         <p className="small" data-upload-message="" data-testid="upload-message" aria-live="polite" />
@@ -59,7 +49,12 @@ export function CapturePage(props: { photos: PhotoView[]; next: { title: string;
       </form>
       <p data-testid="photo-count" className={has ? undefined : 'hidden'}><b>已拍 {props.photos.length} 张</b></p>
       <div data-live="capture-status">{props.photos.some(photo => photo.state === 'finding') ? <p role="status">照片已收到，正在找题。</p> : null}</div>
-      {has ? <p><a className="more" href={props.next?.href ?? '/s/items'}>查看错题 ›</a></p> : null}
+      {has ? <p><a className="more" href={props.next?.href ?? '/s/items'}>查看错题 ›</a></p> : <p className="hint js-only">从相册可以一次选多张，选好后会自动上传。</p>}
+      {has ? null : <p className="hint no-js-only">{quoted('选好照片后点「上传这张」。')}</p>}
+      <nav className="capture-actions" data-testid="next-step-bar" aria-label="下一步">
+        <label className="btn primary" htmlFor="camera-input" data-testid="next-step-primary" data-key="capture" aria-label="拍照录入"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 8h3l2-2h6l2 2h3v11H4z" /><circle cx="12" cy="13" r="3.2" /></svg>拍照录入</label>
+        <label className="btn secondary" htmlFor="library-input" data-testid="next-step-secondary-library" data-key="library" aria-label="从相册选"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="m21 16-5-4-9 7" /></svg>从相册选</label>
+      </nav>
     </Page>
   );
 }
@@ -126,7 +121,6 @@ export function PhotosPage(props: { photos: PhotoView[]; bar: BarModel; refresh:
   return (
     <Page title="已上传记录" back={{ href: '/s/capture', label: '新增录入' }} bar={props.bar} pollSeconds={props.refresh ? 3 : undefined} flash={props.flash}>
       <h1>已上传记录</h1>
-      <CaptureTabs active="history" />
       <div data-live="added">{props.added ? <div className="flash m-rise" role="status" data-testid="photos-added">{props.added.count} 道加进错题本了 ✓</div> : null}</div>
       <p className="lead">点击缩略图查看原图；需要补勾或重试的照片会显示在记录里。</p>
       <div data-live="after">

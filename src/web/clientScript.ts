@@ -46,9 +46,9 @@ var key=el.getAttribute('data-key')||el.getAttribute('data-testid')||(el.tagName
 var href=el.getAttribute('href')||'';var nav=(el.tagName==='A'&&!el.hasAttribute('data-print')&&href.charAt(0)!=='#'&&el.target!=='_blank')||(el.tagName==='BUTTON'&&el.type==='submit');
 if(!nav)trailSend()},true);
 
-/* 学科切换保留原生 details；关闭菜单不改变当前学科。 */
-document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;var menu=$('.subject-switch[open]');if(!menu)return;e.preventDefault();menu.open=false;var trigger=$('summary',menu);if(trigger)trigger.focus({preventScroll:true})});
-document.addEventListener('click',function(e){$$('.subject-switch[open]').forEach(function(menu){if(!menu.contains(e.target))menu.open=false})});
+/* 学科菜单和筛选菜单都是原生 details。点外面或按 Esc 只关掉菜单，不改当前选择。 */
+document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;var menu=$('.pop-menu[open]');if(!menu)return;e.preventDefault();menu.open=false;var trigger=$('summary',menu);if(trigger)trigger.focus({preventScroll:true})});
+document.addEventListener('click',function(e){$$('.pop-menu[open]').forEach(function(menu){if(!menu.contains(e.target))menu.open=false})});
 
 /* ---------- 动效：只在状态真的变了的时候放，说明刚发生了什么（样式里的 m-* 类；减少动态效果时样式把它们全关掉） ---------- */
 function play(el,cls){if(!el||!el.classList)return;el.classList.remove(cls);void el.offsetWidth;el.classList.add(cls);
@@ -87,6 +87,8 @@ ${UI_SHEET_SCRIPT}
 within(scope,'[data-js-primary]').forEach(function(el){el.setAttribute('data-testid','next-step-primary')});
 within(scope,'.next-bar').forEach(function(nbar){if(!once(nbar,'bar'))return;function barH(){root.style.setProperty('--bar-h',nbar.offsetHeight+'px')}barH();if(window.ResizeObserver)new ResizeObserver(barH).observe(nbar);watchPrimary(nbar)});
 trackSteps(scope);
+/* 弹出按钮：选完立刻提交。没有脚本时，同一张表单上的「保存学段」仍然可见。 */
+within(scope,'form[data-submit-on-change]').forEach(function(form){if(!once(form,'autosubmit'))return;form.addEventListener('change',function(e){var target=e.target;if(!target||!target.matches||!target.matches('select'))return;try{if(form.requestSubmit)form.requestSubmit();else form.submit()}catch(err){form.submit()}})});
 /* 设置页：正常连接只占一行，失败时才显示重试；不轮询、不读取学习内容。 */
 within(scope,'[data-connection-status]').forEach(function(conn){if(!once(conn,'connection'))return;var retry=$('[data-connection-retry]',conn.parentNode),busy=false;if(!retry)return;
 function state(ok){conn.textContent=ok?'已连接':'连接失败';conn.classList.toggle('tone-red',!ok);retry.classList.toggle('hidden',ok)}

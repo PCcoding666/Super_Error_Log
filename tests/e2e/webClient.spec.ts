@@ -84,7 +84,7 @@ async function stubPrint(page: Page): Promise<void> {
 test('三栏：手机看题、跳过、直接核对、恢复进度与可选打印', async ({browser}) => {
   const page = await pairedPage(browser);
   const errors = collectErrors(page);
-  await expect(page.getByRole('heading', {name:'错题本',exact:true})).toBeVisible();
+  await expect(page).toHaveTitle(/^错题本 · /);
   await expect(page.getByTestId('root-tabs')).toContainText('错题录入');
   await upload(page,'#efb7b2');
   await page.goto(`${WEB}/s/photos`);
