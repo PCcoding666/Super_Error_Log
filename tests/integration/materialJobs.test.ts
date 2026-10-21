@@ -15,13 +15,13 @@ import { AdmissionController } from '../../src/mobile/admission.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function fixture(capacity = 2) {
+async function fixture(capacity = 2, studentAiConcurrency?: number) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'material-jobs-'));
   const db = new DatabaseSync(path.join(dir, 'app.db')); db.exec('PRAGMA foreign_keys=ON'); db.exec(SCHEMA_SQL); migrateMaterials(db);
   db.exec("INSERT INTO student_profile(id,nickname,created_at) VALUES ('student','Synthetic','2026-10-20')");
   const store = new MaterialStore(db, 'student'); const question = store.createQuestion().id;
   const admission = new AdmissionController({ jobCapacity: capacity, diskProbe: async () => 10n ** 12n });
-  const scheduler = new MobileRecognitionService(await MobileRecognitionStore.open(dir), { inventory: async () => ({ candidates: [], warnings: [], capacityReached: false }), recognizeQuestion: async () => { throw new Error('unused'); } });
+  const scheduler = new MobileRecognitionService(await MobileRecognitionStore.open(dir), { inventory: async () => ({ candidates: [], warnings: [], capacityReached: false }), recognizeQuestion: async () => { throw new Error('unused'); } }, studentAiConcurrency === undefined ? undefined : { studentAiConcurrency });
   scheduler.useAdmission(admission);
   const jobs = new MaterialJobs(store, scheduler, admission);
   cleanups.push(async () => { await scheduler.stop(); db.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -46,17 +46,71 @@ describe('durable material scheduling', () => {
     expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true); f.admission.releaseJobCapacity();
   });
 
-  it('serializes external work with the legacy drain and isolates handler errors', async () => {
-    const f = await fixture(); const order: string[] = []; let release!: () => void;
+  it('keeps external work serial at a student limit of 1 and isolates handler errors', async () => {
+    const f = await fixture(2, 1); const order: string[] = []; let release!: () => void;
     f.scheduler.enqueueExternalWork('block', async () => { order.push('first'); await new Promise<void>(r => { release = r; }); order.push('last'); });
     f.jobs.register('answer', async () => { order.push('material'); throw new Error('handler failed'); });
     const ticket = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis');
-    await expect.poll(() => order).toEqual(['first']); release();
+    await expect.poll(() => order).toEqual(['first']);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(order).toEqual(['first']); release();
     await settled(f.jobs, ticket.id, 'failed');
     expect(order).toEqual(['first', 'last', 'material']); expect(f.scheduler.isStorageAvailable()).toBe(true);
   });
 
-  it('shares the worker and capacity with a real legacy recognition job', async () => {
+  it('runs material and external work together up to the per-student lane limit', async () => {
+    const f = await fixture(8, 3);
+    const entered = new Set<string>();
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const hold = (name: string) => async (signal: AbortSignal) => {
+      entered.add(name);
+      await new Promise<void>((resolve, reject) => {
+        const finish = () => { signal.removeEventListener('abort', abort); resolve(); };
+        const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); };
+        signal.addEventListener('abort', abort, { once: true });
+        released.then(finish, finish);
+        if (signal.aborted) abort();
+      });
+    };
+    for (const name of ['a', 'b', 'c', 'd']) f.scheduler.enqueueExternalWork(name, hold(name));
+    await expect.poll(() => [...entered].sort()).toEqual(['a', 'b', 'c']);
+    expect(f.scheduler.enqueueExternalWork('a', async () => { entered.add('a-again'); })).toBe('already_queued');
+    f.jobs.register('answer', async () => { entered.add('material'); throw new Error('handler failed'); });
+    const ticket = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis');
+    await new Promise(resolve => setImmediate(resolve));
+    expect(entered.has('material')).toBe(false);
+    expect(entered.has('d')).toBe(false);
+    release();
+    await settled(f.jobs, ticket.id, 'failed');
+    await expect.poll(() => entered.has('d') && entered.has('material')).toBe(true);
+    expect(entered.has('a-again')).toBe(false);
+    expect(f.scheduler.isStorageAvailable()).toBe(true);
+    expect(f.scheduler.enqueueExternalWork('a', async () => {})).toBe('queued');
+  });
+
+  it('overlaps a recognition photo with material work on the same student lanes', async () => {
+    const f = await fixture(4, 2); const order: string[] = [];
+    let releasePhoto!: () => void; let releaseMaterial!: () => void;
+    f.scheduler.vision.inventory = async () => { order.push('legacy'); await new Promise<void>(resolve => { releasePhoto = resolve; }); return { candidates: [], warnings: [], capacityReached: false }; };
+    const bytes = await sharp({ create: { width: 16, height: 16, channels: 3, background: '#fff' } }).jpeg().toBuffer();
+    const legacy = await f.scheduler.submit({ idempotencyKey: randomUUID(), photoName: 'legacy.jpg', sourceBytes: bytes });
+    await expect.poll(() => order).toEqual(['legacy']);
+    f.jobs.register('answer', async () => { order.push('material'); await new Promise<void>(resolve => { releaseMaterial = resolve; }); });
+    const material = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis');
+    await expect.poll(() => order).toEqual(['legacy', 'material']);
+    let third = false;
+    f.scheduler.enqueueExternalWork('third', async () => { third = true; order.push('third'); });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(third).toBe(false);
+    releasePhoto(); releaseMaterial();
+    await settled(f.jobs, material.id, 'succeeded');
+    await expect.poll(() => third).toBe(true);
+    await expect.poll(async () => (await f.scheduler.getJob(legacy.job.id)).status).toBe('completed');
+    expect(order).toEqual(['legacy', 'material', 'third']);
+  });
+
+  it('shares admission capacity with a real legacy recognition job', async () => {
     const f = await fixture(2); let release!: () => void; const order: string[] = [];
     f.scheduler.vision.inventory = async () => { order.push('legacy'); await new Promise<void>(r => { release = r; }); return { candidates: [], warnings: [], capacityReached: false }; };
     const bytes = await sharp({ create: { width: 16, height: 16, channels: 3, background: '#fff' } }).jpeg().toBuffer();
@@ -66,9 +120,9 @@ describe('durable material scheduling', () => {
     f.jobs.register('answer', async () => { order.push('material'); });
     const material = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis');
     expect(f.admission.tryAcquireJobCapacity().accepted).toBe(false);
-    await new Promise(resolve => setImmediate(resolve)); expect(order).toEqual(['legacy']); release();
+    await expect.poll(() => order).toEqual(['legacy', 'material']); release();
     await settled(f.jobs, material.id, 'succeeded');
-    expect((await f.scheduler.getJob(legacy.job.id)).status).toBe('completed'); expect(order).toEqual(['legacy', 'material']);
+    await expect.poll(async () => (await f.scheduler.getJob(legacy.job.id)).status).toBe('completed');
     expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true); expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true);
     f.admission.releaseJobCapacity(); f.admission.releaseJobCapacity();
   });
@@ -236,7 +290,7 @@ describe('durable material scheduling', () => {
   });
 
   it('stop interrupts queued and running external work and releases capacity once', async () => {
-    const f = await fixture(2);
+    const f = await fixture(2, 1);
     f.jobs.register('answer', async (id) => { await f.jobs.request(id, 'request', signal => new Promise((_resolve, reject) => { signal.addEventListener('abort', () => reject(signal.reason), { once: true }); })); });
     const first = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis');
     const second = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis');
@@ -253,7 +307,7 @@ describe('durable material scheduling', () => {
 
 describe('invalidated material work', () => {
   it('skips queued stale work and releases its real admission ownership exactly once', async () => {
-    const f=await fixture(1); let release!:()=>void; let blocked=false; let drained=false; let calls=0;
+    const f=await fixture(1, 1); let release!:()=>void; let blocked=false; let drained=false; let calls=0;
     f.scheduler.enqueueExternalWork('hold-stale-queue',async()=>{blocked=true;await new Promise<void>(resolve=>{release=resolve;});});
     await expect.poll(()=>blocked).toBe(true);
     f.jobs.register('answer',async id=>{await f.jobs.request(id,'answer',async()=>{calls++;return 'unexpected';});});

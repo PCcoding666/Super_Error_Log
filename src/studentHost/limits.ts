@@ -7,6 +7,8 @@ export const DEFAULT_WORKER_IDLE_MS = 12 * 60 * 1000;
 export const DEFAULT_MAX_LIVE_WORKERS = 8;
 export const DEFAULT_AI_CONCURRENCY = 2;
 export const DEFAULT_IMAGE_CONCURRENCY = 2;
+/** 一个学生同时处理的照片数。模型调用次数仍受全局信号量限制。 */
+export const DEFAULT_STUDENT_AI_CONCURRENCY = 3;
 export const DEFAULT_SERVICE_MEMORY_MIB = 4096;
 
 const MIB = 1024 * 1024;
@@ -37,6 +39,14 @@ export function aiConcurrency(env: NodeJS.ProcessEnv = process.env): number {
 
 export function imageConcurrency(env: NodeJS.ProcessEnv = process.env): number {
   return readInt(env, 'SEL_GLOBAL_IMAGE_CONCURRENCY', DEFAULT_IMAGE_CONCURRENCY, 1, 32);
+}
+
+/**
+ * 单个学生同时跑的识别照片数。缺省 3。
+ * 每张照片内部仍是清单、逐题、各阶段串行；真正打到模型和 sharp 的次数还要再过父进程的全局信号量。
+ */
+export function studentAiConcurrency(env: NodeJS.ProcessEnv = process.env): number {
+  return readInt(env, 'SEL_STUDENT_AI_CONCURRENCY', DEFAULT_STUDENT_AI_CONCURRENCY, 1, 32);
 }
 
 /**
