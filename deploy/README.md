@@ -142,7 +142,9 @@ systemctl daemon-reload && systemctl enable --now super-error-log-caddy
 
 ### 可选 Token Plan 主用与按量接口备用
 
-在 `/etc/super-error-log/env`（root:root 0600）设置 `SEL_TOKEN_PLAN_API_KEY`，保留原 `SEL_AI_*`、`SEL_MOBILE_AI_*` 的北京 DashScope 地址、密钥与阶段模型。文本/图片的 ChatClient 优先使用固定的北京 Token Plan compatible-mode 接口；未设置时行为不变，其他地区和非百炼客户端不启用此路由。语音原生 ASR 继续使用原密钥。
+在 `/etc/super-error-log/env`（root:root 0600）设置 `SEL_TOKEN_PLAN_API_KEY`，保留原 `SEL_AI_*`、`SEL_MOBILE_AI_*` 的北京 DashScope 地址、密钥与阶段模型。文本/图片的 ChatClient 优先使用固定的北京 Token Plan compatible-mode 接口；未设置时行为不变，其他地区和非百炼客户端不启用此路由。
+
+语音识别也优先 Token Plan：固定 `qwen-audio-3.0-asr-flash`，使用 `https://token-plan.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation`，不是 chat/completions。Safari M4A/AAC 与 WebM 的 MIME、原生请求体、内存内 Base64 处理保持一致。主用服务/网络/权限故障时仅尝试一次原 DashScope 原生接口，备用使用原密钥与 `SEL_AI_MODEL_ASR`（缺省 `qwen-audio-3.1-asr-flash`）。错误输入、非法响应、取消不转备用；空转写仍为正常空结果。两次请求各记一条无录音/文字内容的用量记录，各自计时。未设置 Token Plan key 时仅调用原接口。
 
 主用网络错误、超时、HTTP 401/403/404/408/429 或 5xx 时，最多切到原接口一次。输入错误、输出不完整/非法 JSON、取消和预算耗尽不触发切换。每次实际请求仍占原有阶段预算，图片调用共享全局许可；两次调用各保留用量记录（主用 provider 为 `bailian-token-plan`），单次超时分别计时。密钥不得进日志或仓库。删除该变量并重启可恢复仅使用原接口。
 

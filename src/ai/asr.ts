@@ -5,8 +5,8 @@ import { recordAiUsage, tokenCount } from '../observability/aiUsage.js';
 /**
  * 「说说为什么错」的语音转文字（学生网页版用；iOS App 在手机上本地转写，不走这里）。
  * - mock 模式（默认、测试）：固定返回一句合成的转写，不发任何网络请求。
- * - bailian 模式：调用百炼（DashScope）**原生**多模态接口的千问音频识别（默认 qwen-audio-3.1-asr-flash；
- *   该模型不在 OpenAI 兼容的 chat/completions 上，兼容接口对它返回 404），
+ * - bailian 模式：配置 Token Plan key 时优先其原生接口的 qwen-audio-3.0-asr-flash；
+ *   未配置或主用服务失败时使用原 DashScope 原生接口（默认 qwen-audio-3.1-asr-flash），
  *   音频以 Base64 Data URL 放在请求体里，只在内存里经过一次，**服务器不落盘、不记日志**。
  * - 其他模式或缺配置：fail-hard（启动守卫 + 取用时再查一次），绝不悄悄退回 mock。
  */
@@ -16,6 +16,8 @@ export const ASR_DEFAULT_MODEL = 'qwen-audio-3.1-asr-flash';
 export const ASR_BAILIAN_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 /** 语音转写实际调用的原生接口：固定常量（北京地域），不做成环境变量。 */
 export const ASR_NATIVE_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+export const ASR_TOKEN_PLAN_ENDPOINT = 'https://token-plan.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+export const ASR_TOKEN_PLAN_MODEL = 'qwen-audio-3.0-asr-flash';
 /** mock 模式固定转写（合成句子，不含任何真实学生内容）。 */
 export const MOCK_TRANSCRIPT = '我以为移项不用变号，就直接抄过去了。';
 
@@ -26,7 +28,7 @@ export interface SpeechTranscriber {
 }
 
 export class TranscribeError extends Error {
-  constructor(public readonly kind: 'timeout' | 'provider_error' | 'invalid_output', message: string) {
+  constructor(public readonly kind: 'timeout' | 'provider_error' | 'invalid_output', message: string, readonly fallbackEligible = false) {
     super(message);
     this.name = 'TranscribeError';
   }
@@ -44,6 +46,8 @@ export interface BailianTranscriberOptions {
   apiKey: string;
   model: string;
   timeoutMs?: number;
+  /** 固定 Token Plan 原生接口；不接受任意地址。 */
+  tokenPlan?: boolean;
   /** 测试注入；缺省用全局 fetch。 */
   fetchImpl?: typeof fetch;
 }
@@ -61,6 +65,9 @@ const DATA_URL_MIME: Readonly<Record<string, string>> = { 'audio/x-m4a': 'audio/
 
 function normalizeMime(mimeType: string): string {
   return mimeType.split(';')[0]!.trim().toLowerCase();
+}
+function canUseBackup(status: number): boolean {
+  return [401, 403, 404, 408, 429].includes(status) || status >= 500;
 }
 
 /** 从原生接口响应里取转写文字：优先 output.text，其次 output.sentence.text（对象或数组）；都没有返回 null。 */
@@ -104,7 +111,7 @@ export class BailianTranscriber implements SpeechTranscriber {
     let outputTokens: number | null = null;
     let errorCode: string | null = null;
     try {
-      const response = await (this.options.fetchImpl ?? fetch)(ASR_NATIVE_ENDPOINT, {
+      const response = await (this.options.fetchImpl ?? fetch)(this.options.tokenPlan ? ASR_TOKEN_PLAN_ENDPOINT : ASR_NATIVE_ENDPOINT, {
         method: 'POST',
         redirect: 'error',
         headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' },
@@ -115,24 +122,24 @@ export class BailianTranscriber implements SpeechTranscriber {
       let body: unknown;
       try { body = await response.json(); } catch {
         if (timeout.aborted || signal?.aborted) throw new Error('aborted');
-        if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`);
+        if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`, canUseBackup(response.status));
         throw new TranscribeError('invalid_output', '语音转写结果无法解析。');
       }
       const usage = (body as { usage?: { input_tokens?: unknown; output_tokens?: unknown } } | null)?.usage;
       inputTokens = tokenCount(usage?.input_tokens); outputTokens = tokenCount(usage?.output_tokens);
-      if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`);
+      if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`, canUseBackup(response.status));
       const text = extractText(body);
       if (text === null) throw new TranscribeError('invalid_output', '语音转写结果里没有文字。');
       return text;
     } catch (error) {
       errorCode = signal?.aborted ? 'cancelled' : timeout.aborted ? 'timeout'
         : httpStatus === 429 ? 'rate_limited' : error instanceof TranscribeError ? error.kind : 'provider_error';
-      if (timeout.aborted) throw new TranscribeError('timeout', '语音转写超时。');
+      if (timeout.aborted) throw new TranscribeError('timeout', '语音转写超时。', true);
       if (error instanceof TranscribeError) throw error;
-      throw new TranscribeError('provider_error', '暂时连不上语音转写服务。');
+      throw new TranscribeError('provider_error', '暂时连不上语音转写服务。', true);
     } finally {
       recordAiUsage({ id: crypto.randomUUID(), startedAt: new Date(started).toISOString(), operation: 'asr',
-        model: this.options.model, provider: 'bailian', source: 'live', status: errorCode ? 'failed' : 'succeeded',
+        model: this.options.model, provider: this.options.tokenPlan ? 'bailian-token-plan' : 'bailian', source: 'live', status: errorCode ? 'failed' : 'succeeded',
         inputTokens, outputTokens, durationMs: Date.now() - started, httpStatus, errorCode });
     }
   }
@@ -152,7 +159,19 @@ export function assertAsrConfigured(cfg: AsrConfig): void {
 export function createTranscriber(cfg: AsrConfig & { aiTimeoutMs?: number }): SpeechTranscriber {
   if (cfg.aiMode === 'mock') return new MockTranscriber();
   assertAsrConfigured(cfg);
-  return new BailianTranscriber({ apiKey: cfg.aiApiKey, model: cfg.aiAsrModel, timeoutMs: Math.min(cfg.aiTimeoutMs ?? 30_000, 60_000) });
+  const timeoutMs = Math.min(cfg.aiTimeoutMs ?? 30_000, 60_000);
+  const backup = new BailianTranscriber({ apiKey: cfg.aiApiKey, model: cfg.aiAsrModel, timeoutMs });
+  const key = process.env.SEL_TOKEN_PLAN_API_KEY?.trim();
+  if (!key) return backup;
+  const primary = new BailianTranscriber({ apiKey: key, model: ASR_TOKEN_PLAN_MODEL, tokenPlan: true, timeoutMs });
+  return { source: 'bailian', async transcribe(audio, mimeType, signal) {
+    try { return await primary.transcribe(audio, mimeType, signal); }
+    catch (error) {
+      signal?.throwIfAborted();
+      if (!(error instanceof TranscribeError) || !error.fallbackEligible) throw error;
+      return backup.transcribe(audio, mimeType, signal);
+    }
+  } };
 }
 
 let shared: SpeechTranscriber | null = null;
