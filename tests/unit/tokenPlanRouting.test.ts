@@ -10,6 +10,17 @@ const ok = () => new Response(JSON.stringify({ choices: [{ finish_reason: 'stop'
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe('Token Plan primary with original provider backup', () => {
+  it('shares a per-operation HTTP budget across primary and backup', async () => {
+    vi.stubEnv('SEL_TOKEN_PLAN_API_KEY','plan-secret');
+    const fetcher=vi.fn().mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(ok());vi.stubGlobal('fetch',fetcher);
+    let remaining=2;
+    const budget=async()=>{if(remaining===0)throw new Error('operation budget exhausted');remaining--;};
+    const client=new ChatClient(options());
+    await client.call('followup',[{role:'user',content:'test'}],budget);
+    expect(remaining).toBe(0);
+    await expect(client.call('followup',[{role:'user',content:'test'}],budget)).rejects.toThrow('operation budget exhausted');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it('fails over timeout, but caller cancellation never starts backup', async () => {
     vi.stubEnv('SEL_TOKEN_PLAN_API_KEY', 'plan-secret');
     const hanging = (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {

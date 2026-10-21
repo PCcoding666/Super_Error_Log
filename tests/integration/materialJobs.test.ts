@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ChatClient } from '../../src/ai/chatClient.js';
+import { AiError } from '../../src/ai/errors.js';
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -14,7 +16,7 @@ import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
 
 const cleanups: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 async function fixture(capacity = 2, studentAiConcurrency?: number) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'material-jobs-'));
   const db = new DatabaseSync(path.join(dir, 'app.db')); db.exec('PRAGMA foreign_keys=ON'); db.exec(SCHEMA_SQL); migrateMaterials(db);
@@ -33,6 +35,27 @@ async function settled(jobs: MaterialJobs, id: string, state: string) {
 const transient = () => Object.assign(new Error('synthetic busy'), { code: 'provider_unavailable', retryable: true });
 
 describe('durable material scheduling', () => {
+  it.each([false, true])('counts Token Plan and backup HTTP in the same persisted budget (success=%s)', async success => {
+    vi.stubEnv('SEL_TOKEN_PLAN_API_KEY', 'synthetic-plan');
+    let recovered=false;
+    const fetcher=vi.fn().mockImplementation(()=>Promise.resolve(success && fetcher.mock.calls.length===2 || recovered
+      ? new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'{"ok":true}'}}]}))
+      : new Response('{}',{status:503})));
+    vi.stubGlobal('fetch',fetcher);
+    const f=await fixture();f.jobs.retryDelaysMs=[0,0];
+    f.jobs.register('answer',async id=>{
+      const invoke=async(signal:AbortSignal,beforeRequest?:()=>Promise<void>)=>{
+        try{return (await new ChatClient({baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',apiKey:'synthetic-backup',models:{followup:'qwen3.8-max'},timeoutMs:1000,bailianOnly:true,signal,beforeRequest}).call('followup',[{role:'user',content:'synthetic'}])).value;}
+        catch(error){if(error instanceof AiError)throw {code:'provider_unavailable',message:'synthetic',retryable:true};throw error;}
+      };
+      await f.jobs.request(id,'stage',invoke);
+      await f.jobs.request(id,'stage',invoke); // successful checkpoint must not invoke again
+    });
+    const ticket=f.jobs.enqueue('answer',f.question,randomUUID(),'basis');await settled(f.jobs,ticket.id,success?'succeeded':'failed');
+    expect(fetcher).toHaveBeenCalledTimes(success?2:3);
+    expect(f.jobs.execution(ticket.id).stages.stage).toMatchObject({attempts:success?2:3});
+    if(!success){recovered=true;f.jobs.retry(ticket.id,randomUUID());await settled(f.jobs,ticket.id,'succeeded');expect(fetcher).toHaveBeenCalledTimes(4);expect(f.jobs.execution(ticket.id).stages.stage).toMatchObject({round:2,attempts:1});}
+  });
   it('keeps missing handlers pending and shares capacity with legacy work', async () => {
     const f = await fixture(1);
     const ticket = f.jobs.enqueue('answer', f.question, randomUUID(), 'basis');

@@ -101,8 +101,9 @@ function containsImage(messages: Message[]): boolean {
 
 export class ChatClient {
   constructor(readonly options: ChatOptions) {}
-  async call(stage: ModelStage, messages: Message[]): Promise<StageResult<unknown>> {
-    const o = this.options; const model = o.models[stage];
+  async call(stage: ModelStage, messages: Message[], beforeRequest?: () => Promise<void>): Promise<StageResult<unknown>> {
+    const o = beforeRequest ? { ...this.options, beforeRequest: async () => { await beforeRequest(); await this.options.beforeRequest?.(); } } : this.options;
+    const model = o.models[stage];
     if (!o.apiKey.trim() || !model?.trim()) throw new AiError('unsupported', '真实 AI 配置缺失，请在本机配置密钥和阶段模型；不会降级为 Mock');
     assertEndpoint(o.baseUrl, o.bailianOnly);
     const vision = containsImage(messages);
