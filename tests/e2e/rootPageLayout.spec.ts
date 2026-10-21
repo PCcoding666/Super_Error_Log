@@ -48,13 +48,17 @@ for (const scripting of [true, false]) test.describe(`root page layout ${scripti
           return {
             compatMode: document.compatMode,
             overflow: document.documentElement.scrollWidth - innerWidth,
-            actionBottom: action.bottom, formTop: form.top,
+            actionTop: action.top, actionBottom: action.bottom, formTop: form.top,
+            viewportHeight: innerHeight,
             mainHeight: document.querySelector('main')!.getBoundingClientRect().height,
           };
         });
         expect(layout.compatMode).toBe('CSS1Compat');
         expect(layout.overflow, `${count} photos at ${size.width}px`).toBeLessThanOrEqual(1);
-        expect(layout.actionBottom).toBeGreaterThan(layout.formTop);
+        expect(layout.actionTop, `${count} photos at ${size.width}px`).toBeGreaterThanOrEqual(0);
+        expect(layout.actionBottom, `${count} photos at ${size.width}px`).toBeLessThanOrEqual(layout.viewportHeight);
+        // 空状态的示例照片在短屏上会把表单顶到固定按钮下面；有历史时示例不出现，按钮仍应落在表单起点之下。
+        if (count > 0) expect(layout.actionBottom, `${count} photos at ${size.width}px`).toBeGreaterThan(layout.formTop);
         if (count > 0) {
           populatedHeight ??= layout.mainHeight;
           expect(Math.abs(layout.mainHeight - populatedHeight)).toBeLessThanOrEqual(1);
