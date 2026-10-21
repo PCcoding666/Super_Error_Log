@@ -62,7 +62,7 @@ export function ItemDetailPage(props: ItemDetailProps): ReactNode {
       {item.knowledgeTags.length ? <p className="small muted">细知识点：{item.knowledgeTags.join('、')}</p> : null}
     </section>
     <section className="inset-group learning-stack">
-      {groups.length ? <div className="learning-evidence" aria-label="原作答与订正">{groups.map(group => <details className="disclosure" key={group.title}><summary>{group.title}</summary><div className="disclosure-body">{group.notes.map(note => <AnswerText key={note.id} text={note.text} teacherNote={note.kind === 'teacher_note'} />)}</div></details>)}</div> : null}
+      {groups.length ? <section className="learning-evidence" aria-label="原作答与订正">{groups.map(group => <details className="disclosure" key={group.title}><summary>{group.title}</summary><div className="disclosure-body">{group.notes.map(note => <AnswerText key={note.id} text={note.text} teacherNote={note.kind === 'teacher_note'} />)}</div></details>)}</section> : null}
       <section aria-labelledby="learning-reflection" data-testid="item-reflection">
         <h2 id="learning-reflection" className="stack-label">我的错因与提醒</h2>
         {reflection ? <>
