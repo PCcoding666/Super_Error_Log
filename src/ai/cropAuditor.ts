@@ -5,6 +5,7 @@ import { validateEvidence, type Evidence, type Region } from './evidence.js';
 import { cropPhoto, normalizePhoto, type Box } from '../media/images.js';
 import { assessCrop, validateInventory, expandCropBox, CROP_AUDIT_VERSION, type CropAssessment, type SourceInventory } from './cropAudit.js';
 import { humanResolution, type HumanCropResolution } from './cropResolution.js';
+class CropCallBudgetExhausted extends Error {}
 
 export interface CropTarget { id: string; kind: 'question' | Region['kind']; box: Box; expectedText: string }
 export interface AuditedCrop extends CropTarget {
@@ -56,7 +57,7 @@ async function comparisonImages(source: Buffer, context: Buffer, crop: Buffer): 
 
 export class CropAuditor {
   constructor(readonly client: ChatClient) {}
-  /** No retries or automatic replacement. At most 12 targets / 24 calls; remaining targets fail closed. */
+  /** No automatic replacement. At most 12 targets / 24 HTTP calls including backup; remaining targets fail closed. */
   async check(source: Buffer, evidence: Evidence, previous?: CropAuditReport | null): Promise<CropAuditReport> {
     const e = validateEvidence(evidence);
     const report: CropAuditReport = { version: 1, policyVersion: CROP_AUDIT_VERSION, sourceHash: sha256(source),
@@ -65,7 +66,11 @@ export class CropAuditor {
     const resume = previous?.policyVersion === CROP_AUDIT_VERSION && previous.sourceHash === report.sourceHash
       && previous.evidenceHash === report.evidenceHash && previous.targets.some(t => t.technicalStatus === 'not_checked') ? previous : null;
     report.humanResolutions = structuredClone(resume?.humanResolutions ?? []);
-    let checkedTargets = 0;
+    let checkedTargets = 0; let httpCalls = 0;
+    const reserveHttp = async (): Promise<void> => {
+      if (httpCalls >= 24) throw new CropCallBudgetExhausted();
+      httpCalls++;
+    };
     for (const target of cropTargets(e)) {
       const prior = resume?.targets.find(t => t.id === target.id);
       if (prior && prior.technicalStatus !== 'not_checked') { report.targets.push(structuredClone(prior)); continue; }
@@ -76,7 +81,7 @@ export class CropAuditor {
       if (checkedTargets++ >= 12) { result.error = '达到单轮12个区域上限，再次点击将继续未检查区域'; continue; }
       const call = async (stage: 'crop_inventory' | 'crop_verify', input: Message[]) => {
         result.requestHashes.push(sha256(stable(input)));
-        const response = await this.client.call(stage, input);
+        const response = await this.client.call(stage, input, reserveHttp);
         result.runs.push({ ...response.run, promptVersion: CROP_AUDIT_VERSION });
         result.responseHashes.push(sha256(stable(response.value)));
         return response.value;
@@ -124,9 +129,10 @@ referenceText只写当前目标的完整可见原文（题目留空学生填空�
         if (assessment.comparison.coveredDiagramIds.some(id => !requiredDiagrams.some(i => i.id === id))) throw new Error('Unrecognized required diagram');
         Object.assign(result, { technicalStatus: 'completed', assessment, completeness: assessment.completeness,
           purity: assessment.purity, textFidelity: assessment.textFidelity });
-      } catch {
-        result.technicalStatus = 'failed'; result.failurePhase = phase;
-        result.error = `检查未完成（${phase}）；保留已返回响应摘要和usage，未自动重试，请人工复核或主动重试`;
+      } catch (error) {
+        result.technicalStatus = error instanceof CropCallBudgetExhausted ? 'not_checked' : 'failed'; result.failurePhase = phase;
+        result.error = error instanceof CropCallBudgetExhausted ? '达到单轮24次调用上限，再次点击将继续未检查区域'
+          : `检查未完成（${phase}）；保留已返回响应摘要和usage，未自动重试，请人工复核或主动重试`;
       }
     }
     return report;

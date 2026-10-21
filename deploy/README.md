@@ -140,6 +140,12 @@ systemctl daemon-reload && systemctl enable --now super-error-log-caddy
 
 ## 5. 部署验收（服务器实测，直接读内核接口）
 
+### 可选 Token Plan 主用与按量接口备用
+
+在 `/etc/super-error-log/env`（root:root 0600）设置 `SEL_TOKEN_PLAN_API_KEY`，保留原 `SEL_AI_*`、`SEL_MOBILE_AI_*` 的北京 DashScope 地址、密钥与阶段模型。文本/图片的 ChatClient 优先使用固定的北京 Token Plan compatible-mode 接口；未设置时行为不变，其他地区和非百炼客户端不启用此路由。语音原生 ASR 继续使用原密钥。
+
+主用网络错误、超时、HTTP 401/403/404/408/429 或 5xx 时，最多切到原接口一次。输入错误、输出不完整/非法 JSON、取消和预算耗尽不触发切换。每次实际请求仍占原有阶段预算，图片调用共享全局许可；两次调用各保留用量记录（主用 provider 为 `bailian-token-plan`），单次超时分别计时。密钥不得进日志或仓库。删除该变量并重启可恢复仅使用原接口。
+
 ```bash
 # cgroup v1 实测（systemctl show 不是内核读回）。先确认这台机器用的是哪一档，再对数字。
 # 推荐档（4 核 / 8 GB，单元文件默认值）：

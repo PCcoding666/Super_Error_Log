@@ -1,7 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import sharp from 'sharp';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ChatClient } from '../../src/ai/chatClient.js';
 import * as engine from '../../src/ai/cropAuditor.js';
 import { validateEvidence } from '../../src/ai/evidence.js';
@@ -38,6 +38,23 @@ describe('裁图自动核对的真实 HTTP 边界（合成模型响应）', () =
   afterAll(() => server.close());
   const auditor = () => new engine.CropAuditor(new ChatClient({ baseUrl, apiKey: 'synthetic-only', bailianOnly: false,
     models: { crop_inventory: 'inventory-fixture', crop_verify: 'verify-fixture' }, timeoutMs: 2000 }));
+  it('counts backup HTTP in the 24-call cap and resumes every budget-blocked target', async () => {
+    mode='pass';requests.length=0;
+    const e=evidence();e.regions=Array.from({length:12},(_,i)=>({id:`d${i}`,kind:'diagram' as const,box:{x:.1,y:.1,width:.2,height:.1},confidence:1,cleanForPrint:false}));
+    const realFetch=globalThis.fetch;
+    const fetcher=vi.fn(async(url:string,init?:RequestInit)=>new URL(url).hostname.startsWith('token-plan.')?new Response('{}',{status:503}):realFetch(baseUrl+'/chat/completions',init));
+    vi.stubEnv('SEL_TOKEN_PLAN_API_KEY','synthetic-plan');vi.stubGlobal('fetch',fetcher);
+    try{
+      const subject=new engine.CropAuditor(new ChatClient({baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',apiKey:'synthetic-only',bailianOnly:true,models:{crop_inventory:'inventory-fixture',crop_verify:'verify-fixture'},timeoutMs:2000}));
+      const first=await subject.check(source,e);
+      expect(fetcher).toHaveBeenCalledTimes(24);expect(first.targets.filter(t=>t.technicalStatus==='completed')).toHaveLength(6);
+      expect(first.targets.filter(t=>t.technicalStatus==='not_checked')).toHaveLength(7);
+      const second=await subject.check(source,e,first);
+      expect(fetcher).toHaveBeenCalledTimes(48);expect(second.targets.filter(t=>t.technicalStatus==='completed')).toHaveLength(12);
+      const third=await subject.check(source,e,second);
+      expect(fetcher).toHaveBeenCalledTimes(52);expect(third.targets.every(t=>t.technicalStatus==='completed')).toBe(true);
+    }finally{vi.unstubAllGlobals();vi.unstubAllEnvs();}
+  });
   it('原图独立建清单，再发送原图、上下文与裁图；成功响应不能掩盖题干缺失', async () => {
     mode = 'missing'; requests.length = 0;
     const report = await auditor().check(source, evidence());

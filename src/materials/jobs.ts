@@ -118,7 +118,7 @@ export class MaterialJobs {
     if (errors.length) throw new AggregateError(errors, 'Material shutdown could not persist all interrupted states; capacity was released.');
   }
 
-  async request<T>(jobId: string, stageKey: string, invoke: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  async request<T>(jobId: string, stageKey: string, invoke: (signal: AbortSignal, beforeRequest?: () => Promise<void>) => Promise<T>): Promise<T> {
     const signal = this.signals.get(jobId);
     if (!signal || signal.aborted) throw paused();
     const key = JSON.stringify([jobId, stageKey]);
@@ -131,7 +131,7 @@ export class MaterialJobs {
     return work;
   }
 
-  private async requestStage<T>(jobId: string, stageKey: string, invoke: (signal: AbortSignal) => Promise<T>, signal: AbortSignal): Promise<T> {
+  private async requestStage<T>(jobId: string, stageKey: string, invoke: (signal: AbortSignal, beforeRequest?: () => Promise<void>) => Promise<T>, signal: AbortSignal): Promise<T> {
     for (;;) {
       signal.throwIfAborted();
       if (this.require(jobId).state !== 'running') throw new MobileRequestError(409, 'stale_basis', '材料已更新，请重新发起处理。');
@@ -151,7 +151,18 @@ export class MaterialJobs {
       stage.attempts++; stage.state = 'running'; delete stage.nextAttemptAt;
       execution.stages[stageKey] = stage; this.saveExecution(jobId, execution);
       try {
-        const result = await invoke(signal);
+        let firstRequest = true;
+        const beforeRequest = async (): Promise<void> => {
+          signal.throwIfAborted();
+          if (this.require(jobId).state !== 'running') throw new MobileRequestError(409, 'stale_basis', '材料已更新，请重新发起处理。');
+          if (firstRequest) { firstRequest = false; return; }
+          if (stage.attempts >= 3) throw { code: 'retry_budget_exhausted', message: '本轮请求次数已用完，请重试。', retryable: true };
+          stage.attempts++;
+          const current = this.execution(jobId);
+          current.stages[stageKey] = { ...stage };
+          this.saveExecution(jobId, current);
+        };
+        const result = await invoke(signal, beforeRequest);
         signal.throwIfAborted();
         // Re-read to preserve checkpoints from other stage keys in the same handler.
         const updated = this.execution(jobId);
