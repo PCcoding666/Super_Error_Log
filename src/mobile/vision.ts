@@ -132,8 +132,7 @@ export class BailianMobileVision implements MobileVisionBoundary {
   private async call<T>(stage: VisionAttempt['stage'], input: Message[], context: VisionContext, validate: (value: unknown) => T): Promise<T> {
     const promptHash = crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const modelStage = `mobile_${stage}` as ModelStage;
-    // Task 01-C：预算统一收到 service 层（同一题目及阶段最多 3 次，含首次）。适配器每次调用
-    // 只做一次 HTTP 尝试并原样上抛分类错误——不再内部自转，避免与外层重试相乘。
+    // Task 01-C：每次 HTTP（包括 Token Plan 切换备用）均向 service 预留预算。
     const recorder = context.recordAttempt ?? this.defaultRecorder;
     let captured: ChatTrace | null = null;
     let reservation: { roundId: string; reservationId: string; attempt: number } | undefined;
@@ -145,7 +144,15 @@ export class BailianMobileVision implements MobileVisionBoundary {
         try { reservation = await context.reserveAttempt?.(stage); }
         catch (error) { boundaryFailure = error; throw error; }
       },
-      trace: trace => { captured = trace; } });
+      trace: async trace => {
+        // Failed transport attempts must be persisted before a backup reservation
+        // can fail. Successful output is recorded below after domain validation.
+        if (trace.error && recorder) {
+          captured = null;
+          try { await recorder({ ...this.attempt(stage, reservation?.attempt ?? 1, context, trace, null, promptHash), ...reservation }); }
+          catch (error) { boundaryFailure = error; throw error; }
+        } else captured = trace;
+      } });
     // 仅模型调用与输出校验进入 try/catch 做错误分类；attempt 落盘（recorder）保持在外——
     // 存储故障（如 EIO）必须原样穿透为 fail-closed，绝不能被误分类成模型失败（既有语义回归）。
     let value: T;

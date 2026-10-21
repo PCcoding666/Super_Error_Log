@@ -54,6 +54,17 @@ process.on('message', async (message: { id?: string; action?: string; student?: 
       const body=await uploaded.json() as {job:{jobId?:string;id:string}};const id=body.job.id??body.job.jobId!;
       const registered=await fetch(`http://127.0.0.1:${endpoint.port}/v2/photos/${id}/register`,{method:'POST',headers});
       if(!registered.ok)throw Error('Synthetic legacy registration failed');
+      // Queue admission is not completion: the page does not poll an empty pick
+      // list. Wait for this synthetic legacy inventory before returning its URL.
+      const deadline=Date.now()+8000;
+      while(true){
+        const status=await fetch(`http://127.0.0.1:${endpoint.port}/v1/recognitions/${id}`,{headers});
+        if(!status.ok)throw Error('Synthetic legacy status failed');
+        const current=await status.json() as {job:{status:string}};
+        if(current.job.status==='completed')break;
+        if(['failed','partial'].includes(current.job.status)||Date.now()>=deadline)throw Error('Synthetic legacy recognition did not complete');
+        await new Promise(resolve=>setTimeout(resolve,25));
+      }
       result={jobId:id};
     }
     if (message.action === 'snapshot' || message.action === 'age') {

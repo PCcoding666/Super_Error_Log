@@ -26,6 +26,9 @@ export interface Message { role: 'system' | 'user'; content: unknown }
 export const PROMPT_VERSION = 'evidence-v1-20260907';
 export const MAX_INPUT_TOKEN_RESERVATION = 100_000;
 const MAX_RESPONSE_BYTES = 2_000_000;
+const TOKEN_PLAN_ENDPOINT = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
+/** Only transport/provider failures may use the backup, never local validation or budgets. */
+class FailoverError extends AiError {}
 
 async function readResponse(response: Response): Promise<{ raw: string; overflow: boolean }> {
   const reader = response.body?.getReader();
@@ -106,12 +109,25 @@ export class ChatClient {
     // 带图的调用才占全局名额：先串行解码校验，再占视觉名额发请求。纯文本追问不排队。
     if (vision) await withProcessImage(() => checkInput(messages));
     else await checkInput(messages);
-    const run = (): Promise<StageResult<unknown>> => this.complete(stage, messages);
+    const run = async (): Promise<StageResult<unknown>> => {
+      const key = process.env.SEL_TOKEN_PLAN_API_KEY?.trim();
+      // Explicit opt-in for the Beijing Bailian deployment. ASR has its own client
+      // and continues to use the original native DashScope key.
+      if (!key || !o.bailianOnly || o.baseUrl.replace(/\/$/, '') !== 'https://dashscope.aliyuncs.com/compatible-mode/v1') {
+        return this.complete(stage, messages, o);
+      }
+      try { return await this.complete(stage, messages, { ...o, baseUrl: TOKEN_PLAN_ENDPOINT, apiKey: key }); }
+      catch (error) {
+        o.signal?.throwIfAborted();
+        if (!(error instanceof FailoverError)) throw error;
+        return this.complete(stage, messages, o);
+      }
+    };
     return vision ? withParentPermit('ai', run) : run();
   }
 
-  private async complete(stage: ModelStage, messages: Message[]): Promise<StageResult<unknown>> {
-    const o = this.options; const model = o.models[stage]!;
+  private async complete(stage: ModelStage, messages: Message[], o: ChatOptions): Promise<StageResult<unknown>> {
+    const model = o.models[stage]!;
     const maxTokens = o.maxTokens ?? 8192;
     if (!Number.isInteger(maxTokens) || maxTokens < 128 || maxTokens > 16384 || !Number.isFinite(o.timeoutMs) || o.timeoutMs < 1) throw new AiError('unsupported', '模型 token/超时限制无效');
     const request = { model, messages: traceMessages(messages), temperature: 0, max_tokens: maxTokens,
@@ -139,11 +155,12 @@ export class ChatClient {
       let body: { choices?: Array<{ finish_reason?: string; message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } } | null = null;
       try { body = JSON.parse(raw); } catch { /* classified after HTTP status */ }
       usage = { prompt_tokens: tokenCount(body?.usage?.prompt_tokens), completion_tokens: tokenCount(body?.usage?.completion_tokens) };
-      if (res.status === 429) throw new AiError('rate_limited', '模型服务限流');
+      if (res.status === 429) throw new FailoverError('rate_limited', '模型服务限流');
       if (!res.ok) {
-        if (res.status === 401) throw new AiError('unsupported', '模型认证失败');
-        if (res.status === 403) throw new AiError('unsupported', '模型权限不足');
-        if (res.status >= 500 || res.status === 408) throw new AiError('provider_error', `模型服务暂时不可用 HTTP ${res.status}`);
+        if (res.status === 401) throw new FailoverError('unsupported', '模型认证失败');
+        if (res.status === 403) throw new FailoverError('unsupported', '模型权限不足');
+        if (res.status === 404) throw new FailoverError('unsupported', '模型不存在或无权限');
+        if (res.status >= 500 || res.status === 408) throw new FailoverError('provider_error', `模型服务暂时不可用 HTTP ${res.status}`);
         throw new AiError('unsupported', `模型请求不受支持 HTTP ${res.status}`);
       }
       if (!raw) throw new AiError('invalid_json', '模型响应为空');
@@ -156,17 +173,20 @@ export class ChatClient {
       if (o.signal?.aborted) { reportedError = { kind: 'cancelled', message: '调用已取消' }; throw o.signal.reason; }
       if (e instanceof AiError) { reportedError = { kind: e.kind, message: e.message }; throw e; }
       // Provider exceptions may contain echoed user material/credentials. Never propagate them.
-      const safe = new AiError(controller.signal.aborted ? 'timeout' : 'provider_error', controller.signal.aborted ? '模型调用超时' : '模型连接失败');
+      const safe = new FailoverError(controller.signal.aborted ? 'timeout' : 'provider_error', controller.signal.aborted ? '模型调用超时' : '模型连接失败');
       reportedError = { kind: safe.kind, message: safe.message }; throw safe;
     } finally {
       clearTimeout(timer);
       const durationMs = Date.now() - started;
       const startedAt = new Date(started).toISOString();
       recordAiUsage({ id: usageId, startedAt, durationMs, operation: stage, model,
-        provider: o.bailianOnly ? 'bailian' : 'openai-compatible', source: 'live',
+        provider: o.baseUrl === TOKEN_PLAN_ENDPOINT ? 'bailian-token-plan' : o.bailianOnly ? 'bailian' : 'openai-compatible', source: 'live',
         status: reportedError ? 'failed' : 'succeeded', inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens,
         httpStatus, errorCode: reportedError?.kind ?? null });
-      const safeRaw = raw === null ? null : (o.apiKey ? raw.split(o.apiKey).join('[REDACTED]') : raw);
+      let safeRaw = raw;
+      for (const key of [o.apiKey, this.options.apiKey, process.env.SEL_TOKEN_PLAN_API_KEY]) {
+        if (key && safeRaw !== null) safeRaw = safeRaw.split(key).join('[REDACTED]');
+      }
       await o.trace?.({ usageId, startedAt, durationMs, stage, model, request, responseRaw: safeRaw, httpStatus, usage, error: reportedError });
     }
   }
