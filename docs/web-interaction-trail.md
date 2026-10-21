@@ -39,7 +39,7 @@
 | `web_error` | 服务器回了 4xx / 5xx，或者处理失败但跳回了页面（重试没成功、有题没提交上） | 服务器 | `状态码` 或 `状态码:原因`（原因是固定的短标识） | `/s/record/:pid#400:date_missing`、`/s/capture#400:unreadable`、`/s/*#404`、`/s/#401:unauthorized` |
 | `web_error` | 浏览器里出的错（服务器看不到） | 页面脚本 → 服务器 | `client:原因` | `/s/why/:pid/:itemId#client:mic_denied` |
 
-服务器端的出错原因：`unreadable` `too_big` `busy` `full` `paused` `empty` `consent_required`（上传）；`date_missing` `completion_missing` `correct_missing` `item_missing` `return_failed` `return_rejected`（录结果）；
+服务器端的出错原因：`unreadable` `too_big` `busy` `full` `paused` `empty`（上传）；`date_missing` `completion_missing` `correct_missing` `item_missing` `return_failed` `return_rejected`（录结果）；
 `missing` `submit_failed` `answer_invalid`（说说为什么错）；`none_chosen` `too_many` `conflict` `create_failed`（选题）；`none_picked` `select_failed` `retry_failed`（勾题）；
 `fix_failed` `fix_accept_failed` `edit_failed` `discard_refused`（改题）；`settings_invalid`；`unauthorized` `cross_site`；配对失败记配对模块的错误码（`pairing_used` 等）。
 

@@ -17,8 +17,7 @@ import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
 import { sendHtml } from '../views/render.js';
-import { hasConsent } from './session.js';
-import { MaterialGradeActionPage, MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialConsentPage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
+import { MaterialGradeActionPage, MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const roles: MaterialRole[] = ['question', 'diagram', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown'];
 const text = (v: unknown): string => typeof v === 'string' ? v : '';
@@ -109,8 +108,6 @@ export function createMaterialsRouter(options: {
                 if (req.headers['sec-fetch-site'] === 'cross-site' || (origin && (origin === 'null' || new URL(origin).host !== req.headers.host)))
                     throw new MobileRequestError(403, 'forbidden', '请从自己的页面提交。');
                 check(req);
-                if (!hasConsent(req))
-                    throw new MobileRequestError(403, 'consent_required', '第一次上传前，先看一下上传说明。');
             }
             next();
         }
@@ -140,7 +137,7 @@ export function createMaterialsRouter(options: {
         }
         else if (attemptId)
             bad();
-        sendHtml(res, hasConsent(req) ? MaterialCapturePage({ namespace: draftNamespace, count: assetCount(), uploadId: randomUUID(), context }) : MaterialConsentPage({ namespace: draftNamespace, context }));
+        sendHtml(res, MaterialCapturePage({ namespace: draftNamespace, count: assetCount(), uploadId: randomUUID(), context }));
     });
     r.post('/capture', () => bad('请重新打开拍照页面再上传。'));
     r.post('/materials/captures', (req, res) => {

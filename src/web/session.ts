@@ -2,7 +2,6 @@
  * 学生网页版的 cookie。全部 Path=/s、HttpOnly、SameSite=Lax；非本机地址一律 Secure。
  * 内容（隐私文档 docs/privacy/PRIVACY_AND_MINOR_DATA.md 同步列出）：
  * - sel_device：配对兑换得到的设备令牌（与 App 的令牌同一种，30 天有效，可由管理员撤销）。
- * - sel_consent：看过并同意「上传前看一下」的版本号。
  * - sel_photos：最近操作的照片的两个本机标记（最多 80 条）（这页没有做错的题 / 移除这张），只存识别任务 ID。
  * - sel_skip：本次打开里点过的「跳过」（会话 cookie，关掉网页即失效，对应 App 的「只记在内存里」）。
  * - sel_a2hs：看过「放到主屏幕」提示。
@@ -15,7 +14,6 @@ import type { StepKind } from './weekPlan.js';
 
 export const COOKIE = {
   device: 'sel_device',
-  consent: 'sel_consent',
   photos: 'sel_photos',
   skip: 'sel_skip',
   a2hs: 'sel_a2hs',
@@ -23,7 +21,6 @@ export const COOKIE = {
   itemsGrade: 'sel_items_grade',
 } as const;
 
-export const CONSENT_VERSION = 'v2';
 const YEAR_SECONDS = 365 * 24 * 60 * 60;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ITEM_ID = /^itm_[0-9a-f]{16}$/;
@@ -110,14 +107,6 @@ export function readSkips(request: Request): SkipState {
 export function writeSkips(request: Request, response: Response, state: SkipState): void {
   const entries = [...state.steps, ...[...state.passedItems].slice(0, 20)];
   setCookie(request, response, COOKIE.skip, entries.join('.'), null);
-}
-
-export function hasConsent(request: Request): boolean {
-  return readCookies(request)[COOKIE.consent] === CONSENT_VERSION;
-}
-
-export function giveConsent(request: Request, response: Response): void {
-  setCookie(request, response, COOKIE.consent, CONSENT_VERSION, YEAR_SECONDS);
 }
 
 export function sawInstallHint(request: Request): boolean {

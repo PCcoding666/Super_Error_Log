@@ -15,7 +15,6 @@ import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
 import { createMaterialsRouter } from '../../src/web/materialsRouter.js';
-import { CONSENT_VERSION } from '../../src/web/session.js';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
     for (const c of cleanups.splice(0).reverse())
@@ -45,23 +44,23 @@ async function fixture() {
         port: number;
     }).port}/s`;
     cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await scheduler.stop(); db.close(); rmSync(dir, { recursive: true, force: true }); });
-    const headers = { 'content-type': 'application/json', accept: 'application/json', 'x-draft-namespace': namespace, cookie: `sel_consent=${CONSENT_VERSION}` };
+    const headers = { 'content-type': 'application/json', accept: 'application/json', 'x-draft-namespace': namespace };
     const post = (url: string, body: unknown, ns = namespace) => fetch(base + url, { method: 'POST', headers: { ...headers, 'x-draft-namespace': ns }, body: JSON.stringify(body), redirect: 'manual' });
     const photo = await sharp({ create: { width: 24, height: 16, channels: 3, background: '#fff' } }).jpeg().toBuffer();
-    const upload = (captureId: string, uploadId = randomUUID(), ns = namespace) => { const form = new FormData(); form.append('captureId', captureId); form.append('hints', '{}'); form.append('photo', new Blob([new Uint8Array(photo)]), 'synthetic.jpg'); return fetch(base + '/materials/uploads', { method: 'POST', headers: { accept: 'application/json', 'x-draft-namespace': ns, 'x-upload-id': uploadId, cookie: `sel_consent=${CONSENT_VERSION}` }, body: form, redirect: 'manual' }); };
+    const upload = (captureId: string, uploadId = randomUUID(), ns = namespace) => { const form = new FormData(); form.append('captureId', captureId); form.append('hints', '{}'); form.append('photo', new Blob([new Uint8Array(photo)]), 'synthetic.jpg'); return fetch(base + '/materials/uploads', { method: 'POST', headers: { accept: 'application/json', 'x-draft-namespace': ns, 'x-upload-id': uploadId }, body: form, redirect: 'manual' }); };
     return { db, store, other, namespace, base, post, upload, photo, headers, admission };
 }
 it('GET capture, grouped results and namespace are read-only', async () => {
     const f = await fixture();
     const before = f.db.prepare('SELECT total_changes() n').get();
     for (const p of ['/capture', '/materials', '/materials/session'])
-        expect((await fetch(f.base + p, { headers: { cookie: `sel_consent=${CONSENT_VERSION}` } })).status).toBe(200);
+        expect((await fetch(f.base + p)).status).toBe(200);
     expect(f.db.prepare('SELECT total_changes() n').get()).toEqual(before);
 });
 it('rejects stale identity before any capture or multipart write', async () => { const f = await fixture(); expect((await f.post('/materials/captures', { requestId: randomUUID() }, f.other.getWorkspace().draftNamespace)).status).toBe(409); expect((await f.upload('bad', randomUUID(), f.other.getWorkspace().draftNamespace)).status).toBe(409); expect(f.db.prepare('SELECT count(*) n FROM material_capture').get()).toEqual({ n: 0 }); expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 0 }); });
 it('acknowledges durable upload and replays the same request even at full capacity', async () => { const f = await fixture(); const capture = await (await f.post('/materials/captures', { requestId: randomUUID() })).json(); const id = randomUUID(); const first = await f.upload(capture.id, id); expect(first.status).toBe(200); const saved = await first.json(); expect(saved).toMatchObject({ ok: true, assetId: expect.any(String), job: { kind: 'extract' } }); expect((await f.upload(capture.id, id)).status).toBe(200); expect((await f.upload(capture.id)).status).toBe(429); expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 }); expect((await fetch(f.base + `/materials/assets/${saved.assetId}/image`)).status).toBe(200); });
-it('validates hints, owners, consent and cross-site posts', async () => { const f = await fixture(); expect((await f.post('/materials/captures', { requestId: 'bad' })).status).toBe(400); expect((await fetch(f.base + '/materials/captures', { method: 'POST', headers: { ...f.headers, origin: 'https://evil.example' }, body: JSON.stringify({ requestId: randomUUID() }) })).status).toBe(403); expect((await fetch(f.base + '/materials/captures', { method: 'POST', headers: { ...f.headers, cookie: '' }, body: JSON.stringify({ requestId: randomUUID() }) })).status).toBe(403); expect((await f.post('/materials/assets/missing/hints', { roles: ['made_up'] })).status).toBe(400); const q = f.other.createQuestion(); expect((await fetch(f.base + '/materials/questions/' + q.id)).status).toBe(404); });
-it('no-JS single-photo POST creates a real capture and material without a legacy job', async () => { const f = await fixture(); const body = new FormData(); body.append('photo', new Blob([new Uint8Array(f.photo)]), 'page.jpg'); const response = await fetch(f.base + `/materials/uploads?namespace=${f.namespace}&uploadId=${randomUUID()}`, { method: 'POST', headers: { cookie: `sel_consent=${CONSENT_VERSION}` }, body, redirect: 'manual' }); expect(response.status).toBe(303); expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 }); expect(f.db.prepare('SELECT kind FROM material_job').get()).toEqual({ kind: 'extract' }); });
+it('validates hints, owners and cross-site posts, and a stale consent cookie does not block capture', async () => { const f = await fixture(); expect((await f.post('/materials/captures', { requestId: 'bad' })).status).toBe(400); expect((await fetch(f.base + '/materials/captures', { method: 'POST', headers: { ...f.headers, origin: 'https://evil.example' }, body: JSON.stringify({ requestId: randomUUID() }) })).status).toBe(403); expect((await fetch(f.base + '/materials/captures', { method: 'POST', headers: { ...f.headers, cookie: 'sel_consent=v1' }, body: JSON.stringify({ requestId: randomUUID() }) })).status).toBe(200); const page = await (await fetch(f.base + '/capture', { headers: { cookie: 'sel_consent=v2' } })).text(); expect(page).toContain('data-testid="capture-examples"'); expect(page).toContain('平放、拍全、光线均匀'); expect(page).not.toContain('阿里云'); expect(page).not.toContain('上传前看一下'); expect(page).not.toContain('整页拍全，别裁边'); expect((await f.post('/materials/assets/missing/hints', { roles: ['made_up'] })).status).toBe(400); const q = f.other.createQuestion(); expect((await fetch(f.base + '/materials/questions/' + q.id)).status).toBe(404); });
+it('no-JS single-photo POST creates a real capture and material without a legacy job', async () => { const f = await fixture(); const body = new FormData(); body.append('photo', new Blob([new Uint8Array(f.photo)]), 'page.jpg'); const response = await fetch(f.base + `/materials/uploads?namespace=${f.namespace}&uploadId=${randomUUID()}`, { method: 'POST', body, redirect: 'manual' }); expect(response.status).toBe(303); expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 }); expect(f.db.prepare('SELECT kind FROM material_job').get()).toEqual({ kind: 'extract' }); });
 it('voluntary unnamed paper bootstrap is atomic and uses asset link CAS', async () => { const f = await fixture(); const c = await (await f.post('/materials/captures', { requestId: randomUUID() })).json(); const a = await (await f.upload(c.id)).json(); expect((await f.post(`/materials/assets/${a.assetId}/document`, { newDocument: true, expectedRevision: 1 })).status).toBe(200); expect((await f.post(`/materials/assets/${a.assetId}/document`, { newDocument: true, expectedRevision: 1 })).status).toBe(409); expect(f.db.prepare('SELECT count(*) n FROM material_document').get()).toEqual({ n: 1 }); expect(f.db.prepare('SELECT revision,link_revision FROM material_asset').get()).toEqual({ revision: 1, link_revision: 2 }); });
 it('batch hints can be cleared without changing extraction revisions or starting answer/grade jobs', async () => {
     const f = await fixture();
@@ -106,7 +105,7 @@ it('no-JS upload retains optional hints and serves the original validated image 
     body.append('photo', new Blob([new Uint8Array(png)]), 'page.png');
     body.append('roles', 'student_work');
     body.append('marking', 'unmarked');
-    const response = await fetch(f.base + `/materials/uploads?namespace=${f.namespace}&uploadId=${randomUUID()}`, { method: 'POST', headers: { cookie: `sel_consent=${CONSENT_VERSION}` }, body, redirect: 'manual' });
+    const response = await fetch(f.base + `/materials/uploads?namespace=${f.namespace}&uploadId=${randomUUID()}`, { method: 'POST', body, redirect: 'manual' });
     expect(response.status).toBe(303);
     const row = f.db.prepare('SELECT id,hints_json FROM material_asset').get() as {
         id: string;
@@ -134,7 +133,7 @@ it('capture supplementation validates question/attempt ownership and preserves c
     const a = f.store.createAttempt(q.id);
     const other = f.other.createQuestion();
     expect((await fetch(f.base + `/capture?questionId=${other.id}`)).status).toBe(404);
-    const page = await fetch(f.base + `/capture?questionId=${q.id}&attemptId=${a.id}`, { headers: { cookie: `sel_consent=${CONSENT_VERSION}` } });
+    const page = await fetch(f.base + `/capture?questionId=${q.id}&attemptId=${a.id}`);
     expect(page.status).toBe(200);
     const html = await page.text();
     expect(html).toContain(`name="questionId" value="${q.id}"`);
@@ -145,7 +144,7 @@ it('capture supplementation validates question/attempt ownership and preserves c
     body.append('photo', new Blob([new Uint8Array(f.photo)]), 'page.jpg');
     body.append('questionId', q.id);
     body.append('attemptId', a.id);
-    expect((await fetch(f.base + `/materials/uploads?namespace=${f.namespace}&uploadId=${randomUUID()}`, { method: 'POST', headers: { cookie: `sel_consent=${CONSENT_VERSION}` }, body, redirect: 'manual' })).status).toBe(303);
+    expect((await fetch(f.base + `/materials/uploads?namespace=${f.namespace}&uploadId=${randomUUID()}`, { method: 'POST', body, redirect: 'manual' })).status).toBe(303);
     expect(JSON.parse((f.db.prepare('SELECT hints_json FROM material_asset').get() as {
         hints_json: string;
     }).hints_json)).toEqual({ questionId: q.id, attemptId: a.id });

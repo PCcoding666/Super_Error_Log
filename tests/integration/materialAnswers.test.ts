@@ -20,7 +20,6 @@ import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
 import { createMaterialsRouter } from '../../src/web/materialsRouter.js';
-import { CONSENT_VERSION } from '../../src/web/session.js';
 import { backfillImportedAnswers, saveManualAnswer, importAnswerText, requestAnswers, selectAnswerBasis, selectedAnswerIds, generateAnswer, generateAnswerForBasis, registerMaterialAnswers } from '../../src/materials/answers.js';
 import { createMaterialActionProvider } from '../../src/materials/provider.js';
 import { gradeBasis, answerHistory, answerBasis, readQuestion } from '../../src/materials/queries.js';
@@ -208,7 +207,7 @@ it('supports 40000 Chinese characters over bounded HTTP while retaining ownershi
         port: number;
     }).port}`;
     const body = new URLSearchParams({ namespace, questionId: q.id, text: '中'.repeat(40000), claimedSource: '老师提供', expectedRevision: String(readQuestion(s, q.id)!.revision) });
-    const headers = { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', cookie: `sel_consent=${CONSENT_VERSION}` };
+    const headers = { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' };
     expect((await fetch(base + '/s/materials/answers/manual', { method: 'POST', headers, body })).status).toBe(200);
     expect(readQuestion(s, q.id)!.answers[0]!.text).toHaveLength(40000);
     expect((await fetch(base + '/s/materials/answers/manual', { method: 'POST', headers: { ...headers, origin: 'https://evil.example' }, body })).status).toBe(403);
@@ -234,7 +233,7 @@ it('passes the authenticated parent router for long Chinese forms and rejects ov
     const base = `http://127.0.0.1:${(server.address() as {
         port: number;
     }).port}`;
-    const headers = { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', cookie: `sel_device=${token}; sel_consent=${CONSENT_VERSION}` };
+    const headers = { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', cookie: `sel_device=${token}` };
     const post = (fields: Record<string, string>, extra = {}) => fetch(base + '/s/materials/answers/manual', { method: 'POST', headers: { ...headers, ...extra }, body: new URLSearchParams({ namespace, questionId: q.id, text: '中'.repeat(40000), expectedRevision: String(readQuestion(s, q.id)!.revision), ...fields }), redirect: 'manual' });
     expect((await post({})).status).toBe(200);
     expect((await post({ text: '中'.repeat(40001) })).status).toBe(400);
@@ -243,7 +242,7 @@ it('passes the authenticated parent router for long Chinese forms and rejects ov
     expect((await post({ questionId: other.id })).status).toBe(404);
     expect((await post({ namespace: 'other' })).status).toBe(409);
     expect((await post({}, { origin: 'https://evil.example' })).status).toBe(403);
-    expect((await post({}, { cookie: `sel_consent=${CONSENT_VERSION}` })).status).toBe(401);
+    expect((await post({}, { cookie: 'sel_consent=v1' })).status).toBe(401);
     expect((await post({ text: '中'.repeat(70000) })).status).toBe(413);
 });
 it('rolls job admission and batch accounting back together and recovers a partial batch on replay', async () => {

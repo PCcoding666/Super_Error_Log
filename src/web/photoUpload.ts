@@ -94,7 +94,7 @@ var name=document.createElement('p');name.className='upload-name small';name.tex
 entry.status=document.createElement('p');entry.progressBar=document.createElement('div');entry.progressBar.className='progress';
 entry.progressBar.setAttribute('role','progressbar');entry.progressBar.setAttribute('aria-label','第 '+(entries.length+1)+' 张上传进度');entry.progressBar.setAttribute('aria-valuemin','0');entry.progressBar.setAttribute('aria-valuemax','100');
 entry.progressBar.appendChild(document.createElement('i'));row.appendChild(name);row.appendChild(entry.status);row.appendChild(entry.progressBar);if(uploadList)uploadList.appendChild(row)}
-function appendUploadedPhoto(entry){var photoGrid=$('[data-photo-grid]'),tips=$('[data-testid="capture-tips"]'),camera=$('.next-bar label[for="camera-input"]'),skip=$('.next-bar [data-key="skipShoot"]');
+function appendUploadedPhoto(entry){var photoGrid=$('[data-photo-grid]'),tips=$('[data-testid="capture-examples"]'),camera=$('.next-bar label[for="camera-input"]'),skip=$('.next-bar [data-key="skipShoot"]');
 if(tips)tips.classList.add('hidden');if(camera)camera.textContent='再拍一页';if(skip&&skip.closest('form'))skip.closest('form').classList.add('hidden');
 if(!photoGrid)return;var figure=document.createElement('figure'),img=document.createElement('img'),caption=document.createElement('figcaption');
 figure.setAttribute('data-testid','photo-tile');img.src='/s/img/photo/'+encodeURIComponent(entry.jobId);img.alt=entry.name;img.loading='lazy';

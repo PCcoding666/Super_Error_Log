@@ -4,6 +4,7 @@ import {
   IMMUTABLE, SCRIPT_HASH, SCRIPT_SERVED, SERVICE_WORKER, STYLES_HASH, STYLES_SERVED,
   iconPng, manifest,
 } from './assets.js';
+import { CAPTURE_EXAMPLE_PAGE, CAPTURE_EXAMPLE_QUESTION } from './captureExamples.js';
 import { OfflinePage } from './views/today.js';
 import { sendHtml } from '../views/render.js';
 
@@ -47,6 +48,12 @@ export function registerStaticAssets(router: Router): void {
   router.get('/assets/icon-512.png', icon(512));
   router.get('/assets/icon-maskable-512.png', icon(512, true));
   router.get('/assets/apple-touch-icon.png', icon(180));
+  const example = (asset: { bytes: Buffer; hash: string }) => (request: Request, response: Response): void => {
+    cacheFor(response, (request.params as Record<string, string>)[0] === asset.hash ? IMMUTABLE : 'no-cache');
+    response.type('image/jpeg').send(asset.bytes);
+  };
+  router.get(/^\/assets\/capture-page\.([0-9a-f]{10})\.jpg$/, example(CAPTURE_EXAMPLE_PAGE));
+  router.get(/^\/assets\/capture-question\.([0-9a-f]{10})\.jpg$/, example(CAPTURE_EXAMPLE_QUESTION));
   router.get('/offline', (_request, response) => {
     response.setHeader('cache-control', 'private, no-store');
     sendHtml(response, OfflinePage());

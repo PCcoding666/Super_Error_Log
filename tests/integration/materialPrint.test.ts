@@ -318,7 +318,6 @@ import { PairingManager } from '../../src/mobile/pairing.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
 import { createWebClientRouter } from '../../src/web/router.js';
 import { createV2Router } from '../../src/v2/router.js';
-import { CONSENT_VERSION } from '../../src/web/session.js';
 it('serves authenticated web page groups, exact crops, originals and mixed prints while preserving legacy gates', async () => {
     const f = await fixture(), a = await f.asset('#f00'), b = await f.asset('#00f', true);
     const one = f.add(a, 'question', 'web first page', { check: 'low' }), two = f.add(b, 'question', 'web second page', { page: 2, check: 'low' });
@@ -339,7 +338,7 @@ it('serves authenticated web page groups, exact crops, originals and mixed print
     const base = `http://127.0.0.1:${(server.address() as {
         port: number;
     }).port}`;
-    const headers = { cookie: `sel_device=${token}; sel_consent=${CONSENT_VERSION}` };
+    const headers = { cookie: `sel_device=${token}` };
     try {
         const html = await (await fetch(`${base}/s/items/${item}`, { headers })).text();
         expect(html).toContain(`${one.fragmentId}/crop?revision=1`);

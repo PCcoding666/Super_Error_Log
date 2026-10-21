@@ -34,7 +34,15 @@ async function enter(page: Page, gateway: { base: string; codes: string[] }) {
   await page.getByRole('button', { name: '进入我的错题本' }).click();
   await expect(page).toHaveURL(/login=1/);
   await page.goto(gateway.base + '/s/capture');
-  await page.getByRole('button', { name: '同意，上传', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '错题录入', exact: true })).toBeVisible();
+  await expect(page.getByText('阿里云')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '同意，上传' })).toHaveCount(0);
+  const examples = page.getByTestId('capture-examples');
+  await expect(examples).toBeVisible();
+  await expect(examples).toContainText('平放、拍全、光线均匀');
+  for (const id of ['capture-example-page', 'capture-example-question']) {
+    expect(await page.getByTestId(id).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 100)).toBe(true);
+  }
   await expect(page.locator('#library-input')).toBeAttached();
 }
 async function jpeg(width = 820, height = 1100, background = '#c6cff2') {
@@ -205,7 +213,7 @@ test('album queue uploads five photos once, keeps four successes, and retries on
   await expect(rows.locator('[data-upload-state="failed"]')).toHaveCount(1);
   await expect(page.getByRole('progressbar', { name: '整批上传进度' })).toHaveAttribute('aria-valuenow', '80');
   await expect(page.locator('[data-upload-next]')).toBeVisible();
-  await expect(page.getByTestId('capture-tips')).toBeHidden();
+  await expect(page.getByTestId('capture-examples')).toBeHidden();
   await expect(page.getByTestId('next-step-primary')).toHaveText('再拍一页');
   expect(await page.locator('[data-upload-retry]').evaluate(button => {
     const bounds = button.getBoundingClientRect();

@@ -23,6 +23,7 @@ import { cropPhoto } from '../../src/media/images.js';
 import type { MobileRecognitionService } from '../../src/mobile/service.js';
 import type { InventoryCandidate, MobileVisionBoundary, VisionInventoryResult, VisionQuestionResult } from '../../src/mobile/vision.js';
 import { createV2Router } from '../../src/v2/router.js';
+import { CAPTURE_EXAMPLE_PAGE, CAPTURE_EXAMPLE_QUESTION } from '../../src/web/captureExamples.js';
 import { createWebClientRouter, dayOptions } from '../../src/web/router.js';
 import { readTrail } from '../../src/web/trail.js';
 import { syntheticMp4 } from '../helpers/syntheticAudio.js';
@@ -185,7 +186,6 @@ describe('三栏入口', () => {
     expect(home).toContain('错题录入');
     expect(home).toContain('href="/s/practices"');
     expect(home).not.toContain('纸上练习');
-    await browser.post('/s/consent');
     const capture = await browser.text('/s/capture');
     expect(capture).toContain('<h1>错题录入</h1>');
     expect(capture).toContain('已上传记录');
@@ -232,7 +232,7 @@ describe('连接：链接配对 → httpOnly cookie；没有 cookie 只看到连
     const page = await browser.text('/s/');
     expect(page).toContain('先连上服务器');
     expect(page).toContain('这一步要大人帮一下');
-    expect((await browser.post('/s/consent')).headers.get('location')).toBe('/s/');
+    expect((await browser.post('/s/capture')).headers.get('location')).toBe('/s/');
     expect((await browser.get('/s/img/item/itm_0123456789abcdef')).status).toBe(401);
     expect((await browser.request('/s/voice', { method: 'POST', body: new Uint8Array(syntheticMp4(2)), headers: { 'content-type': 'audio/mp4' } })).status).toBe(401);
   });
@@ -333,7 +333,6 @@ describe('录入与上传记录分开', () => {
   it('已有照片不会挤占录入页，拍照入口和历史入口仍可直接使用', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const { jobId } = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
 
@@ -355,7 +354,6 @@ describe('录入与上传记录分开', () => {
   it('历史照片跨周保留，最新上传排在前面，旧照片仍能打开和补勾', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const { jobId: older } = await (await uploadPhoto(browser, await photo('#b0c0ed'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(older)).status === 'completed');
     getDb().prepare('UPDATE v2_photo SET registered_at = ? WHERE job_id = ?').run(new Date(Date.now() - 14 * 86400000).toISOString(), older);
@@ -373,11 +371,10 @@ describe('录入与上传记录分开', () => {
   });
 });
 
-describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 共用准入', () => {
+describe('拍照上传：直接上传；去掉拍摄信息；与 /v1 共用准入', () => {
   it('今天页等待找题时自动刷新并提供查看进度；完成后停止刷新', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     let release!: () => void;
     env.vision.gate = new Promise<void>(resolve => { release = resolve; });
     try {
@@ -396,15 +393,27 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
     } finally { release(); }
   });
 
-  it('没同意不收照片；同意后上传、登记进本周、原图去掉 EXIF', async () => {
+  it('录入页用示例照片代替拍摄说明，旧同意标记不挡上传，原图去掉 EXIF', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    expect(await browser.text('/s/capture')).toContain('上传前看一下');
-    const refused = await uploadPhoto(browser, await photo('#f0d0c8'));
-    expect(refused.status).toBe(403);
-    expect(getDb().prepare('SELECT COUNT(*) AS n FROM v2_photo').get()).toEqual({ n: 0 });
-    expect((await browser.post('/s/consent')).headers.get('location')).toBe('/s/capture');
-    expect(browser.cookies.get('sel_consent')).toBe('v2');
+    browser.cookies.set('sel_consent', 'v1');
+    const html = await browser.text('/s/capture');
+    expect(html).toContain('<h1>错题录入</h1>');
+    expect(html).toContain('data-testid="capture-examples"');
+    expect(html).toContain('平放、拍全、光线均匀');
+    expect(html).toContain(CAPTURE_EXAMPLE_PAGE.path);
+    expect(html).toContain(CAPTURE_EXAMPLE_QUESTION.path);
+    expect(html).not.toContain('阿里云');
+    expect(html).not.toContain('上传前看一下');
+    expect(html).not.toContain('把卷子平放在桌上');
+    expect(html).not.toContain('/s/consent');
+    for (const asset of [CAPTURE_EXAMPLE_PAGE, CAPTURE_EXAMPLE_QUESTION]) {
+      const image = await browser.get(asset.path);
+      expect(image.status).toBe(200);
+      expect(image.headers.get('content-type')).toContain('image/jpeg');
+      expect(image.headers.get('cache-control')).toContain('immutable');
+      expect((await image.arrayBuffer()).byteLength).toBe(asset.bytes.length);
+    }
     const tagged = await sharp({ create: { width: 500, height: 650, channels: 3, background: '#f0d0c8' } }).withExif({ IFD0: { Artist: 'SYNTHETIC-EXIF-MARKER' } }).jpeg().toBuffer();
     expect((await sharp(tagged).metadata()).exif).toBeDefined();
     const response = await uploadPhoto(browser, tagged);
@@ -423,7 +432,6 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
   it('PNG 转成 JPEG；读不出来的文件给出换一张的提示', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const png = await sharp({ create: { width: 400, height: 520, channels: 3, background: '#c8d0f0' } }).png().toBuffer();
     expect((await uploadPhoto(browser, png, 'image/png')).status).toBe(200);
     const broken = await uploadPhoto(browser, Buffer.from('definitely not an image'));
@@ -438,7 +446,6 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
     // 2026-10-15 线上修复：这两类在服务器读不了时不能一律「读不出来」，要给出能操作的提示
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     // 合成 HEIC：只有 ftyp 盒子（无隐私、无真实照片），sharp 必然解码失败，服务器按格式识别
     const heic = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(12)]);
     const heicResponse = await uploadPhoto(browser, heic, 'image/heic');
@@ -465,7 +472,6 @@ describe('拍照上传：先同意，再上传；去掉拍摄信息；与 /v1 �
   it('磁盘不足时与 /v1 一样拒收（准入规则只有一份）', async () => {
     const env = await setup({ admission: new AdmissionController({ diskProbe: async () => 1n, dataUsageProbe: async () => 0n }) });
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const response = await uploadPhoto(browser, await photo('#f0d0c8'));
     expect(response.status).toBe(503);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM v2_photo').get()).toEqual({ n: 0 });
@@ -476,7 +482,6 @@ describe('勾出做错的题：没批改的页由学生勾，勾了才精读', (
   it('没批改痕迹的页：今天说「勾出错题」，勾 2 道后进错题本；「这页没有做错的题」只记在 cookie', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const { jobId } = await (await uploadPhoto(browser, await photo('#c8d0f0'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
     const today = await browser.visibleText('/s/photos');
@@ -508,7 +513,6 @@ describe('错题页学科切换', () => {
   it('筛选当前题目、数量和历史题目，记住选择并保留旧学科与未分类入口', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent', { agree: 'yes' });
     const upload = await uploadPhoto(browser, await photo('#d34040'));
     expect(upload.status).toBe(200);
     const { jobId } = await upload.json() as { jobId: string };
@@ -557,7 +561,6 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
   for (const marked of [true, false]) it(`5 道练习生成后补充 2 道（${marked ? '自动识别' : '学生勾选'}），快照、题号、进度及已有做题记录不变`, async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     env.vision.questionCount = 5;
     const first = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(first.jobId)).status === 'completed');
@@ -635,7 +638,6 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
 
   async function chosen(env: Setup): Promise<{ browser: Browser; packetId: string; itemIds: string[] }> {
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const { jobId } = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
     const choose = await browser.text('/s/choose');
@@ -957,15 +959,15 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(getDb().prepare('SELECT completion,hint_level FROM review_attempt WHERE packet_id = ?').get(packetId)).toEqual({completion:'hint_used',hint_level:2});
   });
 
-  it('后发起的小图重拍不被较慢的旧上传覆盖，未同意上传说明时不接收作答', async () => {
+  it('后发起的小图重拍不被较慢的旧上传覆盖，旧同意标记也不挡住上传', async () => {
     const env = await setup(); const {browser,packetId,itemIds} = await chosen(env);
     const {attachWork,latestWork} = await import('../../src/v2/practiceWork.js');
     const large = await photo('#eeeeee',3900), small = await photo('#dddddd',32);
     const [older,newer] = await Promise.all([attachWork(packetId,itemIds[0]!,crypto.randomUUID(),large),attachWork(packetId,itemIds[0]!,crypto.randomUUID(),small)]);
     expect(older.id).not.toBe(newer.id);expect(latestWork(packetId,itemIds[0]!)?.id).toBe(newer.id);
-    browser.cookies.delete('sel_consent');
+    browser.cookies.set('sel_consent', 'v1');
     const form = new FormData(); form.append('key',crypto.randomUUID());form.append('photo',new Blob([new Uint8Array(small)],{type:'image/jpeg'}),'work.jpg');
-    expect((await browser.request(`/s/practice/${packetId}/${itemIds[0]}/work`,{method:'POST',body:form,headers:{accept:'application/json'}})).status).toBe(403);
+    expect((await browser.request(`/s/practice/${packetId}/${itemIds[0]}/work`,{method:'POST',body:form,headers:{accept:'application/json'}})).status).toBe(200);
   });
 
   it('AI 只问、只建议；没选把握不能提交；提交后才有复盘记录；跳过一道后去打印', async () => {
@@ -1110,7 +1112,6 @@ describe('互动记录：每个动作只记时间、路由模板、动作标识�
     browser.cookies.set('sel_tap', encodeURIComponent('d4e5f6.primary.capture@/s/capture|e7.error.mic_denied@/s/why/pkt_0123456789abcdef/itm_0123456789abcdef'));
     const beacon = await browser.request('/s/capture', { method: 'HEAD' });
     expect(beacon.status).toBe(204);
-    await browser.post('/s/consent');
     await browser.post('/s/skip', { step: 'shoot' });
     expect((await uploadPhoto(browser, Buffer.from('definitely not an image'))).status).toBe(400);
     expect((await browser.get('/s/items/itm_0123456789abcdef')).status).toBe(404);
@@ -1128,7 +1129,6 @@ describe('互动记录：每个动作只记时间、路由模板、动作标识�
       'view /s/capture#open',
       'tap /s/capture#primary.capture',
       'error /s/why/:pid/:itemId#client:mic_denied',
-      'submit /s/consent#submit',
       'skip /s/skip#shoot',
       'error /s/capture#400:unreadable',
       'error /s/items/:id#404',
@@ -1149,7 +1149,6 @@ describe('互动记录：每个动作只记时间、路由模板、动作标识�
   it('这周的练习纸生成以后又拍了卷子：「勾出做错的题」说明新题去哪，主按钮回到今天（门槛 G3）', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const first = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(first.jobId)).status === 'completed');
     const choose = await browser.text('/s/choose');
@@ -1179,7 +1178,6 @@ describe('稀疏的屏用现有数据填满；服务器忙页不替没连上的�
   it('说说为什么错开头、说完了、打印首屏、以前的练习都列出这份练习里的题', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const job = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
     const choose = await browser.text('/s/choose');
@@ -1275,7 +1273,6 @@ describe('等 AI 的页面：局部轮询代替整页刷新（quality round 2）
     env.vision.gate = new Promise<void>(resolve => { release = resolve; });
     const browser = await pairBrowser(env);
     const [device] = await env.manager.listDevices();
-    await browser.post('/s/consent');
     const { jobId } = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
 
     const waiting = await browser.text('/s/photos');
@@ -1311,7 +1308,6 @@ describe('等 AI 的页面：局部轮询代替整页刷新（quality round 2）
   it('练习纸准备中：进度、已经等了多久（从开始准备算，只读现有的一列）、按进度推算还要多久；准备好了就不再轮询', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const job = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
     const choose = await browser.text('/s/choose');
@@ -1347,7 +1343,6 @@ describe('打印页与练习纸单独页的首屏（quality round 2；纸面本�
   it('先是第 1 道题原样原大小，再是题目清单，整张 A4 是可展开的缩略图；单独页打印之前主按钮是「打印」；哪里都不替他说「已打印」', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const job = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
     const choose = await browser.text('/s/choose');
@@ -1425,7 +1420,6 @@ describe('性能卫生（quality round 2，代码这一侧）：带指纹的静�
   it('题目裁图：thumb / list / big 按显示尺寸的 2 倍以内缩小，从不放大；不带尺寸的是原图；图片仍然不缓存', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const job = await (await uploadPhoto(browser, await photo('#f0d0c8', 2400))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(job.jobId)).status === 'completed');
     const items = await browser.text('/s/items');
@@ -1462,7 +1456,6 @@ describe('年级、学科、章节分类', () => {
     const env = await setup();
     env.vision.questionCount = count;
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     expect((await uploadPhoto(browser, await photo('#fa8080'))).status).toBe(200);
     await waitFor(async () => { await browser.get('/s/items'); return (getDb().prepare('SELECT COUNT(*) AS n FROM error_item').get() as {n:number}).n === count; });
     const rows = getDb().prepare('SELECT id FROM error_item ORDER BY item_index').all() as {id:string}[];
@@ -1639,7 +1632,6 @@ describe('single-question learning detail', () => {
   async function fixture(options: Parameters<typeof setup>[0] = {}) {
     const env = await setup(options);
     const browser = await pairBrowser(env);
-    await browser.post('/s/consent');
     const {jobId} = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as {jobId:string};
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
     await browser.get('/s/items');

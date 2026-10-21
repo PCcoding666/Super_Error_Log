@@ -6,7 +6,7 @@ import type { PhotoView } from '../../src/web/state.js';
 export const FIXTURE_DATE = '2026-10-17T02:00:00.000Z';
 export const FIXTURE_WEEK = '2026-W42';
 export const SCENARIOS = [
-  ['login', '邀请码登录'], ['today', '今天'], ['consent', '上传说明'],
+  ['login', '邀请码登录'], ['today', '今天'],
   ['capture', '拍照'], ['photos', '照片识别状态'], ['pick', '勾出错题'],
   ['items', '题目列表'], ['practices', '以前的练习'], ['item', '题目详情'], ['choose', '选题'],
   ['why', '追问'], ['confirm', '确认错因'], ['settings', '设置'], ['install', '主屏幕说明'],

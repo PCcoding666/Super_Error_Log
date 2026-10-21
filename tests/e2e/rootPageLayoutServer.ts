@@ -1,5 +1,8 @@
 /** Production SSR and assets with synthetic data; no student storage or AI calls. */
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CLIENT_SCRIPT, CSS_PATH, JS_PATH, STYLES } from '../../src/web/assets.js';
 import type { PhotoView } from '../../src/web/state.js';
@@ -25,6 +28,10 @@ const server = http.createServer((request, response) => {
     const [width, height] = number % 2 ? [900, 1600] : [1600, 900];
     response.setHeader('content-type', 'image/svg+xml');
     response.end(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="#667766"/></svg>`);
+  } else if (/^\/s\/assets\/capture-(page|question)\.[0-9a-f]{10}\.jpg$/.test(url.pathname)) {
+    const name = url.pathname.includes('question') ? 'capture-question.jpg' : 'capture-page.jpg';
+    response.setHeader('content-type', 'image/jpeg');
+    response.end(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../src/web/examples', name)));
   } else if (url.pathname === '/s/capture') {
     const count = Number(url.searchParams.get('count') ?? 8);
     const photos: PhotoView[] = Array.from({ length: count }, (_, index) => ({

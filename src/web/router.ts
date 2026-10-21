@@ -56,12 +56,12 @@ import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection 
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
 import { registerStaticAssets } from './staticAssets.js';
 import { displayImage, displaySize } from './images.js';
-import { COOKIE, clearCookie, giveConsent, hasConsent, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
+import { COOKIE, clearCookie, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
 import { trailRecorder, trailTaps } from './trail.js';
 import { DEFAULT_TIME_ZONE, localDayOrdinal, localDayText, stepCaption, type StepKind } from './weekPlan.js';
 import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, PairPage, TodayPage, type BusyReason, type TodayWait } from './views/today.js';
-import { CapturePage, ConsentPage, PhotosPage, PickPage, findingSince } from './views/photos.js';
+import { CapturePage, PhotosPage, PickPage, findingSince } from './views/photos.js';
 import { CategoryEditPage, EditPage, FixPage, ItemDetailPage, ItemsPage } from './views/items.js';
 import {
   ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage, printExpect,
@@ -400,21 +400,10 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   // ---------- 拍这周的卷子 ----------
   r.get('/capture', page(async (request, response) => {
-    if (!hasConsent(request)) { render(response, ConsentPage()); return; }
     const state = await loadToday(ctx, request);
     const next = { title: '查看错题', href: '/s/items' };
     const err = UPLOAD_ERRORS[str(request.query.err)] ?? null;
     render(response, CapturePage({ photos: state.photos, next, caption: '', flash: { err } }));
-  }));
-
-  r.post('/consent', form, page((request, response) => {
-    if (options.materials && request.body?.namespace && request.body.namespace !== options.materials.store.getWorkspace().draftNamespace) { response.status(409).send('登录的账号已变化，请重新打开页面。'); return; }
-    giveConsent(request, response);
-    const questionId = str(request.body?.questionId);
-    const attemptId = str(request.body?.attemptId);
-    if (questionId) { response.redirect(303, `/s/capture?questionId=${encodeURIComponent(questionId)}${attemptId ? `&attemptId=${encodeURIComponent(attemptId)}` : ''}`); return; }
-    const returnTo = str(request.body?.returnTo);
-    response.redirect(303, /^\/s\/practice\/pkt_[0-9a-f]{16}\?item=itm_[0-9a-f]{16}&view=upload$/.test(returnTo) ? returnTo : '/s/capture');
   }));
 
   r.post('/capture', async (request, response, next) => {
@@ -423,13 +412,6 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       if (wantsJson(request)) { response.status(status).json({ error: { code, message: UPLOAD_ERRORS[code] ?? '没传上去。' } }); return; }
       response.redirect(303, `/s/capture?err=${code}`);
     };
-    if (!hasConsent(request)) {
-      // 第一次上传前必须先看「上传前看一下」并同意；没同意的照片不收（也不读进内存以外的任何地方）。
-      failed(response, 'consent_required');
-      if (wantsJson(request)) { response.status(403).json({ error: { code: 'consent_required', message: '第一次上传前，先看一下上传说明。' } }); return; }
-      response.redirect(303, '/s/capture');
-      return;
-    }
     const admission = options.admission;
     const reserve = admission ? trackUploadAdmission(admission, response) : null;
     try {

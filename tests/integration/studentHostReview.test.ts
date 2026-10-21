@@ -269,7 +269,8 @@ it('clears previous student business cookies on a successful invitation login', 
   const response = await env.post('/s/login', { cookie: 'sel_photos=old; sel_skip=old; sel_consent=old' }, new URLSearchParams({ code: next.code }).toString());
   expect(response.status).toBe(303);
   const cookies = response.headers.getSetCookie().join('\n');
-  for (const name of ['sel_photos', 'sel_skip', 'sel_consent', 'sel_tap', 'sel_device']) expect(cookies).toMatch(new RegExp(`${name}=;[^\\n]*Max-Age=0`, 'i'));
+  for (const name of ['sel_photos', 'sel_skip', 'sel_tap', 'sel_device']) expect(cookies).toMatch(new RegExp(`${name}=;[^\\n]*Max-Age=0`, 'i'));
+  expect(cookies).not.toMatch(/sel_consent=/i);
 });
 
 it('forwards the existing tap cookie and its clearing response without exposing an internal device token', async () => {

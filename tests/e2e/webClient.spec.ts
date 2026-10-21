@@ -253,7 +253,7 @@ async function allTrail(): Promise<string[]> {
 }
 const count = (lines: string[], line: string): number => lines.filter(entry => entry === line).length;
 
-/** 新开一台「手机」并连上（点配对链接 → 连接这台手机）；同意过上传说明。 */
+/** 新开一台「手机」并连上（点配对链接 → 连接这台手机）。 */
 async function pairedPage(browser: Browser, options: BrowserContextOptions = {}): Promise<Page> {
   const context = await browser.newContext({ ...DEVICE, ...options });
   const page = await context.newPage();
@@ -261,8 +261,6 @@ async function pairedPage(browser: Browser, options: BrowserContextOptions = {})
   await page.goto(link.replace('https://study.pccoding666.com', WEB));
   await primary(page).click();
   await page.waitForURL(/\/s\/\?paired=1$/);
-  const consent = await page.request.post(`${WEB}/s/consent`, { headers: { origin: WEB }, maxRedirects: 0 });
-  expect(consent.status()).toBe(303);
   return page;
 }
 

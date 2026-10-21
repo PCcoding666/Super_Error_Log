@@ -1,7 +1,5 @@
 import type { PracticeReviewer } from '../ai/practiceReview.js';
 import { practiceSubmissionRouter } from './practiceSubmissionRouter.js';
-import { hasConsent } from './session.js';
-import { ConsentPage } from './views/photos.js';
 import multer from 'multer';
 import { handwritingRecognizer, type HandwritingRecognizer } from '../ai/handwriting.js';
 import { attachWork, latestWork, recognizeWork, workImage } from '../v2/practiceWork.js';
@@ -43,7 +41,6 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; practic
     const view = selectedView ?? String(req.query.view ?? '');
     if (itemId && !p.items.some(item => item.id === itemId)) { res.status(404).send('题目不在此练习中'); return; }
     if (itemId && taskLifecycle(p.id)!=='cancelled') savePracticeCursor(p.id,itemId);
-    if (view === 'upload' && itemId && !hasConsent(req)) { sendHtml(res, ConsentPage({returnTo:`/s/practice/${p.id}?item=${itemId}&view=upload`})); return; }
     sendHtml(res, OnlinePracticePage({ practice: p, lifecycle:taskLifecycle(p.id), progress: practiceProgress(p.id), state: String(body.status), snapshot: body.status === 'ready' ? body.snapshot as PrintSnapshot : undefined, itemId, view, paper: req.query.mode === 'paper', today: localDayText(options.now(), options.timeZone), earliestDay: localDayText(new Date(p.generatedAt ?? p.createdAt), options.timeZone), works: Object.fromEntries(p.items.map(item => [item.id, latestWork(p.id, item.id)])), error }));
   };
   router.get('/practice/:pid', (req, res) => show(req, res));
@@ -58,7 +55,6 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; practic
   };
   const upload = multer({ storage: multer.memoryStorage(), limits: {fileSize:15*1024*1024, files:2, fields:4, parts:8} }).array('photo', 2);
   router.post('/practice/:pid/:itemId/work', member, async (req, res) => {
-    if (!hasConsent(req)) {res.status(403).json({error:{message:'请先确认上传说明'}});return;}
     const gate = options.limiter.transcribe(String(res.locals.deviceId));
     if (!gate.allowed) { res.setHeader('retry-after', String(gate.retryAfterSeconds)); res.status(429).json({error:{message:'上传次数较多，请稍后再试，也可以直接核对。'}}); return; }
     const dest = `/s/practice/${req.params.pid}?item=${req.params.itemId}&view=check`;
@@ -104,7 +100,6 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; practic
   });
   router.post('/practice/:pid/:itemId/work/retry', member, async (req,res) => {
     const work = latestWork(String(req.params.pid),String(req.params.itemId));
-    if (!hasConsent(req)) {res.status(403).json({error:{message:'请先确认上传说明'}});return;}
     const gate = options.limiter.transcribe(String(res.locals.deviceId));
     if (!gate.allowed) {res.setHeader('retry-after',String(gate.retryAfterSeconds));res.status(429).send('请稍后重试，仍可直接核对');return;}
     if (work) await recognizeWork(work.id, options.handwriting ?? handwritingRecognizer());

@@ -45,7 +45,6 @@ async function fixture(page:Page,request:APIRequestContext,{WEB,CONTROL}:DetailS
   const {link} = await (await request.get(`${CONTROL}/pairing-link`)).json() as {link:string};
   await page.goto(link.replace('https://study.pccoding666.com',WEB));
   await page.getByTestId('next-step-primary').click();
-  await page.request.post(`${WEB}/s/consent`,{headers:{origin:WEB}});
   const before = new Set(idsIn(await (await page.request.get(`${WEB}/s/choose`)).text()));
   const rows = [0,1,2].map(i=>`<g transform="translate(100 ${100+i*420})"><text y="35" font-size="38">${i+1}) ${i+1}x + 3 = ${(i+1)*2+3}</text><text x="120" y="130" font-size="38" fill="#374151">x = ${i+3}</text><path d="M420 95 l35 45 m0 -45 l-35 45" stroke="#ae2932" stroke-width="6"/><text x="150" y="220" font-size="34" fill="#ae2932">Correction: x = 2</text></g>`).join('');
   const photo = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1350"><rect width="100%" height="100%" fill="white"/><g font-family="sans-serif"><text x="20" y="30" font-size="18">Synthetic ${crypto.randomBytes(4).toString('hex')}</text>${rows}</g></svg>`)).jpeg().toBuffer();

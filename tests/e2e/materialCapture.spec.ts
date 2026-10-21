@@ -53,9 +53,10 @@ async function enter(page: Page, gateway: {
     await page.getByLabel('12 位邀请码').fill(gateway.codes[index]!);
     await page.getByRole('button', { name: '进入我的错题本' }).click();
     await page.goto(gateway.base + '/s/capture');
-    await page.getByRole('button', { name: '同意，上传', exact: true }).click();
-    // Consent redirects back to the same URL. Wait for the new capture document before installing request interception.
     await expect(page.locator('[data-material-capture]')).toBeVisible();
+    await expect(page.getByTestId('capture-examples')).toBeVisible();
+    await expect(page.getByText('阿里云')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '同意，上传' })).toHaveCount(0);
 }
 async function jpeg() { return { name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: '#fff' } }).jpeg().toBuffer() }; }
 test('finishes continuous and multi-photo capture without a per-photo picker', async ({ page, gateway }) => {
@@ -89,7 +90,6 @@ test('does not accept a queued student A request after switching to B', async ({
     const response = await page.request.post(gateway.base + '/s/materials/captures', { headers: { accept: 'application/json', 'x-draft-namespace': ns! }, data: { requestId: crypto.randomUUID() } });
     expect(response.status()).toBe(409);
     await page.goto(gateway.base + '/s/capture');
-    await page.getByRole('button', { name: '同意，上传', exact: true }).click();
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 0 张');
 });
 test('new queue normalizes a 48MP image to a real bounded JPEG and tags remain optional', async ({ page, gateway }) => {
@@ -211,7 +211,6 @@ test('same-student reauthentication resumes retained drafts and a stale settings
     await page.unroute('**/s/materials/uploads**');
     await page.request.post(gateway.base + '/s/login', { form: { code: gateway.codes[2]! } });
     await page.reload();
-    await page.getByRole('button', { name: '同意，上传', exact: true }).click();
     await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
     const oldNamespace = await settings.locator('input[name=namespace]').first().inputValue();
