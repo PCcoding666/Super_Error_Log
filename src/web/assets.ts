@@ -474,6 +474,46 @@ html:has(body.has-tabbar){scroll-padding-bottom:calc(6.625rem + env(safe-area-in
 .choose-list .choice.pick input{position:absolute;width:44px;height:44px;opacity:0}
 .choose-list .choice.pick{position:relative}
 .group-footer{margin:8px 16px 0;color:var(--muted);font-size:var(--fs-2)}
+/* 学习材料：叠放胶囊按钮留 12px（间距刻度 8–12）；去下一屏用内嵌列表行，展开用披露行，不再用裸蓝字或系统 ▶。 */
+.material-surface .btn-stack{display:flex;flex-direction:column;align-items:stretch;gap:var(--s-3);margin:var(--s-4) 0}
+.material-surface .btn-stack>.btn{width:100%;flex:none}
+.material-surface .inset-group{margin:12px 0}
+.material-surface .group-label{margin:22px 16px 8px}
+.material-surface .group-footer{margin:6px 16px 18px}
+.material-surface .group-pad{padding:16px 16px 4px}
+.material-surface .group-pad>h2{margin:0 0 8px;font-size:var(--fs-4)}
+.material-surface .group-pad .btn{margin:12px 0 8px}
+.material-surface .nav-title{margin:0;font-size:inherit;font-weight:inherit;line-height:inherit}
+.material-surface a.nav-row,.material-surface button.nav-row{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:12px 16px;border:0;background:transparent;color:var(--ink);font:inherit;font-weight:600;line-height:var(--lh-tight);text-align:left;text-decoration:none;cursor:pointer}
+.material-surface .nav-row .row-text{flex:1;min-width:0}
+.material-surface .nav-row .chev{flex:none}
+.material-surface .asset-row{display:flex;align-items:center;gap:12px;min-height:84px;padding:12px 16px;text-decoration:none;color:inherit}
+.material-surface .asset-row h3{margin:0;font-size:var(--fs-3);font-weight:600;line-height:var(--lh-tight)}
+.material-surface .asset-thumb{width:64px;height:64px;flex:none;object-fit:contain;object-position:center;border-radius:10px;background:var(--surround)}
+.material-surface .asset-row .meta-line{white-space:normal;overflow:visible;text-overflow:clip;text-wrap:pretty}
+.material-surface .break-anywhere{overflow-wrap:anywhere}
+.material-surface .row-detail{padding:0 16px 10px}
+.material-surface .row-detail p{margin:4px 0}
+.material-surface .inset-group>*+*:not(.row-detail){background-image:linear-gradient(var(--line),var(--line));background-repeat:no-repeat;background-size:calc(100% - 16px) 1px;background-position:right top}
+.material-surface .disclosure>summary{display:flex;align-items:center;gap:12px;min-height:52px;padding:12px 16px;list-style:none;cursor:pointer;font-weight:600;color:var(--ink)}
+.material-surface .disclosure>summary::-webkit-details-marker{display:none}
+.material-surface .disclosure>summary::after{content:"";width:7px;height:7px;margin-left:auto;flex:none;border-right:1.8px solid var(--muted);border-bottom:1.8px solid var(--muted);transform:rotate(-45deg)}
+.material-surface .disclosure[open]>summary::after{transform:rotate(45deg)}
+.material-surface .disclosure-body{padding:4px 16px 16px}
+.material-surface .disclosure-body>:first-child{margin-top:0}
+.material-surface .disclosure .disclosure{margin:8px 0 4px;background:var(--paper);border-radius:var(--r-control);overflow:hidden}
+.material-surface .card>.nav-row,.material-surface .card>.disclosure{margin-left:-20px;margin-right:-20px}
+.material-surface .card>.nav-row,.material-surface .card>.disclosure>summary{background-image:linear-gradient(var(--line),var(--line));background-repeat:no-repeat;background-size:calc(100% - 16px) 1px;background-position:right top}
+.material-surface .disclosure-body .btn-stack{margin:12px 0 0}
+.material-surface .disclosure-body .btn-stack>.btn{margin-top:0}
+.material-surface .disclosure-body form>.btn,.material-surface .disclosure-body>.btn{margin-top:12px}
+.material-surface .disclosure-body>.nav-row{margin:8px -16px 0;background-image:linear-gradient(var(--line),var(--line));background-repeat:no-repeat;background-size:calc(100% - 16px) 1px;background-position:right top}
+.material-surface .inset-group>form .btn{margin:12px 16px;width:calc(100% - 32px)}
+.material-surface .retry-card>.row-detail{padding:12px 16px 0}
+.material-surface .retry-card>.btn-stack{padding:0 16px 16px;margin:0}
+@media (hover:hover){.material-surface a.nav-row:hover,.material-surface .asset-row:hover,.material-surface .disclosure>summary:hover{background-color:color-mix(in srgb,var(--ink) 4%,transparent)}}
+.material-surface a.nav-row:active,.material-surface .asset-row:active,.material-surface .disclosure>summary:active{background-color:color-mix(in srgb,var(--ink) 8%,transparent)}
+@media (forced-colors:active){.material-surface .inset-group{border:1px solid CanvasText}}
 .practice-adjust{display:flex;align-items:center;justify-content:space-between;min-height:52px;margin:8px 0 12px;padding:0 16px;background:var(--card);border-radius:var(--r-2);color:var(--accent);text-decoration:none;font-weight:600}
 .practice-cta{position:fixed;z-index:12;left:0;right:0;bottom:calc(6.625rem + env(safe-area-inset-bottom));width:min(536px,100%);margin:0 auto;padding:8px var(--page-inset) 4px}
 .practice-cta .btn{width:100%}
@@ -541,7 +581,7 @@ body.sheet-is-open{overflow:hidden}
 .week-sheet .rhythm{margin:var(--s-5) 0 var(--s-3);background:var(--paper)}
 .week-sheet .steps{margin-top:var(--s-4)}
 .week-sheet .steps .current{background:var(--mint)}
-@supports (corner-shape:squircle){.today-focus,.today-library .list,.week-sheet,.card{corner-shape:squircle}}
+@supports (corner-shape:squircle){.today-focus,.today-library .list,.week-sheet,.card,.material-surface .inset-group{corner-shape:squircle}}
 @media (min-width:720px){.week-sheet{inset:0;max-height:min(82dvh,780px);height:fit-content;margin:auto;border-radius:28px}.week-sheet .sheet-toolbar{border-radius:28px 28px 0 0}}
 @media (max-width:360px){.today-focus{padding:20px}.week-sheet [data-sheet-content]{padding-left:20px;padding-right:20px}.week-overview>summary{gap:8px}}
 @media (max-width:240px){.week-overview>summary{flex-wrap:wrap}.week-overview-label{flex-basis:100%}.week-overview-meta{flex:1;text-align:left}}
