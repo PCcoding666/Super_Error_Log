@@ -1825,8 +1825,33 @@ describe('single-question learning detail', () => {
     const packetPath = destination.split('?')[0]!;
     const pid = packetPath.split('/').pop()!;
     getDb().prepare('UPDATE review_packet SET generated_at=? WHERE id=?').run(generated.toISOString(),pid);
+    // 延迟从录入日算（P0-3）：录入也拨到同一时刻。
+    getDb().prepare('UPDATE error_item SET created_at=? WHERE id=?').run(generated.toISOString(),id);
     await browser.post(`${packetPath}/${id}/result`,{correct:'yes',performedOn:new Date().toLocaleDateString('en-CA')});
     expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(id)).toEqual({status:'temporarily_mastered'});
     expect(await browser.visibleText(`/s/items/${id}`)).toContain('隔 3 天独立做对');
+  });
+  it('same-day correct tells the student the exact redo date, and the home page prompts once it is due (P0-3)', async () => {
+    const {browser,id} = await fixture();
+    const started = await browser.post(`/s/items/${id}/practice`);
+    const destination = started.headers.get('location')!;
+    await waitFor(async () => (await browser.text(destination)).includes('practice-question'));
+    const packetPath = destination.split('?')[0]!;
+    const today = new Date();
+    const due = new Date(today.getTime() + 3 * 86400000);
+    await browser.post(`${packetPath}/${id}/result`,{correct:'yes',performedOn:today.toLocaleDateString('en-CA')});
+    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(id)).toEqual({status:'attempted'});
+    const dueText = `${due.getMonth()+1} 月 ${due.getDate()} 日`;
+    expect(await browser.visibleText(`${packetPath}/feedback`)).toContain(`下次再做：${dueText}（3 天后）`);
+    const practices = await browser.visibleText('/s/practices');
+    // 当天做对的这道在冷却期：不在「就练这几道」里，只给日期。
+    expect(practices).toContain(`下次再做：${dueText}（1 道）`);
+    expect(practices).toContain('就练这 2 道');
+    expect(await browser.visibleText('/s/')).not.toContain('该再做了');
+    // 3 天后：首页提示到期。
+    getDb().prepare('UPDATE review_attempt SET performed_at=? WHERE item_id=?').run(new Date(today.getTime() - 3 * 86400000).toLocaleDateString('en-CA'),id);
+    getDb().prepare('UPDATE error_item SET created_at=? WHERE id=?').run(new Date(today.getTime() - 4 * 86400000).toISOString(),id);
+    expect(await browser.visibleText('/s/')).toContain('今天有 1 道题该再做了');
+    expect(await browser.visibleText('/s/practices')).toContain('就练这 3 道');
   });
 });

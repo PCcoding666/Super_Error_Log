@@ -1,4 +1,5 @@
 import type { LearningCard, LearningScope } from '../learning/contracts.js';
+import { cooldownUntil } from '../learning/redoSchedule.js';
 import { learningPacketAllowed, learningCard, legacyCard } from '../learning/sources.js';
 /**
  * v2.0 T4d：回传与回报。
@@ -122,6 +123,10 @@ export interface LearningReturnSummary {
   calibration: { confidentTotal: number; missedCount: number; text: string | null; items: LearningCard[] };
   /** 本包新进入暂时掌握的题中最早的确认日期（YYYY-MM-DD，仅日期）；无则 null。 */
   nextConfirmOn: string | null;
+  /** 本包当天做对（pending）的题最早哪天再做才算数：上次作答日 + 3 天（YYYY-MM-DD）；无则 null。 */
+  pendingRedoOn: string | null;
+  /** 「X 月 X 日再做」：pendingRedoOn 与 nextConfirmOn 里较早的一天；无则 null。 */
+  nextRedoOn: string | null;
 }
 
 type SummaryRow = {
@@ -178,7 +183,17 @@ export function getLearningReturnSummary(packetId: string, scope:LearningScope='
     .map(row => (row.next_review_at as string).slice(0, 10))
     .sort();
 
+  const pendingDays = rows
+    .filter(row => isIndependentCorrect(row) && row.status === 'attempted')
+    .map(row => cooldownUntil(row.id))
+    .filter((day): day is string => day !== null)
+    .sort();
+  const pendingRedoOn = pendingDays[0] ?? null;
+  const nextRedoOn = [pendingRedoOn, confirmDates[0] ?? null].filter((day): day is string => day !== null).sort()[0] ?? null;
+
   return {
+    pendingRedoOn,
+    nextRedoOn,
     answered: rows.filter(row => row.att_completion !== null).length,
     total: rows.length,
     independentCorrect: rows.filter(isIndependentCorrect).length,

@@ -9,6 +9,8 @@ export interface ItemPracticeRecord {
   completion?: string | null;
   hint_level?: number | null;
   generated_day?: string | null;
+  /** 延迟锚点：这次之前最近一次作答日，没有则为录入日；缺省时退回练习纸生成日（旧数据）。 */
+  anchor_day?: string | null;
   created_at?: string;
 }
 
@@ -23,8 +25,9 @@ export function attemptLabel(record: ItemPracticeRecord): string {
   }
   if (record.completion !== 'independent') return record.correct ? '做对了（未记录完成方式）' : '做错了（未记录完成方式）';
   if (!record.correct) return '独立作答做错';
-  const days = record.generated_day && record.performed_at
-    ? (Date.parse(record.performed_at) - Date.parse(record.generated_day)) / 86400000 : NaN;
+  const anchor = record.anchor_day ?? record.generated_day;
+  const days = anchor && record.performed_at
+    ? (Date.parse(record.performed_at) - Date.parse(anchor)) / 86400000 : NaN;
   if (!Number.isInteger(days) || days < 0) return '独立做对（缺少延迟日期记录）';
   if (days < MIN_DELAY_DAYS) return `${days === 0 ? '当天' : `隔 ${days} 天`}独立做对 · 未计入延迟掌握`;
   return `隔 ${days} 天独立做对`;

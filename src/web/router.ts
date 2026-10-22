@@ -43,7 +43,7 @@ import { isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { getLearningSource, learningCard, materialStoreForItem, learningImageFragments } from '../learning/sources.js';
 import { setQuestionIncluded } from '../materials/learning.js';
-import { getLearningWeek } from '../learning/queries.js';
+import { getLearningWeek, learningRedoOverview } from '../learning/queries.js';
 import type { LearningCard as V2WeekItem } from '../learning/contracts.js';
 import { getItemFullCrop } from '../v2/fullCrop.js';
 import { getV2Settings, updateV2Settings } from '../v2/settingsService.js';
@@ -591,7 +591,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       selection:selecting,
       category:{grade,subject,subjects,stages:stageOptions},anyPhoto:state.week.photos.length > 0,
       finding:state.photos.some(photo=>photo.state === 'finding'),
-      bar:{caption:'',primary:null,secondary:[]},removed,materials:!!ctx.materials,
+      bar:{caption:'',primary:null,secondary:[]},removed,materials:!!ctx.materials,redo:learningRedoOverview('all'),
       flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null,err:!validReturnSelection && request.method !== 'POST' ? '返回的选题信息不可用，请重新选择。' : null}};
   };
   const itemsPage = async (request: Request, response: Response): Promise<ReactNode> => ItemsPage(await notebookData(request,response));
@@ -651,13 +651,20 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       LEFT JOIN review_attempt ra ON ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id
       WHERE rpi.item_id = ? ORDER BY COALESCE(ra.performed_at, rp.created_at) DESC, rp.created_at DESC, rp.rowid DESC`).all(itemId) as unknown as Array<ItemPracticeRecord & {generated_at:string|null}>;
     const reflection = getV2Reflection(itemId)?.reflection ?? null;
+    const intakeAt = (getDb().prepare('SELECT created_at FROM error_item WHERE id = ?').get(itemId) as {created_at:string} | undefined)?.created_at;
     return ItemDetailPage({
       item, images: learningImageFragments(itemId), evidence: getEvidenceView(itemId),
       canDiscard: item.source.kind === 'material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
       reflected: reflection != null, reflection, error, returnTo, timeZone: ctx.timeZone,
       eligible: [...recommend.recommended, ...recommend.others].some(candidate => candidate.id === itemId),
       resumePracticeId: unfinishedPractice(itemId), reflectionPracticeId: history[0]?.id,
-      practiceHistory: history.map(record => ({ ...record, generated_day: record.generated_at ? localDayText(new Date(record.generated_at), Intl.DateTimeFormat().resolvedOptions().timeZone) : null })),
+      practiceHistory: history.map((record, index) => ({
+        ...record,
+        generated_day: record.generated_at ? localDayText(new Date(record.generated_at), Intl.DateTimeFormat().resolvedOptions().timeZone) : null,
+        // 「隔几天」与掌握判定同一锚点：更早一次作答日，没有就是录入日（P0-3）。
+        anchor_day: history.slice(index + 1).find(older => older.performed_at)?.performed_at
+          ?? (intakeAt ? localDayText(new Date(intakeAt), Intl.DateTimeFormat().resolvedOptions().timeZone) : null),
+      })),
     });
   };
 
