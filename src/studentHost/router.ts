@@ -33,6 +33,9 @@ import type { RateLimiter } from '../mobile/rateLimit.js';
 import { sendHtml } from '../views/render.js';
 import { AccountPage, HostErrorPage, LoginPage, PrivacyPage, RegistrationPage, RegistrationCompletePage } from './loginView.js';
 
+/** 「我的邀请码」换码成功的一次性提示（网关自用，不转发给 worker，也不在业务 cookie 白名单里）。 */
+const ACCOUNT_FLASH_COOKIE = 'sel_account_flash';
+
 /** 前台会话 cookie（Path=/s）；与学生 worker 内部的 sel_device 设备令牌完全分开。 */
 export const SESSION_COOKIE = 'sel_student';
 
@@ -330,25 +333,28 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     });
 
     // ---------- 我的邀请码（网关直接处理，不进 worker） ----------
-    r.get(/^\/account\/?$/, (_request, response) => {
+    r.get(/^\/account\/?$/, (request, response) => {
       const info = registry.sessionInvitation(String(response.locals.sessionToken));
       if (!info) { response.redirect(303, '/s/'); return; }
+      // 换码成功的提示只显示一次：读到就清掉（刷新不会再显示，更不会再换一次码）。
+      const regenerated = readCookies(request)[ACCOUNT_FLASH_COOKIE] === '1';
+      if (regenerated) clearCookie(request, response, ACCOUNT_FLASH_COOKIE);
       response.setHeader('referrer-policy', 'no-referrer');
-      sendHtml(response, AccountPage({ ...info, now: now() }));
+      sendHtml(response, AccountPage({ ...info, now: now(), regenerated }));
     });
+    // POST/Redirect/GET：换码成功后 303 回到 /s/account，刷新页面只是重新查看，不会再换一次。
+    // 新码保存在本会话可解的副本里，跳转后的页面照样能看到、能复制。
     r.post(/^\/account\/regenerate\/?$/, form, (request, response) => {
       if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
-      const token = String(response.locals.sessionToken);
       try {
-        registry.regenerateOwnInvitation(token);
+        registry.regenerateOwnInvitation(String(response.locals.sessionToken));
       } catch (error) {
         if (!(error instanceof RegistryError)) throw error;
         response.redirect(303, '/s/');
         return;
       }
-      const info = registry.sessionInvitation(token);
-      response.setHeader('referrer-policy', 'no-referrer');
-      sendHtml(response, AccountPage({ code: info?.code ?? null, expiresAt: info?.expiresAt ?? null, studentExpiresAt: info?.studentExpiresAt ?? null, now: now(), regenerated: true }));
+      setCookie(request, response, ACCOUNT_FLASH_COOKIE, '1', 120);
+      response.redirect(303, '/s/account');
     });
 
     // ---------- 转发到该学生的独立 worker ----------

@@ -13,7 +13,7 @@
  *   revoke-sessions <studentId>           撤销该学生的全部登录会话。注意：**不作废邀请码**，持码人可以马上再登录；
  *                                         要封禁用 disable，要换码用 reset-invitation
  *   disable <studentId>                   停用：作废全部邀请码和会话，不能再登录；学习数据保留（reset-invitation 恢复）
- *   delete <studentId> --confirm          删除账号和全部学习数据（不可恢复）；要求先 disable 并等 15 分钟
+ *   delete <studentId> --confirm          删除账号和全部学习数据（不可恢复）；要求先 disable，且该学生没有正在运行的进程
  *   export <studentId> <outDir>           导出该学生的登记资料和学习数据副本到 outDir 下的新目录（0700）
  *   registration-code create [--uses N] [--days D] [备注]   生成注册码（班级码），学生注册时必须填；明文只显示一次
  *   registration-code list                列出注册码（编号、备注、已用/上限、状态；不含码本身）
@@ -169,7 +169,7 @@ export function runAdminCli(argv: string[], out: (line: string) => void = consol
         if (rest.length !== 1) return argError('disable 需要学生 ID。');
         const result = registry.disableStudent(rest[0]!);
         out(`学生 ${rest[0]} 已停用：作废 ${result.expiredInvitations} 个邀请码、撤销 ${result.revokedSessions} 个会话。学习数据保留。`);
-        out('要恢复：reset-invitation <studentId>（会发一个新码）。要彻底删除：等 15 分钟后 delete <studentId> --confirm。');
+        out('要恢复：reset-invitation <studentId>（会发一个新码）。要彻底删除：等该学生的进程空闲退出（缺省约 12 分钟）后 delete <studentId> --confirm；还在运行时 delete 会拒绝并说明。');
         return 0;
       }
       case 'delete': {

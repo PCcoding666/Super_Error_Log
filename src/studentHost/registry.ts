@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ACCOUNT_ROLES, isAccountRole, type AccountRole } from './accountRole.js';
+import { liveWorkerPid, WORKER_PID_FILE } from './workerLock.js';
 
 export const MAX_STUDENTS = 100;
 export const INVITATION_TTL_MS = 60 * 24 * 60 * 60 * 1000;
@@ -38,8 +39,6 @@ export const INVITATION_WARN_MS = 7 * 24 * 60 * 60 * 1000;
 const REGISTRATION_CODE_LENGTH = 8;
 export const REGISTRATION_CODE_DEFAULT_DAYS = 14;
 export const REGISTRATION_CODE_DEFAULT_USES = 60;
-/** 删除账号前要求该学生至少这么久没有活动（worker 空闲 12 分钟会退出，留出余量）。 */
-export const DELETE_IDLE_MS = 15 * 60 * 1000;
 
 export type AgeBand = '14plus' | 'under14';
 export interface RegistrationConsent {
@@ -164,6 +163,19 @@ function openCode(sessionToken: string, box: string): string | null {
     const code = Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8');
     return normalizeInviteCode(code);
   } catch { return null; }
+}
+
+/** 真实绝对路径：存在的部分用 realpath 解开符号链接，不存在的尾部原样拼回。 */
+function canonicalPath(input: string): string {
+  let current = path.resolve(input);
+  const rest: string[] = [];
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    rest.unshift(path.basename(current));
+    current = parent;
+  }
+  return path.join(fs.realpathSync(current), ...rest);
 }
 
 function phoneLast4(phone: string | null | undefined): string | null {
@@ -762,7 +774,9 @@ export class StudentRegistry {
 
   /**
    * 删除账号（不可恢复）：删注册表里该学生的会话、邀请码、登记资料和账号行，再删除整个学生目录。
-   * 为了不和仍在运行的学生进程抢文件，要求先停用、且至少 DELETE_IDLE_MS 没有活动。
+   * 前提：① 已经 disable（停用后网关不会再为他启动 worker）；② 该学生没有正在运行的 worker——
+   * 由 worker 自己写的 `.worker.pid` 判活（CLI 是另一个进程，停不了 worker；不靠「多久没活动」推断）。
+   * 有 worker 还活着就拒绝：等它空闲退出，或在发布窗口重启/停止服务后再删。
    * 删除记录（日期 + 账号 ID，不含姓名手机号）追加到 hostDir/deletions.log。
    */
   deleteStudent(studentId: string): { removedDirectory: boolean } {
@@ -770,12 +784,13 @@ export class StudentRegistry {
     const dir = this.studentDir(studentId);
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const row = this.db.prepare('SELECT disabled_at, last_seen_at FROM students WHERE id = ?').get(studentId) as { disabled_at: string | null; last_seen_at: string | null } | undefined;
+      const row = this.db.prepare('SELECT disabled_at FROM students WHERE id = ?').get(studentId) as { disabled_at: string | null } | undefined;
       if (!row) throw new RegistryError('student_not_found', '学生不存在。');
-      const now = this.now().getTime();
-      const lastActivity = Math.max(row.disabled_at ? Date.parse(row.disabled_at) : 0, row.last_seen_at ? Date.parse(row.last_seen_at) : 0);
-      if (row.disabled_at === null || now - lastActivity < DELETE_IDLE_MS) {
-        throw new RegistryError('student_active', `请先运行 disable ${studentId}，等至少 ${Math.round(DELETE_IDLE_MS / 60000)} 分钟（让该学生的进程空闲退出）再删除。`);
+      if (row.disabled_at === null) throw new RegistryError('student_active', `请先运行 disable ${studentId}，再删除。`);
+      const pid = liveWorkerPid(dir);
+      if (pid !== null) {
+        throw new RegistryError('student_active', `这个学生的进程还在运行（${pid > 0 ? `pid ${pid}` : `${WORKER_PID_FILE} 无法识别`}），现在删除会和它抢文件。`
+          + '请等它空闲退出（缺省约 12 分钟；有识别任务时会更久），或停止服务（systemctl stop super-error-log）后再删。');
       }
       this.db.prepare('DELETE FROM sessions WHERE student_id = ?').run(studentId);
       this.db.prepare('DELETE FROM invitations WHERE student_id = ?').run(studentId);
@@ -796,11 +811,20 @@ export class StudentRegistry {
    */
   exportStudent(studentId: string, outDir: string): string {
     if (!/^[0-9a-f-]{36}$/i.test(studentId) || !this.studentExists(studentId)) throw new RegistryError('student_not_found', '学生不存在。');
-    const target = path.join(path.resolve(outDir), `${studentId}-${this.now().toISOString().slice(0, 10)}`);
-    if (fs.existsSync(target)) throw new RegistryError('invalid_registration', `导出目录已存在：${target}`);
     const source = this.studentDir(studentId);
-    if (target.startsWith(this.hostDir + path.sep)) throw new RegistryError('invalid_registration', '不要导出到学生空间目录里面。');
+    // 先把输出目录换成真实路径（解开符号链接；目录还不存在时解开最近的已存在上级），
+    // 再判断是否落在注册库目录或该学生目录里面：符号链接指进去的目标同样拒绝。
+    const realOut = canonicalPath(outDir);
+    const target = path.join(realOut, `${studentId}-${this.now().toISOString().slice(0, 10)}`);
+    if (fs.existsSync(target)) throw new RegistryError('invalid_registration', `导出目录已存在：${target}`);
+    for (const guarded of [this.hostDir, source]) {
+      const real = canonicalPath(guarded);
+      if (target === real || target.startsWith(real + path.sep) || real.startsWith(target + path.sep)) {
+        throw new RegistryError('invalid_registration', '不要导出到学生空间目录里面（含指向那里的符号链接），请换一个目录。');
+      }
+    }
     fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+    if (canonicalPath(target) !== target) throw new RegistryError('invalid_registration', '导出目录在创建过程中被替换，已停止。');
     fs.chmodSync(target, 0o700);
     const student = this.db.prepare('SELECT id, created_at, account_role, last_seen_at, disabled_at FROM students WHERE id = ?').get(studentId);
     const registration = this.db.prepare(`SELECT name, phone, consent_version, consent_at, age_band, guardian_consent, registration_code_id
@@ -817,7 +841,7 @@ export class StudentRegistry {
           const dst = path.join(to, entry.name);
           if (entry.isSymbolicLink()) continue;
           if (entry.isDirectory()) { fs.mkdirSync(dst, { mode: 0o700 }); walk(src, dst); continue; }
-          if (!entry.isFile() || /\.db-(?:wal|shm)$/.test(entry.name)) continue;
+          if (!entry.isFile() || /\.db-(?:wal|shm)$/.test(entry.name) || entry.name === WORKER_PID_FILE) continue;
           if (entry.name.endsWith('.db')) {
             const db = new DatabaseSync(src, { readOnly: true });
             try { db.prepare('VACUUM INTO ?').run(dst); } finally { db.close(); }

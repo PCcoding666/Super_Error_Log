@@ -66,6 +66,10 @@ async function main(): Promise<void> {
     send({ type: 'error', message: 'worker 缺少 SEL_STUDENT_DATA_DIR' });
     process.exit(2);
   }
+  // 存活标记：管理 CLI 删除账号前据此确认没有 worker 还开着这个目录（退出时删掉；被强杀时由 CLI 判活识别）。
+  const { clearWorkerPid, writeWorkerPid } = await import('./workerLock.js');
+  writeWorkerPid(studentDir);
+  process.on('exit', () => clearWorkerPid(studentDir));
   // 必须在任何业务模块加载前固定（config.ts 在 import 时读环境变量）。
   process.env.SEL_DATA_DIR = studentDir;
   process.env.SEL_MOBILE_DATA_DIR = studentDir;

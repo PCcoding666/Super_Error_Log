@@ -10,7 +10,10 @@ import { DatabaseSync } from 'node:sqlite';
 import express from 'express';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DELETE_IDLE_MS, SESSION_TTL_MS, StudentRegistry } from '../../src/studentHost/registry.js';
+import { SESSION_TTL_MS, StudentRegistry } from '../../src/studentHost/registry.js';
+import { StudentWorkerPool } from '../../src/studentHost/workers.js';
+import { liveWorkerPid, WORKER_PID_FILE, writeWorkerPid } from '../../src/studentHost/workerLock.js';
+import { spawn } from 'node:child_process';
 import { createStudentHostGateway, SESSION_COOKIE, type StudentHostGateway } from '../../src/studentHost/router.js';
 import { AttemptGuard, codeKey, LOGIN_LIMITS } from '../../src/studentHost/attemptGuard.js';
 import { runAdminCli } from '../../src/studentHost/admin-cli.js';
@@ -292,8 +295,19 @@ describe('会话续期与我的邀请码（P0-11）', () => {
 
     expect((await env.post('/s/account/regenerate', {}, { cookie: phone, origin: 'https://attacker.invalid' })).status).toBe(403);
     const regenerated = await env.post('/s/account/regenerate', {}, { cookie: phone });
-    expect(regenerated.status).toBe(200);
-    const next = codeFrom(await regenerated.text(), 'my-invite-code');
+    // POST/Redirect/GET：成功后 303 回到查看页，带一次性提示 cookie。
+    expect(regenerated.status).toBe(303);
+    expect(regenerated.headers.get('location')).toBe('/s/account');
+    const flash = regenerated.headers.getSetCookie().find(line => line.startsWith('sel_account_flash='))!.split(';')[0]!;
+    const shown = await env.get('/s/account', { cookie: `${phone}; ${flash}` });
+    const shownHtml = await shown.text();
+    expect(shownHtml).toContain('已经换成新邀请码');
+    expect(shown.headers.getSetCookie().some(line => /^sel_account_flash=;.*Max-Age=0/.test(line))).toBe(true);
+    const next = codeFrom(shownHtml, 'my-invite-code');
+    // 刷新查看页：码不变，提示不再出现，也不会再换一次。
+    const refreshed = await (await env.get('/s/account', { cookie: phone })).text();
+    expect(codeFrom(refreshed, 'my-invite-code')).toBe(next);
+    expect(refreshed).not.toContain('已经换成新邀请码');
     expect(next).not.toBe(code);
     expect((await env.post('/s/login', { code })).status).toBe(400);
     expect((await env.get('/s/account', { cookie: tablet })).status).toBe(401);
@@ -311,8 +325,8 @@ describe('会话续期与我的邀请码（P0-11）', () => {
     const cookie = `${SESSION_COOKIE}=${session.sessionToken}`;
     const html = await (await env.get('/s/account', { cookie })).text();
     expect(html).toContain('data-testid="invite-code-unavailable"');
-    const regenerated = await env.post('/s/account/regenerate', {}, { cookie });
-    expect(codeFrom(await regenerated.text(), 'my-invite-code')).toMatch(/-/);
+    expect((await env.post('/s/account/regenerate', {}, { cookie })).status).toBe(303);
+    expect(codeFrom(await (await env.get('/s/account', { cookie })).text(), 'my-invite-code')).toMatch(/-/);
   });
 
   it('邀请码 7 天内到期时提醒；设置页给出一键换码按钮', async () => {
@@ -451,17 +465,14 @@ describe('管理 CLI（P1-5、P1-6）', () => {
     expect(registry.listStudents()[0]!.disabledAt).toBeNull();
   });
 
-  it('delete 需要 --confirm、先停用并空闲 15 分钟；删除注册资料和目录，同名同号可以重新注册', () => {
-    let t = Date.parse('2026-11-01T00:00:00Z');
+  it('delete 需要 --confirm、先停用；删除注册资料和目录，同名同号可以重新注册', () => {
     const dir = root();
-    const registry = openRegistry(dir, () => new Date(t));
+    const registry = openRegistry(dir);
     const registered = registry.registerStudent('测试学生甲', '+6581234567');
     const other = registry.registerStudent('测试学生乙', '+6581234568');
     fs.writeFileSync(path.join(registry.studentDir(registered.studentId), 'synthetic.txt'), 'x');
     expect(() => registry.deleteStudent(registered.studentId)).toThrow('disable');
     registry.disableStudent(registered.studentId);
-    expect(() => registry.deleteStudent(registered.studentId)).toThrow('disable');
-    t += DELETE_IDLE_MS + 1;
     vi.stubEnv('SEL_STUDENT_HOST_DIR', dir);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(runAdminCli(['delete', registered.studentId], () => undefined)).toBe(2);
@@ -475,14 +486,60 @@ describe('管理 CLI（P1-5、P1-6）', () => {
     expect(registry.registerStudent('测试学生甲', '+6581234567').studentId).not.toBe(registered.studentId);
   });
 
-  it('delete --confirm 通过 CLI 删除已停用、已空闲的账号', () => {
+  it('delete 在该学生 worker 仍存活时拒绝（不靠空闲时间推断）；进程退出后的过期标记不挡删除', async () => {
+    const dir = root();
+    const registry = openRegistry(dir);
+    const registered = registry.registerStudent('测试学生甲', '+6581234567');
+    const studentDir = registry.studentDir(registered.studentId);
+    registry.disableStudent(registered.studentId);
+    // 一个命令行像 worker 的合成长寿进程（不加载任何业务代码）。
+    const script = path.join(root(), 'worker.js');
+    fs.writeFileSync(script, 'setInterval(() => {}, 1000);');
+    const child = spawn(process.execPath, [script], { stdio: 'ignore' });
+    await new Promise<void>(resolve => child.once('spawn', () => resolve()));
+    try {
+      writeWorkerPid(studentDir, child.pid!);
+      expect(liveWorkerPid(studentDir)).toBe(child.pid);
+      expect(() => registry.deleteStudent(registered.studentId)).toThrow('还在运行');
+      expect(registry.listStudents()).toHaveLength(1);
+      expect(fs.existsSync(studentDir)).toBe(true);
+    } finally {
+      const exited = new Promise(resolve => child.once('exit', resolve));
+      child.kill('SIGKILL');
+      await exited;
+    }
+    // 被强杀后留下的标记：pid 已不存在，按已退出处理。
+    expect(fs.existsSync(path.join(studentDir, WORKER_PID_FILE))).toBe(true);
+    expect(liveWorkerPid(studentDir)).toBeNull();
+    // 损坏的标记：无法确认，宁可拒绝。
+    fs.writeFileSync(path.join(studentDir, WORKER_PID_FILE), 'garbage');
+    expect(() => registry.deleteStudent(registered.studentId)).toThrow('无法识别');
+    fs.rmSync(path.join(studentDir, WORKER_PID_FILE));
+    expect(registry.deleteStudent(registered.studentId)).toEqual({ removedDirectory: true });
+  });
+
+  it('真实学生 worker 运行时写存活标记，正常退出时清掉；运行期间 delete 被拒绝', async () => {
+    const dir = root();
+    const registry = openRegistry(dir);
+    const registered = registry.registerStudent('测试学生甲', '+6581234567');
+    const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { NODE_ENV: 'test', SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock' } });
+    try {
+      await pool.ensure(registered.studentId);
+      const studentDir = registry.studentDir(registered.studentId);
+      expect(liveWorkerPid(studentDir)).toBeGreaterThan(0);
+      registry.disableStudent(registered.studentId);
+      expect(() => registry.deleteStudent(registered.studentId)).toThrow('还在运行');
+      await pool.stopAll();
+      expect(fs.existsSync(path.join(studentDir, WORKER_PID_FILE))).toBe(false);
+      expect(registry.deleteStudent(registered.studentId)).toEqual({ removedDirectory: true });
+    } finally { await pool.stopAll(); }
+  }, 60_000);
+
+  it('delete --confirm 通过 CLI 删除已停用、没有运行进程的账号', () => {
     const dir = root();
     const registry = openRegistry(dir);
     const registered = registry.registerStudent('测试学生甲', '+6581234567');
     registry.disableStudent(registered.studentId);
-    const db = new DatabaseSync(path.join(dir, 'registry.db'));
-    db.prepare('UPDATE students SET disabled_at = ?, last_seen_at = NULL WHERE id = ?').run(new Date(Date.now() - DELETE_IDLE_MS - 60_000).toISOString(), registered.studentId);
-    db.close();
     vi.stubEnv('SEL_STUDENT_HOST_DIR', dir);
     const lines: string[] = [];
     expect(runAdminCli(['delete', registered.studentId, '--confirm'], line => lines.push(line))).toBe(0);
@@ -518,6 +575,29 @@ describe('管理 CLI（P1-5、P1-6）', () => {
     copy.close();
     expect(fs.readFileSync(path.join(target, 'data', 'uploads', 'photo.jpg'), 'utf8')).toBe('synthetic-bytes');
     expect(runAdminCli(['export', registered.studentId, out], () => undefined)).toBe(1);
+  });
+
+  it('export 解开符号链接后再检查：指向注册库或学生目录的输出位置一律拒绝', () => {
+    const dir = root();
+    const outside = root();
+    const registry = openRegistry(dir);
+    const registered = registry.registerStudent('测试学生甲', '+6581234567');
+    const studentDir = registry.studentDir(registered.studentId);
+    const intoHost = path.join(outside, 'looks-safe');
+    fs.symlinkSync(dir, intoHost);
+    const intoStudent = path.join(outside, 'also-safe');
+    fs.symlinkSync(studentDir, intoStudent);
+    for (const target of [intoHost, path.join(intoHost, 'new-subdir'), intoStudent, dir, path.join(studentDir, 'nested')]) {
+      expect(() => registry.exportStudent(registered.studentId, target)).toThrow('不要导出到学生空间目录里面');
+    }
+    expect(fs.readdirSync(studentDir)).toEqual([]);
+    expect(fs.readdirSync(dir).filter(name => name.includes(registered.studentId))).toEqual([]);
+    // 指向外面的符号链接照常可用，结果写在真实路径下。
+    const realOut = root();
+    const link = path.join(outside, 'out-link');
+    fs.symlinkSync(realOut, link);
+    const target = registry.exportStudent(registered.studentId, link);
+    expect(target.startsWith(fs.realpathSync(realOut) + path.sep)).toBe(true);
   });
 });
 
