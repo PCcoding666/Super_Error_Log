@@ -58,3 +58,32 @@ it('lets an unclassified question keep its chapter while the student edits only 
   expect(editItemCategory(db, 'a', 'one', {grade:'高中',subject:'数学',chapter:'未分类'})).toBeNull();
   expect(readItemCategory(db, 'a', 'one')).toEqual({grade:'高中',subject:'数学',chapter:'未分类'});
 });
+
+import { chooseStudentStage, stageChoiceNeeded } from '../../src/classification/itemCategories.js';
+it('A17: changing only the stage keeps the untouched prefilled chapter computed, so 高中 reclassifies it', () => {
+  db.prepare("UPDATE error_item SET chapter='圆锥曲线' WHERE id='one'").run();
+  const prefill = readItemCategory(db, 'a', 'one')!;
+  expect(prefill).toEqual({ grade: '初中', subject: '数学', chapter: '圆' });
+  expect(editItemCategory(db, 'a', 'one', { ...prefill, grade: '高中' })).toBeNull();
+  expect(readItemCategory(db, 'a', 'one')).toEqual({ grade: '高中', subject: '数学', chapter: '圆锥曲线' });
+  expect(db.prepare("SELECT subject,chapter FROM item_category WHERE item_id='one'").get()).toEqual({ subject: null, chapter: null });
+  // A chapter the student actually typed is kept as a manual override.
+  expect(editItemCategory(db, 'a', 'one', { grade: '高中', subject: '数学', chapter: '椭圆' })).toBeNull();
+  expect(readItemCategory(db, 'a', 'one')?.chapter).toBe('椭圆');
+});
+
+it('asks only new, empty accounts to choose a stage once; existing accounts are never asked', () => {
+  classificationStudent(db, 'fresh');
+  expect(stageChoiceNeeded(db, 'fresh')).toBe(true);
+  // 'a' already has a question: it keeps its stage and is never asked.
+  expect(stageChoiceNeeded(db, 'a')).toBe(false);
+  expect(db.prepare("SELECT grade FROM student_profile WHERE id='a'").get()).toEqual({ grade: '初中' });
+  expect(chooseStudentStage(db, 'fresh', '高三')).toBe(false);
+  expect(stageChoiceNeeded(db, 'fresh')).toBe(true);
+  expect(chooseStudentStage(db, 'fresh', '高中')).toBe(true);
+  expect(stageChoiceNeeded(db, 'fresh')).toBe(false);
+  expect(db.prepare("SELECT grade FROM student_profile WHERE id='fresh'").get()).toEqual({ grade: '高中' });
+  classificationItem(db, 'fresh', 'senior-one');
+  db.prepare("UPDATE error_item SET chapter='圆锥曲线' WHERE id='senior-one'").run();
+  expect(readItemCategory(db, 'fresh', 'senior-one')).toEqual({ grade: '高中', subject: '数学', chapter: '圆锥曲线' });
+});

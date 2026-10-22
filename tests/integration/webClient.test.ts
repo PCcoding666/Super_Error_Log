@@ -1479,6 +1479,21 @@ describe('年级、学科、章节分类', () => {
     expect(await browser.visibleText(`/s/items/${id}`)).toContain('高中 · 物理 · 力与运动');
   });
 
+  it('A17: a stage change (settings or one question) forgets the remembered stage filter so new questions stay visible', async () => {
+    const { browser, rows } = await categoryFixture();
+    await browser.get('/s/items?grade=' + encodeURIComponent('初中'));
+    expect(browser.lastSetCookie.some(line => line.startsWith('sel_items_grade=') && !/Max-Age=0/.test(line))).toBe(true);
+    expect((await browser.post('/s/settings/grade', { grade: '高中' })).status).toBe(303);
+    expect(browser.lastSetCookie.some(line => line.startsWith('sel_items_grade=') && /Max-Age=0/.test(line))).toBe(true);
+    await browser.get('/s/items?grade=' + encodeURIComponent('初中'));
+    // Only the stage changes; the prefilled subject/chapter stay computed rather than becoming overrides.
+    const item = rows[0]!.id; const form = await (await browser.get(`/s/items/${item}/category`)).text();
+    const value = (id: string) => new RegExp(`<input[^>]*id="${id}"[^>]*value="([^"]*)"`).exec(form)?.[1] ?? new RegExp(`<input[^>]*value="([^"]*)"[^>]*id="${id}"`).exec(form)![1]!;
+    expect((await browser.post(`/s/items/${item}/category`, { grade: '高中', subject: value('category-subject'), chapter: value('category-chapter') })).status).toBe(303);
+    expect(browser.lastSetCookie.some(line => line.startsWith('sel_items_grade=') && /Max-Age=0/.test(line))).toBe(true);
+    expect(getDb().prepare('SELECT subject,chapter FROM item_category WHERE item_id=?').get(item)).toEqual({ subject: null, chapter: null });
+  });
+
   it('shows full readable questions directly and combines chapter, status and search across older records', async () => {
     const { browser, rows } = await categoryFixture();
     getDb().prepare("UPDATE v2_photo SET registered_at='2025-01-01T00:00:00Z'").run();

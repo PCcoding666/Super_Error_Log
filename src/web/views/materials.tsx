@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { BatchAction, CaptureHints, Fragment, MaterialRole, QuestionBundle, ReferenceAnswer } from '../../materials/contracts.js';
 import { Page } from './layout.js';
 import { CaptureExamples } from './photos.js';
+import { UNSUPPORTED_SUBJECT_MESSAGE, unsupportedSubject } from '../../materials/subjects.js';
 
 export interface MaterialAssetView {
   id: string;
@@ -70,6 +71,7 @@ export function MaterialCapturePage({ namespace, count, uploadId, context = {} }
         <h1>{context.questionId ? '补充材料' : '拍学习材料'}</h1>
         {context.questionId ? <p className="hint">从这道题继续补拍；整页上其他题目会分别整理。</p> : null}
         <p className="lead">题目、答题卡、作答或答案都可以拍，顺序不限，之后还能补。</p>
+        <p className="hint" data-testid="capture-subjects">{UNSUPPORTED_SUBJECT_MESSAGE.replace('。', '')}的卷子，其他科目先不用拍。</p>
         <p data-testid="photo-count">已拍 {count} 张</p>
         <form method="post" encType="multipart/form-data" action={`/s/materials/uploads?namespace=${namespace}&uploadId=${uploadId}`} data-material-upload="">
           {context.questionId ? <input type="hidden" name="questionId" value={context.questionId} /> : null}
@@ -112,6 +114,84 @@ function fragmentLine(fragments: Fragment[]): string {
   return fragments.map(f => [f.number ? `第${f.number}题` : '题号不清', f.subpart ?? '', roleNames[f.role]].filter(Boolean).join(' ')).join('；') || '还没有可用于区分的题号或内容';
 }
 
+/** First sentence of the stem, short enough for one list line. */
+export function stemFirstSentence(q: QuestionBundle, max = 28): string {
+  const text = q.stem.filter(f => f.role === 'question').map(f => f.text).join(' ').replace(/\s+/g, ' ').trim()
+    .replace(/^(?:第\s*)?[0-9０-９]+\s*(?:题|[.．、)）])\s*/u, '');
+  if (!text) return '';
+  const first = /^.+?[。？！?!；;]/u.exec(text)?.[0] ?? text;
+  return first.length > max ? first.slice(0, max) + '…' : first;
+}
+
+export type MaterialInclusionMark = 'included' | 'removed' | 'pending';
+const inclusionNames: Record<MaterialInclusionMark, string> = { included: '已收录', removed: '已移出错题本', pending: '未收录' };
+
+function QuestionMeta({ q, mark }: { q: QuestionBundle; mark: MaterialInclusionMark }): ReactNode {
+  const other = unsupportedSubject(q.subject);
+  const parts = [q.subject?.trim() || '学科待定', stemFirstSentence(q)].filter(Boolean).join(' · ');
+  return <p className="row-detail meta-line" data-testid="material-question-meta">
+    <span>{parts}</span>{' · '}
+    {other ? <span className="tone-orange">{UNSUPPORTED_SUBJECT_MESSAGE}</span>
+      : <span className={mark === 'included' ? 'tone-green' : 'muted'} data-testid="material-inclusion">{inclusionNames[mark]}</span>}
+  </p>;
+}
+
+export type MaterialJobView = { id: string; state: string; assetId?: string | null; retryable?: boolean };
+export type MaterialPendingGroup = { assetId: string; photo: number; questions: QuestionBundle[] };
+
+/** Top-of-page status: in progress, failed (one tap retries all), other subjects. Polled while processing. */
+function MaterialStatus(props: { namespace: string; processing: number; failed: MaterialJobView[]; unsupported: { photo: number; subject: string }[]; assetCount: number; questionCount: number }): ReactNode {
+  const retryable = props.failed.filter(j => j.retryable !== false);
+  const broken = props.failed.length - retryable.length;
+  return <div data-live="material-status" data-testid="material-status">
+    {props.processing ? <p className="inset-group group-pad" role="status" data-row="processing">正在整理 {props.processing} 张照片，整理好的题会自动出现在下面，不用一直刷新。</p>
+      : props.assetCount && !props.failed.length ? <p className="inset-group group-pad tone-green" role="status" data-row="done" data-testid="material-done">照片都整理好了，共找到 {props.questionCount} 道题。</p> : null}
+    {props.failed.length ? (
+      <form className="inset-group retry-card group-pad" method="post" action="/s/materials/jobs/retry-all" data-testid="material-failed">
+        <Hidden namespace={props.namespace} />
+        <input type="hidden" name="requestId" value={randomUUID()} />
+        <p className="row-detail" data-row="failed">{props.failed.length} 张照片没整理成功，原图已保留。</p>
+        {broken ? <p className="hint">其中 {broken} 张看不清或格式不对，请重拍这几张。</p> : null}
+        {retryable.length ? <div className="btn-stack"><button className="btn" type="submit">一键重新整理</button></div> : null}
+      </form>
+    ) : null}
+    {props.unsupported.length ? (
+      <section className="inset-group group-pad" data-testid="material-unsupported">
+        <p className="tone-orange">{UNSUPPORTED_SUBJECT_MESSAGE}</p>
+        <p className="row-detail">{props.unsupported.map(u => `照片 ${u.photo}（${u.subject}）`).join('、')}不会整理成错题，原图仍保留。</p>
+      </section>
+    ) : null}
+  </div>;
+}
+
+/** 「本页还有 N 道没收录」：一页全收，或逐个勾选。勾选值带上看到时的版本，变了的题会跳过。 */
+function PendingInclusion({ namespace, groups }: { namespace: string; groups: MaterialPendingGroup[] }): ReactNode {
+  const total = groups.reduce((n, g) => n + g.questions.length, 0);
+  return <div data-live="material-pending">
+    {total ? (
+      <form method="post" action="/s/materials/inclusions" id="material-pending" data-testid="material-pending">
+        <Hidden namespace={namespace} />
+        <h2 className="group-label">还没收进错题本的题</h2>
+        <p className="group-footer">老师没明确打叉的题不会自动收。做错、扣了分或没把握的题，勾上收进错题本。</p>
+        {groups.map(g => (
+          <fieldset className="inset-group group-pad" key={g.assetId} data-testid="material-pending-page">
+            <legend>照片 {g.photo}：本页还有 {g.questions.length} 道没收录</legend>
+            {g.questions.map(q => <input key={`h-${q.id}`} type="hidden" name={`page_${g.assetId}`} value={`${q.id}:${q.revision}`} />)}
+            {g.questions.map(q => (
+              <label className="choice" key={q.id}>
+                <input type="checkbox" name="pick" value={`${q.id}:${q.revision}`} />
+                <span>{questionTitle(q)}{stemFirstSentence(q) ? ` · ${stemFirstSentence(q)}` : ''}</span>
+              </label>
+            ))}
+            <div className="btn-stack"><button className="btn" type="submit" name="allOf" value={g.assetId}>本页 {g.questions.length} 道全部收录</button></div>
+          </fieldset>
+        ))}
+        <div className="btn-stack"><button className="btn primary" type="submit">收录勾选的题</button></div>
+      </form>
+    ) : null}
+  </div>;
+}
+
 export function MaterialsPage(props: {
   namespace: string;
   questions: QuestionBundle[];
@@ -120,27 +200,52 @@ export function MaterialsPage(props: {
   hasMore: boolean;
   documents: { id: string; label: string | null }[];
   changes: { id: string }[];
-  jobs: { id: string; state: string }[];
+  jobs: MaterialJobView[];
   revision: number;
+  processing?: number;
+  assetCount?: number;
+  /** Photo number (1-based, all pages) per asset id. */
+  photoNumbers?: Record<string, number>;
+  unsupported?: { assetId: string; subject: string }[];
+  pending?: MaterialPendingGroup[];
+  marks?: Record<string, MaterialInclusionMark>;
+  notice?: { included: number; skipped: number; retried?: number } | null;
 }): ReactNode {
   const { namespace } = props;
+  const processing = props.processing ?? 0;
+  const photoNumbers = props.photoNumbers ?? Object.fromEntries(props.assets.map((a, i) => [a.id, props.page * 8 + i + 1]));
+  const unsupported = props.unsupported ?? [];
+  const assetCount = props.assetCount ?? props.assets.length;
+  const failedAssets = new Set(props.jobs.map(j => j.assetId).filter((id): id is string => !!id));
+  const notice = props.notice;
   return (
-    <Page title="我的材料" bar={{ caption: '材料已保存，可以先结束；以后随时补拍。', primary: { title: '继续拍照', key: 'capture', href: '/s/capture' }, secondary: [] }}>
+    <Page title="我的材料" pollSeconds={processing ? 4 : undefined} bar={{ caption: '材料已保存，可以先结束；以后随时补拍。', primary: { title: '继续拍照', key: 'capture', href: '/s/capture' }, secondary: [] }}>
       <div className="material-surface" data-draft-namespace={namespace}>
         <h1>我的材料</h1>
         <p className="lead">按题整理，缺的材料以后再补。没有把握的关联会留在“待确定”。</p>
+        {notice ? <div className="flash" role="status" data-testid="include-done">
+          {notice.retried !== undefined ? `已重新开始整理 ${notice.retried} 张照片。` : notice.included ? `已收进错题本 ${notice.included} 道。` : '这次没有收进新的题。'}
+          {notice.skipped ? ` 有 ${notice.skipped} 道刚刚有变化，没收进去，请再勾一次。` : ''}
+          {notice.included ? <> <a href="/s/items">去错题本看看 ›</a></> : null}
+        </div> : null}
+        <MaterialStatus namespace={namespace} processing={processing} failed={props.jobs} assetCount={assetCount} questionCount={props.questions.length}
+          unsupported={unsupported.map(u => ({ photo: photoNumbers[u.assetId] ?? 0, subject: u.subject }))} />
+        <PendingInclusion namespace={namespace} groups={props.pending ?? []} />
         <div className="inset-group">
           <NavRow href="/s/materials">刷新整理结果</NavRow>
         </div>
-        {!props.questions.length ? <p className="group-footer">照片保存后会继续整理，稍后刷新就能看到。</p> : null}
-        {props.questions.length ? <h2 className="group-label">题目</h2> : null}
-        {props.questions.map(q => (
-          <section className="inset-group" key={q.id}>
-            <h2 className="nav-title"><NavRow href={`/s/materials/questions/${q.id}`}>{questionTitle(q)}</NavRow></h2>
-            <div className="row-detail">{summary(q)}</div>
-            <NavRow href={`/s/capture?questionId=${q.id}`}>补充材料</NavRow>
-          </section>
-        ))}
+        <div data-live="material-questions">
+          {!props.questions.length ? <p className="group-footer">照片保存后会继续整理，整理好的题会出现在这里。</p> : null}
+          {props.questions.length ? <h2 className="group-label">题目</h2> : null}
+          {props.questions.map(q => (
+            <section className="inset-group" key={q.id}>
+              <h2 className="nav-title"><NavRow href={`/s/materials/questions/${q.id}`}>{questionTitle(q)}</NavRow></h2>
+              <QuestionMeta q={q} mark={props.marks?.[q.id] ?? (q.itemId ? 'included' : 'pending')} />
+              <div className="row-detail">{summary(q)}</div>
+              <NavRow href={`/s/capture?questionId=${q.id}`}>补充材料</NavRow>
+            </section>
+          ))}
+        </div>
         <h2 className="group-label">批量处理</h2>
         <div className="inset-group">
           <BatchGradeForms namespace={namespace} documents={props.documents} questions={props.questions} />
@@ -148,21 +253,14 @@ export function MaterialsPage(props: {
         </div>
         <h2 className="group-label">原图和整页归属</h2>
         <p className="group-footer">只有需要调整时才选；一次调整整页，不必逐题确认。</p>
-        {props.assets.map((a, i) => <AssetCard key={a.id} namespace={namespace} asset={a} index={i} assets={props.assets} documents={props.documents} />)}
+        {props.assets.map((a, i) => <AssetCard key={a.id} namespace={namespace} asset={a} index={(photoNumbers[a.id] ?? i + 1) - 1} assets={props.assets} documents={props.documents}
+          state={unsupported.find(u => u.assetId === a.id) ? `${unsupported.find(u => u.assetId === a.id)!.subject} · ${UNSUPPORTED_SUBJECT_MESSAGE}` : failedAssets.has(a.id) ? '没整理成功，可在页首重新整理' : undefined} />)}
         {props.page > 0 || props.hasMore ? (
           <div className="inset-group">
             {props.page > 0 ? <NavRow href={`/s/materials?page=${props.page - 1}`}>上一页原图</NavRow> : null}
             {props.hasMore ? <NavRow href={`/s/materials?page=${props.page + 1}`}>下一页原图</NavRow> : null}
           </div>
         ) : null}
-        {props.jobs.map(j => (
-          <form className="inset-group retry-card" method="post" action={`/s/materials/jobs/${j.id}/retry`} key={j.id}>
-            <Hidden namespace={namespace} />
-            <input type="hidden" name="requestId" value={randomUUID()} />
-            <p className="row-detail">有照片还没整理完，原图已保留。</p>
-            <div className="btn-stack"><button className="btn" type="submit">重新整理</button></div>
-          </form>
-        ))}
         {props.changes.length ? (
           <div className="inset-group">
             {props.changes.map((c, i) => (
@@ -184,6 +282,7 @@ function AssetCard(props: {
   index: number;
   assets: MaterialAssetView[];
   documents: { id: string; label: string | null }[];
+  state?: string;
 }): ReactNode {
   const { namespace, asset: a, index: i, assets, documents } = props;
   const title = `照片 ${i + 1}${a.hints.label ? ` · ${a.hints.label}` : ''}`;
@@ -193,7 +292,7 @@ function AssetCard(props: {
         <img loading="lazy" className="asset-thumb" src={`/s/materials/assets/${a.id}/image`} alt={`照片 ${i + 1} 原图`} />
         <span className="row-text">
           <h3>{title}</h3>
-          <span className="meta-line">{a.fragments.length ? `找到 ${a.fragments.length} 处材料` : '正在整理或等待重试'}</span>
+          <span className="meta-line">{props.state ?? (a.fragments.length ? `找到 ${a.fragments.length} 处材料` : '正在整理')}</span>
           <span className="meta-line muted break-anywhere">{fragmentLine(a.fragments)}</span>
         </span>
         <Chevron />
@@ -231,8 +330,9 @@ function AssetCard(props: {
   );
 }
 
-export function MaterialQuestionPage({ namespace, question: q, questions, revision, materials, selectedAnswerIds = [], answerJobs = [], gradeJobs = [], included = null, legacy = false }: {
+export function MaterialQuestionPage({ namespace, question: q, questions, revision, materials, selectedAnswerIds = [], answerJobs = [], gradeJobs = [], included = null, legacy = false, notice = null }: {
   namespace: string;
+  notice?: string | null;
   included?: boolean | null;
   legacy?: boolean;
   question: QuestionBundle;
@@ -245,7 +345,7 @@ export function MaterialQuestionPage({ namespace, question: q, questions, revisi
 }): ReactNode {
   const fragments = materials;
   return (
-    <Page title="题目材料" bar={{ caption: '可以对照原图修正关联。', primary: { title: '返回材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
+    <Page title="题目材料" flash={{ ok: notice }} bar={{ caption: '可以对照原图修正关联。', primary: { title: '返回材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
       <div className="material-surface" data-draft-namespace={namespace}>
         <h1>{q.number ? `第 ${q.number} 题` : '题目材料'}</h1>
         {summary(q)}
@@ -255,11 +355,11 @@ export function MaterialQuestionPage({ namespace, question: q, questions, revisi
         <section className="inset-group">
           <div className="group-pad">
             <h2>错题本</h2>
-            <p>{included === false ? '已取消后续推荐，原材料和练习历史仍保留。' : q.itemId ? '已收录，可以先结束，也可以安排练习。' : included === true ? '收录意愿已保存，题干补齐后会进入错题本。' : '可以自行收录；明确错题也会按你的选择整理。'}</p>
-            <form method="post" action={`/s/materials/questions/${q.id}/inclusion`}>
+            <p>{included === false ? '已取消后续推荐，原材料和练习历史仍保留。' : q.itemId ? '已收录，可以先结束，也可以安排练习。' : included === true ? '收录意愿已保存，题干补齐后会进入错题本。' : unsupportedSubject(q.subject) ? `这道是${unsupportedSubject(q.subject)}题。${UNSUPPORTED_SUBJECT_MESSAGE}` : '做错、扣了分或没把握的题，点下面收进错题本。'}</p>
+            {unsupportedSubject(q.subject) && !q.itemId && included !== false ? null : <form method="post" action={`/s/materials/questions/${q.id}/inclusion`}>
               <Hidden namespace={namespace} revision={q.revision} />
               <button className="btn" name="included" value={included === false || !q.itemId ? 'true' : 'false'} type="submit">{included === false ? '恢复收录' : !q.itemId ? '收录到错题本' : '取消后续推荐'}</button>
-            </form>
+            </form>}
           </div>
           {q.itemId ? <NavRow href={`/s/items/${q.itemId}`}>查看错题与修改转写</NavRow> : null}
           <NavRow href="/s/choose">安排本周练习（可稍后）</NavRow>

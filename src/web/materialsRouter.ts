@@ -1,4 +1,6 @@
-import { setQuestionIncluded, inclusionIntent } from '../materials/learning.js';
+import { setQuestionIncluded, inclusionIntent, includeQuestions, notYetIncluded, unsupportedSubject } from '../materials/learning.js';
+import { createHash } from 'node:crypto';
+import { canRecover } from '../mobile/contracts.js';
 import { requestGrades } from '../materials/grading.js';
 import { saveManualAnswer, importAnswerText, requestAnswers, selectAnswerBasis, selectedAnswerIds } from '../materials/answers.js';
 import express, { Router, type Request, type Response } from 'express';
@@ -17,7 +19,7 @@ import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
 import { sendHtml } from '../views/render.js';
-import { MaterialGradeActionPage, MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
+import { type MaterialInclusionMark, type MaterialJobView, MaterialGradeActionPage, MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const roles: MaterialRole[] = ['question', 'diagram', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown'];
 const text = (v: unknown): string => typeof v === 'string' ? v : '';
@@ -80,6 +82,17 @@ export function createMaterialsRouter(options: {
         status: string;
         link_revision: number;
     }[]).map(a => ({ ...a, hints: JSON.parse(a.hints_json), fragments: latestFragments(store, a.id) }));
+    /** Latest extraction job per photo: failed ones are summarized at the top, separate from photos still in progress. */
+    const extractJobs = (): { failed: MaterialJobView[]; processing: number } => {
+        const rows = store.db.prepare(`SELECT j.id,j.state,j.asset_id,j.error FROM material_job j WHERE j.owner_id=? AND j.kind='extract'
+          AND NOT EXISTS (SELECT 1 FROM material_job n WHERE n.owner_id=j.owner_id AND n.kind='extract' AND n.asset_id=j.asset_id AND n.rowid>j.rowid)`).all(store.studentId) as { id: string; state: string; asset_id: string | null; error: string | null }[];
+        const failed = rows.filter(r => r.state === 'failed' || r.state === 'interrupted').map(r => {
+            let retryable = true;
+            try { if (r.error) retryable = canRecover({ ...JSON.parse(r.error), stage: 'transcribe' }); } catch { retryable = false; }
+            return { id: r.id, state: r.state, assetId: r.asset_id, retryable };
+        });
+        return { failed, processing: rows.filter(r => r.state === 'queued' || r.state === 'running').length };
+    };
     const result = (req: Request, res: Response, value: unknown) => {
         if (json(req))
             res.json(value);
@@ -118,8 +131,21 @@ export function createMaterialsRouter(options: {
     r.post('/materials/questions/:id/inclusion', (req,res,next)=>{
       try {
         const raw=req.body.included;if(![true,false,'true','false'].includes(raw))bad('请选择是否收录。');
-        const saved=setQuestionIncluded(store,String(req.params.id),raw===true||raw==='true',revision(req.body.expectedRevision));
-        result(req,res,saved);
+        const wanted=raw===true||raw==='true';
+        const saved=setQuestionIncluded(store,String(req.params.id),wanted,revision(req.body.expectedRevision));
+        // Stay on the question and say what happened, instead of jumping back to the long list.
+        if(json(req))res.json(saved);else res.redirect(303,`/s/materials/questions/${encodeURIComponent(String(req.params.id))}?${wanted?(saved.itemId?'included=1':'included=later'):'included=0'}`);
+      }catch(error){next(error);}
+    });
+    // Batch inclusion: "本页 N 道全部收录" (allOf=<assetId>) or the ticked picks. Values are "<questionId>:<revision>".
+    r.post('/materials/inclusions', (req,res,next)=>{
+      try {
+        const allOf=text(req.body.allOf);
+        const values=allOf?list(req.body[`page_${allOf}`]):list(req.body.pick);
+        if(values.length>200)bad();
+        const picks=values.map(v=>{const m=/^([A-Za-z0-9_-]{1,80}):([0-9]{1,9})$/.exec(v);if(!m)bad();return {questionId:m[1]!,revision:Number(m[2])};});
+        const saved=picks.length?includeQuestions(store,picks):{included:0,skipped:0};
+        if(json(req))res.json({ok:true,...saved});else res.redirect(303,`/s/materials?included=${saved.included}&skipped=${saved.skipped}`);
       }catch(error){next(error);}
     });
     r.get('/materials/session', (_req, res) => res.json({ draftNamespace, assetCount: assetCount() }));
@@ -192,11 +218,15 @@ export function createMaterialsRouter(options: {
         const changes = store.db.prepare("SELECT id FROM material_link_event WHERE owner_id=? AND decision='manual' AND json_extract(basis_json,'$.operation') IS NOT NULL ORDER BY rowid DESC LIMIT 5").all(store.studentId) as {
             id: string;
         }[];
-        const tickets = store.db.prepare("SELECT id,state FROM material_job WHERE owner_id=? AND kind='extract' AND state IN ('failed','interrupted')").all(store.studentId) as {
-            id: string;
-            state: string;
-        }[];
-        sendHtml(res, MaterialsPage({ namespace: draftNamespace, questions: store.listQuestions(), assets: assets(page), page, hasMore: (page + 1) * 8 < assetCount(), documents, changes, jobs: tickets, revision: linkRevision(store) }));
+        const questions = store.listQuestions();
+        const allAssets = store.db.prepare("SELECT id,json_extract(extraction_json,'$.document.subject') AS subject FROM material_asset WHERE owner_id=? ORDER BY created_at,id").all(store.studentId) as { id: string; subject: string | null }[];
+        const photoNumbers = Object.fromEntries(allAssets.map((a, i) => [a.id, i + 1]));
+        const unsupported = allAssets.flatMap(a => { const other = unsupportedSubject(a.subject); return other ? [{ assetId: a.id, subject: other }] : []; });
+        const marks: Record<string, MaterialInclusionMark> = Object.fromEntries(questions.map(q => { const intent = inclusionIntent(store, q.id); return [q.id, intent === false ? 'removed' : q.itemId ? 'included' : 'pending']; }));
+        const pending = notYetIncluded(store).map(g => ({ ...g, photo: photoNumbers[g.assetId] ?? 0 }));
+        const included = Number(req.query.included), skipped = Number(req.query.skipped) || 0, retried = Number(req.query.retried);
+        const notice = Number.isSafeInteger(retried) && retried >= 0 && req.query.retried !== undefined ? { included: 0, skipped: 0, retried } : Number.isSafeInteger(included) && included >= 0 && req.query.included !== undefined ? { included, skipped: Number.isSafeInteger(skipped) && skipped >= 0 ? skipped : 0 } : null;
+        sendHtml(res, MaterialsPage({ namespace: draftNamespace, questions, assets: assets(page), page, hasMore: (page + 1) * 8 < assetCount(), documents, changes, jobs: extractJobs().failed, processing: extractJobs().processing, assetCount: allAssets.length, photoNumbers, unsupported, pending, marks, notice, revision: linkRevision(store) }));
     });
     r.get('/materials/assets/:id/match', (req, res) => {
         const id = text(req.params.id);
@@ -214,7 +244,9 @@ export function createMaterialsRouter(options: {
         const q = store.getQuestion(text(req.params.id));
         if (!q)
             throw new MobileRequestError(404, 'not_found', '题目不存在。');
-        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, question: q, included: inclusionIntent(store,q.id), legacy: !!(q.itemId&&store.db.prepare('SELECT 1 FROM mobile_item_link WHERE item_id=?').get(q.itemId)), gradeJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='grade' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], answerJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='answer' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], selectedAnswerIds: selectedAnswerIds(store,q.id), questions: store.listQuestions(), revision: linkRevision(store), materials: (store.db.prepare('SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)').all(store.studentId, q.id) as {
+        const flag = text(req.query.included);
+        const notice = flag === '1' && q.itemId ? '已收进错题本。可以接着看下一题，也可以去错题本看看。' : flag === 'later' ? '已记下要收录，题目补齐后会进入错题本。' : flag === '0' ? '已移出错题本，原材料仍保留。' : null;
+        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, notice, question: q, included: inclusionIntent(store,q.id), legacy: !!(q.itemId&&store.db.prepare('SELECT 1 FROM mobile_item_link WHERE item_id=?').get(q.itemId)), gradeJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='grade' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], answerJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='answer' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], selectedAnswerIds: selectedAnswerIds(store,q.id), questions: store.listQuestions(), revision: linkRevision(store), materials: (store.db.prepare('SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)').all(store.studentId, q.id) as {
                 content_json: string;
             }[]).map(row => JSON.parse(row.content_json) as Fragment) }));
     });
@@ -299,6 +331,21 @@ export function createMaterialsRouter(options: {
     r.post('/materials/answers/basis', (req,res) => {selectAnswerBasis(store,text(req.body.questionId),list(req.body.answerIds),revision(req.body.expectedRevision));result(req,res,{ok:true});});
     r.post('/materials/links', (req, res) => { const input = { fragmentIds: list(req.body.fragmentIds), questionId: text(req.body.questionId), expectedRevision: revision(req.body.expectedRevision) }; const change = req.body.newAttempt === '1' || req.body.newAttempt === true ? relinkNewAttempt(store, input) : relink(store, { ...input, target: { questionId: input.questionId, attemptId: text(req.body.attemptId) || null } }); result(req, res, { ok: true, change }); });
     r.post('/materials/links/:id/undo', (req, res) => result(req, res, { ok: true, change: undoLink(store, text(req.params.id), revision(req.body.expectedRevision)) }));
+    // One tap re-extracts every failed photo. Each job gets a request key derived from the form's key, so a resubmitted form is idempotent.
+    r.post('/materials/jobs/retry-all', (req, res) => {
+        const requestId = text(req.body.requestId);
+        if (!UUID.test(requestId))
+            bad();
+        let retried = 0;
+        for (const job of extractJobs().failed.filter(j => j.retryable !== false)) {
+            const h = createHash('sha256').update(`${requestId}:${job.id}`).digest('hex');
+            const derived = `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${(8 + (parseInt(h[16]!, 16) & 3)).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+            try { jobs.retry(job.id, derived); retried++; }
+            catch (error) { if (!(error instanceof MobileRequestError) || error.code !== 'not_retryable') throw error; }
+        }
+        if (json(req)) res.json({ ok: true, retried });
+        else res.redirect(303, `/s/materials?retried=${retried}`);
+    });
     r.post('/materials/jobs/:id/retry', (req, res) => {
         if (!UUID.test(text(req.body.requestId)))
             bad();

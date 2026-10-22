@@ -14,7 +14,8 @@ import { PracticeDashboardPage } from './views/practiceDashboard.js';
  *   不在视图里另写一份规则；页面只做「取数 → WeekPlan → 渲染」与表单提交。
  * - 只有拍照上传与录音用到脚本；关掉脚本时每屏照样能用（语音除外）。
  */
-import { categoryForItem, editItemCategory, STAGE_REQUIRED_MESSAGE, updateStudentGrade } from '../classification/itemCategories.js';
+import { categoryForItem, chooseStudentStage, editItemCategory, stageChoiceNeeded, STAGE_REQUIRED_MESSAGE } from '../classification/itemCategories.js';
+import { StageChoicePage } from './views/stage.js';
 import { readCatalog } from '../classification/catalog.js';
 import { ALL_STAGES } from '../classification/stages.js';
 import { resolveNotebookStage, stagesInScope } from './notebook.js';
@@ -42,7 +43,7 @@ import type { CoachProvider, CorrectionProvider, FollowupProvider } from '../ai/
 import { isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { getLearningSource, learningCard, materialStoreForItem, learningImageFragments } from '../learning/sources.js';
-import { setQuestionIncluded } from '../materials/learning.js';
+import { materialIntakeSummary, setQuestionIncluded } from '../materials/learning.js';
 import { getLearningWeek } from '../learning/queries.js';
 import type { LearningCard as V2WeekItem } from '../learning/contracts.js';
 import { getItemFullCrop } from '../v2/fullCrop.js';
@@ -361,8 +362,19 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     r.use(createMaterialsRouter({ ...options.materials, draftNamespace: namespace, admission: options.admission }));
   }
 
+  // 新注册的账号第一次进来（登录/注册后都回到 /s/）先选学段（初中/高中）；已有题目或照片、或已经选过的账号不会被问。只在邀请码网关里生效。
+  const stageGate = (request: Request, response: Response, next: express.NextFunction): void => {
+    if (options.studentHostWorker === true && stageChoiceNeeded(getDb(), requireProfile().id)) { render(response, StageChoicePage({})); return; }
+    next();
+  };
+  r.post('/stage', form, page((request, response) => {
+    if (!chooseStudentStage(getDb(), requireProfile().id, request.body?.grade)) { render(response, StageChoicePage({ error: STAGE_REQUIRED_MESSAGE }), 400); return; }
+    clearCookie(request, response, COOKIE.itemsGrade);
+    audit('student_grade_updated', 'student', requireProfile().id);
+    response.redirect(303, '/s/');
+  }));
   // 默认进入错题本，保留根地址作为主屏幕入口。材料拍照由 /s/capture 接管。
-  r.get('/', page(async (request, response) => {
+  r.get('/', stageGate, page(async (request, response) => {
     render(response, await itemsPage(request, response));
   }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
@@ -591,7 +603,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       selection:selecting,
       category:{grade,subject,subjects,stages:stageOptions},anyPhoto:state.week.photos.length > 0,
       finding:state.photos.some(photo=>photo.state === 'finding'),
-      bar:{caption:'',primary:null,secondary:[]},removed,materials:!!ctx.materials,
+      bar:{caption:'',primary:null,secondary:[]},removed,materials:!!ctx.materials,materialIntake:ctx.materials?materialIntakeSummary(ctx.materials):undefined,
       flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null,err:!validReturnSelection && request.method !== 'POST' ? '返回的选题信息不可用，请重新选择。' : null}};
   };
   const itemsPage = async (request: Request, response: Response): Promise<ReactNode> => ItemsPage(await notebookData(request,response));
@@ -695,6 +707,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const values = {grade:str(request.body?.grade),subject:str(request.body?.subject),chapter:str(request.body?.chapter)};
     const error = editItemCategory(getDb(), requireProfile().id, item.id, values);
     if (error) { render(response, CategoryEditPage({item,values,error,returnTo}), 400); return; }
+    if (values.grade !== item.grade) clearCookie(request, response, COOKIE.itemsGrade);
     audit('item_category_updated', 'item', item.id);
     response.redirect(303, itemContextUrl(item,returnTo));
   }));
@@ -1079,9 +1092,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
 
   r.post('/settings/grade', form, page((request, response) => {
-    if (!updateStudentGrade(getDb(), requireProfile().id, request.body?.grade)) {
+    if (!chooseStudentStage(getDb(), requireProfile().id, request.body?.grade)) {
       render(response, SettingsPage({studentHostWorker:options.studentHostWorker === true,accountRole:accountRoleOf(response),grade:requireProfile().grade,error:STAGE_REQUIRED_MESSAGE}), 400); return;
     }
+    // A notebook filter remembered from the old stage would hide new questions.
+    clearCookie(request, response, COOKIE.itemsGrade);
     audit('student_grade_updated', 'student', requireProfile().id);
     response.redirect(303, '/s/settings');
   }));
