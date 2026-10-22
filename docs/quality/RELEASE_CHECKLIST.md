@@ -21,7 +21,7 @@
 
 - [ ] Actions 里 `production / release` 成功；摘要里的提交与刚合并的一致。失败时看失败任务；启动检查失败会自动切回旧版本（Actions 仍显示失败）。
 - [ ] 手机打开 `https://study.pccoding666.com/s/` 能看到登录页；`/admin/` 能登录，「按调用线路」有数据。
-- [ ] 如果 PR 改了 `deploy/ci/sel-ci-deploy.py` 或 `deploy/ops/`：服务器不会自动用上新版本，按 RUNBOOK 第 7 / 10 步由管理员重新安装。
+- [ ] 如果 PR 改了 `deploy/ci/sel-ci-deploy.py` 或 `deploy/ops/`：服务器不会自动用上新版本，按 RUNBOOK 第 13 / 6 步由管理员重新安装（第 13 步之前必须先做完第 9、10 步的第一次备份和恢复演练）。
 
 ## 给真实学生用之前（一次性）
 
