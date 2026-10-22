@@ -231,6 +231,8 @@ describe('学生注册表', () => {
 
   it('管理 CLI：create 打印一次码、list 不含秘密、revoke-sessions 生效', () => {
     const hostDir = tempRoot('sel-reg-');
+    // 注册库由服务启动时建好；CLI 不再自己新建（见 studentAccounts 的「没有 registry.db 时拒绝运行」）。
+    StudentRegistry.open(hostDir).close();
     process.env.SEL_STUDENT_HOST_DIR = hostDir;
     try {
       const lines: string[] = [];
