@@ -5,18 +5,23 @@ import { expect, test } from '@playwright/test';
 
 let base: string;
 let codes: string[];
+let registrationCode: string;
+let expiringCode: string;
 let child: ChildProcess;
+const WECHAT_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50(0x1800322f) NetType/WIFI Language/zh_CN';
 
 test.beforeAll(async () => {
   child = fork(path.resolve('tests/e2e/studentHostServer.ts'), [], { execArgv: ['--import', 'tsx'], env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
-  const ready = await new Promise<{ base: string; codes: string[] }>((resolve, reject) => {
+  const ready = await new Promise<{ base: string; codes: string[]; registrationCode: string; expiringCode: string }>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('browser fixture startup timed out')), 20000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('exit', () => { clearTimeout(timer); reject(new Error('browser fixture exited during startup')); });
-    child.once('message', message => { clearTimeout(timer); resolve(message as { base: string; codes: string[] }); });
+    child.once('message', message => { clearTimeout(timer); resolve(message as { base: string; codes: string[]; registrationCode: string; expiringCode: string }); });
   });
   base = ready.base;
   codes = ready.codes;
+  registrationCode = ready.registrationCode;
+  expiringCode = ready.expiringCode;
 });
 
 test.afterAll(async () => {
@@ -115,8 +120,11 @@ test('name and phone registration works without JavaScript and its code works af
     await page.goto(base + '/s/');
     await page.getByRole('link', { name: '首次使用，注册账号' }).click();
     await expect(page.getByRole('heading', { name: '注册账号' })).toBeVisible();
-    await page.getByLabel('学生姓名').fill('合成浏览器学生');
+    await page.getByLabel('注册码（8 位，老师发的）').fill(registrationCode);
+    await page.getByLabel('学生姓名（可以写化名）').fill('合成浏览器学生');
     await page.getByLabel('手机号', { exact: true }).fill('+6587654321');
+    await page.getByTestId('age-14plus').check();
+    await page.getByTestId('privacy-consent').check();
     await page.getByRole('button', { name: '注册并生成邀请码' }).click();
     await expect(page.getByRole('heading', { name: '注册成功' })).toBeVisible();
     const code = (await page.getByTestId('registered-invite-code').textContent())!;
@@ -131,5 +139,87 @@ test('name and phone registration works without JavaScript and its code works af
     await page.goto(base + '/s/settings');
     await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
     await expect(page.getByTestId('account-role')).toHaveText('学生');
+  } finally { await context.close(); }
+});
+
+test('registration without a class code or consent is refused, and the privacy draft is readable', async ({ page }) => {
+  await page.goto(base + '/s/register');
+  await page.getByRole('link', { name: '《个人信息处理规则》' }).evaluate(link => link.removeAttribute('target'));
+  await page.getByRole('link', { name: '《个人信息处理规则》' }).click();
+  await expect(page.getByRole('heading', { name: '个人信息处理规则' })).toBeVisible();
+  await expect(page.getByTestId('privacy-draft')).toBeVisible();
+  await expect(page.getByTestId('privacy-contact')).toContainText('联系方式待定');
+  await page.goto(base + '/s/register');
+  // 绕过浏览器端 required，确认服务端也拦。
+  await page.locator('#register-form').evaluate(form => form.setAttribute('novalidate', ''));
+  await page.getByLabel('注册码（8 位，老师发的）').fill('WRNG-0000');
+  await page.getByLabel('学生姓名（可以写化名）').fill('合成无码学生');
+  await page.getByLabel('手机号', { exact: true }).fill('+6587650000');
+  await page.getByTestId('age-14plus').check();
+  await page.getByTestId('privacy-consent').check();
+  await page.getByRole('button', { name: '注册并生成邀请码' }).click();
+  await expect(page.getByText('注册码不正确或已经失效')).toBeVisible();
+  await page.locator('#register-form').evaluate(form => form.setAttribute('novalidate', ''));
+  await page.getByLabel('注册码（8 位，老师发的）').fill(registrationCode);
+  await page.getByTestId('age-under14').check();
+  await page.getByRole('button', { name: '注册并生成邀请码' }).click();
+  await expect(page.getByText('未满 14 周岁需要家长（监护人）同意')).toBeVisible();
+  await expect(page.getByTestId('registered-invite-code')).toHaveCount(0);
+});
+
+test('WeChat in-app browser sees an "open in browser" hint on login and registration', async ({ browser }, info) => {
+  const context = await browser.newContext({ userAgent: WECHAT_UA, viewport: { width: 390, height: 844 } });
+  try {
+    const page = await context.newPage();
+    await page.goto(base + '/s/');
+    await expect(page.getByTestId('in-app-browser-notice')).toContainText('在浏览器打开');
+    await page.screenshot({ path: info.outputPath('wechat-login.png'), fullPage: true });
+    await page.goto(base + '/s/register');
+    await expect(page.getByTestId('in-app-browser-notice')).toContainText('先截图或复制保存');
+  } finally { await context.close(); }
+  const plain = await browser.newPage();
+  await plain.goto(base + '/s/');
+  await expect(plain.getByTestId('in-app-browser-notice')).toHaveCount(0);
+  await plain.close();
+});
+
+test('settings warns about an expiring code; my invite code can be viewed, copied and regenerated', async ({ browser }, info) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+  try {
+    const page = await context.newPage();
+    await page.goto(base + '/s/');
+    await page.getByLabel('12 位邀请码').fill(expiringCode);
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await page.goto(base + '/s/settings');
+    await expect(page.getByTestId('invite-expiring')).toContainText('天后');
+    await page.screenshot({ path: info.outputPath('settings-invite-expiring.png'), fullPage: true });
+    await page.getByTestId('settings-my-invite').click();
+    await expect(page.getByRole('heading', { name: '我的邀请码' })).toBeVisible();
+    await expect(page.getByTestId('my-invite-code')).toHaveText(expiringCode);
+    await page.getByTestId('my-invite-code-copy').click();
+    await expect(page.getByText('已复制。')).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expiringCode);
+    await page.goto(base + '/s/settings');
+    await page.getByTestId('regenerate-invitation').click();
+    await expect(page.getByTestId('flash-ok')).toContainText('已经换成新邀请码');
+    const fresh = (await page.getByTestId('my-invite-code').textContent())!;
+    expect(fresh).not.toBe(expiringCode);
+    await expect(page.getByTestId('invite-expiring')).toHaveCount(0);
+    await page.goto(base + '/s/settings');
+    await expect(page.getByTestId('invite-expiring')).toHaveCount(0);
+    // 旧码已作废，新码能在另一台设备登录
+    const other = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    try {
+      const second = await other.newPage();
+      await second.goto(base + '/s/');
+      await second.getByLabel('12 位邀请码').fill(expiringCode);
+      await second.getByRole('button', { name: '进入我的错题本' }).click();
+      await expect(second.getByText('这个邀请码进不去')).toBeVisible();
+      await second.getByLabel('12 位邀请码').fill(fresh);
+      await second.getByRole('button', { name: '进入我的错题本' }).click();
+      await second.goto(base + '/s/settings');
+      await expect(second.getByRole('heading', { name: '设置' })).toBeVisible();
+    } finally { await other.close(); }
   } finally { await context.close(); }
 });

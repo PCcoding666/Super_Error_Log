@@ -40,6 +40,7 @@ import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } 
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { CoachProvider, CorrectionProvider, FollowupProvider } from '../ai/provider.js';
 import { isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
+import { isInAppBrowserAgent } from './inAppBrowser.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { getLearningSource, learningCard, materialStoreForItem, learningImageFragments } from '../learning/sources.js';
 import { setQuestionIncluded } from '../materials/learning.js';
@@ -164,7 +165,7 @@ function deviceInfo(request: Request): string {
 }
 
 function inAppBrowser(request: Request): boolean {
-  return /MicroMessenger|QQ\/|Weibo|DingTalk|AlipayClient|Lark|FBAN|FBAV|Instagram/i.test(request.headers['user-agent'] ?? '');
+  return isInAppBrowserAgent(request.headers['user-agent']);
 }
 
 function requireMatch(value: string, pattern: RegExp): string {
@@ -254,6 +255,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       // 且必须是四个合法值之一；只是展示用元数据，不参与鉴权。
       const role = request.headers['x-sel-internal-account-role'];
       if (isAccountRole(role)) response.locals.accountRole = role;
+      // 邀请码快到期提醒：同样只信网关注入的内部头（ISO 时间或 none），只用于设置页展示。
+      const inviteExpires = request.headers['x-sel-internal-invite-expires'];
+      if (typeof inviteExpires === 'string' && (inviteExpires === 'none' || /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(inviteExpires))) response.locals.inviteExpires = inviteExpires;
     }
     next();
   });
@@ -1073,14 +1077,16 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   /** 设置页的账号身份标签：只有邀请码网关 worker 模式才有（locals 由上面的内部头中间件写入）；旧独立版一律不显示。 */
   const accountRoleOf = (response: Response): AccountRole | null =>
     options.studentHostWorker === true && isAccountRole(response.locals.accountRole) ? response.locals.accountRole : null;
+  const inviteExpiresOf = (response: Response): string | null =>
+    options.studentHostWorker === true && typeof response.locals.inviteExpires === 'string' ? response.locals.inviteExpires : null;
 
   r.get('/settings', page((_request, response) => {
-    render(response, SettingsPage({ studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response), grade: requireProfile().grade }));
+    render(response, SettingsPage({ studentHostWorker: options.studentHostWorker === true, accountRole: accountRoleOf(response), grade: requireProfile().grade, inviteExpires: inviteExpiresOf(response) }));
   }));
 
   r.post('/settings/grade', form, page((request, response) => {
     if (!updateStudentGrade(getDb(), requireProfile().id, request.body?.grade)) {
-      render(response, SettingsPage({studentHostWorker:options.studentHostWorker === true,accountRole:accountRoleOf(response),grade:requireProfile().grade,error:STAGE_REQUIRED_MESSAGE}), 400); return;
+      render(response, SettingsPage({studentHostWorker:options.studentHostWorker === true,accountRole:accountRoleOf(response),grade:requireProfile().grade,inviteExpires:inviteExpiresOf(response),error:STAGE_REQUIRED_MESSAGE}), 400); return;
     }
     audit('student_grade_updated', 'student', requireProfile().id);
     response.redirect(303, '/s/settings');
