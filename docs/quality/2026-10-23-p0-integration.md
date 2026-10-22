@@ -25,6 +25,15 @@
 
 真正原因：`recordAttempt` 用**进程本地日历日**校验作答日期（不能早于练习包首次打印日、不能是未来日期），这几处测试却用 `now().slice(0,10)` / `new Date().toISOString().slice(0,10)` 取「今天」，拿到的是 **UTC 日期**。在 UTC+8 的 00:00–08:00，UTC 日期比本地日期早一天，回传被拒，练习包关不上，后面的建包/核对/确认跟着失败。GitHub CI 跑在 UTC，各 PR 作者也在 UTC 的云端跑，所以都是绿的；合并验证恰好在北京时间凌晨跑，才暴露。生产代码没有这个问题（`src/` 里没有用 UTC 日期当「今天」的地方；网页默认作答日用 `localDayText(now, timeZone)`）。
 
-修法（只改测试输入，不动断言）：这几处改用 `src/domain/calendarDay.ts` 的 `localDayText(new Date())`，即与 `recordAttempt` 同一口径的本地日历日；同类的 `practiceTasks.test.ts` 一处（断言的是「已取消」，当前不受影响）也一并改。改后在本地（UTC+8 凌晨）、`UTC`、`Pacific/Kiritimati`（UTC+14）、`America/Los_Angeles` 下这 6 个文件 132 条全过。
+处理：**这 9 条测试不改**（Orchestrator 10/23 决定：时段相关的既有失败不在本 PR 里改测试，写进 PR 说明）。曾提交过一版把这几处改成 `localDayText(new Date())` 的修法（本地/UTC/UTC+14/UTC−7 下都通过），已用 `git revert` 撤回；它可以作为单独的后续 PR。归因：7 条在 `main` 上本来就时段相关（`materialPrint` 3、`materialLearning` 1、`practiceSubmission` 2、`webClient` 1），2 条是 #53 新测试 `practiceMaterialItems.test.ts:73/98` 的同一写法；**没有一条是 #57 新锚点造成的**。因此 verify 用 `TZ=UTC` 跑一次、`TZ=Asia/Shanghai` 跑一次，后者在北京时间 00:00–08:00 运行时会出现这 9 条，08:00 之后应为全绿。
 
 「当天做对不算掌握」和 #57 的锚点（上次作答日，没有就用录入日）都没有改。另核对了任务书点名的风险点：材料来源题由 `syncMaterialLearning` 写入真实的 `error_item` 行（`created_at` = 收录时间），`intakeDay()` 能找到，锚点不会悄悄退回练习包生成日。为把 #53 × #57 的组合行为固定下来，在 `practiceMaterialItems.test.ts` 加了 2 条：从没作答过的材料题以录入日为锚（第 0 天收录、第 3 天建包当天做对 → 暂时掌握）；材料题当天做对只到 `attempted`，隔 3 天以上再做对 → 暂时掌握。把 `intakeDay` 改成找不到材料题时第一条会失败。
+
+## 集成评审（#55/#56/#58）要求一并改的
+
+- #55 P1 全站/单 IP 失败预算会锁住所有人：登录、注册改为**先验码**，正确的码任何时候都能用；预算只决定「错的那一次」回 429，预算已用完时错误回应再放慢 500 ms（`failureDelayMs`）。注册的全站成功总数上限仍在注册前检查。测试：10 个 IP 刷满 1000 次失败后，正确码从新 IP 和刷过的 IP 都能登录。
+- #55 P1 注册限速键是注册码前 4 位：改为「整条注册码哈希 + IP」，`duplicate_registration` 不再计失败。测试：40 人同一 IP 共用注册码，中间 18 次连续打错 + 2 次重复提交（旧规则下第 16 人起被挡）再加 2 次零散打错，40 次正确提交全部 201。
+- #58 P1 熔断账本静默退到学生目录：去掉 `SEL_STUDENT_DATA_DIR` 退路，学生 worker 找不到共享账本时拒绝走按量付费并记 `sel_ai_fallback_blocked`（`ledger_dir_missing`）。测试：网关组装的进程池把注册库目录作为共享账本；worker 无共享账本时不调用按量接口。#55 × #58 冲突那一行已核对，保留了 `sharedDir: registry.hostDir`。
+- #58 P1 RUNBOOK 顺序：第一次每日备份与恢复演练（新第 9、10 步）挪到删旧发布备份（新第 12 步）和重装发布程序（新第 13 步）之前，并写明前提。
+- #55 运维：`check_migrations` 比对 `dist/db` 与 `dist/studentHost/registry.js`，本批 #54（新表）和 #55（注册库 +454 行）都会让自动发布拒绝；合并后第一次上线必须人工发布，人工发布前之后的合并也都会被拒。没有改这道检查。
+- #55 P2：删除账号改为删掉目录后才提交（删不掉整笔回滚）；CLI 在目录存在但没有 `registry.db` 时拒绝运行。
