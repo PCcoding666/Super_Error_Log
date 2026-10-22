@@ -773,7 +773,7 @@ export class StudentRegistry {
   }
 
   /**
-   * 删除账号（不可恢复）：删注册表里该学生的会话、邀请码、登记资料和账号行，再删除整个学生目录。
+   * 删除账号（不可恢复）：在同一事务里删注册表里该学生的会话、邀请码、登记资料和账号行，删掉整个学生目录后才提交。
    * 前提：① 已经 disable（停用后网关不会再为他启动 worker）；② 该学生没有正在运行的 worker——
    * 由 worker 自己写的 `.worker.pid` 判活（CLI 是另一个进程，停不了 worker；不靠「多久没活动」推断）。
    * 有 worker 还活着就拒绝：等它空闲退出，或在发布窗口重启/停止服务后再删。
@@ -782,6 +782,7 @@ export class StudentRegistry {
   deleteStudent(studentId: string): { removedDirectory: boolean } {
     if (!/^[0-9a-f-]{36}$/i.test(studentId)) throw new RegistryError('student_not_found', '学生不存在。');
     const dir = this.studentDir(studentId);
+    let existed = false;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const row = this.db.prepare('SELECT disabled_at FROM students WHERE id = ?').get(studentId) as { disabled_at: string | null } | undefined;
@@ -796,10 +797,12 @@ export class StudentRegistry {
       this.db.prepare('DELETE FROM invitations WHERE student_id = ?').run(studentId);
       this.db.prepare('DELETE FROM student_registration WHERE student_id = ?').run(studentId);
       this.db.prepare('DELETE FROM students WHERE id = ?').run(studentId);
+      // 先删目录、再提交：目录删不掉（例如里面有 root 属主的文件）时整笔回滚，账号行还在，
+      // 修好权限后可以再执行一次 delete；不会出现「账号没了、学习数据还留在盘上、CLI 再也找不到」。
+      existed = fs.existsSync(dir);
+      fs.rmSync(dir, { recursive: true, force: true });
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
-    const existed = fs.existsSync(dir);
-    fs.rmSync(dir, { recursive: true, force: true });
     fs.appendFileSync(path.join(this.hostDir, 'deletions.log'), `${this.now().toISOString()} deleted ${studentId}\n`, { mode: 0o600 });
     return { removedDirectory: existed };
   }

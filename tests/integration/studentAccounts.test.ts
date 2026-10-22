@@ -486,6 +486,17 @@ describe('管理 CLI（P1-5、P1-6）', () => {
     } finally { process.chdir(previous); }
   });
 
+  it('目录在但里面没有 registry.db 时拒绝运行，不新建空库（集成评审 P2）', () => {
+    const dir = root();
+    vi.stubEnv('SEL_STUDENT_HOST_DIR', dir);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(runAdminCli(['create'], () => undefined)).toBe(2);
+    expect(runAdminCli(['list'], () => undefined)).toBe(2);
+    expect(errors.mock.calls.flat().join('\n')).toContain('没有注册库 registry.db');
+    errors.mockRestore();
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
   it('lookup 支持姓名片段和手机尾号；list 显示姓名和尾号', () => {
     const dir = root();
     const registry = openRegistry(dir);
@@ -568,6 +579,28 @@ describe('管理 CLI（P1-5、P1-6）', () => {
     expect(fs.readFileSync(path.join(dir, 'deletions.log'), 'utf8')).not.toContain('测试学生甲');
     expect(registry.redeem(other.code).studentId).toBe(other.studentId);
     expect(registry.registerStudent('测试学生甲', '+6581234567').studentId).not.toBe(registered.studentId);
+  });
+
+  it('delete 时学生目录删不掉：整笔回滚，账号还在，修好后可以再删（集成评审 P2）', () => {
+    const dir = root();
+    const registry = openRegistry(dir);
+    const registered = registry.registerStudent('测试学生甲', '+6581234567');
+    const studentDir = registry.studentDir(registered.studentId);
+    fs.writeFileSync(path.join(studentDir, 'synthetic.txt'), 'x');
+    registry.disableStudent(registered.studentId);
+    const realRm = fs.rmSync;
+    const rm = vi.spyOn(fs, 'rmSync').mockImplementation(((target: fs.PathLike, options?: fs.RmOptions) => {
+      if (String(target) === studentDir) throw Object.assign(new Error('EACCES: synthetic permission denied'), { code: 'EACCES' });
+      return realRm(target, options);
+    }) as typeof fs.rmSync);
+    expect(() => registry.deleteStudent(registered.studentId)).toThrow('EACCES');
+    expect(registry.listStudents().map(student => student.studentId)).toEqual([registered.studentId]);
+    expect(fs.existsSync(path.join(studentDir, 'synthetic.txt'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'deletions.log'))).toBe(false);
+    rm.mockRestore();
+    expect(registry.deleteStudent(registered.studentId)).toEqual({ removedDirectory: true });
+    expect(registry.listStudents()).toEqual([]);
+    expect(fs.existsSync(studentDir)).toBe(false);
   });
 
   it('delete 在该学生 worker 仍存活时拒绝（不靠空闲时间推断）；进程退出后的过期标记不挡删除', async () => {
