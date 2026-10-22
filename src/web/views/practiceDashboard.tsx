@@ -2,11 +2,13 @@ import type { ReactNode } from 'react';
 import type { TaskLifecycle } from '../../v2/practiceTasks.js';
 import { weekRangeText } from '../format.js';
 import { Page } from './layout.js';
+import { monthDayText } from '../../domain/calendarDay.js';
+import { RedoReminder, type RedoOverviewView } from './redoDate.js';
 
 /** Fields the dashboard actually renders. Legacy practice cards and learning cards both satisfy this. */
 interface DashboardItem { id: string; subject?: string | null; knowledgeTags: string[]; reason: string; questionExcerpt?: string | null; chapter?: string | null; shortId?: string | null }
 interface DashboardPractice { id: string; week: string; items: DashboardItem[] }
-interface DashboardRecommendation { recommended: DashboardItem[]; others?: DashboardItem[]; notes?: string[]; limits?: { min: number; max: number } }
+interface DashboardRecommendation { recommended: DashboardItem[]; others?: DashboardItem[]; notes?: string[]; limits?: { min: number; max: number }; redo?: RedoOverviewView }
 
 export interface DashboardTask {
   practice: DashboardPractice;
@@ -57,10 +59,11 @@ export function PracticeDashboardPage(props: {tasks:DashboardTask[]; activeId:st
           <span className="chev" aria-hidden="true">›</span>
         </span>
       </a></li>)}</ul>
-      <p className="group-footer">隔几天独立做对，才计入掌握。</p>
+      <p className="group-footer">当天做对不算掌握，隔 3 天以上再独立做对才算。</p>
+      <RedoReminder overview={props.recommendation.redo?.dueCount ? undefined : props.recommendation.redo} />
       <a className="practice-adjust" href="/s/choose">调整题目和题量<span className="chev" aria-hidden="true">›</span></a>
       <form className="practice-cta" method="post" action="/s/practices/start" data-wait="正在准备这次练习…"><input type="hidden" name="key" value={props.requestKey}/><button className="btn primary" type="submit">就练这 {cards.length} 道</button></form>
-    </section> : <section className="card"><h2>现在没有需要新增的练习</h2><p>可以继续下面暂缓的任务，或到错题本选题。到了复习时间，这里会给你建议。</p><a className="btn" href="/s/">查看错题本</a><a className="more" href="/s/capture">录入新错题</a></section>}
+    </section> : props.recommendation.redo?.nextDay ? <section className="card" data-testid="redo-wait"><h2>{monthDayText(props.recommendation.redo.nextDay)}再来做</h2><p>有 {props.recommendation.redo.nextCount} 道之前做对过的题，要隔几天再独立做对一次才算掌握。今天先别再做，到那天这里会把它们排给你。</p><p className="muted">这期间有新错题，可以先录进错题本。</p><a className="btn" href="/s/">查看错题本</a><a className="more" href="/s/capture">录入新错题</a></section> : <section className="card"><h2>现在没有需要新增的练习</h2><p>可以继续下面暂缓的任务，或到错题本选题。到了复习时间，这里会给你建议。</p><a className="btn" href="/s/">查看错题本</a><a className="more" href="/s/capture">录入新错题</a></section>}
     {cards.length && !active ? null : <a className="more" href="/s/choose">自己选题</a>}
     {history.length>0?<details className="card" data-testid="practice-history"><summary>练习记录（{history.length}）</summary>
       <ul className="list">{history.map(task=><li className="row" key={task.practice.id}><span className="row-text">

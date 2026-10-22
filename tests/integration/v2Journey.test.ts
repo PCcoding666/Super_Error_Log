@@ -471,6 +471,9 @@ describe('T5b 端到端串联：学生的一周', () => {
     // 11. 把 generated_at 调到 4 天前（延迟重做窗口），然后回传。
     const generatedAt = new Date(Date.now() - 4 * DAY_MS);
     getDb().prepare("UPDATE review_packet SET generated_at = ? WHERE id = ?").run(generatedAt.toISOString(), practice.id);
+    // 延迟从录入日 / 上次作答日算（P0-3）：录入也拨到 4 天前。
+    getDb().prepare('UPDATE error_item SET created_at = ? WHERE created_at > ? AND id IN (SELECT item_id FROM review_packet_item WHERE packet_id = ?)')
+      .run(generatedAt.toISOString(), generatedAt.toISOString(), practice.id);
     const today = localDay(new Date());
 
     // 形状错误整体 400（不产生记录）。

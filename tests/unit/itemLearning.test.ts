@@ -79,3 +79,19 @@ describe('single-question learning', () => {
     expect(html).toContain('?scope=full&amp;s=big');
   });
 });
+
+describe('history delay anchors (P0-3)', async () => {
+  const { attemptLabel, withHistoryAnchors } = await import('../../src/web/itemLearning.js');
+  const { attemptDay } = await import('../../src/learning/redoSchedule.js');
+  it('legacy attempts without performed_at anchor on their record time, same fallback as mastery', () => {
+    const local = (iso: string) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+    const history = withHistoryAnchors([
+      { id: 'pkt_new', correct: 1, completion: 'independent', performed_at: '2026-10-20', attempt_created_at: '2026-10-20T12:00:00Z' },
+      { id: 'pkt_open', correct: null, completion: null, performed_at: null, attempt_created_at: null },
+      { id: 'pkt_legacy', correct: 1, completion: 'independent', performed_at: null, attempt_created_at: '2026-10-15T12:00:00Z' },
+    ], '2026-10-01', attemptDay);
+    expect(history[0]!.anchor_day).toBe(local('2026-10-15T12:00:00Z'));
+    expect(history[2]!.anchor_day).toBe('2026-10-01');
+    expect(attemptLabel(history[0]!)).toBe(`隔 ${(Date.parse('2026-10-20') - Date.parse(local('2026-10-15T12:00:00Z'))) / 86400000} 天独立做对`);
+  });
+});
