@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import type { ReactNode } from 'react';
-import type { PracticeDetail } from '../../v2/practiceService.js';
+import type { LearningPracticeDetail as PracticeDetail } from '../../learning/contracts.js';
 import type { SubmissionState } from '../../v2/practiceSubmission.js';
 import type { PracticeProgress } from '../../v2/practiceProgress.js';
-import type { ReturnSummary } from '../../v2/returnService.js';
+import type { LearningReturnSummary as ReturnSummary } from '../../v2/returnService.js';
 import { Page } from './layout.js';
 import { AnswerText } from './answerText.js';
 

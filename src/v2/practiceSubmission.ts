@@ -3,10 +3,10 @@ import sharp from 'sharp';
 import { getDb, newId, now } from '../db/connection.js';
 import { validatePracticeReview, type PracticeReviewer, type ReviewFinding, type ReviewQuestion } from '../ai/practiceReview.js';
 import { assertTaskWritable, taskLifecycle } from './practiceTasks.js';
-import { getPractice } from './practiceService.js';
+import { getLearningPractice } from '../learning/queries.js';
 import { getPrintStatus, readPrintMedia, type PrintSnapshot } from './printService.js';
 import { practiceProgress } from './practiceProgress.js';
-import { submitReturns, type SubmitReturnResult } from './returnService.js';
+import { submitLearningReturns, type SubmitReturnResult } from './returnService.js';
 
 export interface SubmissionPhoto {id:string;createdAt:string}
 export interface SubmissionFinding extends ReviewFinding {itemId:string|null}
@@ -56,6 +56,27 @@ export async function attachSubmission(packetId:string,key:string,bytes:Buffer):
   }catch(e){db.exec('ROLLBACK');throw e;}
   return {id,createdAt};
 }
+/** Legacy and material-sourced packets share the same practice/submission flow. */
+function practiceOrThrow(packetId:string){
+  const p=getLearningPractice(packetId,'all');
+  if(!p)throw new Error('这份练习找不到了，请回到练习首页重新打开');
+  return p;
+}
+function logReviewFailure(packetId:string,error:unknown):void {
+  // Only IDs and the error message: never photo text or student content.
+  console.error(`[practice-review] ${packetId} 核对失败：${error instanceof Error?error.message:String(error)}`);
+}
+/**
+ * Called by the router when a background review job rejects before (or outside) its
+ * own failure handling, e.g. the frozen questions were not readable. The student then
+ * sees "这次没能完成核对" with a retry instead of a page that silently stays pending.
+ */
+export function recordReviewFailure(packetId:string,error:unknown):void {
+  logReviewFailure(packetId,error);
+  try{
+    getDb().prepare("UPDATE practice_submission SET status='failed',updated_at=? WHERE packet_id=? AND status IN ('pending','analyzing')").run(now(),packetId);
+  }catch(writeError){console.error(`[practice-review] ${packetId} 无法记录核对失败状态：`,writeError);}
+}
 export function isReviewing(packetId:string):boolean{return active.has(packetId);}
 type ImageGate=<T>(work:()=>Promise<T>)=>Promise<T>;
 /** Coalesces concurrent requests. A late result cannot replace a newer photo revision. */
@@ -64,7 +85,7 @@ export async function reviewSubmission(packetId:string,reviewer:PracticeReviewer
   const existing=active.get(packetId);if(existing)return existing;
   const state=submissionState(packetId);if(!state.photos.length)throw new Error('请先提交作答照片');
   if(state.status==='ready'||state.attempts>=3)return;
-  const print=getPrintStatus(packetId);
+  const print=getPrintStatus(packetId,'all');
   if(print.httpStatus!==200||print.body.status!=='ready')throw new Error('题目还没有准备好，请先查看题目');
   const snapshot=print.body.snapshot as PrintSnapshot;
   const job=(async()=>{
@@ -82,7 +103,7 @@ export async function reviewSubmission(packetId:string,reviewer:PracticeReviewer
         for(const [i,item] of snapshot.items.entries()){
           const media=[...(item.cropMedia?[item.cropMedia]:[]),...item.diagramMedia];
           const images:Buffer[]=[];let uncertain=item.needsGlance||media.length>2;
-          for(const name of media.slice(0,2)){const bytes=readPrintMedia(packetId,name);if(bytes)images.push(await resize(bytes,384));else uncertain=true;}
+          for(const name of media.slice(0,2)){const bytes=readPrintMedia(packetId,name,'all');if(bytes)images.push(await resize(bytes,384));else uncertain=true;}
           const stem=item.stemText??'',ref=snapshot.answerSheet[i]?.answer.text??null;
           questions.push({number:i+1,itemId:item.itemId,stem,reference:ref,uncertain,images});
         }
@@ -101,7 +122,8 @@ export async function reviewSubmission(packetId:string,reviewer:PracticeReviewer
       if(taskLifecycle(packetId)==='cancelled')return;
       const findings:SubmissionFinding[]=result.findings.map(f=>({...f,itemId:input.questions.find(q=>q.number===f.questionNumber)?.itemId??null}));
       db.prepare("UPDATE practice_submission SET status='ready',findings_json=?,updated_at=? WHERE packet_id=? AND revision=?").run(JSON.stringify(findings),now(),packetId,state.revision);
-    }catch{
+    }catch(error){
+      logReviewFailure(packetId,error);
       db.prepare("UPDATE practice_submission SET status='failed',updated_at=? WHERE packet_id=? AND revision=?").run(now(),packetId,state.revision);
     }
   })();
@@ -113,7 +135,7 @@ function currentReview(packetId:string,revision:unknown):SubmissionState {
   return state;
 }
 export function assignFinding(packetId:string,revision:number,index:number,itemId:string):void {
-  const state=currentReview(packetId,revision),p=getPractice(packetId)!;
+  const state=currentReview(packetId,revision),p=practiceOrThrow(packetId);
   const finding=state.findings[index];const number=p.items.findIndex(item=>item.id===itemId)+1;
   if(!Number.isInteger(index)||!finding||finding.itemId||!number)throw new Error('题号无法关联，请核对或补拍带题号的作答');
   const existing=state.findings.find(f=>f.itemId===itemId);
@@ -136,7 +158,7 @@ export function confirmSubmission(packetId:string,input:unknown):SubmitReturnRes
   currentReview(packetId,body.revision);
   if(!['independent','helped'].includes(String(body.help)))throw new Error('请说明这次是否用过提示或参考帮助');
   if(!Array.isArray(body.results)||!body.results.length||body.results.length>8)throw new Error('请选择至少一道有把握的结果');
-  const p=getPractice(packetId)!,seen=new Set<string>();
+  const p=practiceOrThrow(packetId),seen=new Set<string>();
   const results=body.results.map((raw:unknown)=>{
     const r=raw as {itemId?:unknown;outcome?:unknown;help?:unknown;performedOn?:unknown}|null;
     if(!r||typeof r.itemId!=='string'||!p.items.some(item=>item.id===r.itemId)||seen.has(r.itemId))throw new Error('题目不在本次练习中或重复');
@@ -148,5 +170,5 @@ export function confirmSubmission(packetId:string,input:unknown):SubmitReturnRes
   });
   const answers=practiceProgress(packetId).answers;
   const pending=results.filter(r=>!answers[r.itemId]);
-  return pending.length?submitReturns(packetId,{results:pending}):{ok:true,results:[]};
+  return pending.length?submitLearningReturns(packetId,{results:pending},'all'):{ok:true,results:[]};
 }
