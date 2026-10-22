@@ -102,6 +102,11 @@ export class BailianTranscriber implements SpeechTranscriber {
   }
 
   async transcribe(audio: Buffer, mimeType: string, signal?: AbortSignal): Promise<string> {
+    return (await this.transcribeWithUsage(audio, mimeType, signal)).text;
+  }
+
+  /** 同 transcribe，另外带回这次调用计入每日备用上限的 token 数（供应商报告的，或按音频大小的保守估计）。 */
+  async transcribeWithUsage(audio: Buffer, mimeType: string, signal?: AbortSignal): Promise<{ text: string; tokens: number }> {
     const requestBody = JSON.stringify(this.requestBody(audio, mimeType));
     const timeout = AbortSignal.timeout(this.options.timeoutMs ?? 30_000);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -126,12 +131,14 @@ export class BailianTranscriber implements SpeechTranscriber {
         if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`, canUseBackup(response.status));
         throw new TranscribeError('invalid_output', '语音转写结果无法解析。');
       }
-      const usage = (body as { usage?: { input_tokens?: unknown; output_tokens?: unknown } } | null)?.usage;
+      const usage = (body as { usage?: { input_tokens?: unknown; output_tokens?: unknown; duration?: unknown } } | null)?.usage;
+      const seconds = typeof usage?.duration === 'number' && Number.isFinite(usage.duration) && usage.duration > 0 ? usage.duration : null;
       inputTokens = tokenCount(usage?.input_tokens); outputTokens = tokenCount(usage?.output_tokens);
       if (!response.ok) throw new TranscribeError('provider_error', `语音转写服务返回 HTTP ${response.status}。`, canUseBackup(response.status));
       const text = extractText(body);
       if (text === null) throw new TranscribeError('invalid_output', '语音转写结果里没有文字。');
-      return text;
+      const reported = (inputTokens ?? 0) + (outputTokens ?? 0);
+      return { text, tokens: reported > 0 ? reported : estimateAsrTokens(audio.length, seconds) };
     } catch (error) {
       errorCode = signal?.aborted ? 'cancelled' : timeout.aborted ? 'timeout'
         : httpStatus === 429 ? 'rate_limited' : error instanceof TranscribeError ? error.kind : 'provider_error';
@@ -144,6 +151,15 @@ export class BailianTranscriber implements SpeechTranscriber {
         inputTokens, outputTokens, durationMs: Date.now() - started, httpStatus, errorCode });
     }
   }
+}
+
+/**
+ * 语音接口通常只报音频秒数（usage.duration），不报 token。备用通道的每日 token 上限按保守估计计入：
+ * 有秒数按每秒 32 个（高于语音模型约 25 个/秒的计费口径）；连秒数都没有，按每 256 字节 1 个
+ * （64 kbps 的 AAC 约 31 个/秒）。两种都至少 100 个。只用于熔断计数，宁可多算。
+ */
+export function estimateAsrTokens(bytes: number, seconds: number | null = null): number {
+  return Math.max(100, seconds !== null ? Math.ceil(seconds * 32) : Math.ceil(bytes / 256));
 }
 
 export interface AsrConfig { aiMode: string; aiBaseUrl: string; aiApiKey: string; aiAsrModel: string }
@@ -171,8 +187,9 @@ export function createTranscriber(cfg: AsrConfig & { aiTimeoutMs?: number }): Sp
       signal?.throwIfAborted();
       if (!(error instanceof TranscribeError) || !error.fallbackEligible) throw error;
       // 按量付费备用与图文调用共用同一份每日上限（见 fallbackBudget.ts）。
-      return withFallbackBudget({ operation: 'asr', primaryError: error.kind }, () => backup.transcribe(audio, mimeType, signal),
-        () => new TranscribeError('provider_error', FALLBACK_BLOCKED_MESSAGE));
+      const result = await withFallbackBudget({ operation: 'asr', primaryError: error.kind }, () => backup.transcribeWithUsage(audio, mimeType, signal),
+        () => new TranscribeError('provider_error', FALLBACK_BLOCKED_MESSAGE), r => r.tokens);
+      return result.text;
     }
   } };
 }

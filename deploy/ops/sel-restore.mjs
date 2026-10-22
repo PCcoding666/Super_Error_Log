@@ -6,13 +6,15 @@
 //         systemctl stop super-error-log
 //         sel-restore.mjs --from <快照目录> --target /var/lib/super-error-log --live --confirm-service-stopped
 //
+// 以 root 运行时，恢复出来的文件和目录一律改为应用用户所有（被挪开的旧目录的属主，否则 SEL_OPS_APP_USER，缺省 supererrorlog）；
+// 真恢复时查不到这个用户就不开始。
 // 真恢复不会删除现有数据：现有目录整体改名为 <target>.before-restore-<时间>，确认无误后由人决定是否删除。
 // 从 OSS 恢复时先把快照下载到本机目录（命令见 RUNBOOK.md），再用 --from 指向它。
 // --dry-run：只检查快照、打印计划，不写任何文件。
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hasTable, integrity, isMain, log, openReadOnly, parseArgs, readJson, sha256File, walk } from './lib.mjs';
+import { DEFAULTS, env, hasTable, integrity, isMain, log, openReadOnly, parseArgs, readJson, sha256File, walk } from './lib.mjs';
 
 export function verifySnapshot(from) {
   const manifest = readJson(path.join(from, 'manifest.json'));
@@ -41,7 +43,16 @@ function copyTree(fromRoot, toRoot) {
   return count;
 }
 
-export function restore({ from, target, live = false, confirmStopped = false, dryRun = false, serviceActive = defaultServiceActive, now = new Date() }) {
+/** 应用用户的 uid/gid（SEL_OPS_APP_USER，缺省 supererrorlog）。查不到返回 null。 */
+export function appOwner(user = env('SEL_OPS_APP_USER', DEFAULTS.appUser)) {
+  const uid = spawnSync('/usr/bin/id', ['-u', user], { encoding: 'utf8' });
+  const gid = spawnSync('/usr/bin/id', ['-g', user], { encoding: 'utf8' });
+  const u = Number(uid.stdout?.trim()); const g = Number(gid.stdout?.trim());
+  return uid.status === 0 && gid.status === 0 && Number.isInteger(u) && Number.isInteger(g) ? { uid: u, gid: g } : null;
+}
+
+export function restore({ from, target, live = false, confirmStopped = false, dryRun = false, serviceActive = defaultServiceActive, now = new Date(),
+  isRoot = () => typeof process.getuid === 'function' && process.getuid() === 0, resolveOwner = appOwner, chown = fs.chownSync }) {
   const started = Date.now();
   if (!from || !target) throw new Error('需要 --from <快照目录> 和 --target <恢复到哪里>');
   from = path.resolve(from); target = path.resolve(target);
@@ -53,7 +64,14 @@ export function restore({ from, target, live = false, confirmStopped = false, dr
     if (!confirmStopped) throw new Error('真恢复必须先停服务，并加 --confirm-service-stopped');
     if (serviceActive()) throw new Error('super-error-log 服务还在运行，先 systemctl stop super-error-log');
   }
-  const plan = { from, target, databases: manifest.databases.length, snapshotDay: manifest.day, moveAside: exists };
+  // root 运行：先确定恢复后的属主（被挪开的旧目录的属主优先，否则应用用户），查不到就不开始。
+  let owner = null;
+  if (isRoot()) {
+    owner = exists ? (({ uid, gid }) => ({ uid, gid }))(fs.statSync(target)) : resolveOwner();
+    // 演练目录归谁无所谓（查不到应用用户就保持 root）；真恢复到线上必须能改属主。
+    if (!owner && live) throw new Error('以 root 运行但查不到应用用户（SEL_OPS_APP_USER，缺省 supererrorlog），恢复出来的文件会是 root 所有，服务读不了');
+  }
+  const plan = { from, target, databases: manifest.databases.length, snapshotDay: manifest.day, moveAside: exists, owner };
   if (dryRun) { log('restore_plan', plan); return { ...plan, dryRun: true }; }
   if (exists) {
     movedAside = `${target}.before-restore-${now.toISOString().replace(/[:.]/g, '-')}`;
@@ -73,12 +91,11 @@ export function restore({ from, target, live = false, confirmStopped = false, dr
     if (items !== null) errorItems += items;
     checks.push({ path: entry.path, integrity: result, errorItems: items, expectedErrorItems: entry.errorItems ?? null });
   }
-  // 以 root 恢复到线上目录时，属主改回原目录的属主（应用用户），否则服务起来读写不了。
-  // 放在检查之后：检查时打开库可能新建 -wal/-shm，也要一起改。
-  if (movedAside && typeof process.getuid === 'function' && process.getuid() === 0) {
-    const owner = fs.statSync(movedAside);
-    const chown = dir => { fs.chownSync(dir, owner.uid, owner.gid); for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) chown(p); else fs.chownSync(p, owner.uid, owner.gid); } };
-    chown(target);
+  // 以 root 运行时，恢复出来的文件一律改回应用用户所有（目标原来不存在、为空、还是被整体挪开都一样），
+  // 否则 root 所有的 0700/0600 文件服务读不了。放在检查之后：检查时打开库可能新建 -wal/-shm，也要一起改。
+  if (owner) {
+    const chownTree = dir => { chown(dir, owner.uid, owner.gid); for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) chownTree(p); else chown(p, owner.uid, owner.gid); } };
+    chownTree(target);
   }
   const bad = checks.filter(check => check.integrity !== 'ok' || (check.expectedErrorItems !== null && check.errorItems !== check.expectedErrorItems));
   const summary = { ...plan, files, databases, errorItems, movedAside, ok: bad.length === 0, problems: bad.slice(0, 10), seconds: Math.round((Date.now() - started) / 1000) };

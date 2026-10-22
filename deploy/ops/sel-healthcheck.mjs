@@ -28,6 +28,7 @@ export function config() {
     node: env('SEL_OPS_NODE', DEFAULTS.node),
     publicHost: env('SEL_OPS_PUBLIC_HOST', DEFAULTS.publicHost),
     connectHost: env('SEL_OPS_CONNECT_HOST', DEFAULTS.connectHost),
+    tlsPort: intEnv('SEL_OPS_TLS_PORT', 443),
     healthUrl: env('SEL_OPS_HEALTH_URL', ''),
     services: env('SEL_OPS_SERVICES', 'super-error-log super-error-log-caddy').split(/\s+/).filter(Boolean),
     skip: new Set(env('SEL_OPS_SKIP', '').split(',').map(item => item.trim()).filter(Boolean)),
@@ -156,17 +157,32 @@ function fetchPage(cfg) {
   });
 }
 
-function certDaysLeft(cfg, now = Date.now()) {
+/** 证书剩余天数；读不到（连不上、握手超时、没有证书）返回 null。一定会在 timeoutMs 内结束。 */
+export function certDaysLeft(cfg, now = Date.now(), timeoutMs = 10_000) {
   return new Promise(resolve => {
-    const socket = tls.connect({ host: cfg.connectHost, port: 443, servername: cfg.publicHost, rejectUnauthorized: false, timeout: 10_000 }, () => {
+    let settled = false;
+    const finish = value => { if (settled) return; settled = true; clearTimeout(timer); socket.destroy(); resolve(value); };
+    const socket = tls.connect({ host: cfg.connectHost, port: cfg.tlsPort ?? 443, servername: cfg.publicHost, rejectUnauthorized: false }, () => {
       const cert = socket.getPeerCertificate();
-      socket.end();
       const end = Date.parse(cert?.valid_to ?? '');
-      resolve(Number.isFinite(end) ? Math.floor((end - now) / 86_400_000) : null);
+      finish(Number.isFinite(end) ? Math.floor((end - now) / 86_400_000) : null);
     });
-    socket.on('timeout', () => socket.destroy());
-    socket.on('error', () => resolve(null));
+    // 对方接受连接但一直不握手时，socket 的 timeout 事件不会自己结束 Promise：用独立计时器兜底。
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    socket.on('error', () => finish(null));
+    socket.on('close', () => finish(null));
   });
+}
+
+/** 数 journald 里某个事件的行数：按 JSON 的 event 字段精确匹配（worker 行带 "[worker xxxxxxxx] " 前缀）。 */
+export function countEvents(text, name) {
+  let n = 0;
+  for (const line of text.split('\n')) {
+    const start = line.indexOf('{');
+    if (start < 0) continue;
+    try { if (JSON.parse(line.slice(start)).event === name) n += 1; } catch { /* 不是 JSON 行 */ }
+  }
+  return n;
 }
 
 function disk(dir) {
@@ -178,7 +194,7 @@ function disk(dir) {
 const pct = (part, whole) => whole ? Math.round((part / whole) * 100) : 0;
 
 /** 运行全部检查，返回 { alerts: [{id,text}], facts }。每项检查自己 try/catch，一项坏了不影响其他项。 */
-export async function runChecks(cfg, { now = new Date(), statsProvider = statsAsAppUser, state = {} } = {}) {
+export async function runChecks(cfg, { now = new Date(), statsProvider = statsAsAppUser, state = {}, journalReader = journal } = {}) {
   const alerts = []; const facts = {};
   const add = (id, text) => alerts.push({ id, text });
   const guard = async (name, fn) => { try { await fn(); } catch (error) { add(`check-${name}`, `检查「${name}」本身出错：${error instanceof Error ? error.message.slice(0, 120) : error}`); } };
@@ -204,19 +220,19 @@ export async function runChecks(cfg, { now = new Date(), statsProvider = statsAs
   });
 
   if (!cfg.skip.has('journal')) await guard('日志', () => {
-    const caddy = journal(['-u', 'super-error-log-caddy', '--since', '-5min']);
+    const caddy = journalReader(['-u', 'super-error-log-caddy', '--since', '-5min']);
     const upstream = count(caddy, /"level":"error"/);
     facts.upstreamErrors5m = upstream;
     if (upstream > cfg.t.upstreamErrors) add('upstream', `最近 5 分钟 Caddy 记录了 ${upstream} 条上游错误（学生可能看到 502/5xx）`);
-    const kernel = journal(['-k', '--since', '-5min']);
+    const kernel = journalReader(['-k', '--since', '-5min']);
     if (count(kernel, /killed process|out of memory/i) > 0) add('oom', '最近 5 分钟内核因为内存不足杀了进程（OOM）');
-    const app5 = journal(['-u', 'super-error-log', '--since', '-5min']);
-    const workerErrors = count(app5, /"event":"sel_worker_error"/);
+    const app5 = journalReader(['-u', 'super-error-log', '--since', '-5min']);
+    const workerErrors = countEvents(app5, 'sel_worker_error');
     facts.workerErrors5m = workerErrors;
     if (workerErrors > 0) add('worker', `最近 5 分钟有 ${workerErrors} 条学生进程错误（journalctl -u super-error-log | grep sel_worker_error）`);
-    const app60 = journal(['-u', 'super-error-log', '--since', '-60min']);
-    const fallbacks = count(app60, /"event":"sel_ai_fallback"/);
-    const blocked = count(app60, /"event":"sel_ai_fallback_blocked"/);
+    const app60 = journalReader(['-u', 'super-error-log', '--since', '-60min']);
+    const fallbacks = countEvents(app60, 'sel_ai_fallback');
+    const blocked = countEvents(app60, 'sel_ai_fallback_blocked');
     facts.fallbacks1h = fallbacks; facts.fallbackBlocked1h = blocked;
     if (fallbacks > cfg.t.fallbackPerHour) add('fallback', `最近 1 小时 Token Plan 失败后改走按量付费 ${fallbacks} 次（在花按量的钱）`);
     if (blocked > 0) add('fallback-blocked', `按量付费备用通道今天已到上限，最近 1 小时拒绝了 ${blocked} 次；Token Plan 恢复前识别会失败`);
@@ -306,18 +322,23 @@ export async function check(cfg = config(), { dryRun = false, now = new Date(), 
   const stateFile = path.join(cfg.stateDir, 'health-state.json');
   const state = readJson(stateFile) ?? {};
   const { alerts, facts } = await runChecks(cfg, { now, statsProvider, state });
-  const { fresh, recovered, sent } = decide(alerts, state, now.getTime(), cfg.t.repeatMin);
+  const decided = decide(alerts, state, now.getTime(), cfg.t.repeatMin);
+  const { fresh, recovered } = decided;
+  let sent = decided.sent;
+  let delivered = true;
   if (fresh.length || recovered.length) {
     const lines = [...fresh.map(a => `• ${a.text}`), ...(recovered.length ? [`已恢复：${recovered.join('、')}`] : [])];
     const title = fresh.length ? `错题本告警（${fresh.length} 项）` : '错题本已恢复';
-    await notify(cfg, title, lines.join('\n'), { dryRun, sender });
+    delivered = await notify(cfg, title, lines.join('\n'), { dryRun, sender });
+    // 一个目标都没送到：不记成“已推送”，下次巡检重试；从没送到的告警以后也不会冒出“已恢复”。
+    if (!delivered) sent = state.sent ?? {};
   }
   if (!dryRun) {
     fs.mkdirSync(cfg.stateDir, { recursive: true, mode: 0o700 });
     writeJsonAtomic(stateFile, { sent, restarts: facts.restarts ?? state.restarts ?? {}, checkedAt: now.toISOString() });
   }
-  log('health_check', { alerts: alerts.map(a => a.id), pushed: fresh.map(a => a.id), recovered });
-  return { alerts, fresh, recovered, facts };
+  log('health_check', { alerts: alerts.map(a => a.id), pushed: delivered ? fresh.map(a => a.id) : [], recovered: delivered ? recovered : [], delivered });
+  return { alerts, fresh, recovered, facts, delivered };
 }
 
 export async function report(cfg = config(), { dryRun = false, now = new Date(), statsProvider = statsAsAppUser, sender } = {}) {

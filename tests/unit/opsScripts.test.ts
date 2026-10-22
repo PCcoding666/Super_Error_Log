@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -139,6 +140,27 @@ describe('restore', () => {
     expect(fs.existsSync(path.join(data, 'env'))).toBe(false); // 密钥不在备份里，也不会被“恢复”出来
   });
 
+  it('as root, always hands restored files to the app user — also for a missing or empty live target', async () => {
+    const { restore } = await load('sel-restore.mjs');
+    const from = await snapshotDir();
+    for (const prepare of ['missing', 'empty'] as const) {
+      const target = path.join(root, `live-${prepare}`);
+      if (prepare === 'empty') fs.mkdirSync(target);
+      const chowned: Array<[string, number, number]> = [];
+      const result = restore({ from, target, live: true, confirmStopped: true, serviceActive: () => false, isRoot: () => true,
+        resolveOwner: () => ({ uid: 4242, gid: 4343 }), chown: (p: string, uid: number, gid: number) => { chowned.push([p, uid, gid]); } });
+      expect(result.ok).toBe(true);
+      expect(result.movedAside).toBeNull();
+      const expected = [target, ...walkAll(target).map(rel => path.join(target, rel))];
+      for (const dir of new Set(walkAll(target).map(rel => path.dirname(path.join(target, rel))))) expected.push(dir);
+      for (const p of new Set(expected)) expect(chowned).toContainEqual([p, 4242, 4343]);
+      expect(chowned.every(([, uid, gid]) => uid === 4242 && gid === 4343)).toBe(true);
+    }
+    expect(() => restore({ from, target: path.join(root, 'live-nouser'), live: true, confirmStopped: true, serviceActive: () => false,
+      isRoot: () => true, resolveOwner: () => null, chown: () => undefined })).toThrow(/查不到应用用户/);
+    expect(fs.existsSync(path.join(root, 'live-nouser'))).toBe(false);
+  });
+
   it('rejects a tampered snapshot', async () => {
     const { restore } = await load('sel-restore.mjs');
     const from = await snapshotDir();
@@ -197,6 +219,61 @@ describe('health check and alert push', () => {
     const third = await check({ ...cfg, barkKey: 'fake-bark-key' }, { now: new Date(now.getTime() + 10 * 60_000), sender, statsProvider: () => stats });
     expect(third.recovered).toEqual(['http']);
     expect(sent[0][1].body).toContain('已恢复：http');
+  });
+
+  it('when every push target fails, does not mark alerts as sent (retries next run, no false "recovered")', async () => {
+    const { check, config } = await load('sel-healthcheck.mjs');
+    const now = new Date('2026-10-22T12:00:00.000Z');
+    studentDb().close();
+    status = 502;
+    const cfg = { ...config(), barkKey: 'fake-bark-key' };
+    const stats = { students: 0, registeredToday: 0, queue: { queued: 0, running: 0, failedToday: 0 }, legacyJobs: 0, aiHour: { calls: 0, failed: 0, byProvider: {} }, aiToday: { calls: 0, failed: 0, durationSum: 0, timed: 0, byProvider: {} }, fallbackToday: null, unreadable: 0 };
+    let attempts = 0;
+    const failing = async () => { attempts += 1; throw new Error('push down'); };
+    const first = await check(cfg, { now, sender: failing, statsProvider: () => stats });
+    expect(first.delivered).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'state/health-state.json'), 'utf8')).sent).toEqual({});
+    const second = await check(cfg, { now: new Date(now.getTime() + 5 * 60_000), sender: failing, statsProvider: () => stats });
+    expect(second.fresh.map((a: Any) => a.id)).toContain('http');
+    expect(attempts).toBe(2);
+    status = 200; body = '邀请码';
+    const sent: Any[] = [];
+    const third = await check(cfg, { now: new Date(now.getTime() + 10 * 60_000), sender: async (_t: string, payload: Any) => { sent.push(payload); }, statsProvider: () => stats });
+    expect(third.recovered).toEqual([]);
+    expect(sent.every(p => !String(p.body).includes('已恢复'))).toBe(true);
+  });
+
+  it('counts paid fallbacks and blocked fallbacks separately (exact event names)', async () => {
+    const { runChecks, config, countEvents } = await load('sel-healthcheck.mjs');
+    const app = [
+      '[worker 0000aaaa] {"event":"sel_ai_fallback","level":"warn"}',
+      '[worker 0000aaaa] {"event":"sel_ai_fallback_blocked","level":"error"}',
+      '[worker 0000bbbb] {"event":"sel_ai_fallback_blocked","level":"error"}',
+      '{"event":"sel_ai_fallback","level":"warn"}',
+      '[worker 0000aaaa] not json sel_ai_fallback',
+      '{"event":"sel_worker_error","level":"error"}',
+    ].join('\n');
+    expect(countEvents(app, 'sel_ai_fallback')).toBe(2);
+    expect(countEvents(app, 'sel_ai_fallback_blocked')).toBe(2);
+    const cfg = { ...config(), skip: new Set(['systemd', 'http', 'cert']) };
+    const { facts, alerts } = await runChecks(cfg, { statsProvider: () => ({ queue: { queued: 0, running: 0 }, legacyJobs: 0, aiHour: { calls: 0, failed: 0 }, unreadable: 0 }),
+      journalReader: (args: string[]) => args.includes('super-error-log') ? app : '' });
+    expect(facts).toMatchObject({ fallbacks1h: 2, fallbackBlocked1h: 2, workerErrors5m: 1 });
+    expect(alerts.map((a: Any) => a.id)).toEqual(expect.arrayContaining(['fallback-blocked', 'worker']));
+    expect(alerts.map((a: Any) => a.id)).not.toContain('fallback');
+  });
+
+  it('cert check resolves null when the peer accepts but never completes the TLS handshake', async () => {
+    const { certDaysLeft } = await load('sel-healthcheck.mjs');
+    const sockets: net.Socket[] = [];
+    const silent = net.createServer(socket => { sockets.push(socket); });
+    await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', resolve));
+    try {
+      const started = Date.now();
+      const days = await certDaysLeft({ connectHost: '127.0.0.1', tlsPort: (silent.address() as net.AddressInfo).port, publicHost: 'synthetic.invalid' }, Date.now(), 300);
+      expect(days).toBeNull();
+      expect(Date.now() - started).toBeLessThan(5000);
+    } finally { for (const s of sockets) s.destroy(); await new Promise<void>(resolve => silent.close(() => resolve())); }
   });
 
   it('dry-run prints instead of sending and keeps no state; report summarizes the day', async () => {

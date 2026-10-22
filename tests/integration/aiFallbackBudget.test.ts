@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatClient, type ChatOptions } from '../../src/ai/chatClient.js';
 import { AiError } from '../../src/ai/errors.js';
+import { ASR_BAILIAN_ENDPOINT, createTranscriber, estimateAsrTokens } from '../../src/ai/asr.js';
 import { FALLBACK_BLOCKED_MESSAGE, FALLBACK_LEDGER_FILE, readFallbackToday, setFallbackClockForTests, shanghaiDay } from '../../src/ai/fallbackBudget.js';
 
 const original = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
@@ -119,6 +120,26 @@ describe('pay-as-you-go fallback daily circuit breaker', () => {
     await new ChatClient(options()).call('followup', msg);
     expect(hosts(fetcher)).toEqual(['payg', 'payg']);
     expect(events('sel_ai_fallback')).toHaveLength(0);
+  });
+
+  it('ASR fallbacks count toward the daily token cap (reported tokens, else reported seconds, else audio size)', async () => {
+    const cfg = { aiMode: 'bailian', aiBaseUrl: ASR_BAILIAN_ENDPOINT, aiApiKey: 'payg-fake', aiAsrModel: 'qwen-audio-fake', aiTimeoutMs: 1000 };
+    const asr = (usage: unknown) => vi.fn().mockImplementation(async (url: string) => String(url).includes('token-plan')
+      ? new Response('{}', { status: 503 })
+      : new Response(JSON.stringify({ output: { text: '合成转写' }, ...(usage === undefined ? {} : { usage }) })));
+    const audio = Buffer.alloc(64_000, 1);
+    vi.stubGlobal('fetch', asr({ input_tokens: 700, output_tokens: 20 }));
+    expect(await createTranscriber(cfg).transcribe(audio, 'audio/mp4')).toBe('合成转写');
+    expect(readFallbackToday(ledger)).toMatchObject({ calls: 1, tokens: 720 });
+    vi.stubGlobal('fetch', asr({ duration: 5 }));
+    await createTranscriber(cfg).transcribe(audio, 'audio/mp4');
+    expect(readFallbackToday(ledger)).toMatchObject({ calls: 2, tokens: 720 + 160 });
+    vi.stubGlobal('fetch', asr(undefined));
+    await createTranscriber(cfg).transcribe(audio, 'audio/mp4');
+    expect(estimateAsrTokens(64_000)).toBe(250);
+    expect(readFallbackToday(ledger)).toMatchObject({ calls: 3, tokens: 720 + 160 + 250 });
+    vi.stubEnv('SEL_AI_FALLBACK_DAILY_TOKENS', '1130');
+    await expect(createTranscriber(cfg).transcribe(audio, 'audio/mp4')).rejects.toMatchObject({ message: FALLBACK_BLOCKED_MESSAGE });
   });
 
   it('records provider per attempt so /admin/ can split Token Plan from pay-as-you-go', async () => {
