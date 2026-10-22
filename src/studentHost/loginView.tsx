@@ -15,11 +15,14 @@ function beijingDate(date: Date): string {
   return date.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' });
 }
 
-/** 限速提示：说清楚是谁太频繁、要等多久。 */
+/**
+ * 限速提示：说清楚是谁太频繁、要等多久。登录只在「码不对」时出现（正确的码不受限速影响）；
+ * 注册名额的全站上限（scope global，在注册前挡）也用这里的 global 文案。
+ */
 function throttleText(block: NonNullable<AttemptBlock>): string {
   const minutes = Math.max(1, Math.ceil(block.seconds / 60));
   if (block.scope === 'global') return `现在同时试的人太多了，等 ${minutes} 分钟左右再试。`;
-  if (block.scope === 'ip') return `你们这个网络里输错的次数太多了，等 ${minutes} 分钟左右再试；也可以换手机流量试试。`;
+  if (block.scope === 'ip') return `你们这个网络里输错的次数太多了，等 ${minutes} 分钟左右再试；也可以换手机流量试试。正确的码不受影响，先对照一下有没有输错。`;
   return `这个码输错的次数太多了，等 ${minutes} 分钟左右再试。先对照一下有没有输错。`;
 }
 

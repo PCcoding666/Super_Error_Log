@@ -22,7 +22,7 @@ import crypto from 'node:crypto';
 import express, { Router, type Request, type Response } from 'express';
 import { isAccountRole } from './accountRole.js';
 import { INVITATION_WARN_MS, RegistryError, StudentRegistry, resolveStudentHostDir, type AgeBand } from './registry.js';
-import { AttemptGuard, codeKey, LOGIN_LIMITS, REGISTRATION_LIMITS } from './attemptGuard.js';
+import { AttemptGuard, codeKey, LOGIN_LIMITS, REGISTRATION_LIMITS, registrationKey } from './attemptGuard.js';
 import { PRIVACY_VERSION } from './privacyText.js';
 import { isInAppBrowserAgent } from '../web/inAppBrowser.js';
 import { StudentWorkerPool, WorkerStartError } from './workers.js';
@@ -131,6 +131,11 @@ export interface StudentHostGatewayOptions {
   now?: () => Date;
   /** 测试注入：限速器用的时钟（毫秒）。 */
   throttleNow?: () => number;
+  /**
+   * 预算已用完时，「错的那一次」回应前等多久（毫秒，缺省 500）。正确的码不等。
+   * 只放慢错误尝试，不挡任何人（P0-6 评审：全站预算不能变成全站锁）。
+   */
+  failureDelayMs?: number;
 }
 
 /** 「复制邀请码」的小脚本：网关自己提供（script-src 'self'），没有脚本时码本身可以长按选择。 */
@@ -168,6 +173,8 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   const loginGuard = new AttemptGuard(LOGIN_LIMITS, options.throttleNow);
   const registrationGuard = new AttemptGuard(REGISTRATION_LIMITS, options.throttleNow);
   const now = options.now ?? ((): Date => new Date());
+  const failureDelayMs = Math.max(0, options.failureDelayMs ?? 500);
+  const slowDown = (): Promise<void> => failureDelayMs > 0 ? new Promise(resolve => setTimeout(resolve, failureDelayMs)) : Promise.resolve();
   let built: Router | null = null;
 
   // 不在启动时为每个已注册学生拉起进程。第一次打开再 fork；空闲后由进程池退出。
@@ -201,7 +208,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
 
     // ---------- 公开注册（注册码 + 姓名手机号 + 同意；不能指定账号身份或学生 ID） ----------
     r.get('/register', (request, response) => sendHtml(response, RegistrationPage({ inAppBrowser: inApp(request) })));
-    r.post('/register', form, (request, response) => {
+    r.post('/register', form, async (request, response) => {
       if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
       const ip = deps.ipOf(request);
       const field = (name: string): string => typeof request.body?.[name] === 'string' ? request.body[name] : '';
@@ -209,12 +216,13 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         name: field('name').slice(0, 60), phone: field('phone').slice(0, 40), regcode: field('regcode').slice(0, 20),
         ageBand: field('age'), consent: field('consent') === '1', guardian: field('guardian') === '1',
       };
-      const key = codeKey(values.regcode, ip);
-      const blocked = registrationGuard.blocked(key, ip);
-      if (blocked) {
-        response.setHeader('retry-after', String(blocked.seconds));
+      const key = registrationKey(values.regcode, ip);
+      // 只有「全站注册成功总数」在注册前挡（防刷满名额）；失败预算只影响错的那一次怎么回应，先验码。
+      const capped = registrationGuard.successCapped();
+      if (capped) {
+        response.setHeader('retry-after', String(capped.seconds));
         response.status(429);
-        sendHtml(response, RegistrationPage({ blocked, inAppBrowser: inApp(request), values }));
+        sendHtml(response, RegistrationPage({ blocked: capped, inAppBrowser: inApp(request), values }));
         return;
       }
       try {
@@ -233,26 +241,32 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         sendHtml(response, RegistrationCompletePage({ ...registration, inAppBrowser: inApp(request) }));
       } catch (error) {
         if (!(error instanceof RegistryError)) throw error;
-        // 只有「码不对」和「重复登记」算失败（后者可被用来探测谁注册过）；填错格式、没勾同意不算。
-        if (error.code === 'invalid_registration_code' || error.code === 'duplicate_registration') registrationGuard.failure(key, ip);
+        // 只有「注册码不对」算失败。重复登记（同一个人多点了一次）、填错格式、没勾同意都不算：
+        // 全班共用一个注册码，不能让几次重复提交把全班挡在外面。
+        if (error.code === 'invalid_registration_code') {
+          const wasOver = registrationGuard.blocked(key, ip) !== null;
+          registrationGuard.failure(key, ip);
+          const over = registrationGuard.blocked(key, ip);
+          if (over) {
+            if (wasOver) await slowDown();
+            response.setHeader('retry-after', String(over.seconds));
+            response.status(429);
+            sendHtml(response, RegistrationPage({ blocked: over, inAppBrowser: inApp(request), values: { ...values, regcode: '' } }));
+            return;
+          }
+        }
         response.status(error.code === 'capacity_full' ? 503 : 400);
         sendHtml(response, RegistrationPage({ error: error.message, inAppBrowser: inApp(request), values: error.code === 'invalid_registration_code' ? { ...values, regcode: '' } : values }));
       }
     });
 
     // ---------- 登录（兑换邀请码） ----------
-    r.post('/login', form, (request, response) => {
+    r.post('/login', form, async (request, response) => {
       if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
       const ip = deps.ipOf(request);
       const raw = typeof request.body?.code === 'string' ? request.body.code : '';
       const key = codeKey(raw, ip);
-      const blocked = loginGuard.blocked(key, ip);
-      if (blocked) {
-        response.setHeader('retry-after', String(blocked.seconds));
-        response.status(429);
-        sendHtml(response, LoginPage({ blocked, inAppBrowser: inApp(request) }));
-        return;
-      }
+      // 先验码：正确的码任何时候都能登录，不受码键、IP、全站失败预算影响（预算只放慢错误尝试）。
       try {
         const session = registry.redeem(raw);
         loginGuard.success(key);
@@ -267,9 +281,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         response.redirect(303, '/s/?login=1');
       } catch (error) {
         if (!(error instanceof RegistryError)) throw error;
+        const wasOver = loginGuard.blocked(key, ip) !== null;
         loginGuard.failure(key, ip);
         const retryAfter = loginGuard.blocked(key, ip);
         if (retryAfter) {
+          if (wasOver) await slowDown();
           response.setHeader('retry-after', String(retryAfter.seconds));
           response.status(429);
           sendHtml(response, LoginPage({ blocked: retryAfter, inAppBrowser: inApp(request) }));
