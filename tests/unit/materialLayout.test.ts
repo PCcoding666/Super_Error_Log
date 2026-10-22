@@ -49,12 +49,13 @@ describe('学习材料界面', () => {
     expect(html).toContain('待确定题号');
     expect(html).toContain('补充材料');
     expect(html).toContain('<h3>照片 1 · later label</h3>');
-    expect(html).toContain('正在整理或等待重试');
+    expect(html).toContain('<span class="meta-line">正在整理</span>');
     expect(html).toContain('还没有可用于区分的题号或内容');
     expect(html).toContain('<summary>调整这页属于哪份试卷</summary>');
     expect(html).toContain('<summary>批量帮我批改</summary>');
     expect(html).toContain('<summary>批量参考答案</summary>');
-    expect(html).toContain('有照片还没整理完，原图已保留。');
+    expect(html).toContain('1 张照片没整理成功，原图已保留。');
+    expect(html).toContain('一键重新整理');
     expect(html).not.toContain('class="more"');
     expect(html).not.toContain('▶');
   });

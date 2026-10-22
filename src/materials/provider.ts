@@ -4,6 +4,7 @@ import { newId } from '../db/connection.js';
 import { ChatClient, assertEndpoint, type ChatOptions, type Message, type ModelStage, type StageResult } from '../ai/chatClient.js';
 import { AiError } from '../ai/errors.js';
 import { cropPhoto, normalizePhoto, validateBox, type Box } from '../media/images.js';
+import { unsupportedSubject } from './subjects.js';
 import type { CaptureHints, DocumentClues, Extraction, Fragment, MaterialRole, Grade, ReferenceAnswer } from './contracts.js';
 
 export interface MaterialProvider {
@@ -139,6 +140,11 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
         hints: input.hints,
         schema: { document: { title: 'string|null', subject: 'string|null', date: 'string|null', printedCode: 'string|null', page: 'positive integer|null' }, candidates: [{ key: 'unique string', role: ROLES, box: { x: '0..1', y: '0..1', width: '>0', height: '>0' }, number: 'printed question number|null', subpart: 'printed subpart|null', page: 'positive integer|null', order: 'unique increasing nonnegative integer', requiresDiagram: 'boolean' }], warnings: ['string'] },
       }, bytes, v => inventory(v, source));
+      // Trial scope is 数学/物理/化学. A clearly named other subject stops after this one locate call:
+      // no per-region reads or verifications, and the original photo stays saved.
+      if (unsupportedSubject(located.document.subject)) {
+        return validateMaterialExtraction({ assetId: source.assetId, revision: source.revision, document: located.document, fragments: [], warnings: [...located.warnings, 'unsupported_subject'], runs }, source);
+      }
       const fragments: Fragment[] = []; const warnings = [...located.warnings]; let failure: MaterialProviderError | undefined;
       for (const candidate of located.candidates) {
         signal.throwIfAborted();

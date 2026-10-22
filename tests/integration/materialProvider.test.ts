@@ -147,3 +147,31 @@ describe('grounded material provider protocol', () => {
   });
 });
 function fModels() { return { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' }; }
+
+describe('trial scope 数学/物理/化学', () => {
+  it('stops after the single locate call for a clearly other-subject paper, with no reads, verifications or failure', async () => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate') { send(res, { source: { ...source }, document: { ...document, subject: '英语' }, candidates: [candidate('q', 'question'), candidate('w', 'student_work', 1)], warnings: [] }); return; }
+      send(res, response(body));
+    });
+    const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct });
+    const result = await provider.extract({ assetId: source.assetId, revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(f.requests).toHaveLength(1);
+    expect(result.fragments).toEqual([]);
+    expect(result.document.subject).toBe('英语');
+    expect(result.warnings).toContain('unsupported_subject');
+  });
+  it('still extracts a supported or unnamed subject normally', async () => {
+    for (const subject of ['数学', null]) {
+      const f = await local((body, res) => {
+        const c = context(body);
+        if (c.operation === 'locate') { send(res, { source: { ...source }, document: { ...document, subject }, candidates: [candidate('q', 'question')], warnings: [] }); return; }
+        send(res, response(body));
+      });
+      const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct });
+      const result = await provider.extract({ assetId: source.assetId, revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+      expect(f.requests).toHaveLength(3); expect(result.fragments).toHaveLength(1);
+    }
+  });
+});
