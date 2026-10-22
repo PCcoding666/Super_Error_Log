@@ -71,7 +71,7 @@ function documentClues(value: unknown): DocumentClues {
 }
 type Candidate = { key: string; fragmentId: string; role: MaterialRole; box: Box; number: string | null; subpart: string | null; page: number | null; order: number; requiresDiagram: boolean };
 function inventory(value: unknown, source: MaterialSource): { document: DocumentClues; candidates: Candidate[]; warnings: string[] } {
-  const v = record(value); identity(v.source, source);
+  const v = record(unwrap(value, 'candidates')); identity(v.source, source);
   if (!Array.isArray(v.candidates) || v.candidates.length > 128) return invalid();
   const keys = new Set<string>(); const orders = new Set<number>(); const document = documentClues(v.document);
   const candidates = v.candidates.map(raw => {
@@ -162,7 +162,7 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
       const located = await invoke('material_extract', 'locate', 'locate', {
         hints: input.hints,
         schema: { document: { title: 'string|null', subject: 'string|null', date: 'string|null', printedCode: 'string|null', page: 'positive integer|null' }, candidates: [{ key: 'unique string', role: ROLES, box: { x: '0..1', y: '0..1', width: '>0', height: '>0' }, number: 'printed question number|null', subpart: 'printed subpart|null', page: 'positive integer|null', order: 'unique increasing nonnegative integer', requiresDiagram: 'boolean' }], warnings: ['string'] },
-      }, bytes, v => inventory(unwrap(v, 'candidates'), source));
+      }, bytes, v => inventory(v, source));
       const fragments: Fragment[] = []; const warnings = [...located.warnings]; let failure: MaterialProviderError | undefined;
       for (const candidate of located.candidates) {
         signal.throwIfAborted();
