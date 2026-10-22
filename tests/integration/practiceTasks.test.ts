@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getDb, now } from '../../src/db/connection.js';
-import { localDayText } from '../../src/domain/calendarDay.js';
 import { createPractice, recommendPractice } from '../../src/v2/practiceService.js';
 import * as tasks from '../../src/v2/practiceTasks.js';
 import { recordAttempt } from '../../src/services/attemptService.js';
@@ -98,7 +97,7 @@ describe('proactive paper task lifecycle',()=>{
     tasks.setTaskLifecycle(p.id,'cancelled');
     getDb().prepare("UPDATE review_packet SET status='generated',generated_at=? WHERE id=?").run(now(),p.id);
     getDb().prepare("UPDATE error_item SET status='packet_generated' WHERE id=?").run(ids[0]!);
-    const r=recordAttempt(p.id,ids[0]!,{completion:'independent',correct:true,performedAt:localDayText(new Date())},'student');
+    const r=recordAttempt(p.id,ids[0]!,{completion:'independent',correct:true,performedAt:new Date().toISOString().slice(0,10)},'student');
     expect(r.ok).toBe(false);
     expect(r.error).toContain('取消');
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({n:0});
