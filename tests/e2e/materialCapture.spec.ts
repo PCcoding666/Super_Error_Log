@@ -513,6 +513,8 @@ test('P1-3: another account logging in on this phone does not inherit the pendin
     await page.goto(gateway.base + '/s/');
     await page.getByLabel('12 位邀请码').fill(gateway.codes[1]!);
     await page.getByRole('button', { name: '进入我的错题本' }).click();
+    // #54：新账号第一次进入先选学段（与 enter() 相同）。
+    await page.getByRole('button', { name: '初中', exact: true }).click();
     await page.goto(gateway.base + '/s/capture');
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 0 张');
     await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);

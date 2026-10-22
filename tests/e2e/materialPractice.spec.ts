@@ -20,6 +20,8 @@ test('material questions: capture -> include -> practice -> per-item result -> p
     await page.goto(g.base + '/s/');
     await page.getByLabel('12 位邀请码').fill(g.codes[0]!);
     await page.getByRole('button', { name: '进入我的错题本' }).click();
+    // #54：新账号第一次进入先选学段。
+    await page.getByRole('button', { name: '初中', exact: true }).click();
     await page.goto(g.base + '/s/capture');
     await page.locator('#library-input').setInputFiles({ name: 'paper.jpg', mimeType: 'image/jpeg', buffer: await jpeg('SYNTHETIC 1/2/3') });
     await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible({ timeout: 30000 });
