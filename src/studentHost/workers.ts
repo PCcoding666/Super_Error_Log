@@ -137,6 +137,11 @@ export class StudentWorkerPool {
     installExitHook();
   }
 
+  /** 传给每个 worker 的共享目录（备用 AI 通道的全机账本 SEL_AI_FALLBACK_LEDGER_DIR）；没传时 worker 会拒绝走备用。 */
+  get sharedDir(): string | undefined {
+    return this.options.sharedDir;
+  }
+
   /** 进程退出钩子里用：同步杀，不等待。 */
   killAllSync(): void {
     for (const entry of this.entries.values()) {
