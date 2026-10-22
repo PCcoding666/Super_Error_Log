@@ -7,6 +7,8 @@ import { ChatClient, type ChatOptions } from '../../src/ai/chatClient.js';
 import { AiError } from '../../src/ai/errors.js';
 import { ASR_BAILIAN_ENDPOINT, createTranscriber, estimateAsrTokens } from '../../src/ai/asr.js';
 import { FALLBACK_BLOCKED_MESSAGE, FALLBACK_LEDGER_FILE, readFallbackToday, setFallbackClockForTests, shanghaiDay } from '../../src/ai/fallbackBudget.js';
+import { StudentRegistry } from '../../src/studentHost/registry.js';
+import { createStudentHostGateway } from '../../src/studentHost/router.js';
 
 const original = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 const primary = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
@@ -110,6 +112,30 @@ describe('pay-as-you-go fallback daily circuit breaker', () => {
     await expect(new ChatClient(options()).call('followup', msg)).rejects.toMatchObject({ kind: 'rate_limited' });
     expect(hosts(fetcher)).toEqual(['tp']);
     expect(events('sel_ai_fallback_blocked')[0]).toMatchObject({ reason: 'ledger' });
+  });
+
+  it('a student worker without the shared ledger dir refuses the backup loudly instead of counting per student', async () => {
+    // Before: the ledger fell back to SEL_STUDENT_DATA_DIR, silently making the cap per student.
+    vi.stubEnv('SEL_AI_FALLBACK_LEDGER_DIR', '');
+    vi.stubEnv('SEL_STUDENT_HOST_DIR', '');
+    vi.stubEnv('SEL_STUDENT_WORKER', '1');
+    const fetcher = vi.fn().mockImplementation(async (url: string) => String(url).startsWith(primary) ? quota() : ok()); vi.stubGlobal('fetch', fetcher);
+    await expect(new ChatClient(options()).call('followup', msg)).rejects.toMatchObject({ kind: 'rate_limited', message: FALLBACK_BLOCKED_MESSAGE });
+    expect(hosts(fetcher)).toEqual(['tp']);
+    expect(events('sel_ai_fallback_blocked')[0]).toMatchObject({ level: 'error', reason: 'ledger_dir_missing' });
+    expect(fs.existsSync(path.join(usage, FALLBACK_LEDGER_FILE))).toBe(false);
+  });
+
+  it('under the student gateway every worker gets the registry host dir as the one shared ledger', async () => {
+    const hostDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-fallback-host-'));
+    const registry = StudentRegistry.open(hostDir);
+    const gateway = await createStudentHostGateway({ registry });
+    try {
+      expect(gateway.pool.sharedDir).toBe(registry.hostDir);
+      expect(path.resolve(gateway.pool.sharedDir!)).toBe(path.resolve(hostDir));
+    } finally {
+      await gateway.close(); fs.rmSync(hostDir, { recursive: true, force: true });
+    }
   });
 
   it('does not limit pay-as-you-go when it is the configured primary (no Token Plan key)', async () => {
