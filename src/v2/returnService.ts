@@ -127,6 +127,10 @@ export interface LearningReturnSummary {
   pendingRedoOn: string | null;
   /** 「X 月 X 日再做」：pendingRedoOn 与 nextConfirmOn 里较早的一天；无则 null。 */
   nextRedoOn: string | null;
+  /** pending 题里最晚的再做日；与 pendingRedoOn 不同说明各题日期不一样。 */
+  pendingRedoLastOn: string | null;
+  /** 本包所有「再做」日期（pending 冷却日 + 新进暂时掌握的确认日），去重升序。 */
+  redoDays: string[];
 }
 
 type SummaryRow = {
@@ -189,11 +193,15 @@ export function getLearningReturnSummary(packetId: string, scope:LearningScope='
     .filter((day): day is string => day !== null)
     .sort();
   const pendingRedoOn = pendingDays[0] ?? null;
-  const nextRedoOn = [pendingRedoOn, confirmDates[0] ?? null].filter((day): day is string => day !== null).sort()[0] ?? null;
+  const redoDays = [...new Set([...pendingDays, ...confirmDates])].sort();
+  const nextRedoOn = redoDays[0] ?? null;
+  const pendingRedoLastOn = pendingDays[pendingDays.length - 1] ?? null;
 
   return {
     pendingRedoOn,
+    pendingRedoLastOn,
     nextRedoOn,
+    redoDays,
     answered: rows.filter(row => row.att_completion !== null).length,
     total: rows.length,
     independentCorrect: rows.filter(isIndependentCorrect).length,

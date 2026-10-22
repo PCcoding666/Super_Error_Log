@@ -3,7 +3,7 @@ import type { ReactElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import { addDayText, monthDayText } from '../../src/domain/calendarDay.js';
 import { PracticeDashboardPage } from '../../src/web/views/practiceDashboard.js';
-import { RedoDateCard, RedoReminder } from '../../src/web/views/redoDate.js';
+import { pendingRedoText, RedoDateCard, RedoReminder } from '../../src/web/views/redoDate.js';
 
 const html = (node: unknown): string => renderToStaticMarkup(node as ReactElement);
 
@@ -15,10 +15,35 @@ describe('P0-3「X 月 X 日再做」文案', () => {
   });
 
   it('练完后的日期卡写明哪天、还有几天', () => {
-    const out = html(RedoDateCard({ day: '2026-10-25', today: '2026-10-22' }));
+    const out = html(RedoDateCard({ days: ['2026-10-25'], today: '2026-10-22' }));
     expect(out).toContain('下次再做：10 月 25 日（3 天后）');
     expect(out).toContain('今天先别再做这几道');
-    expect(html(RedoDateCard({ day: null }))).toBe('');
+    expect(html(RedoDateCard({ days: [] }))).toBe('');
+  });
+
+  it('日期不一时只说最早一天是「最早」，不暗示所有题都能在那天做', () => {
+    const out = html(RedoDateCard({ days: ['2026-11-01', '2026-10-25'], today: '2026-10-22' }));
+    expect(out).toContain('下次再做：最早 10 月 25 日（3 天后）');
+    expect(out).toContain('最晚的要到 11 月 1 日');
+    expect(out).toContain('没到日期的先别做');
+    expect(out).not.toContain('今天先别再做这几道');
+  });
+
+  it('最早日期已到（例如晚几天才补录）时说今天就可以再做，而不是「先别做」', () => {
+    const due = html(RedoDateCard({ days: ['2026-10-20'], today: '2026-10-22' }));
+    expect(due).toContain('今天就可以再做了');
+    expect(due).not.toContain('先别');
+    const today = html(RedoDateCard({ days: ['2026-10-22', '2026-11-01'], today: '2026-10-22' }));
+    expect(today).toContain('今天就可以再做了');
+    expect(today).toContain('其余的要到 11 月 1 日前后');
+  });
+
+  it('当天做对那几道的说明区分同一天 / 不同日期 / 已到期', () => {
+    expect(pendingRedoText('2026-10-25', '2026-10-25', '2026-10-22')).toBe('10 月 25 日以后再独立做对一次才算掌握。');
+    expect(pendingRedoText('2026-10-25', '2026-10-28', '2026-10-22')).toBe('最早 10 月 25 日起可以再做第一道，最晚的要到 10 月 28 日；每道到期后练习页会排给你，没到日期的先别做。');
+    expect(pendingRedoText('2026-10-20', '2026-10-28', '2026-10-22')).toContain('最早的一道今天就可以再做');
+    expect(pendingRedoText('2026-10-20', '2026-10-21', '2026-10-22')).toBe('已经隔够天数了，现在就可以再做，独立做对就算掌握。');
+    expect(pendingRedoText(null, null, '2026-10-22')).toBe('隔 3 天再独立做对一次才算掌握。');
   });
 
   it('首页只在到期当天及以后提示；没到期时 compact 不打扰', () => {

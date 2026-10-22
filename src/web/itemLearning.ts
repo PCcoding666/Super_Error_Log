@@ -33,6 +33,21 @@ export function attemptLabel(record: ItemPracticeRecord): string {
   return `隔 ${days} 天独立做对`;
 }
 
+/**
+ * 题目历史（新的在前）每条的延迟锚点：比它更早的最近一次作答日，没有就是录入日。
+ * 作答日用 dayOf（纸上作答日；旧记录没有作答日时用记录时间），与掌握判定 delayAnchorDay 同一回退。
+ */
+export function withHistoryAnchors<T extends { performed_at: string | null; attempt_created_at?: string | null }>(
+  newestFirst: T[], intakeDay: string | null, dayOf: (attempt: { performed_at: string | null; created_at: string | null }) => string | null,
+): Array<T & { anchor_day: string | null }> {
+  return newestFirst.map((record, index) => ({
+    ...record,
+    anchor_day: newestFirst.slice(index + 1)
+      .map(older => (older.attempt_created_at || older.performed_at ? dayOf({ performed_at: older.performed_at, created_at: older.attempt_created_at ?? null }) : null))
+      .find(day => day !== null) ?? intakeDay,
+  }));
+}
+
 /** Detail shares notebook normalization, retaining the current item's fallback position. */
 export function itemNotebookReturn(value: unknown, item: {id:string;grade?:string;subject:string|null}): string {
   const fallback = notebookUrl({grade:item.grade,subject:item.subject ?? undefined},item.id);

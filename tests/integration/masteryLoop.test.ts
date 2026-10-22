@@ -132,6 +132,30 @@ describe('P0-3 默认流程（接受建议、当天做完）能走到掌握', ()
   });
 });
 
+describe('P0-3 回报里的再做日期', () => {
+  it('同一份练习里各题日期不一时给出最早和最晚，不只给一个日期', () => {
+    seedPracticeItems(2);
+    at(0); const p1 = startSuggested(); const [a, b] = packetItems(p1) as [string, string];
+    expect(submitLearningReturns(p1, { results: [{ itemId: a, completion: 'independent', correct: true, performedOn: ymd(day(0)) }] }).ok).toBe(true);
+    at(1);
+    expect(submitLearningReturns(p1, { results: [{ itemId: b, completion: 'independent', correct: true, performedOn: ymd(day(1)) }] }).ok).toBe(true);
+    const summary = getLearningReturnSummary(p1)!;
+    expect(summary.pendingRedoOn).toBe(ymd(day(3)));
+    expect(summary.pendingRedoLastOn).toBe(ymd(day(4)));
+    expect(summary.redoDays).toEqual([ymd(day(3)), ymd(day(4))]);
+  });
+
+  it('晚几天才补录当天的作答：再做日期已到，回报日期早于今天', () => {
+    seedPracticeItems(1);
+    at(0); const p1 = startSuggested();
+    at(5); doAll(p1, day(0));
+    const summary = getLearningReturnSummary(p1)!;
+    expect(summary.redoDays).toEqual([ymd(day(3))]);
+    expect(summary.nextRedoOn! <= ymd(day(5))).toBe(true);
+    expect(learningRedoOverview()).toMatchObject({ dueCount: 1 });
+  });
+});
+
 describe('P0-3 积压：40 道新错题每天练 3 道', () => {
   it('当场做对的题冷却 3 天，新错题每天都能轮到', () => {
     const ids = seedPracticeItems(40);

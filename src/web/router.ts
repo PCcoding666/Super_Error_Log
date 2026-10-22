@@ -44,6 +44,7 @@ import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekSer
 import { getLearningSource, learningCard, materialStoreForItem, learningImageFragments } from '../learning/sources.js';
 import { setQuestionIncluded } from '../materials/learning.js';
 import { getLearningWeek, learningRedoOverview } from '../learning/queries.js';
+import { attemptDay, intakeDay } from '../learning/redoSchedule.js';
 import type { LearningCard as V2WeekItem } from '../learning/contracts.js';
 import { getItemFullCrop } from '../v2/fullCrop.js';
 import { getV2Settings, updateV2Settings } from '../v2/settingsService.js';
@@ -70,7 +71,7 @@ import {
 import { createMaterialsRouter } from './materialsRouter.js';
 import type { WebClientDeps } from '../mobile/router.js';
 import type { BarButton, BarModel } from './views/layout.js';
-import { itemNotebookReturn, itemContextUrl, removedNotebookUrl, type ItemPracticeRecord } from './itemLearning.js';
+import { itemNotebookReturn, itemContextUrl, removedNotebookUrl, withHistoryAnchors, type ItemPracticeRecord } from './itemLearning.js';
 
 export interface WebClientOptions {
   materials?: WebClientDeps['materials'];
@@ -646,24 +647,22 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const detail = (itemId: string, error?: string | null, returnTo?: string): ReactNode => {
     const item = findItem(itemId);
     const recommend = recommendPractice(ctx.mobileDataDir);
-    const history = getDb().prepare(`SELECT rp.id, rp.created_at, rp.generated_at, ra.correct, ra.completion, ra.hint_level, ra.performed_at
+    const history = getDb().prepare(`SELECT rp.id, rp.created_at, rp.generated_at, ra.correct, ra.completion, ra.hint_level, ra.performed_at, ra.created_at AS attempt_created_at
       FROM review_packet_item rpi JOIN review_packet rp ON rp.id = rpi.packet_id
       LEFT JOIN review_attempt ra ON ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id
-      WHERE rpi.item_id = ? ORDER BY COALESCE(ra.performed_at, rp.created_at) DESC, rp.created_at DESC, rp.rowid DESC`).all(itemId) as unknown as Array<ItemPracticeRecord & {generated_at:string|null}>;
+      WHERE rpi.item_id = ? ORDER BY COALESCE(ra.performed_at, rp.created_at) DESC, rp.created_at DESC, rp.rowid DESC`).all(itemId) as unknown as Array<ItemPracticeRecord & {generated_at:string|null;attempt_created_at:string|null}>;
     const reflection = getV2Reflection(itemId)?.reflection ?? null;
-    const intakeAt = (getDb().prepare('SELECT created_at FROM error_item WHERE id = ?').get(itemId) as {created_at:string} | undefined)?.created_at;
+    const intake = intakeDay(itemId);
     return ItemDetailPage({
       item, images: learningImageFragments(itemId), evidence: getEvidenceView(itemId),
       canDiscard: item.source.kind === 'material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
       reflected: reflection != null, reflection, error, returnTo, timeZone: ctx.timeZone,
       eligible: [...recommend.recommended, ...recommend.others].some(candidate => candidate.id === itemId),
       resumePracticeId: unfinishedPractice(itemId), reflectionPracticeId: history[0]?.id,
-      practiceHistory: history.map((record, index) => ({
+      // 「隔几天」与掌握判定同一锚点（attemptDay 同一回退）：更早一次作答日，没有就是录入日（P0-3）。
+      practiceHistory: withHistoryAnchors(history, intake, attemptDay).map(record => ({
         ...record,
         generated_day: record.generated_at ? localDayText(new Date(record.generated_at), Intl.DateTimeFormat().resolvedOptions().timeZone) : null,
-        // 「隔几天」与掌握判定同一锚点：更早一次作答日，没有就是录入日（P0-3）。
-        anchor_day: history.slice(index + 1).find(older => older.performed_at)?.performed_at
-          ?? (intakeAt ? localDayText(new Date(intakeAt), Intl.DateTimeFormat().resolvedOptions().timeZone) : null),
       })),
     });
   };

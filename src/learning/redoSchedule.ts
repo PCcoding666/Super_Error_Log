@@ -21,23 +21,31 @@ function dayOf(value: string | null | undefined): string | null {
   return Number.isFinite(date.getTime()) ? localDayText(date) : null;
 }
 
+/** 一次作答的作答日：纸上作答日；旧记录没有作答日时用记录时间（与掌握判定同一口径）。 */
+export function attemptDay(attempt: { performed_at: string | null; created_at: string | null }): string | null {
+  return dayOf(attempt.performed_at) ?? dayOf(attempt.created_at);
+}
+
+/** 录入日。 */
+export function intakeDay(itemId: string): string | null {
+  const item = getDb().prepare('SELECT created_at FROM error_item WHERE id = ?').get(itemId) as { created_at: string } | undefined;
+  return dayOf(item?.created_at);
+}
+
 /**
  * 这道题「上一次接触」的日子：最近一次作答的作答日；从没作答就是录入日。
  * excludePacketId：计算某包内本次作答时，排除这包自己的作答（每包每题只有一条，正常不会有）。
  */
 export function delayAnchorDay(itemId: string, excludePacketId?: string): string | null {
-  const db = getDb();
-  const attempts = db.prepare(
+  const attempts = getDb().prepare(
     'SELECT performed_at, created_at FROM review_attempt WHERE item_id = ? AND packet_id <> ?',
   ).all(itemId, excludePacketId ?? '') as Array<{ performed_at: string | null; created_at: string }>;
   let latest: string | null = null;
   for (const attempt of attempts) {
-    const day = dayOf(attempt.performed_at) ?? dayOf(attempt.created_at);
+    const day = attemptDay(attempt);
     if (day && (latest === null || day > latest)) latest = day;
   }
-  if (latest) return latest;
-  const item = db.prepare('SELECT created_at FROM error_item WHERE id = ?').get(itemId) as { created_at: string } | undefined;
-  return dayOf(item?.created_at);
+  return latest ?? intakeDay(itemId);
 }
 
 /** 当场做对（attempted）后，最早哪天再做对才算数：上次作答日 + 3 天。 */

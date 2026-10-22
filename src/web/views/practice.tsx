@@ -9,7 +9,7 @@ import { ACCOUNT_ROLE_LABELS, type AccountRole } from '../../studentHost/account
 import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';
 import { monthDayText } from '../../domain/calendarDay.js';
-import { RedoDateCard } from './redoDate.js';
+import { pendingRedoText, RedoDateCard } from './redoDate.js';
 import { Page, Phrased, Problem, VoiceBox, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
 // ---------- 选项的断行 ----------
@@ -619,7 +619,6 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
     : `录了 ${summary.answered}/${summary.total} 道，独立做对 ${summary.independentCorrect} 道`;
   const nothing = summary.masteredNow.length + summary.again.length + summary.pending.length === 0 && !summary.calibration.text;
   const confirm = summary.nextConfirmOn ? monthDayText(summary.nextConfirmOn) : null;
-  const pendingOn = summary.pendingRedoOn ? monthDayText(summary.pendingRedoOn) : null;
   const bar: BarModel = { caption: '', primary: props.next, secondary: [] };
   return (
     <Page title="这次的结果" bar={bar}>
@@ -627,7 +626,7 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
       {/* 结果出来：头一句和下面几组依次浮上来（减少动态效果时直接显示） */}
       <div className="m-stagger">
       <p className="lead card-title" data-testid="results-head">{head}</p>
-      <RedoDateCard day={summary.nextRedoOn} />
+      <RedoDateCard days={summary.redoDays} />
       {summary.masteredNow.length > 0 ? (
         <section className="card">
           <h2 className="card-title tone-green"><Phrased text={`真会了 ✓（${summary.masteredNow.length} 道）`} /></h2>
@@ -638,7 +637,7 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
       {summary.pending.length > 0 ? (
         <section className="card">
           <h2 className="card-title"><Phrased text={`做对了，过几天再确认（${summary.pending.length} 道）`} /></h2>
-          <p className="small muted">{pendingOn ? `当天做对还不算数，${pendingOn}以后再做一次，做对才算掌握。` : '当天做对还不算数，隔 3 天再做一次，做对才算掌握。'}</p>
+          <p className="small muted">当天做对还不算数：{pendingRedoText(summary.pendingRedoOn, summary.pendingRedoLastOn)}</p>
           <ul className="list">{summary.pending.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
       ) : null}
