@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import crypto from 'node:crypto';
 import { recordAiUsage, tokenCount } from '../observability/aiUsage.js';
+import { FALLBACK_BLOCKED_MESSAGE, withFallbackBudget } from './fallbackBudget.js';
 
 /**
  * 「说说为什么错」的语音转文字（学生网页版用；iOS App 在手机上本地转写，不走这里）。
@@ -169,7 +170,9 @@ export function createTranscriber(cfg: AsrConfig & { aiTimeoutMs?: number }): Sp
     catch (error) {
       signal?.throwIfAborted();
       if (!(error instanceof TranscribeError) || !error.fallbackEligible) throw error;
-      return backup.transcribe(audio, mimeType, signal);
+      // 按量付费备用与图文调用共用同一份每日上限（见 fallbackBudget.ts）。
+      return withFallbackBudget({ operation: 'asr', primaryError: error.kind }, () => backup.transcribe(audio, mimeType, signal),
+        () => new TranscribeError('provider_error', FALLBACK_BLOCKED_MESSAGE));
     }
   } };
 }

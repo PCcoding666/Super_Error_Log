@@ -43,7 +43,7 @@ Environment：`production`，只允许 branch `main`。
 
 `publish.sh` 上传包并核对 SHA256，服务端检查路径、白名单、类型、展开大小、提交 SHA 和运行 ID。单独的 systemd 临时单元负责发布，关闭电脑或 GitHub 连接断开不会中断服务器事务。
 
-顺序：安装生产依赖 → 等待照片识别/打印空闲（最多 2 分钟）→ 确认旧服务健康 → 停服务并再次检查是否有新任务 → 一致性备份 → 原子切换 `current` → 启动 → HTTPS 登录页、JS/CSS、匿名 API 拒绝检查。停服务通常只覆盖备份和重启，用户正在提交表单时可能需要重试。
+顺序：清理旧备份/旧版本（只留最近 3 份）→ 安装生产依赖 → 等待照片识别/打印空闲（最多 2 分钟）→ 确认旧服务健康 → **服务仍在运行时打包照片等文件**（`files.tar`，不压缩、不含 SQLite）→ 停服务并再次检查是否有新任务 → 只打包 SQLite 与 WAL（`sqlite.tar`，通常几秒）→ 原子切换 `current` → 启动 → HTTPS 登录页、JS/CSS、匿名 API 拒绝检查。停服时间只覆盖 SQLite 打包和重启，用户正在提交表单时可能需要重试。北京时间 18:00–24:00 `deploy.yml` 不发布（发布窗口，见 `docs/quality/RELEASE_CHECKLIST.md`）。
 
 服务器任务最多 15 分钟，命令也有各自超时；超时尝试恢复旧服务。状态保存在 `/var/lib/sel-ci/<run-id>-<attempt>/status.json`。Actions 或网络中断后，先查询它，不要连续重启或反复上传：
 
@@ -61,9 +61,9 @@ ssh sel-deploy@SERVER 'status RUN_ID-ATTEMPT'
 - 如果状态是 `rollback: failed`，管理员检查 `systemctl status super-error-log`，读取私有 `failure.log`；不要把整个服务日志粘贴到公开 issue。
 - 必须人工回退一个已上线但有业务问题的版本时，管理员确认没有在跑的发布，再把 `current` 指向状态里的 `previous` 并重启。之后用 revert PR 修复集成分支，防止下次又部署问题代码。
 
-备份在 `/var/backups/super-error-log-ci/<run-id>-<attempt>/`，含数据（SQLite/WAL、照片）、环境和 systemd 单元，仅 root 可读。**代码回退不自动恢复数据库**：避免覆盖用户新写入；数据恢复必须另行确认。发布程序比较 `dist/db/` 和 `dist/studentHost/registry.js`，这些已知迁移入口变更时自动发布会提前拒绝，须安排人工发布和迁移验收。禁止把迁移藏在其他入口绕过检查；代码审查仍是必要边界。
+备份在 `/var/backups/super-error-log-ci/<run-id>-<attempt>/`：`files.tar`（照片等文件，停服前打包）、`sqlite.tar`（SQLite/WAL 与 systemd 单元，停服后打包），仅 root 可读。**不含 env 文件和 TLS 私钥**（`env`、`*.env`、`*.pem`、`*.key`、`tls*/` 都被排除）。恢复时先停服务，依次 `tar -xf files.tar -C /`、`tar -xf sqlite.tar -C /`。**代码回退不自动恢复数据库**：避免覆盖用户新写入；数据恢复必须另行确认。发布程序比较 `dist/db/` 和 `dist/studentHost/registry.js`，这些已知迁移入口变更时自动发布会提前拒绝，须安排人工发布和迁移验收。禁止把迁移藏在其他入口绕过检查；代码审查仍是必要边界。
 
-本版本不自动删除旧发布和备份。定期检查磁盘并按人工保留策略清理；低于 2 GiB 拒绝新发布。此机备份只能覆盖误发布/误操作，不能代替异地备份。
+每次发布开始时自动只保留最近 3 份发布备份（只删名字是 `<run-id>-<attempt>` 的真实目录，不跟随软链）和最近 3 个 `releases/ci-*`（当前版本永远保留；非 `ci-` 的人工版本不动）。低于 2 GiB 拒绝新发布。此机备份只能覆盖误发布/误操作，不能代替异地备份：每日异地备份见 `deploy/ops/RUNBOOK.md`。改了本程序后要由管理员重新安装 `/usr/local/sbin/sel-ci-deploy`（RUNBOOK 第 7 步）。
 
 ## 验收范围
 

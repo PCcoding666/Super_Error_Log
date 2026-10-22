@@ -45,8 +45,26 @@ export interface StudentWorkerPoolOptions {
   aiConcurrency?: number;
   /** 跨学生图片处理并发。缺省读 SEL_GLOBAL_IMAGE_CONCURRENCY。 */
   imageConcurrency?: number;
-  /** worker 报错/异常退出的回调（不写秘密）；缺省静默。 */
+  /** worker 报错/异常退出的回调（不写秘密）。缺省写一行 JSON 到主进程 stderr（systemd 下进 journald）。 */
   onError?: (studentId: string, message: string) => void;
+  /**
+   * worker 的每一行 stderr。缺省原样转发到主进程 stderr（加学生 ID 前 8 位作前缀），进 journald。
+   * 传 null 只保留内存里的最近几行（测试用）。
+   */
+  onStderr?: ((studentId: string, line: string) => void) | null;
+  /** 跨学生共享的目录（学生网关目录）：备用 AI 通道的每日计数放在这里，所有 worker 共用一份。 */
+  sharedDir?: string;
+}
+
+/** 主进程 stderr 一行一条结构化记录；journalctl -u super-error-log 可直接 grep event。 */
+export function logWorkerError(studentId: string, message: string): void {
+  try {
+    process.stderr.write(`${JSON.stringify({ event: 'sel_worker_error', level: 'error', at: new Date().toISOString(), student: studentId.slice(0, 8), message: message.slice(0, 2000) })}\n`);
+  } catch { /* stderr 已关闭 */ }
+}
+
+export function forwardWorkerStderr(studentId: string, line: string): void {
+  try { process.stderr.write(`[worker ${studentId.slice(0, 8)}] ${line}\n`); } catch { /* stderr 已关闭 */ }
 }
 
 export class WorkerStartError extends Error {
@@ -100,7 +118,13 @@ export class StudentWorkerPool {
   private slotsReserved = 0;
   private stopping = false;
 
-  constructor(private readonly options: StudentWorkerPoolOptions) {
+  private readonly options: StudentWorkerPoolOptions & Required<Pick<StudentWorkerPoolOptions, 'onError'>>;
+  private readonly onStderr: ((studentId: string, line: string) => void) | null;
+
+  constructor(options: StudentWorkerPoolOptions) {
+    // 生产池以前没传 onError，worker 崩溃、存储故障只留在内存 20 行里，主机上看不到。现在缺省进 journald。
+    this.options = { ...options, onError: options.onError ?? logWorkerError };
+    this.onStderr = options.onStderr === undefined ? forwardWorkerStderr : options.onStderr;
     this.startTimeoutMs = options.startTimeoutMs ?? WORKER_START_TIMEOUT_MS;
     this.refreshIntervalMs = options.refreshIntervalMs ?? TOKEN_REFRESH_INTERVAL_MS;
     this.idleMs = options.idleMs ?? workerIdleMs();
@@ -210,18 +234,31 @@ export class StudentWorkerPool {
         SEL_MOBILE_DATA_DIR: studentDir,
         SEL_STUDENT_HOST_ENABLED: '0',
         SEL_STUDENT_WORKER: '1',
+        ...(this.options.sharedDir ? { SEL_AI_FALLBACK_LEDGER_DIR: this.options.sharedDir } : {}),
         ...this.options.env,
       },
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
     });
-    // 子进程 stderr 只进内部回调（可能带路径等私密信息），绝不拼进可观察异常/响应。
+    // 子进程 stderr 进主进程 stderr（journald，仅服务器管理员可读）和内部回调；绝不拼进可观察异常/HTTP 响应。
     const stderrTail: string[] = [];
+    let partial = '';
     child.stderr?.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString('utf8').split('\n')) {
+      const lines = (partial + chunk.toString('utf8')).split('\n');
+      partial = lines.pop() ?? '';
+      if (partial.length > 4000) { lines.push(partial); partial = ''; }
+      for (const line of lines) {
         if (!line.trim()) continue;
+        this.onStderr?.(studentId, line.slice(0, 4000));
         stderrTail.push(line.slice(0, 300));
         if (stderrTail.length > STDERR_TAIL_LINES) stderrTail.shift();
       }
+    });
+    child.stderr?.on('end', () => {
+      if (!partial.trim()) return;
+      this.onStderr?.(studentId, partial.slice(0, 4000));
+      stderrTail.push(partial.slice(0, 300));
+      if (stderrTail.length > STDERR_TAIL_LINES) stderrTail.shift();
+      partial = '';
     });
     // 必须接 error 事件：spawn 失败/通道错误没人接会把整个主进程打挂。
     child.on('error', error => {

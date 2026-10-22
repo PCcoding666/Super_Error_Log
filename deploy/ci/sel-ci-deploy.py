@@ -30,6 +30,13 @@ PUBLIC = 'https://study.pccoding666.com'
 RUN = r'[0-9]{1,16}-[0-9]{1,4}'
 MAX_ARCHIVE = 32 * 1024 * 1024
 MAX_UNPACKED = 128 * 1024 * 1024
+# Release backups exist only to roll back a bad deploy; real backups are deploy/ops (daily, off-site).
+KEEP_BACKUPS = 3
+KEEP_RELEASES = 3
+SQLITE_SUFFIXES = ('.db', '.db-wal', '.db-shm', '.db-journal', '.sqlite', '.sqlite-wal', '.sqlite-shm')
+# Never copy secrets into a release backup: env files and TLS private keys stay in their own places.
+SECRET_EXCLUDES = ('env', '*.env', '.env', '.env.*', '*.pem', '*.key', '*.p12', '*.pfx', 'tls', 'tls-*', 'certificates')
+UNIT = 'etc/systemd/system/super-error-log.service'
 
 
 def write_json(path, value):
@@ -41,15 +48,91 @@ def write_json(path, value):
     os.replace(str(tmp), str(path))
 
 
-def run(args, timeout=60, cwd=None, log=None):
+def run(args, timeout=60, cwd=None, log=None, allowed=(0,)):
     # No shell and no inherited SSH/proxy/AI variables.
     env = {'PATH': str(ROOT / 'node-v24/bin') + ':/usr/sbin:/usr/bin:/sbin:/bin',
            'HOME': '/var/cache/sel-build', 'LANG': 'C.UTF-8',
            'NPM_CONFIG_CACHE': '/var/cache/sel-build/npm',
            'NPM_CONFIG_REPLACE_REGISTRY_HOST': 'always'}
-    return subprocess.run(args, timeout=timeout, cwd=cwd, env=env, check=True,
-                          stdout=log or subprocess.DEVNULL,
-                          stderr=log or subprocess.DEVNULL)
+    result = subprocess.run(args, timeout=timeout, cwd=cwd, env=env, check=False,
+                            stdout=log or subprocess.DEVNULL,
+                            stderr=log or subprocess.DEVNULL)
+    if result.returncode not in allowed:
+        raise subprocess.CalledProcessError(result.returncode, args[0])
+    return result
+
+
+def data_relative():
+    return str(DATA.relative_to('/'))
+
+
+def is_sqlite_file(path):
+    return path.name.endswith(SQLITE_SUFFIXES)
+
+
+def backup_files_live(backup, log):
+    """While the service still runs: archive photos/other files, never SQLite or secrets.
+
+    Photos are append-only, so copying them before the stop is safe and keeps the
+    stop-to-start window short. JPEGs do not compress: plain tar, no gzip CPU.
+    GNU tar exits 1 when a file changes while being read; that is acceptable here.
+    """
+    args = ['/usr/bin/tar', '--warning=no-file-changed', '--ignore-failed-read', '--exclude=*.sock']
+    args += ['--exclude=*' + suffix for suffix in SQLITE_SUFFIXES]
+    args += ['--exclude=' + pattern for pattern in SECRET_EXCLUDES]
+    args += ['-cf', str(backup / 'files.tar'), '-C', '/', data_relative()]
+    run(args, timeout=420, log=log, allowed=(0, 1))
+
+
+def sqlite_file_list():
+    files = []
+    for path in sorted(DATA.rglob('*')):
+        if path.is_symlink():
+            if is_sqlite_file(path):
+                raise ValueError('Unexpected SQLite symlink')
+            continue
+        if path.is_file() and is_sqlite_file(path):
+            files.append(str(path.relative_to('/')))
+    return files
+
+
+def backup_sqlite_stopped(backup, log):
+    """Service stopped: only SQLite files (+WAL) and the unit. Small, consistent, quick."""
+    listing = backup / 'sqlite-files.txt'
+    names = sqlite_file_list()
+    if Path('/' + UNIT).is_file():
+        names.append(UNIT)
+    listing.write_text(''.join(name + '\n' for name in names))
+    run(['/usr/bin/tar', '-cf', str(backup / 'sqlite.tar'), '-C', '/', '--files-from', str(listing)],
+        timeout=90, log=log)
+
+
+def prune(directory, keep, pattern, protect=()):
+    """Keep the newest `keep` matching real directories; never follow links, never touch others."""
+    if not directory.is_dir():
+        return []
+    protected = set()
+    for item in protect:
+        try:
+            protected.add(Path(item).resolve())
+        except OSError:
+            pass
+    candidates = [entry for entry in directory.iterdir()
+                  if re.fullmatch(pattern, entry.name) and entry.is_dir() and not entry.is_symlink()]
+    candidates.sort(key=lambda entry: entry.stat().st_mtime, reverse=True)
+    removed = []
+    for entry in candidates[keep:]:
+        if entry.resolve() in protected:
+            continue
+        shutil.rmtree(str(entry))
+        removed.append(entry.name)
+    return removed
+
+
+def prune_old(previous):
+    # Room for this run's backup: keep the newest KEEP_BACKUPS - 1 before creating one more.
+    prune(BACKUPS, KEEP_BACKUPS - 1, RUN)
+    prune(ROOT / 'releases', KEEP_RELEASES, r'ci-' + RUN, protect=(previous,))
 
 
 def read_status(job):
@@ -223,6 +306,7 @@ def deploy(job):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         previous = (ROOT / 'current').resolve(strict=True)
         state(job, 'preparing', previous=previous.name, release=release.name)
+        prune_old(previous)
         if shutil.disk_usage(str(ROOT)).free < 2 * 1024 ** 3:
             raise RuntimeError('Less than 2 GiB free disk space')
         release.mkdir(mode=0o755)
@@ -251,20 +335,26 @@ def deploy(job):
             raise RuntimeError('Recognition or print jobs still active; rerun later')
         if not healthy():
             raise RuntimeError('Old service is not healthy; no automatic switch')
+        # Bulk files first, while students can still use the service (phase is not a stop phase).
+        state(job, 'archiving')
+        backup = BACKUPS / status['run']
+        backup.mkdir(mode=0o700)
+        with (backup / 'backup.log').open('w') as log:
+            backup_files_live(backup, log)
+        if busy():
+            raise RuntimeError('New work arrived while archiving; keeping old release')
         state(job, 'backing_up')
         # Flag first: even a failed stop must restart the original service.
         stopped = True
         run(['/usr/bin/systemctl', 'stop', SERVICE], timeout=45)
         if busy():
             raise RuntimeError('New work arrived before stop; keeping old release')
-        backup = BACKUPS / status['run']
-        backup.mkdir(mode=0o700)
-        with (backup / 'backup.log').open('w') as log:
-            run(['/usr/bin/tar', '--exclude=*.sock', '-czf', str(backup / 'data-and-config.tar.gz'),
-                 '-C', '/', 'var/lib/super-error-log', 'etc/super-error-log/env',
-                 'etc/systemd/system/super-error-log.service'], timeout=120, log=log)
+        with (backup / 'backup.log').open('a') as log:
+            backup_sqlite_stopped(backup, log)
         write_json(backup / 'release.json', {'previous': str(previous), 'next': str(release),
-                                            'commit': status['commit']})
+                                            'commit': status['commit'],
+                                            'contents': ['files.tar', 'sqlite.tar'],
+                                            'restore': 'tar -xf files.tar -C / && tar -xf sqlite.tar -C / (service stopped)'})
         state(job, 'starting', backup=str(backup))
         point_to(release)
         run(['/usr/bin/systemctl', 'start', SERVICE], timeout=45)

@@ -125,7 +125,7 @@ export interface StudentHostGateway {
 
 export async function createStudentHostGateway(options: StudentHostGatewayOptions = {}): Promise<StudentHostGateway> {
   const registry = options.registry ?? StudentRegistry.open(options.hostDir ?? resolveStudentHostDir());
-  const pool = options.pool ?? new StudentWorkerPool({ dirFor: studentId => registry.studentDir(studentId) });
+  const pool = options.pool ?? new StudentWorkerPool({ dirFor: studentId => registry.studentDir(studentId), sharedDir: registry.hostDir });
   const throttle = new LoginThrottle();
   const registrationThrottle = new LoginThrottle();
   let built: Router | null = null;

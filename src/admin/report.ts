@@ -8,6 +8,7 @@ import {
 } from '../observability/aiUsage.js';
 export { USAGE_DETAIL_CAP };
 import { readLegacyUsage, regularPath } from './legacyUsage.js';
+import { fallbackLimits, readFallbackToday, type FallbackLimits, type FallbackToday } from '../ai/fallbackBudget.js';
 
 export const PAGE_SIZE = 50;
 export interface AdminFilters { studentId: string; from: string; to: string; model: string; operation: string; page: number }
@@ -61,6 +62,17 @@ export interface AdminReport {
   summary: UsageSummary; records: AdminCall[]; pages: number; detailLimited: boolean;
   models: string[]; operations: string[]; byModel: Array<{ name: string; usage: UsageSummary }>;
   byOperation: Array<{ name: string; usage: UsageSummary }>; failures: Array<{ code: string; count: number }>;
+  /** 按调用路线（Token Plan / 按量付费 …）分的次数、失败率、耗时。 */
+  byProvider: Array<{ name: string; usage: UsageSummary }>;
+  /** 今天（Asia/Shanghai）按量付费备用通道已用次数与上限。账本读不到时 today 为 null。 */
+  fallback: { today: FallbackToday | null; limits: FallbackLimits | null; unreadable: boolean };
+}
+
+function readFallback(hostDir: string): AdminReport['fallback'] {
+  let limits: FallbackLimits | null = null;
+  try { limits = fallbackLimits(); } catch { /* 配置错误，页面上显示“未配置正确” */ }
+  try { return { today: readFallbackToday(hostDir), limits, unreadable: false }; }
+  catch { return { today: null, limits, unreadable: true }; }
 }
 
 function readActivity(dataDir: string, warnings: string[]): { label: string | null; grade: string | null; lastActiveAt: string | null; activity: AccountActivity } {
@@ -164,6 +176,7 @@ export async function readAdminReport(registry: StudentRegistry, filters: AdminF
   const included: Measurable[] = [];
   const modelParts = new Map<string, Measurable[]>();
   const operationParts = new Map<string, Measurable[]>();
+  const providerParts = new Map<string, Measurable[]>();
   const failureCounts = new Map<string, number>();
   const details: AdminCall[] = [];
   let selectedCalls = 0;
@@ -183,7 +196,7 @@ export async function readAdminReport(registry: StudentRegistry, filters: AdminF
     let live: Measurable = fromAggregate({ calls: 0, succeeded: 0, inputTokens: null, outputTokens: null, knownInputCalls: 0, knownOutputCalls: 0, timedCalls: 0, durationSum: 0, durations: [], p95Ms: null });
     let liveModels: string[] = [];
     let liveOperations: string[] = [];
-    let liveGroups: { model: Array<{ name: string } & UsageAggregate>; operation: Array<{ name: string } & UsageAggregate> } = { model: [], operation: [] };
+    let liveGroups: { model: Array<{ name: string } & UsageAggregate>; operation: Array<{ name: string } & UsageAggregate>; provider: Array<{ name: string } & UsageAggregate> } = { model: [], operation: [], provider: [] };
     let liveFailures: Array<{ code: string; count: number }> = [];
     let liveDetails: AiUsageRecord[] = [];
     if (regularPath(dataDir, 'directory')) {
@@ -199,7 +212,7 @@ export async function readAdminReport(registry: StudentRegistry, filters: AdminF
           liveModels = names.models;
           liveOperations = names.operations;
           live = fromAggregate(aggregateUsage(db, query));
-          liveGroups = { model: groupedUsage(db, query, 'model'), operation: groupedUsage(db, query, 'operation') };
+          liveGroups = { model: groupedUsage(db, query, 'model'), operation: groupedUsage(db, query, 'operation'), provider: groupedUsage(db, query, 'provider') };
           liveFailures = usageFailures(db, query);
           liveDetails = listUsage(db, query, USAGE_DETAIL_CAP);
         }
@@ -230,10 +243,12 @@ export async function readAdminReport(registry: StudentRegistry, filters: AdminF
     included.push(live, legacyPart);
     for (const group of liveGroups.model) pushGroup(modelParts, group.name, fromAggregate(group));
     for (const group of liveGroups.operation) pushGroup(operationParts, group.name, fromAggregate(group));
+    for (const group of liveGroups.provider) pushGroup(providerParts, group.name, fromAggregate(group));
     for (const row of filteredLegacy) {
       const part = fromRecords([row]);
       pushGroup(modelParts, row.model, part);
       pushGroup(operationParts, row.operation, part);
+      pushGroup(providerParts, row.provider, part);
       if (row.status === 'failed') failureCounts.set(row.errorCode ?? 'unknown', (failureCounts.get(row.errorCode ?? 'unknown') ?? 0) + 1);
     }
     for (const row of liveFailures) failureCounts.set(row.code, (failureCounts.get(row.code) ?? 0) + row.count);
@@ -253,6 +268,7 @@ export async function readAdminReport(registry: StudentRegistry, filters: AdminF
     records: window.slice((filters.page - 1) * PAGE_SIZE, filters.page * PAGE_SIZE),
     detailLimited: selectedCalls > USAGE_DETAIL_CAP,
     models: [...models].sort(), operations: [...operations].sort(),
-    byModel: finishGroup(modelParts), byOperation: finishGroup(operationParts),
+    byModel: finishGroup(modelParts), byOperation: finishGroup(operationParts), byProvider: finishGroup(providerParts),
+    fallback: readFallback(registry.hostDir),
     failures: [...failureCounts].map(([code, count]) => ({ code, count })) };
 }
