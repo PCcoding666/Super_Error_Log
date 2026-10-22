@@ -10,6 +10,7 @@ import { MaterialStore } from '../../src/materials/store.js';
 import { setQuestionIncluded } from '../../src/materials/learning.js';
 import { createLearningPractice } from '../../src/learning/queries.js';
 import { intakeDay } from '../../src/learning/redoSchedule.js';
+import { localDayText } from '../../src/domain/calendarDay.js';
 import { getPrintStatus, requestPrint } from '../../src/v2/printService.js';
 import { practiceProgress, revealPracticeHint, savePracticeCursor } from '../../src/v2/practiceProgress.js';
 import { attachWork, latestWork, recognizeWork } from '../../src/v2/practiceWork.js';
