@@ -3,13 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDb, newId, now } from '../../src/db/connection.js';
 import { localDayText } from '../../src/domain/calendarDay.js';
 import { ensureStudentProfile } from '../../src/services/studentService.js';
 import { MaterialStore } from '../../src/materials/store.js';
 import { setQuestionIncluded } from '../../src/materials/learning.js';
 import { createLearningPractice } from '../../src/learning/queries.js';
+import { intakeDay } from '../../src/learning/redoSchedule.js';
 import { getPrintStatus, requestPrint } from '../../src/v2/printService.js';
 import { practiceProgress, revealPracticeHint, savePracticeCursor } from '../../src/v2/practiceProgress.js';
 import { attachWork, latestWork, recognizeWork } from '../../src/v2/practiceWork.js';
@@ -49,8 +50,7 @@ async function materialItems(count: number): Promise<string[]> {
     return setQuestionIncluded(store, q, true, store.getQuestion(q)!.revision).itemId!;
   });
 }
-async function preparedPacket(count = 2) {
-  const ids = await materialItems(count);
+async function printedPacket(ids: string[]) {
   const r = createLearningPractice({ itemIds: ids }, 'all');
   if (!r.ok) throw new Error(r.message);
   const pid = r.detail.id;
@@ -61,6 +61,9 @@ async function preparedPacket(count = 2) {
     await new Promise(res => setTimeout(res, 5));
   }
   throw new Error('print timeout: ' + JSON.stringify(getPrintStatus(pid, 'all')));
+}
+async function preparedPacket(count = 2) {
+  return printedPacket(await materialItems(count));
 }
 const photo = () => sharp({ create: { width: 40, height: 40, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
 const attempts = (pid: string) => (getDb().prepare('SELECT COUNT(*) n FROM review_attempt WHERE packet_id=?').get(pid) as { n: number }).n;
@@ -118,5 +121,42 @@ describe('practice loop for material-sourced items', () => {
     await job.catch(error => recordReviewFailure(pid, error));
     expect(submissionState(pid).status).toBe('failed');
     expect(log.mock.calls.flat().join(' ')).toContain(pid);
+  });
+});
+
+/**
+ * #53 × #57 integration: material-sourced items now reach the real return service, so the
+ * P0-3 delay anchor (this item's last attempt day, else its intake day — never the packet's
+ * generation day) must work for them too. Same-day correct stays `attempted`.
+ */
+describe('delay anchor for material-sourced items (P0-2 × P0-3)', () => {
+  const day = (n: number): Date => new Date(2026, 9, 22 + n, 20, 0, 0);
+  const ymd = (d: Date): string => localDayText(d);
+  const status = (id: string): string => (getDb().prepare('SELECT status FROM error_item WHERE id=?').get(id) as { status: string }).status;
+  const correctOn = (pid: string, id: string, n: number) => submitLearningReturns(pid, { results: [{ itemId: id, completion: 'independent', correct: true, performedOn: ymd(day(n)) }] }, 'all');
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(day(0)); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('anchors a never-attempted material item on its intake day, not on the packet day', async () => {
+    const [id] = await materialItems(1);
+    // The material bridge writes a real error_item row, so the intake day is found (no silent packet-day fallback).
+    expect(intakeDay(id!)).toBe(ymd(day(0)));
+    vi.setSystemTime(day(3));
+    const { pid } = await printedPacket([id!]);
+    // Packet generated and answered on day 3; intake was day 0 → 3 days → delayed evidence.
+    expect(correctOn(pid, id!, 3)).toMatchObject({ ok: true, results: [{ ok: true, toStatus: 'temporarily_mastered' }] });
+    expect(status(id!)).toBe('temporarily_mastered');
+  });
+
+  it('same-day correct on a material item stays attempted; 3+ days after that attempt it becomes temporarily mastered', async () => {
+    const [id] = await materialItems(1);
+    const first = await printedPacket([id!]);
+    expect(correctOn(first.pid, id!, 0)).toMatchObject({ ok: true, results: [{ ok: true, toStatus: 'attempted' }] });
+    expect(getLearningReturnSummary(first.pid, 'all')).toMatchObject({ pendingRedoOn: ymd(day(3)) });
+    vi.setSystemTime(day(4));
+    const second = await printedPacket([id!]);
+    // Packet generated on day 4 and answered the same day: the anchor is the day-0 attempt.
+    expect(correctOn(second.pid, id!, 4)).toMatchObject({ ok: true, results: [{ ok: true, toStatus: 'temporarily_mastered' }] });
+    expect(status(id!)).toBe('temporarily_mastered');
   });
 });
