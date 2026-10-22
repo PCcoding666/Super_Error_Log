@@ -70,7 +70,7 @@ process.on('message', async (message: { id?: string; action?: string; student?: 
     if (message.action === 'snapshot' || message.action === 'age') {
       const db = new DatabaseSync(file);
       if (message.action === 'age') {
-        db.exec("UPDATE review_packet SET generated_at=datetime('now','-7 days'); UPDATE material_asset SET created_at=datetime('now','-1 day'); UPDATE material_capture SET created_at=datetime('now','-1 day')");
+        db.exec("UPDATE review_packet SET generated_at=datetime('now','-7 days'); UPDATE error_item SET created_at=datetime('now','-7 days'); UPDATE material_asset SET created_at=datetime('now','-1 day'); UPDATE material_capture SET created_at=datetime('now','-1 day')");
       } else {
         result = Object.fromEntries(['material_capture','material_document','material_answer_selection','material_question','material_asset','material_fragment','material_attempt','material_answer','material_grade','material_job','material_link_event','error_item','review_packet','review_attempt','v2_reflection_turn'].map(table=>[table,db.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]));
       }
