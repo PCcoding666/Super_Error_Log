@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { matchesNotebook, notebookUrl, resolveNotebookStage, safeNotebookReturn, stageFilterChoices } from '../../src/web/notebook.js';
+import { NOTEBOOK_STATUS_GROUPS, matchesNotebook, notebookStatusFilter, notebookUrl, resolveNotebookStage, safeNotebookReturn, stageFilterChoices } from '../../src/web/notebook.js';
 import type { V2WeekItem } from '../../src/v2/weekService.js';
 
 const item: V2WeekItem = {id:'itm_0123456789abcdef',shortId:'M-01',grade:'初中',subject:'数学',chapter:'方程',knowledgeTags:['判别式'],questionExcerpt:'短题干',status:'needs_recheck',badge:'low',cropUrl:'',jobId:''};
-const filters = {grade:'初中',subject:'数学',chapter:'方程',status:'needs_recheck',q:''};
+const filters = {grade:'初中',subject:'数学',chapter:'方程',status:'todo',q:''};
 describe('notebook filters and safe return context',()=>{
   it('combines every filter with full text, short number, chapter and tags',()=>{
     for (const q of ['完整题目末尾','m-01','方程','判别式']) expect(matchesNotebook(item,{...filters,q},'完整题目末尾')).toBe(true);
-    for (const changed of [{grade:'高中'},{subject:'物理'},{chapter:'函数'},{status:'scheduled'},{q:'没有这个词'}]) expect(matchesNotebook(item,{...filters,...changed})).toBe(false);
+    for (const changed of [{grade:'高中'},{subject:'物理'},{chapter:'函数'},{status:'practicing'},{q:'没有这个词'}]) expect(matchesNotebook(item,{...filters,...changed})).toBe(false);
     expect(matchesNotebook(item,{...filters,grade:'全部'})).toBe(true);
     expect(matchesNotebook({...item,grade:'高中'},{...filters,grade:'全部'})).toBe(true);
   });
@@ -32,6 +32,21 @@ describe('notebook filters and safe return context',()=>{
     expect(safeNotebookReturn('/s/items?grade=初二&status=made-up','/fallback')).toBe('/s/items');
     expect(safeNotebookReturn('/s/items?grade=大学&status=made-up','/fallback')).toBe('/s/items');
     expect(safeNotebookReturn('/s/items?status=toString','/fallback')).toBe('/s/items');
+  });
+  it('shows four student status groups and keeps old status links in their group', () => {
+    expect(Object.values(NOTEBOOK_STATUS_GROUPS)).toEqual(['待练习', '练习中', '真会了', '稳了']);
+    expect(notebookStatusFilter('todo')).toBe('todo');
+    expect(notebookStatusFilter('needs_recheck')).toBe('todo');
+    expect(notebookStatusFilter('attempted')).toBe('todo');
+    expect(notebookStatusFilter('packet_generated')).toBe('practicing');
+    expect(notebookStatusFilter('temporarily_mastered')).toBe('mastered');
+    expect(notebookStatusFilter('stably_mastered')).toBe('stable');
+    expect(notebookStatusFilter('archived_not_worth_review')).toBe('');
+    expect(notebookStatusFilter('toString')).toBe('');
+    expect(safeNotebookReturn('/s/items?grade=初中&status=needs_recheck','/fallback')).toBe(notebookUrl({grade:'初中',status:'todo'}));
+    expect(matchesNotebook({...item,status:'needs_recheck'},{...filters,status:'todo'})).toBe(true);
+    expect(matchesNotebook({...item,status:'scheduled'},{...filters,status:'todo'})).toBe(false);
+    expect(matchesNotebook({...item,status:'scheduled'},{...filters,status:'practicing'})).toBe(true);
   });
   it('offers only stages that are stored for the subject', () => {
     expect(stageFilterChoices([])).toEqual(['全部']);

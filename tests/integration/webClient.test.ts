@@ -1503,7 +1503,8 @@ describe('年级、学科、章节分类', () => {
     expect(unknown).toContain(`id="item-${rows[2]!.id}"`);
     await browser.get('/s/items?grade=高中&subject=数学');
     const remembered = await browser.text('/s/items');
-    expect(remembered).toContain('data-filter="grade" data-value="初中" aria-current="true"');
+    expect(remembered).toContain('name="grade" value="初中"');
+    expect(remembered).not.toContain('data-filter="grade"');
     expect(remembered).not.toContain('data-value="高中"');
   });
 
@@ -1541,7 +1542,7 @@ describe('年级、学科、章节分类', () => {
     const ids=rows.map(row=>row.id);
     getDb().prepare("UPDATE error_item SET status='scheduled' WHERE id=?").run(ids[1]!);
     await browser.post(`/s/items/${ids[2]}/category`,{grade:'初中',subject:'数学',chapter:'筛选外章节'});
-    const fields={grade:'初中',subject:'数学',chapter:'一元一次方程',status:'ready_for_reflection',q:'x',mode:'select'};
+    const fields={grade:'初中',subject:'数学',chapter:'一元一次方程',status:'todo',q:'x',mode:'select'};
     const checked=(html:string)=>[...html.matchAll(/<input[^>]*name="itemIds"[^>]*>/g)].filter(m=>/checked/.test(m[0])).map(m=>/value="([^"]+)"/.exec(m[0])![1]);
     for(const selection of [ids.slice(0,2),ids,[],[ids[0]!, 'itm_ffffffffffffffff']]){
       const opened=await browser.post('/s/items/select',{...fields,itemIds:selection,openItem:ids[0]!});
@@ -1577,7 +1578,7 @@ describe('年级、学科、章节分类', () => {
   it('preserves canonical filter and item-anchor context and rejects arbitrary return paths', async () => {
     const { browser, rows } = await categoryFixture();
     const id = rows[0]!.id;
-    const returnTo = `/s/items?${new URLSearchParams({grade:'初中',subject:'数学',chapter:'一元一次方程',status:'ready_for_reflection',q:'1x'})}#item-${id}`;
+    const returnTo = `/s/items?${new URLSearchParams({grade:'初中',subject:'数学',chapter:'一元一次方程',status:'todo',q:'1x'})}#item-${id}`;
     const html = await browser.text(`/s/items/${id}?${new URLSearchParams({returnTo})}`);
     expect(html).toContain(`href="${returnTo.replaceAll('&','&amp;')}"`);
     for (const bad of ['https://evil.example/s/items','//evil.example/s/items','/s/settings','/s/items/../settings','/s/items?returnTo=https://evil.example']) {
@@ -1613,10 +1614,10 @@ describe('年级、学科、章节分类', () => {
       expect(senior).not.toContain(`id="item-${rows[1]!.id}"`);
       const chemistry = await browser.text(`/s/items?subject=${encodeURIComponent('化学')}`);
       expect(chemistry).toContain('还没有化学错题');
-      expect(chemistry).toContain('data-filter="grade" data-value="全部"');
+      expect(chemistry).toContain('name="grade" value="全部"');
       expect(chemistry).not.toContain('data-filter="grade" data-value="初中"');
       const math = await browser.text(`/s/items?subject=${encodeURIComponent('数学')}`);
-      expect(math).toContain('data-filter="grade" data-value="初中" aria-current="true"');
+      expect(math).toContain('name="grade" value="初中"');
       expect(math).not.toContain('data-filter="grade" data-value="全部"');
       expect((await browser.post('/s/settings/grade', { grade: '高中' })).status).toBe(303);
       expect((await uploadPhoto(browser, await photo('#c83030', 640))).status).toBe(200);
@@ -1676,7 +1677,7 @@ describe('single-question learning detail', () => {
   it('stale eligibility stays on detail with recovery and safe return context, and missing items are 404', async () => {
     const {browser,id} = await fixture();
     getDb().prepare("UPDATE error_item SET status='needs_recheck' WHERE id=?").run(id);
-    const query = new URLSearchParams({grade:'初中',subject:'数学',chapter:'一元一次方程',status:'needs_recheck',q:'方程'});
+    const query = new URLSearchParams({grade:'初中',subject:'数学',chapter:'一元一次方程',status:'todo',q:'方程'});
     const returnTo = `/s/items?${query}#item-${id}`;
     const library = await browser.text(`/s/items?${query}`);
     const href = new RegExp(`href="(/s/items/${id}\\?[^"]+)"`).exec(library)?.[1];
@@ -1692,7 +1693,7 @@ describe('single-question learning detail', () => {
     expect(html).toContain('尚未到复习时间');
     expect(html).toContain('q=%E6%96%B9%E7%A8%8B');
     expect(html).toContain('chapter=%E4%B8%80%E5%85%83%E4%B8%80%E6%AC%A1%E6%96%B9%E7%A8%8B');
-    expect(html).toContain('status=needs_recheck');
+    expect(html).toContain('status=todo');
     expect(html).toContain(`#item-${id}`);
     expect(html).toContain('data-testid="question-text"');
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
@@ -1733,7 +1734,7 @@ describe('single-question learning detail', () => {
     const {browser,id}=await fixture();
     const other=(getDb().prepare('SELECT id FROM error_item WHERE id!=? ORDER BY item_index LIMIT 1').get(id) as {id:string}).id;
     await browser.post(`/s/items/${id}/category`,{grade:'初中',subject:'管理原学科',chapter:'管理原章节'});
-    const query=new URLSearchParams({grade:'初中',subject:'管理原学科',chapter:'管理原章节',status:'ready_for_reflection',q:'x',mode:'select'});
+    const query=new URLSearchParams({grade:'初中',subject:'管理原学科',chapter:'管理原章节',status:'todo',q:'x',mode:'select'});
     for(const itemId of [id,other]) query.append('itemIds',itemId);
     const returnTo=`/s/items?${query}#item-${other}`;
     const detailUrl=`/s/items/${id}?${new URLSearchParams({returnTo})}`;
@@ -1758,7 +1759,7 @@ describe('single-question learning detail', () => {
     expect(library).toContain('管理原章节');
     expect(library).toContain('name="subject" value="管理原学科"');
     expect(library).toContain('这个学段还没有管理原学科错题');
-    expect(library).toContain('data-filter="grade" data-value="初中" aria-current="true"');
+    expect(library).toContain('name="grade" value="初中"');
     expect(library).toContain('清除筛选');
     expect(library).toContain('保留的选择');
   });
