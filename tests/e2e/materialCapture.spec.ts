@@ -52,6 +52,7 @@ async function enter(page: Page, gateway: {
     await page.goto(gateway.base + '/s/');
     await page.getByLabel('12 位邀请码').fill(gateway.codes[index]!);
     await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await page.getByRole('button', { name: '初中', exact: true }).click();
     await page.goto(gateway.base + '/s/capture');
     await expect(page.locator('[data-material-capture]')).toBeVisible();
     await expect(page.getByTestId('capture-examples')).toBeVisible();
@@ -86,7 +87,7 @@ test('never calls a local draft saved and recovers after response loss and reope
 test('does not accept a queued student A request after switching to B', async ({ page, gateway, context }) => {
     await enter(page, gateway);
     const ns = await page.locator('[data-draft-namespace]').getAttribute('data-draft-namespace');
-    await page.request.post(gateway.base + '/s/login', { form: { code: gateway.codes[1]! } });
+    await page.request.post(gateway.base + '/s/login', { form: { code: gateway.codes[1]! } }); await page.request.post(gateway.base + '/s/stage', { form: { grade: '初中' } });
     const response = await page.request.post(gateway.base + '/s/materials/captures', { headers: { accept: 'application/json', 'x-draft-namespace': ns! }, data: { requestId: crypto.randomUUID() } });
     expect(response.status()).toBe(409);
     await page.goto(gateway.base + '/s/capture');
@@ -190,7 +191,7 @@ test('an already dispatched A upload is rejected when released under B cookie', 
     await page.route('**/s/materials/uploads**', route => { pending = route; });
     await page.locator('#camera-input').setInputFiles(await jpeg());
     await expect.poll(() => !!pending).toBe(true);
-    await page.request.post(gateway.base + '/s/login', { form: { code: gateway.codes[1]! } });
+    await page.request.post(gateway.base + '/s/login', { form: { code: gateway.codes[1]! } }); await page.request.post(gateway.base + '/s/stage', { form: { grade: '初中' } });
     const next = await page.request.get(gateway.base + '/s/materials/session');
     const ns = (await next.json()).draftNamespace;
     // Re-dispatch the exact delayed body with the now-current cookie, as a queued browser request would.
@@ -214,7 +215,7 @@ test('same-student reauthentication resumes retained drafts and a stale settings
     await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
     const oldNamespace = await settings.locator('input[name=namespace]').first().inputValue();
-    await page.request.post(gateway.base + '/s/login', { form: { code: gateway.codes[1]! } });
+    await page.request.post(gateway.base + '/s/login', { form: { code: gateway.codes[1]! } }); await page.request.post(gateway.base + '/s/stage', { form: { grade: '初中' } });
     expect((await settings.request.post(gateway.base + '/s/settings', { form: { namespace: oldNamespace, practiceSlot: 'changed', paperHome: 'home' } })).status()).toBe(409);
     expect((await settings.request.post(gateway.base + '/s/logout', { form: { namespace: oldNamespace } })).status()).toBe(409);
 });

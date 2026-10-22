@@ -1,5 +1,5 @@
 /** P0-4 / P0-5: relaxed automatic inclusion, the batch "not yet included" list, and other subjects. Synthetic data only. */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getDb, newId, now } from '../../src/db/connection.js';
 import { ensureStudentProfile } from '../../src/services/studentService.js';
 import { MaterialStore } from '../../src/materials/store.js';
@@ -86,5 +86,19 @@ describe('only 数学/物理/化学 in the trial', () => {
     expect(notYetIncluded(f.store).some(g => g.assetId === f.asset)).toBe(false);
     expect(includeQuestions(f.store, [{ questionId: q, revision: f.store.getQuestion(q)!.revision }])).toEqual({ included: 0, skipped: 1 });
     expect(f.db.prepare('SELECT count(*) n FROM material_item_link WHERE question_id=?').get(q)).toEqual({ n: 0 });
+  });
+});
+
+describe('batch inclusion cost', () => {
+  it('runs the learning projection once per batch, not once per question', async () => {
+    const learning = await import('../../src/materials/learning.js');
+    const f = fixture();
+    const ids = Array.from({ length: 5 }, (_, i) => f.question(`求 ${i}。`));
+    const before = (f.db.prepare('SELECT count(*) n FROM material_inclusion_event').get() as { n: number }).n;
+    const listSpy = vi.spyOn(f.store, 'listQuestions');
+    expect(learning.includeQuestions(f.store, ids.map(id => ({ questionId: id, revision: f.store.getQuestion(id)!.revision })))).toEqual({ included: 5, skipped: 0 });
+    // syncMaterialLearning walks listQuestions once; per-question sync would walk it five times.
+    expect(listSpy).toHaveBeenCalledTimes(1);
+    expect((f.db.prepare('SELECT count(*) n FROM material_inclusion_event').get() as { n: number }).n - before).toBe(5);
   });
 });

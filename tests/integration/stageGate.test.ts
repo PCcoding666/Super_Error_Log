@@ -61,3 +61,20 @@ it('a new account must pick 初中 or 高中 before the notebook, once', async (
   expect(home).toContain('0 道错题');
   expect(await (await browser.get('/s/settings')).text()).toMatch(/<option[^>]*selected[^>]*>高中</);
 }, 60_000);
+
+it('deep links and uploads cannot bypass the stage choice; settings and the choice itself stay reachable', async () => {
+  const browser = await login();
+  for (const page of ['/s/capture', '/s/items', '/s/materials', '/s/practices', '/s/choose']) {
+    const response = await browser.get(page);
+    expect(response.status, page).toBe(200);
+    expect(await response.text(), page).toContain('你现在读初中还是高中？');
+  }
+  const upload = await browser.request('/s/materials/uploads?uploadId=' + crypto.randomUUID(), { method: 'POST', headers: { accept: 'application/json', 'x-upload-id': crypto.randomUUID() }, body: new FormData() });
+  expect(upload.status).toBe(409);
+  expect(await upload.json()).toEqual({ error: { code: 'stage_required', message: '请先选择初中或高中，再上传或整理。' } });
+  const legacy = await browser.post('/s/capture', {});
+  expect(legacy.status).toBe(303); expect(legacy.headers.get('location')).toBe('/s/');
+  expect(await (await browser.get('/s/settings')).text()).toContain('我的学段');
+  expect((await browser.post('/s/stage', { grade: '初中' })).status).toBe(303);
+  expect(await (await browser.get('/s/capture')).text()).not.toContain('你现在读初中还是高中？');
+}, 60_000);

@@ -20,6 +20,16 @@ export function inclusionIntent(store:MaterialStore, questionId:string):boolean|
  });
  return values.includes(0)?false:values.includes(1)?true:null;
 }
+/** inclusionIntent for every current question in one pass (read-only; same exclusion priority). */
+export function inclusionIntents(store:MaterialStore):Map<string,boolean> {
+ const intents=new Map<string,boolean>();
+ for(const row of store.db.prepare('SELECT question_id,included FROM material_inclusion WHERE owner_id=?').all(store.studentId) as {question_id:string;included:number}[]){
+  const id=resolveQuestionId(store,row.question_id);
+  if(intents.get(id)===false)continue;
+  intents.set(id,row.included===1);
+ }
+ return intents;
+}
 export function materialPracticeEligible(store:MaterialStore, questionId:string):boolean {
  const q=readQuestion(store,questionId); if(!q||!questionIncluded(store,q.id)) return false;
  if(q.missing.includes('stem')||q.missing.includes('diagram')||q.unresolved.length||!SUBJECTS.includes(q.subject as Subject)) return false;
@@ -86,27 +96,32 @@ export function syncMaterialLearning(store:MaterialStore):void {
   }
  });
 }
+/** Persists one validated intent without the learning projection; callers sync once. */
+function recordInclusion(store:MaterialStore,questionId:string,included:boolean,expectedRevision:number):string {
+ const q=readQuestion(store,questionId);if(!q)throw new MobileRequestError(404,'not_found','题目不存在。');
+ if(typeof included!=='boolean'||!Number.isSafeInteger(expectedRevision))throw new MobileRequestError(400,'invalid_request','收录选项不合法。');
+ if(q.revision!==expectedRevision)throw new MobileRequestError(409,'revision_conflict','材料已更新，请刷新后重试。');
+ const family=questionFamily(store,q.id);
+ for(const id of family){
+  store.db.prepare('INSERT INTO material_inclusion(owner_id,question_id,included) VALUES (?,?,?) ON CONFLICT(owner_id,question_id) DO UPDATE SET included=excluded.included').run(store.studentId,id,included?1:0);
+  store.db.prepare('UPDATE material_question SET revision=revision+1 WHERE owner_id=? AND id=?').run(store.studentId,id);
+ }
+ store.db.prepare('INSERT INTO material_inclusion_event(id,owner_id,question_id,included,family_json) VALUES (?,?,?,?,?)').run(newId('min'),store.studentId,q.id,included?1:0,JSON.stringify(family));
+ return q.id;
+}
 export function setQuestionIncluded(store:MaterialStore,questionId:string,included:boolean,expectedRevision:number):{itemId:string|null;revision:number} {
  return store.transaction(()=>{
-  const q=readQuestion(store,questionId);if(!q)throw new MobileRequestError(404,'not_found','题目不存在。');
-  if(typeof included!=='boolean'||!Number.isSafeInteger(expectedRevision))throw new MobileRequestError(400,'invalid_request','收录选项不合法。');
-  if(q.revision!==expectedRevision)throw new MobileRequestError(409,'revision_conflict','材料已更新，请刷新后重试。');
-  const family=questionFamily(store,q.id);
-  for(const id of family){
-   store.db.prepare('INSERT INTO material_inclusion(owner_id,question_id,included) VALUES (?,?,?) ON CONFLICT(owner_id,question_id) DO UPDATE SET included=excluded.included').run(store.studentId,id,included?1:0);
-   store.db.prepare('UPDATE material_question SET revision=revision+1 WHERE owner_id=? AND id=?').run(store.studentId,id);
-  }
-  store.db.prepare('INSERT INTO material_inclusion_event(id,owner_id,question_id,included,family_json) VALUES (?,?,?,?,?)').run(newId('min'),store.studentId,q.id,included?1:0,JSON.stringify(family));
-  syncMaterialLearning(store);const next=readQuestion(store,q.id)!;return {itemId:next.itemId,revision:next.revision};
+  const id=recordInclusion(store,questionId,included,expectedRevision);
+  syncMaterialLearning(store);const next=readQuestion(store,id)!;return {itemId:next.itemId,revision:next.revision};
  });
 }
 
 /** Questions the student can still add in one step: a readable stem, a supported subject,
  * not yet in the notebook and never explicitly removed. Grouped by the photo of their first stem. */
-export function notYetIncluded(store:MaterialStore):{assetId:string;questions:import('./contracts.js').QuestionBundle[]}[] {
+export function notYetIncluded(store:MaterialStore,questions=store.listQuestions(),intents=inclusionIntents(store)):{assetId:string;questions:import('./contracts.js').QuestionBundle[]}[] {
  const groups=new Map<string,import('./contracts.js').QuestionBundle[]>();
- for(const q of store.listQuestions()){
-  if(q.itemId||q.missing.includes('stem')||unsupportedSubject(q.subject)||inclusionIntent(store,q.id)!==null)continue;
+ for(const q of questions){
+  if(q.itemId||q.missing.includes('stem')||unsupportedSubject(q.subject)||intents.has(q.id))continue;
   const assetId=q.stem.find(f=>f.role==='question')!.assetId;
   groups.set(assetId,[...(groups.get(assetId)??[]),q]);
  }
@@ -120,17 +135,21 @@ export function materialIntakeSummary(store:MaterialStore):{pending:number;faile
 }
 /** Batch inclusion. Each pick carries the revision the student saw; a changed question is skipped, never guessed. */
 export function includeQuestions(store:MaterialStore,picks:{questionId:string;revision:number}[]):{included:number;skipped:number} {
- let included=0,skipped=0;
- for(const pick of picks){
-  try{
+ return store.transaction(()=>{
+  let skipped=0;const recorded:string[]=[];const already:string[]=[];const seen=new Set<string>();
+  // Validate and persist every intent first; the learning projection then runs once for the whole batch.
+  for(const pick of picks){
    const q=readQuestion(store,pick.questionId);
-   if(!q||unsupportedSubject(q.subject)){skipped++;continue;}
-   if(q.itemId&&inclusionIntent(store,q.id)!==false){included++;continue;}
-   const saved=setQuestionIncluded(store,pick.questionId,true,pick.revision);
-   if(saved.itemId)included++;else skipped++;
-  }catch(error){if(error instanceof MobileRequestError&&[404,409].includes(error.status)){skipped++;continue;}throw error;}
- }
- return {included,skipped};
+   if(!q||seen.has(q.id)||unsupportedSubject(q.subject)){skipped++;continue;}
+   seen.add(q.id);
+   if(q.itemId&&inclusionIntent(store,q.id)!==false){already.push(q.id);continue;}
+   try{recorded.push(recordInclusion(store,q.id,true,pick.revision));}
+   catch(error){if(error instanceof MobileRequestError&&[400,404,409].includes(error.status)){skipped++;continue;}throw error;}
+  }
+  if(recorded.length)syncMaterialLearning(store);
+  const landed=recorded.filter(id=>readQuestion(store,id)?.itemId).length;
+  return {included:already.length+landed,skipped:skipped+recorded.length-landed};
+ });
 }
 
 /** Current source-backed textual observations, including imported answer and unknown fragments.

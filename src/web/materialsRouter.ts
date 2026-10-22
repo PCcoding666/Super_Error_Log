@@ -1,4 +1,4 @@
-import { setQuestionIncluded, inclusionIntent, includeQuestions, notYetIncluded, unsupportedSubject } from '../materials/learning.js';
+import { setQuestionIncluded, inclusionIntent, inclusionIntents, includeQuestions, notYetIncluded, unsupportedSubject } from '../materials/learning.js';
 import { createHash } from 'node:crypto';
 import { canRecover } from '../mobile/contracts.js';
 import { requestGrades } from '../materials/grading.js';
@@ -141,8 +141,8 @@ export function createMaterialsRouter(options: {
     r.post('/materials/inclusions', (req,res,next)=>{
       try {
         const allOf=text(req.body.allOf);
-        const values=allOf?list(req.body[`page_${allOf}`]):list(req.body.pick);
-        if(values.length>200)bad();
+        const values=allOf?list(req.body[`page_${allOf}`]).flatMap(v=>v.split(',')).filter(Boolean):list(req.body.pick);
+        if(values.length>500)bad();
         const picks=values.map(v=>{const m=/^([A-Za-z0-9_-]{1,80}):([0-9]{1,9})$/.exec(v);if(!m)bad();return {questionId:m[1]!,revision:Number(m[2])};});
         const saved=picks.length?includeQuestions(store,picks):{included:0,skipped:0};
         if(json(req))res.json({ok:true,...saved});else res.redirect(303,`/s/materials?included=${saved.included}&skipped=${saved.skipped}`);
@@ -222,8 +222,9 @@ export function createMaterialsRouter(options: {
         const allAssets = store.db.prepare("SELECT id,json_extract(extraction_json,'$.document.subject') AS subject FROM material_asset WHERE owner_id=? ORDER BY created_at,id").all(store.studentId) as { id: string; subject: string | null }[];
         const photoNumbers = Object.fromEntries(allAssets.map((a, i) => [a.id, i + 1]));
         const unsupported = allAssets.flatMap(a => { const other = unsupportedSubject(a.subject); return other ? [{ assetId: a.id, subject: other }] : []; });
-        const marks: Record<string, MaterialInclusionMark> = Object.fromEntries(questions.map(q => { const intent = inclusionIntent(store, q.id); return [q.id, intent === false ? 'removed' : q.itemId ? 'included' : 'pending']; }));
-        const pending = notYetIncluded(store).map(g => ({ ...g, photo: photoNumbers[g.assetId] ?? 0 }));
+        const intents = inclusionIntents(store);
+        const marks: Record<string, MaterialInclusionMark> = Object.fromEntries(questions.map(q => [q.id, intents.get(q.id) === false ? 'removed' : q.itemId ? 'included' : 'pending']));
+        const pending = notYetIncluded(store, questions, intents).map(g => ({ ...g, photo: photoNumbers[g.assetId] ?? 0 }));
         const included = Number(req.query.included), skipped = Number(req.query.skipped) || 0, retried = Number(req.query.retried);
         const notice = Number.isSafeInteger(retried) && retried >= 0 && req.query.retried !== undefined ? { included: 0, skipped: 0, retried } : Number.isSafeInteger(included) && included >= 0 && req.query.included !== undefined ? { included, skipped: Number.isSafeInteger(skipped) && skipped >= 0 ? skipped : 0 } : null;
         sendHtml(res, MaterialsPage({ namespace: draftNamespace, questions, assets: assets(page), page, hasMore: (page + 1) * 8 < assetCount(), documents, changes, jobs: extractJobs().failed, processing: extractJobs().processing, assetCount: allAssets.length, photoNumbers, unsupported, pending, marks, notice, revision: linkRevision(store) }));

@@ -348,6 +348,26 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       try { await handler(request, response); } catch (error) { next(error); }
     };
 
+  // 新注册的账号先选学段（初中/高中）才能用其他页面：直接打开拍照、错题本、材料页或上传都会先被拦下。
+  // 已有题目、照片（含旧版照片）或已经选过的账号不会被问。只在邀请码网关里生效；设置页本身也能选学段。
+  r.post('/stage', form, page((request, response) => {
+    if (!chooseStudentStage(getDb(), requireProfile().id, request.body?.grade)) { render(response, StageChoicePage({ error: STAGE_REQUIRED_MESSAGE }), 400); return; }
+    clearCookie(request, response, COOKIE.itemsGrade);
+    audit('student_grade_updated', 'student', requireProfile().id);
+    response.redirect(303, '/s/');
+  }));
+  r.use((request, response, next) => {
+    try {
+      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path === '/install' || request.path === '/install/seen') { next(); return; }
+      if (!stageChoiceNeeded(getDb(), requireProfile().id)) { next(); return; }
+      failed(response, 'stage_required');
+      const isPage = (request.method === 'GET' || request.method === 'HEAD') && !wantsJson(request) && !request.path.startsWith('/img/') && !/\/(?:image|crop)\/?$/.test(request.path);
+      if (isPage) { render(response, StageChoicePage({})); return; }
+      if (request.method === 'POST' && !wantsJson(request) && !request.headers['x-upload-id'] && request.path !== '/voice') { response.redirect(303, '/s/'); return; }
+      response.status(409).json({ error: { code: 'stage_required', message: '请先选择初中或高中，再上传或整理。' } });
+    } catch (error) { next(error); }
+  });
+
   const useMaterials = options.materials && !(process.env.NODE_ENV === 'test' && process.env.SEL_STUDENT_WORKER_FAKE === '1' && process.env.SEL_E2E_LEGACY_CAPTURE === '1');
   if (useMaterials && options.materials) {
     ctx.materials = options.materials.store;
@@ -362,19 +382,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     r.use(createMaterialsRouter({ ...options.materials, draftNamespace: namespace, admission: options.admission }));
   }
 
-  // 新注册的账号第一次进来（登录/注册后都回到 /s/）先选学段（初中/高中）；已有题目或照片、或已经选过的账号不会被问。只在邀请码网关里生效。
-  const stageGate = (request: Request, response: Response, next: express.NextFunction): void => {
-    if (options.studentHostWorker === true && stageChoiceNeeded(getDb(), requireProfile().id)) { render(response, StageChoicePage({})); return; }
-    next();
-  };
-  r.post('/stage', form, page((request, response) => {
-    if (!chooseStudentStage(getDb(), requireProfile().id, request.body?.grade)) { render(response, StageChoicePage({ error: STAGE_REQUIRED_MESSAGE }), 400); return; }
-    clearCookie(request, response, COOKIE.itemsGrade);
-    audit('student_grade_updated', 'student', requireProfile().id);
-    response.redirect(303, '/s/');
-  }));
   // 默认进入错题本，保留根地址作为主屏幕入口。材料拍照由 /s/capture 接管。
-  r.get('/', stageGate, page(async (request, response) => {
+  r.get('/', page(async (request, response) => {
     render(response, await itemsPage(request, response));
   }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));

@@ -164,30 +164,43 @@ function MaterialStatus(props: { namespace: string; processing: number; failed: 
   </div>;
 }
 
-/** 「本页还有 N 道没收录」：一页全收，或逐个勾选。勾选值带上看到时的版本，变了的题会跳过。 */
+/** Every form stays well under the form parsers' 200-field limit: one checkbox per question plus a few fields. */
+export const PENDING_FORM_MAX = 120;
+function pendingChunks(questions: QuestionBundle[]): QuestionBundle[][] {
+  const chunks: QuestionBundle[][] = [];
+  for (let i = 0; i < questions.length; i += PENDING_FORM_MAX) chunks.push(questions.slice(i, i + PENDING_FORM_MAX));
+  return chunks;
+}
+
+/** 「本页还有 N 道没收录」：一页全收，或逐个勾选。每张照片单独一个表单，只提交这一页的题，
+ * 所以待收录的题再多，一次提交的字段数也有上限。勾选值带上看到时的版本，变了的题会跳过。 */
 function PendingInclusion({ namespace, groups }: { namespace: string; groups: MaterialPendingGroup[] }): ReactNode {
   const total = groups.reduce((n, g) => n + g.questions.length, 0);
   return <div data-live="material-pending">
     {total ? (
-      <form method="post" action="/s/materials/inclusions" id="material-pending" data-testid="material-pending">
-        <Hidden namespace={namespace} />
+      <section id="material-pending" data-testid="material-pending">
         <h2 className="group-label">还没收进错题本的题</h2>
         <p className="group-footer">老师没明确打叉的题不会自动收。做错、扣了分或没把握的题，勾上收进错题本。</p>
-        {groups.map(g => (
-          <fieldset className="inset-group group-pad" key={g.assetId} data-testid="material-pending-page">
-            <legend>照片 {g.photo}：本页还有 {g.questions.length} 道没收录</legend>
-            {g.questions.map(q => <input key={`h-${q.id}`} type="hidden" name={`page_${g.assetId}`} value={`${q.id}:${q.revision}`} />)}
-            {g.questions.map(q => (
-              <label className="choice" key={q.id}>
-                <input type="checkbox" name="pick" value={`${q.id}:${q.revision}`} />
-                <span>{questionTitle(q)}{stemFirstSentence(q) ? ` · ${stemFirstSentence(q)}` : ''}</span>
-              </label>
-            ))}
-            <div className="btn-stack"><button className="btn" type="submit" name="allOf" value={g.assetId}>本页 {g.questions.length} 道全部收录</button></div>
-          </fieldset>
-        ))}
-        <div className="btn-stack"><button className="btn primary" type="submit">收录勾选的题</button></div>
-      </form>
+        {groups.flatMap(g => pendingChunks(g.questions).map((questions, part, all) => (
+          <form method="post" action="/s/materials/inclusions" key={`${g.assetId}:${part}`} className="inset-group group-pad" data-testid="material-pending-page">
+            <Hidden namespace={namespace} />
+            <input type="hidden" name={`page_${g.assetId}`} value={questions.map(q => `${q.id}:${q.revision}`).join(',')} />
+            <fieldset>
+              <legend>照片 {g.photo}{all.length > 1 ? `（第 ${part + 1} 部分）` : ''}：本页还有 {questions.length} 道没收录</legend>
+              {questions.map(q => (
+                <label className="choice" key={q.id}>
+                  <input type="checkbox" name="pick" value={`${q.id}:${q.revision}`} />
+                  <span>{questionTitle(q)}{stemFirstSentence(q) ? ` · ${stemFirstSentence(q)}` : ''}</span>
+                </label>
+              ))}
+            </fieldset>
+            <div className="btn-stack">
+              <button className="btn" type="submit" name="allOf" value={g.assetId}>本页 {questions.length} 道全部收录</button>
+              <button className="btn primary" type="submit">收录勾选的题</button>
+            </div>
+          </form>
+        )))}
+      </section>
     ) : null}
   </div>;
 }

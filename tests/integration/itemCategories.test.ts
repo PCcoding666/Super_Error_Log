@@ -87,3 +87,10 @@ it('asks only new, empty accounts to choose a stage once; existing accounts are 
   db.prepare("UPDATE error_item SET chapter='圆锥曲线' WHERE id='senior-one'").run();
   expect(readItemCategory(db, 'fresh', 'senior-one')).toEqual({ grade: '高中', subject: '数学', chapter: '圆锥曲线' });
 });
+
+it('a legacy photo that is still processing, failed or had nothing selected counts as prior activity', () => {
+  classificationStudent(db, 'legacy-photo');
+  expect(stageChoiceNeeded(db, 'legacy-photo')).toBe(true);
+  db.prepare("INSERT INTO v2_photo (job_id,student_id,registered_at) VALUES ('job-synthetic','legacy-photo','2026-10-16')").run();
+  expect(stageChoiceNeeded(db, 'legacy-photo')).toBe(false);
+});

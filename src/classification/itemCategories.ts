@@ -102,8 +102,11 @@ export function updateStudentGrade(db: DatabaseSync, studentId: string, grade: u
 export function stageChoiceNeeded(db: DatabaseSync, studentId: string): boolean {
   if (db.prepare('SELECT 1 FROM student_stage_choice WHERE student_id=?').get(studentId)) return false;
   if (db.prepare('SELECT 1 FROM error_item WHERE student_id=? LIMIT 1').get(studentId)) return false;
-  const materials = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='material_asset'").get();
-  if (materials && db.prepare('SELECT 1 FROM material_asset WHERE owner_id=? LIMIT 1').get(studentId)) return false;
+  // Any earlier photo counts as prior activity: new material uploads, and legacy uploads that are still
+  // processing, failed, or had no question selected (v2_photo has no error_item yet).
+  const has = (table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+  if (has('material_asset') && db.prepare('SELECT 1 FROM material_asset WHERE owner_id=? LIMIT 1').get(studentId)) return false;
+  if (has('v2_photo') && db.prepare('SELECT 1 FROM v2_photo WHERE student_id=? LIMIT 1').get(studentId)) return false;
   return true;
 }
 

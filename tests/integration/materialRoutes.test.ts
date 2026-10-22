@@ -288,3 +288,30 @@ it('summarizes failed photos at the top, retries all retryable ones in one tap, 
  f.db.prepare('UPDATE material_asset SET extraction_json=? WHERE id=?').run(JSON.stringify({assetId:f.assetId,revision:1,document:{title:null,subject:'高三英语',date:null,printedCode:null,page:1},fragments:[],warnings:['unsupported_subject'],runs:[]}),f.assetId);
  html=await(await fetch(f.base+'/materials')).text();expect(html).toContain('目前只支持数学、物理、化学。');expect(html).toContain('照片 1（英语）不会整理成错题');expect(html).not.toContain('没整理成功');
 });
+it('keeps every batch form bounded with more than 400 pending questions across photos, and syncs learning once per batch',async()=>{
+ const f=await intakeFixture();const assets=[f.assetId];
+ // Two more synthetic photos cloned from the first saved one (job capacity in this fixture is 1).
+ for(let i=0;i<2;i++){const src=`src_${randomUUID().slice(0,8)}`,id=`mas_${randomUUID().slice(0,8)}`,cap=f.store.createCapture(randomUUID()).id;
+  f.db.prepare('INSERT INTO source_asset(id,batch_id,filename,mime,size,content_hash,storage_path,created_at) SELECT ?,batch_id,filename,mime,size,content_hash,storage_path,created_at FROM source_asset WHERE id=(SELECT source_asset_id FROM material_asset WHERE id=?)').run(src,f.assetId);
+  f.db.prepare('INSERT INTO material_asset(id,owner_id,capture_id,source_asset_id) VALUES (?,?,?,?)').run(id,f.store.studentId,cap,src);assets.push(id);}
+ // Seed 3×150 plain questions directly (bulk synthetic rows); no learning projection runs here.
+ const hashOf=(a:string)=>(f.db.prepare('SELECT s.content_hash h FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.id=?').get(a) as {h:string}).h;
+ f.db.exec('BEGIN');
+ for(const a of assets){const h=hashOf(a);for(let n=1;n<=150;n++){const q=f.store.createQuestion({number:String(n),subject:'数学'}).id;const fr=`mfr_${randomUUID().slice(0,12)}`;
+  f.db.prepare('INSERT INTO material_fragment(id,revision,owner_id,asset_id,content_json) VALUES (?,?,?,?,?)').run(fr,1,f.store.studentId,a,JSON.stringify({assetId:a,fragmentId:fr,revision:1,box:{x:0,y:0,width:1,height:1},sourceHash:h,role:'question',text:`${n}. 求 ${n}+1。`,number:String(n),subpart:null,page:1,order:n,requiresDiagram:false,check:'passed',uncertainties:[]}));
+  f.db.prepare('INSERT INTO material_link_event(id,owner_id,fragment_id,fragment_revision,revision,question_id) VALUES (?,?,?,?,?,?)').run(`mlk_${randomUUID().slice(0,12)}`,f.store.studentId,fr,1,1,q);}}
+ f.db.exec('COMMIT');
+ const html=await(await fetch(f.base+'/materials')).text();
+ const forms=[...html.matchAll(/<form[^>]*action="\/s\/materials\/inclusions"[^>]*>([\s\S]*?)<\/form>/g)].map(m=>m[1]!);
+ expect(forms).toHaveLength(6); // 150 per photo → two bounded parts each
+ const fieldsOf=(body:string)=>[...body.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)].map(m=>[m[1]!,m[2]!] as [string,string]);
+ for(const body of forms)expect(fieldsOf(body).length+2).toBeLessThan(200);
+ // "本页全部收录" on one part submits only that part's revisions.
+ const first=fieldsOf(forms[0]!).filter(([n])=>n!=='pick');const page=/<button[^>]*value="([^"]+)"[^>]*name="allOf"|<button[^>]*name="allOf"[^>]*value="([^"]+)"/.exec(forms[0]!)!.slice(1).find(Boolean)!;
+ const all=await f.form('/materials/inclusions',[...first,['allOf',page]]);
+ expect(all.status).toBe(303);expect(all.headers.get('location')).toBe('/s/materials?included=120&skipped=0');
+ const picks=fieldsOf(forms[5]!).filter(([n])=>n==='pick').slice(0,30);
+ const ticked=await f.form('/materials/inclusions',[['namespace',f.namespace],...picks]);
+ expect(ticked.headers.get('location')).toBe('/s/materials?included=30&skipped=0');
+ expect(f.db.prepare('SELECT count(*) n FROM material_item_link').get()).toEqual({n:150});
+},60_000);
