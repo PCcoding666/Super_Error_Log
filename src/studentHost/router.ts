@@ -164,7 +164,7 @@ export interface StudentHostGateway {
 
 export async function createStudentHostGateway(options: StudentHostGatewayOptions = {}): Promise<StudentHostGateway> {
   const registry = options.registry ?? StudentRegistry.open(options.hostDir ?? resolveStudentHostDir());
-  const pool = options.pool ?? new StudentWorkerPool({ dirFor: studentId => registry.studentDir(studentId) });
+  const pool = options.pool ?? new StudentWorkerPool({ dirFor: studentId => registry.studentDir(studentId), sharedDir: registry.hostDir });
   const loginGuard = new AttemptGuard(LOGIN_LIMITS, options.throttleNow);
   const registrationGuard = new AttemptGuard(REGISTRATION_LIMITS, options.throttleNow);
   const now = options.now ?? ((): Date => new Date());

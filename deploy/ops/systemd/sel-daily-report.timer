@@ -1,0 +1,9 @@
+[Unit]
+Description=Super Error Log nightly report at 22:30
+
+[Timer]
+OnCalendar=*-*-* 22:30:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

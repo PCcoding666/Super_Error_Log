@@ -1,0 +1,18 @@
+# 每 5 分钟巡检（deploy/ops/sel-healthcheck.mjs check），有问题推送到 Bark / 企业微信。
+# 以 root 运行：要读 journald 和 systemctl；读学生数据库时脚本自己降到 supererrorlog（runuser）。
+[Unit]
+Description=Super Error Log health check and alert push
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=TZ=Asia/Shanghai
+EnvironmentFile=-/etc/super-error-log/ops.env
+# 推送 key 单独放（root 0600），只给巡检和日报用，不进备份进程的环境。
+EnvironmentFile=-/etc/super-error-log/alert.env
+ExecStart=/opt/super-error-log/node-v24/bin/node /usr/local/lib/sel-ops/sel-healthcheck.mjs check
+TimeoutStartSec=3min
+Nice=10
+MemoryLimit=192M
+PrivateTmp=true
+SyslogIdentifier=sel-healthcheck

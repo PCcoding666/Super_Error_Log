@@ -1,0 +1,25 @@
+# 每日备份（deploy/ops/sel-backup.mjs）。由 sel-backup.timer 每天 03:40（服务器时区 Asia/Shanghai）触发。
+# 快照以应用用户运行（只读打开 SQLite，不会留下 root 属主的 -wal/-shm）；
+# 异地推送以 root 运行（ExecStartPost 的 + 前缀），只读备份文件、不打开任何数据库，凭据在 root 的 ~/.ossutilconfig 或 ~/.ssh。
+# 安装：见 deploy/ops/RUNBOOK.md。改本文件后 systemctl daemon-reload。
+[Unit]
+Description=Super Error Log daily SQLite + photo backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=supererrorlog
+Group=supererrorlog
+Environment=TZ=Asia/Shanghai
+EnvironmentFile=-/etc/super-error-log/ops.env
+ExecStart=/opt/super-error-log/node-v24/bin/node /usr/local/lib/sel-ops/sel-backup.mjs snapshot
+ExecStartPost=+/opt/super-error-log/node-v24/bin/node /usr/local/lib/sel-ops/sel-backup.mjs push
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryLimit=256M
+TimeoutStartSec=4h
+NoNewPrivileges=true
+PrivateTmp=true
+SyslogIdentifier=sel-backup
