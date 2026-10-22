@@ -13,7 +13,8 @@ import { MaterialStore } from './store.js';
 import { originalSourcePath } from './media.js';
 
 type Input = { captureId: string; uploadId: string; filename: string; bytes: Buffer; hints: CaptureHints };
-type Saved = { assetId: string; job: JobTicket; created: boolean };
+/** duplicate: same bytes were already saved for this student; nothing new is stored and no AI job is started. */
+type Saved = { assetId: string; job: JobTicket; created: boolean; duplicate?: boolean };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -68,6 +69,11 @@ export class MaterialUploads {
       return { assetId: existing.id, job, created: false };
     }
     this.validateContext(input);
+    // P1-1: the same student sending byte-identical photo again (re-upload, unsure it went through)
+    // reuses the saved photo and its extraction; it never stores a second copy or calls the AI again.
+    // An explicit supplement (this photo is the work for question/attempt X) stays a separate material.
+    const duplicate = input.hints.questionId || input.hints.attemptId ? null : this.findDuplicate(hash);
+    if (duplicate) return duplicate;
     const owned = !reservation; const reserve = reservation ?? { slot: false, capacity: false, handoff: false };
     let staging: string | undefined; let committedDirectory: string | undefined;
     try {
@@ -116,6 +122,16 @@ export class MaterialUploads {
       if (error instanceof MobileRequestError) throw error;
       throw new MobileRequestError(503, 'storage_unavailable', '保存未完成，请稍后重新上传。');
     } finally { if (owned && this.admission) releaseUploadAdmission(this.admission, reserve); }
+  }
+  private findDuplicate(hash: string): Saved | null {
+    const rows = this.store.db.prepare(`SELECT a.id FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id
+      WHERE a.owner_id=? AND s.content_hash=? ORDER BY a.rowid`).all(this.store.studentId, hash) as { id: string }[];
+    for (const row of rows) {
+      const job = this.store.db.prepare("SELECT id,kind,state FROM material_job WHERE owner_id=? AND asset_id=? AND kind='extract' ORDER BY rowid DESC LIMIT 1")
+        .get(this.store.studentId, row.id) as JobTicket | undefined;
+      if (job) return { assetId: row.id, job, created: false, duplicate: true };
+    }
+    return null;
   }
   private validateContext(input: Input): void {
     if (!this.store.db.prepare('SELECT 1 FROM material_capture WHERE owner_id=? AND id=?').get(this.store.studentId, input.captureId)) throw new MobileRequestError(404, 'not_found', '拍摄批次不存在。');

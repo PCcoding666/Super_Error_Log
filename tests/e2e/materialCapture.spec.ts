@@ -58,7 +58,9 @@ async function enter(page: Page, gateway: {
     await expect(page.getByText('阿里云')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '同意，上传' })).toHaveCount(0);
 }
-async function jpeg() { return { name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: '#fff' } }).jpeg().toBuffer() }; }
+// Each call is a different synthetic page: byte-identical photos are deduplicated per student (P1-1).
+let shade = 0;
+async function jpeg() { shade += 1; return { name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: { r: (shade * 53) % 256, g: (shade * 97) % 256, b: (shade * 31) % 256 } } }).jpeg().toBuffer() }; }
 test('finishes continuous and multi-photo capture without a per-photo picker', async ({ page, gateway }) => {
     await enter(page, gateway);
     await page.locator('#camera-input').setInputFiles(await jpeg());
@@ -397,4 +399,121 @@ test('unverifiable legacy upload identity retains the server photo and offers lo
     await page.getByRole('button', { name: '删除待传', exact: true }).click();
     await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
+});
+
+// ---------- P0-13 / P1-3 / P1-4 / P1-1：上传韧性（合成照片、合成学生） ----------
+async function pendingDrafts(page: Page): Promise<number> {
+    return page.evaluate(() => new Promise<number>((resolve, reject) => { const open = indexedDB.open('sel-material-drafts', 1); open.onsuccess = () => { const req = open.result.transaction('uploads').objectStore('uploads').count(); req.onsuccess = () => { resolve(req.result); open.result.close(); }; req.onerror = () => reject(req.error); }; }));
+}
+test('P0-13: a release restart (empty 502/503) is retried automatically with the same upload ID', async ({ page, gateway }) => {
+    await enter(page, gateway);
+    const seen: { at: number; id: string | undefined }[] = [];
+    await page.route('**/s/materials/uploads**', async route => {
+        seen.push({ at: Date.now(), id: route.request().headers()['x-upload-id'] });
+        if (seen.length === 1) return route.fulfill({ status: 502, body: '' });
+        if (seen.length === 2) return route.fulfill({ status: 503, contentType: 'text/html', body: '<h1>暂时进不去</h1>' });
+        return route.continue();
+    });
+    await page.locator('#library-input').setInputFiles([await jpeg(), await jpeg()]);
+    await expect(page.locator('[data-queue-message]')).toContainText('暂时连不上服务器');
+    await expect(page.getByRole('button', { name: '全部重试', exact: true })).toBeVisible();
+    await expect(page.getByText('请先留在这一页')).toHaveCount(0);
+    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张');
+    expect(seen.length).toBe(4);
+    expect(seen[1]!.id).toBe(seen[0]!.id);
+    expect(seen[2]!.id).toBe(seen[0]!.id);
+    expect(seen[1]!.at - seen[0]!.at).toBeGreaterThanOrEqual(1500);
+    expect(seen[2]!.at - seen[1]!.at).toBeGreaterThanOrEqual(3000);
+    await expect(page.getByRole('button', { name: '全部重试', exact: true })).toBeHidden();
+    expect(await pendingDrafts(page)).toBe(0);
+});
+test('P0-13: dropped connections back off by themselves; 全部重试 skips the remaining wait', async ({ page, gateway }) => {
+    await enter(page, gateway);
+    let down = true; let requests = 0;
+    await page.route('**/s/materials/uploads**', route => { requests++; return down ? route.abort('connectionreset') : route.continue(); });
+    await page.locator('#library-input').setInputFiles([await jpeg(), await jpeg(), await jpeg()]);
+    await expect.poll(() => requests, { timeout: 15000 }).toBeGreaterThanOrEqual(3);
+    await expect(page.locator('[data-upload-queue]')).toContainText('秒后自动重试');
+    expect(await pendingDrafts(page)).toBe(3);
+    down = false;
+    const before = requests;
+    await page.getByRole('button', { name: '全部重试', exact: true }).click();
+    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 3 张');
+    expect(requests - before).toBe(3);
+});
+test('P1-4: a corrupt photo is marked as unusable without a doomed retry while the others upload', async ({ page, gateway }) => {
+    await enter(page, gateway);
+    let requests = 0;
+    await page.route('**/s/materials/uploads**', route => { requests++; return route.continue(); });
+    await page.locator('#library-input').setInputFiles([await jpeg(), { name: 'broken.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('synthetic broken bytes') }, await jpeg()]);
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张', { timeout: 15000 });
+    const broken = page.locator('[data-upload-queue] li');
+    await expect(broken).toHaveCount(1);
+    await expect(broken).toContainText('传不上去');
+    await expect(broken).toContainText('可能已经损坏');
+    await expect(page.getByRole('button', { name: '重试', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '全部重试', exact: true })).toBeHidden();
+    await expect(page.locator('[data-queue-message]')).toHaveText('其他照片已保存。有 1 张传不了，删掉后重新选择。');
+    await expect(page.getByRole('link', { name: '拍完了，查看材料' })).toBeVisible();
+    expect(requests).toBe(2);
+    await page.waitForTimeout(2500);
+    expect(requests).toBe(2);
+    await page.getByRole('button', { name: '删除待传', exact: true }).click();
+    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
+});
+test('P1-4: a server-rejected unreadable image is not offered a retry', async ({ page, gateway }) => {
+    await enter(page, gateway);
+    let requests = 0;
+    await page.route('**/s/materials/uploads**', route => { requests++; return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'invalid_image', message: '照片无法读取、已损坏或超过像素限制，请补拍。' } }) }); });
+    await page.locator('#camera-input').setInputFiles(await jpeg());
+    await expect(page.locator('[data-upload-queue]')).toContainText('传不上去：照片无法读取');
+    await expect(page.getByRole('button', { name: '重试', exact: true })).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.waitForTimeout(500);
+    expect(requests).toBe(1);
+});
+test('P1-4: while uploading, the hint and the main button both say leaving is fine', async ({ page, gateway }) => {
+    await enter(page, gateway);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/s/materials/uploads**', async route => { await gate; await route.continue(); });
+    await page.locator('#library-input').setInputFiles([await jpeg(), await jpeg()]);
+    const main = page.getByTestId('next-step-primary');
+    await expect(main).toHaveText('上传中 0/2（可以离开）');
+    await expect(page.locator('[data-queue-message]')).toContainText('可以先离开，回到这一页会接着传');
+    await expect(page.getByText('请先留在这一页')).toHaveCount(0);
+    release();
+    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
+    await expect(main).toHaveText('拍完了，查看材料');
+});
+test('P1-3: photos chosen at the moment the login expired stay on the phone and resume after logging in again', async ({ page, gateway }) => {
+    await enter(page, gateway);
+    // The session ends while the capture page is open (the browser then drops its cookie).
+    expect((await page.request.post(gateway.base + '/s/logout', { headers: { origin: gateway.base } })).status()).toBeLessThan(400);
+    await page.locator('#library-input').setInputFiles([await jpeg(), await jpeg()]);
+    await expect(page.locator('[data-queue-message]')).toContainText('登录已过期，上传已暂停。还没传的 2 张照片存在这台手机上，重新登录后回到这一页会接着传。');
+    await expect(page.getByRole('link', { name: '重新登录', exact: true })).toBeVisible();
+    expect(await pendingDrafts(page)).toBe(2);
+    await page.getByRole('link', { name: '重新登录', exact: true }).click();
+    await page.getByLabel('12 位邀请码').fill(gateway.codes[2]!);
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await expect(page.locator('[data-pending-uploads]')).toContainText('还有 2 张照片没传完');
+    await page.getByRole('link', { name: '回拍照页继续上传' }).click();
+    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张');
+    expect(await pendingDrafts(page)).toBe(0);
+});
+test('P1-3: another account logging in on this phone does not inherit the pending photos', async ({ page, gateway }) => {
+    await enter(page, gateway);
+    expect((await page.request.post(gateway.base + '/s/logout', { headers: { origin: gateway.base } })).status()).toBeLessThan(400);
+    await page.locator('#camera-input').setInputFiles(await jpeg());
+    await expect(page.locator('[data-queue-message]')).toContainText('登录已过期');
+    await page.goto(gateway.base + '/s/');
+    await page.getByLabel('12 位邀请码').fill(gateway.codes[1]!);
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await page.goto(gateway.base + '/s/capture');
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 0 张');
+    await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);
+    await expect.poll(() => pendingDrafts(page)).toBe(0);
 });
