@@ -71,3 +71,22 @@ test('same question, label and file stay private across two students and switche
  async function draftCount(){return page.evaluate(()=>new Promise<number>((resolve,reject)=>{const request=indexedDB.open('sel-material-drafts',1);request.onsuccess=()=>{const db=request.result;const count=db.transaction('uploads').objectStore('uploads').count();count.onsuccess=()=>{resolve(count.result);db.close()};count.onerror=()=>reject(count.error)}}));}
  }finally{await g.close();}
 });
+
+test('P1-1: the same photo uploaded twice is stored once and not sent to the AI again', async ({ page }) => {
+  const g = await materialGateway();
+  try {
+    await enter(page, g);
+    const svg = Buffer.from('<svg width="780" height="1000"><rect width="100%" height="100%" fill="white"/><text x="50" y="100" font-size="24">SYNTHETIC SAME PAGE</text></svg>');
+    const same = await sharp(svg).jpeg().toBuffer();
+    for (let round = 0; round < 2; round++) {
+      await page.goto(g.base + '/s/capture');
+      await page.locator('#library-input').setInputFiles({ name: 'same.jpg', mimeType: 'image/jpeg', buffer: same });
+      await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
+    }
+    await expect(page.locator('[data-queue-warning]')).toContainText('完全一样，没有重复保存');
+    await expect(page.getByTestId('photo-count')).toHaveText('已拍 1 张');
+    const snapshot = await g.snapshot();
+    expect(snapshot.material_asset).toHaveLength(1);
+    expect(snapshot.material_job!.filter(j => j.kind === 'extract')).toHaveLength(1);
+  } finally { await g.close(); }
+});

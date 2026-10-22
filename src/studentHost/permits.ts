@@ -9,6 +9,9 @@ export class PermitPool {
   private readonly held = new Map<string, Set<string>>();
   private readonly queue: Waiter[] = [];
   private pumping = false;
+  /** 名额从发出到归还的时间（只用于「人有点多」页的粗略等待估计，不参与调度）。 */
+  private readonly grantedAt = new Map<string, number>();
+  private holdAverageMs: number | null = null;
 
   constructor(readonly limit: number) {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('并发上限必须是正整数');
@@ -16,6 +19,8 @@ export class PermitPool {
 
   get waiting(): number { return this.queue.length; }
   get inUse(): number { return this.inUseCount(); }
+  /** 最近名额平均占用时长（指数滑动平均）；还没有完整样本时为 null。 */
+  get averageHoldMs(): number | null { return this.holdAverageMs; }
 
   acquire(owner: string, id: string, grant: () => void): void {
     if (!owner || !id) return;
@@ -30,6 +35,8 @@ export class PermitPool {
     const mine = this.held.get(owner);
     if (mine?.delete(id)) {
       if (mine.size === 0) this.held.delete(owner);
+      const key = `${owner}\u0000${id}`; const started = this.grantedAt.get(key); this.grantedAt.delete(key);
+      if (started !== undefined) { const sample = Date.now() - started; this.holdAverageMs = this.holdAverageMs === null ? sample : this.holdAverageMs * 0.7 + sample * 0.3; }
       this.pump();
       return;
     }
@@ -39,6 +46,7 @@ export class PermitPool {
 
   dropOwner(owner: string): void {
     this.held.delete(owner);
+    for (const key of [...this.grantedAt.keys()]) if (key.startsWith(`${owner}\u0000`)) this.grantedAt.delete(key);
     for (let index = this.queue.length - 1; index >= 0; index -= 1) {
       if (this.queue[index]?.owner === owner) this.queue.splice(index, 1);
     }
@@ -60,6 +68,7 @@ export class PermitPool {
         let mine = this.held.get(next.owner);
         if (!mine) { mine = new Set(); this.held.set(next.owner, mine); }
         mine.add(next.id);
+        this.grantedAt.set(`${next.owner}\u0000${next.id}`, Date.now());
         next.grant();
       }
     } finally { this.pumping = false; }

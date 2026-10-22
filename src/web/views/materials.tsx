@@ -66,7 +66,7 @@ export function MaterialCapturePage({ namespace, count, uploadId, context = {} }
   context?: CaptureHints;
 }): ReactNode {
   return (
-    <Page title="拍学习材料" bar={{ caption: '关页可能暂停上传，回来后可以继续。', primary: { title: '拍完了，查看材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
+    <Page title="拍学习材料" bar={{ caption: '没传完的照片先存在这台手机上，回到这一页会接着传。', primary: { title: '拍完了，查看材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
       <section className="material-surface" data-material-capture="" data-draft-namespace={namespace} data-saved-count={count}>
         <h1>{context.questionId ? '补充材料' : '拍学习材料'}</h1>
         {context.questionId ? <p className="hint">从这道题继续补拍；整页上其他题目会分别整理。</p> : null}
