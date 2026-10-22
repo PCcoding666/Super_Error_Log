@@ -5,6 +5,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getDb, newId, now } from '../../src/db/connection.js';
+import { localDayText } from '../../src/domain/calendarDay.js';
 import { ensureStudentProfile } from '../../src/services/studentService.js';
 import { MaterialStore } from '../../src/materials/store.js';
 import { setQuestionIncluded } from '../../src/materials/learning.js';
@@ -70,7 +71,7 @@ describe('practice loop for material-sourced items', () => {
     expect(() => savePracticeCursor(pid, ids[1]!)).not.toThrow();
     revealPracticeHint(pid, ids[1]!, 1);
     expect(practiceProgress(pid)).toMatchObject({ cursor: ids[1], hints: { [ids[1]!]: 1 } });
-    const result = submitLearningReturns(pid, { results: [{ itemId: ids[0]!, completion: 'independent', correct: true, performedOn: now().slice(0, 10) }] }, 'all');
+    const result = submitLearningReturns(pid, { results: [{ itemId: ids[0]!, completion: 'independent', correct: true, performedOn: localDayText(new Date()) }] }, 'all');
     expect(result).toMatchObject({ ok: true, results: [{ ok: true }] });
     expect(attempts(pid)).toBe(1);
     expect(getLearningReturnSummary(pid, 'all')).toMatchObject({ answered: 1, total: 2 });
@@ -95,7 +96,7 @@ describe('practice loop for material-sourced items', () => {
     const state = submissionState(pid);
     expect(state.status).toBe('ready');
     expect(state.findings[0]?.itemId).toBe(ids[0]);
-    const confirmed = confirmSubmission(pid, { revision: state.revision, performedOn: now().slice(0, 10), help: 'independent', results: [{ itemId: ids[0], outcome: 'correct' }, { itemId: ids[1], outcome: 'incorrect' }] });
+    const confirmed = confirmSubmission(pid, { revision: state.revision, performedOn: localDayText(new Date()), help: 'independent', results: [{ itemId: ids[0], outcome: 'correct' }, { itemId: ids[1], outcome: 'incorrect' }] });
     expect(confirmed).toMatchObject({ ok: true });
     expect(attempts(pid)).toBe(2);
   });

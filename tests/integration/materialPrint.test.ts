@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import { getDb, newId, now } from '../../src/db/connection.js';
+import { localDayText } from '../../src/domain/calendarDay.js';
 import { ensureStudentProfile } from '../../src/services/studentService.js';
 import { backfillLegacyMaterials } from '../../src/materials/legacy.js';
 import { MaterialStore } from '../../src/materials/store.js';
@@ -60,7 +61,7 @@ function packet(ids: string[]) {
         for (const p of getDb().prepare("SELECT p.id FROM review_packet p JOIN review_packet_item i ON i.packet_id=p.id WHERE i.item_id=? AND p.generated_at IS NOT NULL").all(id) as {
             id: string;
         }[])
-            submitLearningReturns(p.id, { results: [{ itemId: id, completion: 'independent', correct: true, performedOn: now().slice(0, 10) }] });
+            submitLearningReturns(p.id, { results: [{ itemId: id, completion: 'independent', correct: true, performedOn: localDayText(new Date()) }] });
     }
     for (const id of ids)
         getDb().prepare("UPDATE error_item SET status='eligible_for_review' WHERE id=?").run(id);
