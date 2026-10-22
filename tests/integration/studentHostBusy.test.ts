@@ -55,7 +55,8 @@ it('a full host answers with honest facts, Retry-After and a self-retrying page'
   expect(html).toContain('<meta http-equiv="refresh" content="30"/>');
   expect(html).toContain('href="/s/items"');
   expect(html).toContain('最多同时开 1 个同学的错题本，1 个都在用');
-  expect(html).toContain('正在做 1 件，还有 0 件在排队');
+  expect(html).toContain('AI 现在正在做 1 件、排着 0 件');
+  expect(html).not.toContain('至少还要');
   expect(html).not.toContain('一两分钟再试');
   expect(html).not.toContain('位同学也在等');
 

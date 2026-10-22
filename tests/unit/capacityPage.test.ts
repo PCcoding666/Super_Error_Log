@@ -1,6 +1,6 @@
 /** P0-7 界面部分：「人有点多」页只说网关真有的数据，并且自己定时重试。 */
 import { describe, expect, it, vi } from 'vitest';
-import { CAPACITY_RETRY_SECONDS, CapacityWaitlist, aiQueueMinutes, capacityLines } from '../../src/studentHost/busy.js';
+import { CAPACITY_RETRY_SECONDS, CapacityWaitlist, capacityLines } from '../../src/studentHost/busy.js';
 import { capacityPageHtml } from '../../src/studentHost/busyView.js';
 import { PermitPool } from '../../src/studentHost/permits.js';
 import type { CapacitySnapshot } from '../../src/studentHost/workers.js';
@@ -20,22 +20,19 @@ describe('capacity waiting page', () => {
     expect(list.rejected('d')).toBe(0);
   });
 
-  it('gives a lower-bound estimate only from the measured AI queue', () => {
-    expect(aiQueueMinutes(full)).toBe(3);
-    expect(aiQueueMinutes({ ...full, aiAverageMs: null })).toBeNull();
-    expect(aiQueueMinutes({ ...full, aiInUse: 0, aiWaiting: 0 })).toBeNull();
-    expect(aiQueueMinutes({ ...full, aiLimit: 2, aiWaiting: 3, aiAverageMs: 30_000 })).toBe(1);
-  });
-
   it('tells the truth instead of promising one or two minutes', () => {
     const text = capacityLines({ snapshot: full, othersWaiting: 4 }).join('\n');
     expect(text).toContain('最多同时开 3 个同学的错题本，3 个都在用');
     expect(text).toContain('还有 4 位同学也在等');
-    expect(text).toContain('正在做 1 件，还有 2 件在排队，最近每件大约 60 秒');
-    expect(text).toContain('至少还要约 3 分钟');
+    expect(text).toContain('AI 现在正在做 1 件、排着 2 件，最近每件大约 60 秒');
+    expect(text).toContain('不决定你什么时候能进');
+    expect(text).toContain('要等多久说不准');
+    // No invented minute bound: a slot can free whenever any open notebook goes idle.
+    expect(text).not.toMatch(/至少|还要约 \d+ 分钟/);
     expect(text).not.toContain('一两分钟再试');
     const unknown = capacityLines({ snapshot: { ...full, aiInUse: 0, aiWaiting: 0, aiAverageMs: null }, othersWaiting: 0 }).join('\n');
     expect(unknown).toContain('说不准');
+    expect(unknown).not.toContain('AI 现在');
     expect(unknown).not.toContain('位同学也在等');
   });
 

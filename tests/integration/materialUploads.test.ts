@@ -178,4 +178,16 @@ describe('durable material uploads', () => {
     expect(saved.created).toBe(true); expect(saved.duplicate).toBeUndefined();
     expect(b.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
   });
+  it('P1-1: the same bytes with different role, marking, label or document hints stay a separate material and are processed', async () => {
+    const f = await fixture(10); const first = await f.uploads.save({ ...f.input, hints: { roles: ['question'], label: '第一次' } });
+    const same = await f.uploads.save({ ...f.input, uploadId: randomUUID(), hints: { label: '第一次', roles: ['question'] } });
+    expect(same).toMatchObject({ assetId: first.assetId, duplicate: true });
+    const documentId = (f.db.prepare("INSERT INTO material_document(id,owner_id) VALUES ('mdoc_synthetic','student') RETURNING id").get() as { id: string }).id;
+    for (const hints of [{ roles: ['reference_answer'], label: '第一次' }, { roles: ['question'], label: '第一次', marking: 'unmarked' }, { roles: ['question'], label: '另一个备注' }, { roles: ['question'], label: '第一次', documentId }, {}]) {
+      const saved = await f.uploads.save({ ...f.input, uploadId: randomUUID(), hints: hints as never });
+      expect(saved.created).toBe(true); expect(saved.duplicate).toBeUndefined(); expect(saved.assetId).not.toBe(first.assetId);
+      expect(JSON.parse((f.db.prepare('SELECT hints_json FROM material_asset WHERE id=?').get(saved.assetId) as { hints_json: string }).hints_json)).toEqual(hints);
+    }
+    expect(f.db.prepare("SELECT count(*) n FROM material_job WHERE kind='extract'").get()).toEqual({ n: 6 });
+  });
 });
