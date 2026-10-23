@@ -1,12 +1,28 @@
 import { ALL_STAGES, compareStage, isStage } from '../classification/stages.js';
 import type { V2WeekItem } from '../v2/weekService.js';
 
-export const NOTEBOOK_STATUSES: Record<string, string> = {
-  captured: '已采集', needs_review: '待检查',
-  ready_for_reflection: '待练习', eligible_for_review: '可复习', needs_recheck: '下次再练',
-  scheduled: '已加入练习', packet_generated: '已生成练习纸', attempted: '已记录作答',
-  temporarily_mastered: '已延迟做对', stably_mastered: '已多次延迟做对',
+/**
+ * 学生看到的四档状态，和结果页「真会了 / 再对就算稳了」同一套说法。
+ * 状态机的细分（待检查、已生成练习纸、当天做对待延迟验证……）只在服务端判断时使用。
+ */
+export const NOTEBOOK_STATUS_GROUPS = { todo: '待练习', practicing: '练习中', mastered: '真会了', stable: '稳了' } as const;
+export type NotebookStatusGroup = keyof typeof NOTEBOOK_STATUS_GROUPS;
+const STATUS_GROUP: Record<string, NotebookStatusGroup> = {
+  captured: 'todo', needs_review: 'todo', ready_for_reflection: 'todo', eligible_for_review: 'todo', needs_recheck: 'todo',
+  // 当天做对不算掌握，还要隔几天再做一次。
+  attempted: 'todo',
+  scheduled: 'practicing', packet_generated: 'practicing',
+  temporarily_mastered: 'mastered', stably_mastered: 'stable',
 };
+/** 题目状态归到哪一档；不在错题本里显示的状态（如已归档）没有档位。 */
+export function notebookStatusGroup(status: string): NotebookStatusGroup | null {
+  return Object.hasOwn(STATUS_GROUP, status) ? STATUS_GROUP[status]! : null;
+}
+/** 筛选参数只认四档；旧链接里的细分状态归到它所在的档，其余丢弃。 */
+export function notebookStatusFilter(value: string): NotebookStatusGroup | '' {
+  if (Object.hasOwn(NOTEBOOK_STATUS_GROUPS, value)) return value as NotebookStatusGroup;
+  return notebookStatusGroup(value) ?? '';
+}
 export interface NotebookFilters { grade: string; subject: string; chapter: string; status: string; q: string }
 export const MAX_NOTEBOOK_RETURN_LENGTH = 6000;
 export function validNotebookSelection(ids: string[]): boolean {
@@ -56,7 +72,8 @@ export function notebookUrl(filters: Partial<NotebookFilters>, itemId?: string, 
   if (filters.grade === ALL_STAGES || isStage(filters.grade)) query.set('grade', filters.grade);
   for (const key of ['subject', 'chapter', 'status', 'q'] as const) {
     const value = filters[key]?.trim();
-    if (value && (key !== 'status' || Object.hasOwn(NOTEBOOK_STATUSES,value))) query.set(key, value.slice(0, key === 'q' ? 200 : 100));
+    const kept = key === 'status' && value ? notebookStatusFilter(value) : value;
+    if (kept) query.set(key, kept.slice(0, key === 'q' ? 200 : 100));
   }
   if (selectedIds) { query.set('mode','select'); selectedIds.forEach(id=>query.append('itemIds',id)); }
   return `/s/items${query.size ? `?${query}` : ''}${itemId && /^itm_[0-9a-f]{16}$/.test(itemId) ? `#item-${itemId}` : ''}`;
@@ -81,7 +98,7 @@ export function safeNotebookReturn(value: unknown, fallback: string): string {
 export function matchesNotebook(item: Omit<V2WeekItem, 'jobId'>, filters: NotebookFilters, questionText = ''): boolean {
   return (filters.grade === ALL_STAGES || item.grade === filters.grade) && (item.subject || '未分类') === filters.subject
     && (!filters.chapter || (item.chapter || '未分类') === filters.chapter)
-    && (!filters.status || item.status === filters.status)
+    && (!filters.status || notebookStatusGroup(item.status) === filters.status)
     && (!filters.q || [questionText, item.questionExcerpt, item.shortId, item.chapter, ...item.knowledgeTags]
       .filter(Boolean).join(' ').toLocaleLowerCase().includes(filters.q.toLocaleLowerCase()));
 }

@@ -2,7 +2,7 @@ import { assertTaskWritable, taskLifecycle } from './practiceTasks.js';
 import crypto from 'node:crypto';
 import sharp from 'sharp';
 import { getDb, newId } from '../db/connection.js';
-import { getPractice } from './practiceService.js';
+import { getLearningPractice } from '../learning/queries.js';
 import { validateHandwriting, type HandwritingRecognizer } from '../ai/handwriting.js';
 
 export interface PracticeWork { id: string; packet_id: string; item_id: string; status: string; text: string | null; uncertain: number; attempts: number }
@@ -17,7 +17,7 @@ export function latestWork(packetId: string, itemId: string): PracticeWork | nul
 }
 export async function attachWork(packetId: string, itemId: string, key: string, bytes: Buffer): Promise<PracticeWork> {
   assertTaskWritable(packetId);
-  if (!getPractice(packetId)?.items.some(item => item.id === itemId)) throw new Error('题目不在此练习中');
+  if (!getLearningPractice(packetId, 'all')?.items.some(item => item.id === itemId)) throw new Error('题目不在此练习中');
   if (!/^[0-9a-f-]{36}$/i.test(key)) throw new Error('上传标识无效，请重新选择照片');
   if (!bytes.length || bytes.length > 15 * 1024 * 1024) throw new Error('照片大小须在 15 MB 以内');
   const hash = crypto.createHash('sha256').update(bytes).digest('hex');
@@ -53,7 +53,8 @@ export async function recognizeWork(id: string, recognizer: HandwritingRecognize
     const result = validateHandwriting(await recognizer.recognize(Buffer.from(row.image)));
     if(taskLifecycle(row.packet_id)==='cancelled')return;
     getDb().prepare("UPDATE practice_work SET status = 'ready', text = ?, uncertain = ? WHERE id = ?").run(result.text,result.uncertain?1:0,id);
-  } catch {
+  } catch (error) {
+    console.error(`[practice-work] ${id} 识别失败：${error instanceof Error ? error.message : String(error)}`);
     getDb().prepare("UPDATE practice_work SET status = 'failed' WHERE id = ?").run(id);
   } finally { active.delete(id); }
 }

@@ -86,9 +86,9 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await expect(page.getByTestId('item-card')).toHaveCount(9);
     await page.locator(`#item-${ids[0]}`).click();
     await page.getByTestId('back-link').click();
-    await page.getByTestId('notebook-filters').locator('summary').click();
-    await expect(page.getByTestId('notebook-filters').getByRole('link',{name:'高中',exact:true})).toHaveAttribute('aria-current','true');
-    await page.getByTestId('notebook-filters').locator('summary').click();
+    // Only 高中 is stored for this subject, so there is no one-option stage menu; the stage stays in the page and the search form.
+    await expect(page.locator('.page-subtitle')).toHaveText(/^高中 · /);
+    await expect(page.locator('form.notebook-filters input[name=grade]')).toHaveValue('高中');
     await expect(page.getByTestId('subject-switch')).toContainText(subject);
     await expect(page.locator(`#item-${ids[0]}`)).toBeInViewport();
     await page.getByRole('link',{name:'选题练习',exact:true}).click();
@@ -154,7 +154,7 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.getByLabel('搜索题目',{exact:true}).fill('x');
     await page.getByLabel('搜索题目',{exact:true}).press('Enter');
     await expect(cards).toHaveCount(1);
-    const expected=`${WEB}/s/items?${new URLSearchParams({grade:'初中',subject:'数学',chapter:'阅读定位',status:'ready_for_reflection',q:'x'})}#item-${id}`;
+    const expected=`${WEB}/s/items?${new URLSearchParams({grade:'初中',subject:'数学',chapter:'阅读定位',status:'todo',q:'x'})}#item-${id}`;
     const photo=cards.locator('img');
     await expect(photo).toHaveAttribute('src',/\?s=thumb$/);
     await expect.poll(()=>photo.evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
@@ -179,7 +179,7 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.getByLabel('搜索题目',{exact:true}).fill('没有匹配的题目');
     await page.getByLabel('搜索题目',{exact:true}).press('Enter');
     await expect(page.getByRole('heading',{name:'没有符合筛选的题目'})).toBeVisible();
-    await page.getByRole('link',{name:'查看全部数学错题',exact:true}).click();
+    await page.getByRole('link',{name:'清除筛选',exact:true}).click();
     await expect(cards).toHaveCount(3);
     await page.getByRole('link',{name:'选题练习',exact:true}).click();
     const countStatus=page.getByTestId('next-step-caption');
@@ -297,7 +297,7 @@ for (const javaScriptEnabled of [true, false]) test.describe(`章节选题（脚
     await page.unroute('**/s/img/item/**');
     const questionIds=await cards.evaluateAll(nodes=>nodes.map(node=>node.id.slice('item-'.length)));
     for(const questionId of questionIds) await page.request.post(`${WEB}/s/items/${questionId}/category`,{headers,form:{grade:'初中',subject:'数学',chapter:'往返定位'}});
-    const selectionFilters={grade:'初中',subject:'数学',chapter:'往返定位',status:'ready_for_reflection',q:'x'};
+    const selectionFilters={grade:'初中',subject:'数学',chapter:'往返定位',status:'todo',q:'x'};
     await page.goto(`${WEB}/s/items?${new URLSearchParams(selectionFilters)}`);
     await expect(cards).toHaveCount(2);
     await page.getByRole('link',{name:'选题练习',exact:true}).click();

@@ -1,6 +1,6 @@
 import { assertTaskWritable } from './practiceTasks.js';
 import { getDb } from '../db/connection.js';
-import { getPractice } from './practiceService.js';
+import { getLearningPractice } from '../learning/queries.js';
 
 export interface PracticeProgress {
   cursor: string | null;
@@ -18,7 +18,7 @@ export function practiceProgress(packetId: string): PracticeProgress {
 
 export function savePracticeCursor(packetId: string, itemId: string): void {
   assertTaskWritable(packetId);
-  if (!getPractice(packetId)?.items.some(item => item.id === itemId)) throw new Error('题目不在此练习中');
+  if (!getLearningPractice(packetId, 'all')?.items.some(item => item.id === itemId)) throw new Error('题目不在此练习中');
   getDb().prepare('INSERT INTO practice_progress(packet_id, cursor_item) VALUES (?,?) ON CONFLICT(packet_id) DO UPDATE SET cursor_item = excluded.cursor_item').run(packetId, itemId);
 }
 

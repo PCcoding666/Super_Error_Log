@@ -1,6 +1,6 @@
 import type { PracticeReviewer } from '../ai/practiceReview.js';
 import { submissionState } from '../v2/practiceSubmission.js';
-import { NOTEBOOK_STATUSES, matchesNotebook, notebookUrl, safeNotebookReturn, validNotebookSelection, type NotebookFilters } from './notebook.js';
+import { matchesNotebook, notebookStatusFilter, notebookUrl, safeNotebookReturn, validNotebookSelection, type NotebookFilters } from './notebook.js';
 import type { NotebookPageProps } from './views/items.js';
 import type { HandwritingRecognizer } from '../ai/handwriting.js';
 import { practiceRouter } from './practiceRouter.js';
@@ -43,7 +43,8 @@ import { isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { getLearningSource, learningCard, materialStoreForItem, learningImageFragments } from '../learning/sources.js';
 import { setQuestionIncluded } from '../materials/learning.js';
-import { getLearningWeek } from '../learning/queries.js';
+import { getLearningWeek, learningRedoOverview } from '../learning/queries.js';
+import { attemptDay, intakeDay } from '../learning/redoSchedule.js';
 import type { LearningCard as V2WeekItem } from '../learning/contracts.js';
 import { getItemFullCrop } from '../v2/fullCrop.js';
 import { getV2Settings, updateV2Settings } from '../v2/settingsService.js';
@@ -70,7 +71,7 @@ import {
 import { createMaterialsRouter } from './materialsRouter.js';
 import type { WebClientDeps } from '../mobile/router.js';
 import type { BarButton, BarModel } from './views/layout.js';
-import { itemNotebookReturn, itemContextUrl, removedNotebookUrl, type ItemPracticeRecord } from './itemLearning.js';
+import { itemNotebookReturn, itemContextUrl, removedNotebookUrl, withHistoryAnchors, type ItemPracticeRecord } from './itemLearning.js';
 
 export interface WebClientOptions {
   materials?: WebClientDeps['materials'];
@@ -366,7 +367,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     render(response, await itemsPage(request, response));
   }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
-  r.get('/install', page((_request, response) => render(response, InstallPage())));
+  r.get('/install', page((_request, response) => render(response, InstallPage({ invitation: options.studentHostWorker === true }))));
 
   /** 「今天」在等 AI 吗：找题中的照片（从最早那张算）或正在准备的练习纸（从开始准备算）。都不在等时 null。 */
   const todayWait = (state: TodayState): TodayWait | null => {
@@ -550,6 +551,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     throw new NotFound();
   };
 
+  /** 首页「这次练习还有 N 道没记录」：最早一份没做完的练习。 */
+  const activeLeft = (): {id:string;left:number}|null => {
+    const active=activePractice();
+    return active?{id:active.id,left:active.items.length-Object.keys(practiceProgress(active.id).answers).length}:null;
+  };
   const notebookData = async (request: Request, response: Response): Promise<NotebookPageProps> => {
     const state = await loadToday(ctx, request);
     const library = getLearningWeek(ctx.mobileDataDir, 'all', true);
@@ -573,7 +579,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     // Keep unavailable chapter filters visible so a changed category never silently broadens search.
     if (chapter && !chapters.includes(chapter)) chapters.push(chapter);
     const status = str(input?.status);
-    const filters: NotebookFilters = {grade,subject,chapter,status:Object.hasOwn(NOTEBOOK_STATUSES,status) ? status : '',q:str(input?.q).trim().slice(0,200)};
+    const filters: NotebookFilters = {grade,subject,chapter,status:notebookStatusFilter(status),q:str(input?.q).trim().slice(0,200)};
     const matches = (item: V2WeekItem): boolean => matchesNotebook(item,filters,filters.q ? getEvidenceView(item.id)?.questionText : '');
     const items = library.items.filter(matches), backlog = library.backlog.filter(matches);
     const requestedSelection = request.method === 'POST' || request.query.mode === 'select' ? list(input?.itemIds) : [];
@@ -591,7 +597,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       selection:selecting,
       category:{grade,subject,subjects,stages:stageOptions},anyPhoto:state.week.photos.length > 0,
       finding:state.photos.some(photo=>photo.state === 'finding'),
-      bar:{caption:'',primary:null,secondary:[]},removed,materials:!!ctx.materials,
+      bar:{caption:'',primary:null,secondary:[]},removed,materials:!!ctx.materials,redo:learningRedoOverview('all'),activePractice:activeLeft(),
       flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null,err:!validReturnSelection && request.method !== 'POST' ? '返回的选题信息不可用，请重新选择。' : null}};
   };
   const itemsPage = async (request: Request, response: Response): Promise<ReactNode> => ItemsPage(await notebookData(request,response));
@@ -646,18 +652,23 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const detail = (itemId: string, error?: string | null, returnTo?: string): ReactNode => {
     const item = findItem(itemId);
     const recommend = recommendPractice(ctx.mobileDataDir);
-    const history = getDb().prepare(`SELECT rp.id, rp.created_at, rp.generated_at, ra.correct, ra.completion, ra.hint_level, ra.performed_at
+    const history = getDb().prepare(`SELECT rp.id, rp.created_at, rp.generated_at, ra.correct, ra.completion, ra.hint_level, ra.performed_at, ra.created_at AS attempt_created_at
       FROM review_packet_item rpi JOIN review_packet rp ON rp.id = rpi.packet_id
       LEFT JOIN review_attempt ra ON ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id
-      WHERE rpi.item_id = ? ORDER BY COALESCE(ra.performed_at, rp.created_at) DESC, rp.created_at DESC, rp.rowid DESC`).all(itemId) as unknown as Array<ItemPracticeRecord & {generated_at:string|null}>;
+      WHERE rpi.item_id = ? ORDER BY COALESCE(ra.performed_at, rp.created_at) DESC, rp.created_at DESC, rp.rowid DESC`).all(itemId) as unknown as Array<ItemPracticeRecord & {generated_at:string|null;attempt_created_at:string|null}>;
     const reflection = getV2Reflection(itemId)?.reflection ?? null;
+    const intake = intakeDay(itemId);
     return ItemDetailPage({
       item, images: learningImageFragments(itemId), evidence: getEvidenceView(itemId),
       canDiscard: item.source.kind === 'material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
       reflected: reflection != null, reflection, error, returnTo, timeZone: ctx.timeZone,
       eligible: [...recommend.recommended, ...recommend.others].some(candidate => candidate.id === itemId),
       resumePracticeId: unfinishedPractice(itemId), reflectionPracticeId: history[0]?.id,
-      practiceHistory: history.map(record => ({ ...record, generated_day: record.generated_at ? localDayText(new Date(record.generated_at), Intl.DateTimeFormat().resolvedOptions().timeZone) : null })),
+      // 「隔几天」与掌握判定同一锚点（attemptDay 同一回退）：更早一次作答日，没有就是录入日（P0-3）。
+      practiceHistory: withHistoryAnchors(history, intake, attemptDay).map(record => ({
+        ...record,
+        generated_day: record.generated_at ? localDayText(new Date(record.generated_at), Intl.DateTimeFormat().resolvedOptions().timeZone) : null,
+      })),
     });
   };
 
@@ -784,7 +795,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // ---------- 选这周要练的题 ----------
   const choosePage = async (request: Request, error?: string | null, reason?: string | null): Promise<ReactNode> => {
     const state = await loadToday(ctx, request);
-    return ChoosePage({ recommend: recommendPractice(ctx.mobileDataDir), practiceSlot: getV2Settings().practiceSlot, caption: '', error, reason, ...(request.method === 'POST' ? { selectedIds: list(request.body?.itemIds) } : {}) });
+    // 默认勾选与练习页「今天该做」同一组；没到期的题在「其他可以选的」里。
+    return ChoosePage({ recommend: suggestedPractice(ctx.mobileDataDir), practiceSlot: getV2Settings().practiceSlot, caption: '', error, reason, ...(request.method === 'POST' ? { selectedIds: list(request.body?.itemIds) } : {}) });
   };
   r.get('/choose', page(async (request, response) => render(response, await choosePage(request))));
 
@@ -1047,24 +1059,24 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     render(response, ResultsPage({ practice, summary, next }));
   }));
 
-  const dashboard = (response:Response, error?:string): void => {
+  const dashboard = (response:Response, error?:string, status=200): void => {
     const recommendation=suggestedPractice(ctx.mobileDataDir);
     const tasks=listLearningPractices('all', -1).map(p=>({
       practice:getPractice(p.id)!,lifecycle:taskLifecycle(p.id),recorded:Object.keys(practiceProgress(p.id).answers).length,received:submissionState(p.id).photos.length,reviewStatus:submissionState(p.id).status,
     }));
-    render(response,PracticeDashboardPage({tasks,activeId:activePractice()?.id??null,recommendation,requestKey:crypto.randomUUID(),error}));
+    render(response,PracticeDashboardPage({tasks,activeId:activePractice()?.id??null,recommendation,requestKey:crypto.randomUUID(),error}),status);
   };
   r.get('/practices',page((_request,response)=>dashboard(response)));
   r.post('/practices/start',form,page((request,response)=>{
     const result=startSuggestedPractice(ctx.mobileDataDir,str(request.body?.key));
-    if(!result.ok){response.status(result.httpStatus);dashboard(response,result.message);return;}
+    if(!result.ok){dashboard(response,result.message,result.httpStatus);return;}
     if (taskLifecycle(result.detail.id) !== 'cancelled') requestPrint(result.detail.id, options.coachProvider, 'all');
     response.redirect(303,`/s/practice/${result.detail.id}`);
   }));
   for(const [action,lifecycle] of [['pause','paused'],['resume','active'],['cancel','cancelled']] as const){
     r.post(`/practice/:pid/${action}`,form,page((request,response)=>{
       const p=practiceOf(String(request.params.pid));
-      try{setTaskLifecycle(p.id,lifecycle);}catch(error){response.status(409);dashboard(response,error instanceof Error?error.message:'任务没有更新');return;}
+      try{setTaskLifecycle(p.id,lifecycle);}catch(error){dashboard(response,error instanceof Error?error.message:'任务没有更新',409);return;}
       response.redirect(303,action==='cancel'&&request.body?.next==='choose'?'/s/choose':'/s/practices');
     }));
   }
@@ -1148,14 +1160,14 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.type('image/jpeg').send(await displayImage(media, displaySize(request.query.s)));
   }));
 
-  r.use((_request, response) => render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整。回到今天接着做。' }), 404));
+  r.use((_request, response) => render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整。回到错题本接着做。' }), 404));
 
   const errors: ErrorRequestHandler = (error, request, response, _next) => {
     if (response.headersSent) return;
     const isImage = request.path.startsWith('/img/');
     if (error instanceof NotFound || (error instanceof MobileRequestError && error.status === 404)) {
       if (isImage) { response.status(404).type('text/plain').send('not found'); return; }
-      render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整，或者这道题已经不在了。回到今天接着做。' }), 404);
+      render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整，或者这道题已经不在了。回到错题本接着做。' }), 404);
       return;
     }
     if ((error as { type?: string }).type === 'entity.too.large') {

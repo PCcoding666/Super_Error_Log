@@ -15,6 +15,8 @@
 
 本轮设计：[学生邀请码网页版](docs/superpowers/specs/2026-10-15-student-invite-web-design.md)；发布与验收状态：[交付记录](docs/quality/2026-10-15-student-web-release.md)。功能需 `SEL_STUDENT_HOST_ENABLED=1`；受控试用上限3个学生。下方原生App与本机演示说明保留作历史与开发参考。
 
+学生怎么用见[学生使用指南](docs/product/STUDENT_GUIDE.md)；产品负责人自查用[走查方法](docs/product/WALKTHROUGH_GUIDE.md)，最近一次结果见[2026-10-22 学生视角走查](docs/quality/2026-10-22-student-walkthrough.md)。
+
 ## 管理后台（开发版本，尚未部署）
 
 新增 `/admin/`，独立管理员登录后查看所有邀请码对应账号的使用、输入/输出 tokens、调用耗时、接口成功率和失败原因。支持按日期、账号、模型、功能筛选；旧数据无法恢复的指标标为“未采集”。管理员密码由服务器 CLI 的 `admin-password` 命令生成，详见[部署和登录说明](deploy/README.md#管理后台账号用量与-ai-性能2026-10-20-开发版本尚未部署)。
