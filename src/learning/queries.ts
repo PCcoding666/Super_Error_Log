@@ -10,6 +10,7 @@ import type { PracticeSummary } from '../v2/practiceService.js';
 import type { LearningScope, LearningWeek, LearningPracticeCard, LearningRecommendation, LearningPracticeDetail, LearningCreateResult } from './contracts.js';
 import { getLearningSource, learningEligible, learningIncluded, learningPacketAllowed, learningCard } from './sources.js';
 import { getLegacyWeek } from '../v2/weekService.js';
+import { cooldownUntil, monthDayText, nextRedoDay, todayText } from './redoSchedule.js';
 
 export function getLearningWeek(mobileDataDir: string, scope: LearningScope = 'all', includeHistory = false): LearningWeek {
  const old = getLegacyWeek(mobileDataDir, includeHistory);
@@ -77,26 +78,34 @@ function tierOf(row: CandidateRow): 1 | 2 | 3 | 4 {
   return 4;
 }
 
-function reasonOf(tier: 1 | 2 | 3 | 4, primaryTag: string | null, recurrence: number): string {
+function reasonOf(tier: 1 | 2 | 3 | 4, primaryTag: string | null, recurrence: number, coolingUntil: string | null = null): string {
   if (tier === 1) return '上次练习没独立做对';
   if (tier === 2) return '上次做对了，到了再确认一次的时候';
-  if (tier === 3) return '上次是当场做对，还要隔几天再验证';
+  if (tier === 3) return coolingUntil ? `上次是当场做对，${monthDayText(coolingUntil)}起再做才算数` : '上次是当场做对，已经隔了几天，可以再验证了';
   return recurrence >= 2 ? `「${primaryTag}」近四周错了 ${recurrence} 次` : '本周新错题';
 }
 
-interface ScoredCandidate { row: CandidateRow; card: LearningPracticeCard; score: number; order: number }
+/**
+ * 候选打分：分层基础分 + 复发分（复发数×10，上限 50）；同分按登记早优先、再按 item_index。
+ * coolingUntil：attempted（当场做对）的题在「上次作答 + 3 天」之前处于冷却期——仍可手动选，
+ * 但不进推荐，好让积压的新错题轮得到（P0-3）。
+ */
+interface ScoredCandidate { row: CandidateRow; card: LearningPracticeCard; score: number; order: number; coolingUntil: string | null }
 
-/** 候选打分：分层基础分 + 复发分（复发数×10，上限 50）；同分按登记早优先、再按 item_index。 */
 function scoreCandidates(scope:LearningScope): ScoredCandidate[] {
+  const today = todayText();
   const scored = candidateRows(scope).map((row): Omit<ScoredCandidate, 'order'> => {
     const tags = JSON.parse(row.knowledge_tags) as string[];
     const primaryTag = tags[0] ?? null;
     const recurrence = recurrenceCount28d(row,scope);
     const tier = tierOf(row);
     const score = TIER_BASE[tier] + Math.min(recurrence * 10, 50);
+    const until = row.status === 'attempted' ? cooldownUntil(row.id) : null;
+    const coolingUntil = until !== null && until > today ? until : null;
     return {
       row,
       score,
+      coolingUntil,
       card: {
         id: row.id,
         shortId: row.short_id,
@@ -107,7 +116,7 @@ function scoreCandidates(scope:LearningScope): ScoredCandidate[] {
         status: row.status,
         cropUrl: learningCard(row.id)!.cropUrl,
         source: getLearningSource(row.id)!,
-        reason: reasonOf(tier, primaryTag, recurrence),
+        reason: reasonOf(tier, primaryTag, recurrence, coolingUntil),
         tier,
         reflected: row.reflected === 1,
       },
@@ -129,7 +138,8 @@ export function recommendLearningPractice(mobileDataDir: string, scope:LearningS
     // 懒桥接整体失败不影响返回。
   }
   const scored = scoreCandidates(scope);
-  const candidates: PlanCandidate[] = scored.map(entry => ({
+  // 冷却中的题不进推荐（仍出现在 others 里，可以手动选）。
+  const candidates: PlanCandidate[] = scored.filter(entry => entry.coolingUntil === null).map(entry => ({
     itemId: entry.row.id,
     score: entry.score,
     primaryTag: entry.card.knowledgeTags[0] ?? null,
@@ -298,4 +308,43 @@ export function listLearningPractices(scope: LearningScope = 'all', limit = 8): 
     generatedAt: row.generated_at,
     itemCount: row.item_count,
   }));
+}
+
+export interface LearningRedoOverview {
+  /** 今天（含）之前已到「再做」日期的题数：冷却已过的当场做对题 + 到期的确认题。 */
+  dueCount: number;
+  /** 还没到日期的题里最早的再做日（YYYY-MM-DD）；没有则 null。 */
+  nextDay: string | null;
+  /** nextDay 那天到期的题数。 */
+  nextCount: number;
+}
+
+/**
+ * 「下次哪天再做」总览：只看有日期约束的题（attempted、temporarily_mastered），
+ * 已在未完成练习里的题不算（那份练习本身会提示）。
+ */
+export function learningRedoOverview(scope: LearningScope = 'all'): LearningRedoOverview {
+  const rows = getDb().prepare(
+    `SELECT ei.id, ei.status, ei.next_review_at FROM error_item ei
+     WHERE ei.status IN ('attempted','temporarily_mastered')
+     AND NOT EXISTS (
+       SELECT 1 FROM review_packet_item rpi
+       WHERE rpi.item_id = ei.id
+         AND NOT EXISTS (SELECT 1 FROM practice_task pt WHERE pt.packet_id = rpi.packet_id AND pt.lifecycle = 'cancelled')
+         AND NOT EXISTS (SELECT 1 FROM review_attempt ra WHERE ra.packet_id = rpi.packet_id AND ra.item_id = rpi.item_id)
+     )`,
+  ).all() as Array<{ id: string; status: string; next_review_at: string | null }>;
+  const today = todayText();
+  let dueCount = 0;
+  const upcoming: string[] = [];
+  for (const row of rows) {
+    const source = getLearningSource(row.id);
+    if (!source || (scope === 'legacy' && source.kind !== 'legacy') || !learningEligible(row.id)) continue;
+    const day = nextRedoDay(row);
+    if (!day) continue;
+    if (day <= today) dueCount += 1; else upcoming.push(day);
+  }
+  upcoming.sort();
+  const nextDay = upcoming[0] ?? null;
+  return { dueCount, nextDay, nextCount: nextDay ? upcoming.filter(day => day === nextDay).length : 0 };
 }

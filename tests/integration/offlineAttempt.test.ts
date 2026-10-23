@@ -90,6 +90,8 @@ function insertFixtureData(): void {
     insertPacketItem.run(REAL_PACKET, itemId, index);
     insertEvidence.run(itemId);
   });
+  // 延迟锚点是录入日/上次作答日（P0-3）：这道题当天录入、当天在纸上做对，晚些才上传。
+  db.prepare("UPDATE error_item SET created_at = '2026-09-01T12:00:00.000Z' WHERE id = 'itm_real_same_day'").run();
   insertItem.run('itm_mock_legacy', 'M-1', 100);
   insertPacketItem.run(MOCK_PACKET, 'itm_mock_legacy', 0);
 }

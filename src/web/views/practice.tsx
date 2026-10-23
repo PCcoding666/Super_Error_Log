@@ -8,6 +8,8 @@ import type { ReflectionSuggestionView, ReflectionTurnView, ReflectionView } fro
 import { ACCOUNT_ROLE_LABELS, type AccountRole } from '../../studentHost/accountRole.js';
 import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';
+import { monthDayText } from '../../domain/calendarDay.js';
+import { pendingRedoText, RedoDateCard } from './redoDate.js';
 import { Page, Phrased, Problem, VoiceBox, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
 // ---------- 选项的断行 ----------
@@ -616,7 +618,7 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
     ? `${summary.total} 道里，独立做对 ${summary.independentCorrect} 道`
     : `录了 ${summary.answered}/${summary.total} 道，独立做对 ${summary.independentCorrect} 道`;
   const nothing = summary.masteredNow.length + summary.again.length + summary.pending.length === 0 && !summary.calibration.text;
-  const confirm = summary.nextConfirmOn ? `${Number(summary.nextConfirmOn.slice(5, 7))}/${Number(summary.nextConfirmOn.slice(8, 10))}` : null;
+  const confirm = summary.nextConfirmOn ? monthDayText(summary.nextConfirmOn) : null;
   const bar: BarModel = { caption: '', primary: props.next, secondary: [] };
   return (
     <Page title="这次的结果" bar={bar}>
@@ -624,17 +626,18 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
       {/* 结果出来：头一句和下面几组依次浮上来（减少动态效果时直接显示） */}
       <div className="m-stagger">
       <p className="lead card-title" data-testid="results-head">{head}</p>
+      <RedoDateCard days={summary.redoDays} />
       {summary.masteredNow.length > 0 ? (
         <section className="card">
           <h2 className="card-title tone-green"><Phrased text={`真会了 ✓（${summary.masteredNow.length} 道）`} /></h2>
-          <p className="small muted">隔了几天还能独立做对。{confirm ? `${confirm} 前后会再考你一次，再对就算稳了。` : ''}</p>
+          <p className="small muted">隔了几天还能独立做对。{confirm ? `${confirm}前后会再考你一次，再对就算稳了。` : ''}</p>
           <ul className="list">{summary.masteredNow.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
       ) : null}
       {summary.pending.length > 0 ? (
         <section className="card">
           <h2 className="card-title"><Phrased text={`做对了，过几天再确认（${summary.pending.length} 道）`} /></h2>
-          <p className="small muted">做题那天离练习纸生成太近，过几天再做对才算数。</p>
+          <p className="small muted">当天做对还不算数：{pendingRedoText(summary.pendingRedoOn, summary.pendingRedoLastOn)}</p>
           <ul className="list">{summary.pending.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
       ) : null}
