@@ -7,6 +7,7 @@ import {
 import { CAPTURE_EXAMPLE_PAGE, CAPTURE_EXAMPLE_QUESTION } from './captureExamples.js';
 import { OfflinePage } from './views/today.js';
 import { sendHtml } from '../views/render.js';
+import { sendClientAsset } from './clientApp.js';
 
 function cacheFor(response: Response, value: string): void {
   response.setHeader('cache-control', value);
@@ -15,6 +16,8 @@ function cacheFor(response: Response, value: string): void {
 
 /** Register before session auth. Only these explicit, student-independent resources are public. */
 export function registerStaticAssets(router: Router): void {
+  // 学生端单页应用的指纹资源（Ionic React 构建产物），网关和 worker 都公开下发。
+  router.get('/app/assets/:file', sendClientAsset);
   router.get('/manifest.webmanifest', (_request, response) => {
     cacheFor(response, 'no-cache');
     response.type('application/manifest+json').send(JSON.stringify(manifest()));

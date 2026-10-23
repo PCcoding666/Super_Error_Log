@@ -8,6 +8,8 @@ async function connect(page: Page, request: import('@playwright/test').APIReques
   await page.goto(link.replace('https://study.pccoding666.com', WEB));
   await page.getByTestId('next-step-primary').click();
   await expect(page).toHaveURL(/\/s\/(?:\?paired=1)?$/);
+  // 根地址现在是学生端单页应用；这些用例检查的是保留下来的服务端页面及其三栏导航。
+  await page.goto(`${WEB}/s/items`);
 }
 
 test('三栏导航在窄屏大字下可用，根页面不再显示本周安排', async ({page,request}) => {
