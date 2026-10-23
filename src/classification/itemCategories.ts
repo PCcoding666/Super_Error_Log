@@ -67,9 +67,16 @@ export function editItemCategory(db: DatabaseSync, studentId: string, itemId: st
   if (!isStage(grade)) return STAGE_REQUIRED_MESSAGE;
   if (typeof subject !== 'string' || !subject.trim() || subject.trim().length > 100) return '请填写学科（1–100 字）。';
   if (typeof chapter !== 'string' || !chapter.trim() || chapter.trim().length > 100) return '请填写章节（1–100 字）。';
-  if (!readItemCategory(db, studentId, itemId)) return '题目不存在。';
+  const current = readItemCategory(db, studentId, itemId);
+  if (!current) return '题目不存在。';
+  const stored = db.prepare('SELECT subject,chapter FROM item_category WHERE item_id=? AND student_id=?')
+    .get(itemId, studentId) as {subject:string|null;chapter:string|null};
+  // The form is prefilled with computed values. Only a field the student actually changed becomes a manual
+  // override; an untouched prefilled chapter stays computed, so a stage change can reclassify it.
+  const keep = (value: string, shown: string, override: string | null): string | null =>
+    override === null && value === shown ? null : value;
   db.prepare('UPDATE item_category SET grade=?,subject=?,chapter=?,updated_at=CURRENT_TIMESTAMP WHERE item_id=? AND student_id=?')
-    .run(grade, subject.trim(), chapter.trim(), itemId, studentId);
+    .run(grade, keep(subject.trim(), current.subject, stored.subject), keep(chapter.trim(), current.chapter, stored.chapter), itemId, studentId);
   return null;
 }
 
@@ -88,6 +95,26 @@ export function updateStudentGrade(db: DatabaseSync, studentId: string, grade: u
     db.exec('ROLLBACK TO change_student_grade; RELEASE change_student_grade');
     throw error;
   }
+}
+
+/** New accounts choose 初中/高中 once before the notebook. Accounts that already have questions or photos,
+ * or that chose before (here or in settings), are never asked; their stage stays as it is. */
+export function stageChoiceNeeded(db: DatabaseSync, studentId: string): boolean {
+  if (db.prepare('SELECT 1 FROM student_stage_choice WHERE student_id=?').get(studentId)) return false;
+  if (db.prepare('SELECT 1 FROM error_item WHERE student_id=? LIMIT 1').get(studentId)) return false;
+  // Any earlier photo counts as prior activity: new material uploads, and legacy uploads that are still
+  // processing, failed, or had no question selected (v2_photo has no error_item yet).
+  const has = (table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+  if (has('material_asset') && db.prepare('SELECT 1 FROM material_asset WHERE owner_id=? LIMIT 1').get(studentId)) return false;
+  if (has('v2_photo') && db.prepare('SELECT 1 FROM v2_photo WHERE student_id=? LIMIT 1').get(studentId)) return false;
+  return true;
+}
+
+/** Records an explicit stage choice. Existing questions keep their stage (see updateStudentGrade). */
+export function chooseStudentStage(db: DatabaseSync, studentId: string, grade: unknown): boolean {
+  if (!updateStudentGrade(db, studentId, grade)) return false;
+  db.prepare('INSERT INTO student_stage_choice (student_id) VALUES (?) ON CONFLICT(student_id) DO UPDATE SET chosen_at=CURRENT_TIMESTAMP').run(studentId);
+  return true;
 }
 
 /** Internal card adapter; authentication remains in the per-student worker/router. */
