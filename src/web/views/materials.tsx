@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { randomUUID } from 'node:crypto';
 import type { BatchAction, CaptureHints, Fragment, MaterialRole, QuestionBundle, ReferenceAnswer } from '../../materials/contracts.js';
-import { Page } from './layout.js';
+import { Page, type BarButton } from './layout.js';
 import { CaptureExamples } from './photos.js';
 import { UNSUPPORTED_SUBJECT_MESSAGE, unsupportedSubject } from '../../materials/subjects.js';
 
@@ -17,6 +17,11 @@ export interface MaterialAssetView {
 const roleNames: Record<MaterialRole, string> = {
   question: '题目', diagram: '图形', student_work: '我的作答', correction: '订正',
   teacher_mark: '老师批改', reference_answer: '参考答案', unknown: '不确定',
+};
+/** Short names for counts such as「作答 3 · 老师批改 3 · 订正 1」. */
+const shortRoleNames: Record<MaterialRole, string> = {
+  question: '题目', diagram: '图形', student_work: '作答', correction: '订正',
+  teacher_mark: '老师批改', reference_answer: '参考答案', unknown: '其他',
 };
 
 const Hidden = ({ namespace, revision }: { namespace: string; revision?: number }) => <>
@@ -34,8 +39,13 @@ function NavRow(props: { href: string; children: ReactNode }): ReactNode {
 }
 
 /** 就地展开：披露行，收起时 chevron 朝右，展开后朝下。 */
-function Disclosure(props: { title: string; children: ReactNode }): ReactNode {
-  return <details className="disclosure"><summary>{props.title}</summary><div className="disclosure-body">{props.children}</div></details>;
+function Disclosure(props: { title: string; children: ReactNode; open?: boolean; id?: string; testId?: string }): ReactNode {
+  return <details className="disclosure" open={props.open || undefined} id={props.id} data-testid={props.testId}><summary>{props.title}</summary><div className="disclosure-body">{props.children}</div></details>;
+}
+
+/** One folded tool group on a task page: closed by default, opened when it holds something in progress. */
+function ToolGroup(props: { title: string; children: ReactNode; open?: boolean; id?: string; testId?: string }): ReactNode {
+  return <div className="inset-group"><Disclosure {...props} /></div>;
 }
 
 export function HintFields(): ReactNode {
@@ -59,55 +69,55 @@ export function HintFields(): ReactNode {
   );
 }
 
+/** Capture tab. One filled button (「拍照」, then「继续拍照」); the way out and the upload status appear
+ * only after something was taken. The upload queue script keeps these in step without a reload. */
 export function MaterialCapturePage({ namespace, count, uploadId, context = {} }: {
   namespace: string;
   count: number;
   uploadId: string;
   context?: CaptureHints;
 }): ReactNode {
+  const supplement = !!context.questionId;
+  const hidden = count ? undefined : 'hidden';
   return (
-    <Page title="拍学习材料" bar={{ caption: '没传完的照片先存在这台手机上，回到这一页会接着传。', primary: { title: '拍完了，查看材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
+    <Page title={supplement ? '补充材料' : '拍学习材料'} tab={supplement ? undefined : 'capture'} bodyClass="capture-page"
+      back={supplement ? { href: `/s/materials/questions/${context.questionId}`, label: '返回题目' } : undefined}>
       <section className="material-surface" data-material-capture="" data-draft-namespace={namespace} data-saved-count={count}>
-        <h1>{context.questionId ? '补充材料' : '拍学习材料'}</h1>
-        {context.questionId ? <p className="hint">从这道题继续补拍；整页上其他题目会分别整理。</p> : null}
+        <h1>{supplement ? '补充材料' : '拍学习材料'}</h1>
+        {supplement ? <p className="hint">从这道题继续补拍；整页上其他题目会分别整理。</p> : null}
         <p className="lead">题目、答题卡、作答或答案都可以拍，顺序不限，之后还能补。</p>
         <p className="hint" data-testid="capture-subjects">{UNSUPPORTED_SUBJECT_MESSAGE.replace('。', '')}的卷子，其他科目先不用拍。</p>
-        <p data-testid="photo-count">已拍 {count} 张</p>
-        <form method="post" encType="multipart/form-data" action={`/s/materials/uploads?namespace=${namespace}&uploadId=${uploadId}`} data-material-upload="">
+        {count ? null : <CaptureExamples />}
+        <form method="post" encType="multipart/form-data" action={`/s/materials/uploads?namespace=${namespace}&uploadId=${uploadId}`} id="material-upload-form" data-material-upload="">
           {context.questionId ? <input type="hidden" name="questionId" value={context.questionId} /> : null}
           {context.attemptId ? <input type="hidden" name="attemptId" value={context.attemptId} /> : null}
-          <div className="btn-stack">
-            <label className="btn primary" htmlFor="camera-input">继续拍照</label>
-            <input className="visually-hidden" id="camera-input" name="photo" type="file" accept="image/*,.heic,.heif" capture="environment" />
-            <label className="btn" htmlFor="library-input">从相册选（可多选）</label>
-            <input className="visually-hidden" id="library-input" name="photo" type="file" accept="image/*,.heic,.heif" multiple />
-          </div>
-          {count ? null : <CaptureExamples />}
+          <input className="visually-hidden" id="camera-input" name="photo" type="file" accept="image/*,.heic,.heif" capture="environment" />
+          <input className="visually-hidden" id="library-input" name="photo" type="file" accept="image/*,.heic,.heif" multiple />
           <div className="inset-group"><HintFields /></div>
-          <noscript><p>未开启脚本时，每次选一张照片，再点上传。HEIC 请先存为 JPEG。</p><button className="btn primary" type="submit">上传这张照片</button></noscript>
+          <noscript><p>未开启脚本时，每次选一张照片，再点下面的“上传这张照片”。HEIC 请先存为 JPEG。</p></noscript>
         </form>
-        <p role="status" data-queue-message="">还没有待上传的照片。</p>
+        <div className={hidden} data-capture-progress="">
+          <p className="capture-count" data-testid="photo-count">已拍 {count} 张</p>
+          <ul className="capture-thumbs hidden" data-capture-thumbs="" aria-label="这次拍的照片" />
+          <p role="status" data-queue-message="" />
+        </div>
         <p className="hint" data-queue-warning="" />
         <ul className="list" data-upload-queue="" />
-        <div className="inset-group">
-          <NavRow href="/s/materials">查看已经保存的材料</NavRow>
+        <div className={`inset-group${count ? '' : ' hidden'}`} data-capture-done="">
+          <a className="nav-row" href="/s/materials" data-key="materials" data-testid="capture-done" aria-label="拍完了，查看材料"><span className="row-text" data-done-text="">拍完了，查看材料</span><Chevron /></a>
         </div>
+        <nav className="capture-actions" aria-label="拍照">
+          <label className="btn primary" htmlFor="camera-input" data-key="capture" data-capture-label="">{count ? '继续拍照' : '拍照'}</label>
+          <label className="btn" htmlFor="library-input">从相册选（可多选）</label>
+          <noscript><button className="btn" type="submit" form="material-upload-form">上传这张照片</button></noscript>
+        </nav>
       </section>
     </Page>
   );
 }
 
-function summary(q: QuestionBundle): ReactNode {
-  return <>
-    <p>找到：{[q.stem.length ? '题目 / 图形' : '', q.attempts.some(a => a.fragments.length) ? '作答' : '', q.teacherMarks.length ? '老师批改' : ''].filter(Boolean).join('、') || '一些材料'}</p>
-    <p>{q.missing.length ? '缺少：' + q.missing.map(x => ({ stem: '题目', diagram: '图形', work: '作答' }[x])).join('、') : '主要材料已找到'}</p>
-    {q.unresolved.length ? <p className="tone-orange">待确定：这些材料是否属于同一题或同一次作答。可对照原图调整。</p> : null}
-    <p className="hint">{q.stem.some(f => f.check !== 'passed') ? '识别还有不确定处，请对照原图。' : '识别结果仍可修正。'} 未进行自动批改。</p>
-  </>;
-}
-
 function questionTitle(q: QuestionBundle): string {
-  return q.number ? `第 ${q.number} 题` : '待确定题号';
+  return q.number ? `第 ${q.number} 题` : '题号不清';
 }
 
 function fragmentLine(fragments: Fragment[]): string {
@@ -123,21 +133,33 @@ export function stemFirstSentence(q: QuestionBundle, max = 28): string {
   return first.length > max ? first.slice(0, max) + '…' : first;
 }
 
-export type MaterialInclusionMark = 'included' | 'removed' | 'pending';
-const inclusionNames: Record<MaterialInclusionMark, string> = { included: '已收录', removed: '已移出错题本', pending: '未收录' };
+function shortText(text: string, max = 24): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? flat.slice(0, max) + '…' : flat;
+}
 
+/** 'correct' = every certain teacher mark is a tick: not offered for inclusion, still includable by hand. */
+export type MaterialInclusionMark = 'included' | 'removed' | 'pending' | 'correct';
+const inclusionNames: Record<MaterialInclusionMark, string> = { included: '已收录', removed: '已移出错题本', pending: '未收录', correct: '老师判对' };
+const missingNames = { stem: '题目', diagram: '图形', work: '作答' } as const;
+
+/** The one status line under each question: subject · first stem sentence · inclusion, plus anything missing. */
 function QuestionMeta({ q, mark }: { q: QuestionBundle; mark: MaterialInclusionMark }): ReactNode {
   const other = unsupportedSubject(q.subject);
   const parts = [q.subject?.trim() || '学科待定', stemFirstSentence(q)].filter(Boolean).join(' · ');
+  const issues = [q.missing.length ? '缺' + q.missing.map(x => missingNames[x]).join('、') : '', q.unresolved.length ? '归属待确定' : ''].filter(Boolean).join(' · ');
   return <p className="row-detail meta-line" data-testid="material-question-meta">
     <span>{parts}</span>{' · '}
     {other ? <span className="tone-orange">{UNSUPPORTED_SUBJECT_MESSAGE}</span>
       : <span className={mark === 'included' ? 'tone-green' : 'muted'} data-testid="material-inclusion">{inclusionNames[mark]}</span>}
+    {issues ? <>{' · '}<span className="tone-orange">{issues}</span></> : null}
   </p>;
 }
 
 export type MaterialJobView = { id: string; state: string; assetId?: string | null; retryable?: boolean };
 export type MaterialPendingGroup = { assetId: string; photo: number; questions: QuestionBundle[] };
+/** Material on one photo the model could not place under a printed number (see unplacedMaterial). */
+export type MaterialUnplacedGroup = { assetId: string; photo: number; items: { questionId: string; fragment: Fragment }[] };
 
 /** Top-of-page status: in progress, failed (one tap retries all), other subjects. Polled while processing. */
 function MaterialStatus(props: { namespace: string; processing: number; failed: MaterialJobView[]; unsupported: { photo: number; subject: string }[]; assetCount: number; questionCount: number }): ReactNode {
@@ -171,32 +193,56 @@ function pendingChunks(questions: QuestionBundle[]): QuestionBundle[][] {
   for (let i = 0; i < questions.length; i += PENDING_FORM_MAX) chunks.push(questions.slice(i, i + PENDING_FORM_MAX));
   return chunks;
 }
+export const PENDING_FORM_ID = 'material-pending-form';
+/** One form, submitted by the page's bottom button, unless the whole submission would not fit the same budget:
+ * a checkbox per question, a hidden page field per photo, the namespace and the pressed button. */
+export const pendingInOneForm = (groups: MaterialPendingGroup[]): boolean => {
+  const total = groups.reduce((n, g) => n + g.questions.length, 0);
+  return total > 0 && total + groups.length + 2 <= PENDING_FORM_MAX;
+};
 
-/** 「本页还有 N 道没收录」：一页全收，或逐个勾选。每张照片单独一个表单，只提交这一页的题，
- * 所以待收录的题再多，一次提交的字段数也有上限。勾选值带上看到时的版本，变了的题会跳过。 */
+function PendingFieldset({ g, questions, legend }: { g: MaterialPendingGroup; questions: QuestionBundle[]; legend: string }): ReactNode {
+  return <>
+    <input type="hidden" name={`page_${g.assetId}`} value={questions.map(q => `${q.id}:${q.revision}`).join(',')} />
+    <fieldset>
+      <legend>{legend}</legend>
+      {questions.map(q => (
+        <label className="choice" key={q.id}>
+          <input type="checkbox" name="pick" value={`${q.id}:${q.revision}`} />
+          <span>{questionTitle(q)}{stemFirstSentence(q) ? ` · ${stemFirstSentence(q)}` : ''}</span>
+        </label>
+      ))}
+    </fieldset>
+  </>;
+}
+
+/** 「本页还有 N 道没收录」：一页全收，或逐个勾选。题不多时合成一个表单，由底部主按钮「收录勾选的题」提交；
+ * 待收录的题很多时，每张照片（再按上限切分）单独一个表单，一次提交的字段数有上限。勾选值带上看到时的版本，变了的题会跳过。 */
 function PendingInclusion({ namespace, groups }: { namespace: string; groups: MaterialPendingGroup[] }): ReactNode {
   const total = groups.reduce((n, g) => n + g.questions.length, 0);
+  const one = pendingInOneForm(groups);
   return <div data-live="material-pending">
     {total ? (
       <section id="material-pending" data-testid="material-pending">
         <h2 className="group-label">还没收进错题本的题</h2>
-        <p className="group-footer">老师没明确打叉的题不会自动收。做错、扣了分或没把握的题，勾上收进错题本。</p>
-        {groups.flatMap(g => pendingChunks(g.questions).map((questions, part, all) => (
+        <p className="group-footer">老师打了叉（包括叉加评语）的题已经自动收好，打 √ 的题不用收。做错、扣了分或没把握的题，勾上收进错题本。</p>
+        {one ? (
+          <form method="post" action="/s/materials/inclusions" id={PENDING_FORM_ID} className="inset-group group-pad" data-testid="material-pending-page">
+            <Hidden namespace={namespace} />
+            {groups.map(g => (
+              <div key={g.assetId}>
+                <PendingFieldset g={g} questions={g.questions} legend={`照片 ${g.photo}：本页还有 ${g.questions.length} 道没收录`} />
+                <div className="btn-stack"><button className="btn" type="submit" name="allOf" value={g.assetId}>本页 {g.questions.length} 道全部收录</button></div>
+              </div>
+            ))}
+          </form>
+        ) : groups.flatMap(g => pendingChunks(g.questions).map((questions, part, all) => (
           <form method="post" action="/s/materials/inclusions" key={`${g.assetId}:${part}`} className="inset-group group-pad" data-testid="material-pending-page">
             <Hidden namespace={namespace} />
-            <input type="hidden" name={`page_${g.assetId}`} value={questions.map(q => `${q.id}:${q.revision}`).join(',')} />
-            <fieldset>
-              <legend>照片 {g.photo}{all.length > 1 ? `（第 ${part + 1} 部分）` : ''}：本页还有 {questions.length} 道没收录</legend>
-              {questions.map(q => (
-                <label className="choice" key={q.id}>
-                  <input type="checkbox" name="pick" value={`${q.id}:${q.revision}`} />
-                  <span>{questionTitle(q)}{stemFirstSentence(q) ? ` · ${stemFirstSentence(q)}` : ''}</span>
-                </label>
-              ))}
-            </fieldset>
+            <PendingFieldset g={g} questions={questions} legend={`照片 ${g.photo}${all.length > 1 ? `（第 ${part + 1} 部分）` : ''}：本页还有 ${questions.length} 道没收录`} />
             <div className="btn-stack">
               <button className="btn" type="submit" name="allOf" value={g.assetId}>本页 {questions.length} 道全部收录</button>
-              <button className="btn primary" type="submit">收录勾选的题</button>
+              <button className="btn" type="submit">收录勾选的题</button>
             </div>
           </form>
         )))}
@@ -205,8 +251,30 @@ function PendingInclusion({ namespace, groups }: { namespace: string; groups: Ma
   </div>;
 }
 
+/** 「这张照片还有 7 段内容没对上题号（作答 3 · 老师批改 3 · 订正 1）」：只汇总，不猜它们属于哪道题。
+ * 展开后逐段链到它现有的手动关联入口。 */
+function UnplacedMaterial({ groups, single }: { groups: MaterialUnplacedGroup[]; single: boolean }): ReactNode {
+  return <>{groups.filter(g => g.items.length).map(g => {
+    const counts = new Map<MaterialRole, number>();
+    for (const { fragment } of g.items) counts.set(fragment.role, (counts.get(fragment.role) ?? 0) + 1);
+    const breakdown = [...counts].map(([role, n]) => `${shortRoleNames[role]} ${n}`).join(' · ');
+    return (
+      <div className="inset-group" key={g.assetId} data-testid="material-unplaced">
+        <Disclosure title={`${single ? '这张照片' : `照片 ${g.photo} `}还有 ${g.items.length} 段内容没对上题号（${breakdown}）`}>
+          <p className="hint">没认出题号的内容不会自动归到题上，也不算在题目里。需要时对照原图，把它归到对应的题。</p>
+          <NavRow href={`/s/materials/assets/${g.assetId}/image`}>查看原图</NavRow>
+          {g.items.map(({ questionId, fragment: f }) => (
+            <NavRow key={f.fragmentId} href={`/s/materials/questions/${questionId}#adjust`}>{shortRoleNames[f.role]}{f.text.trim() ? ` · ${shortText(f.text, 18)}` : ''} · 对照原图归到题上</NavRow>
+          ))}
+        </Disclosure>
+      </div>
+    );
+  })}</>;
+}
+
 export function MaterialsPage(props: {
   namespace: string;
+  /** Questions in paper and number order, without unplaced material. */
   questions: QuestionBundle[];
   assets: MaterialAssetView[];
   page: number;
@@ -221,6 +289,7 @@ export function MaterialsPage(props: {
   photoNumbers?: Record<string, number>;
   unsupported?: { assetId: string; subject: string }[];
   pending?: MaterialPendingGroup[];
+  unplaced?: MaterialUnplacedGroup[];
   marks?: Record<string, MaterialInclusionMark>;
   notice?: { included: number; skipped: number; retried?: number } | null;
 }): ReactNode {
@@ -231,11 +300,17 @@ export function MaterialsPage(props: {
   const assetCount = props.assetCount ?? props.assets.length;
   const failedAssets = new Set(props.jobs.map(j => j.assetId).filter((id): id is string => !!id));
   const notice = props.notice;
+  const pending = props.pending ?? [];
+  const mark = (q: QuestionBundle) => props.marks?.[q.id] ?? (q.itemId ? 'included' : 'pending');
+  // The bottom button is the task on this page: include the ticked questions, else go practise what is in.
+  const primary: BarButton | null = pendingInOneForm(pending) ? { title: '收录勾选的题', key: 'include', form: PENDING_FORM_ID }
+    : props.questions.some(q => mark(q) === 'included') && !processing ? { title: '去练习', key: 'practice', href: '/s/practices' } : null;
   return (
-    <Page title="我的材料" pollSeconds={processing ? 4 : undefined} bar={{ caption: '材料已保存，可以先结束；以后随时补拍。', primary: { title: '继续拍照', key: 'capture', href: '/s/capture' }, secondary: [] }}>
+    <Page title="我的材料" back={{ href: '/s/items', label: '错题本' }} pollSeconds={processing ? 4 : undefined}
+      bar={{ caption: '材料已保存，可以先结束；以后随时补拍。', primary, secondary: [{ title: '继续拍照', key: 'capture', href: '/s/capture' }] }}>
       <div className="material-surface" data-draft-namespace={namespace}>
         <h1>我的材料</h1>
-        <p className="lead">按题整理，缺的材料以后再补。没有把握的关联会留在“待确定”。</p>
+        <p className="lead">按题整理，缺的材料以后再补。</p>
         {notice ? <div className="flash" role="status" data-testid="include-done">
           {notice.retried !== undefined ? `已重新开始整理 ${notice.retried} 张照片。` : notice.included ? `已收进错题本 ${notice.included} 道。` : '这次没有收进新的题。'}
           {notice.skipped ? ` 有 ${notice.skipped} 道刚刚有变化，没收进去，请再勾一次。` : ''}
@@ -243,47 +318,46 @@ export function MaterialsPage(props: {
         </div> : null}
         <MaterialStatus namespace={namespace} processing={processing} failed={props.jobs} assetCount={assetCount} questionCount={props.questions.length}
           unsupported={unsupported.map(u => ({ photo: photoNumbers[u.assetId] ?? 0, subject: u.subject }))} />
-        <PendingInclusion namespace={namespace} groups={props.pending ?? []} />
-        <div className="inset-group">
-          <NavRow href="/s/materials">刷新整理结果</NavRow>
-        </div>
+        <PendingInclusion namespace={namespace} groups={pending} />
         <div data-live="material-questions">
           {!props.questions.length ? <p className="group-footer">照片保存后会继续整理，整理好的题会出现在这里。</p> : null}
           {props.questions.length ? <h2 className="group-label">题目</h2> : null}
           {props.questions.map(q => (
             <section className="inset-group" key={q.id}>
               <h2 className="nav-title"><NavRow href={`/s/materials/questions/${q.id}`}>{questionTitle(q)}</NavRow></h2>
-              <QuestionMeta q={q} mark={props.marks?.[q.id] ?? (q.itemId ? 'included' : 'pending')} />
-              <div className="row-detail">{summary(q)}</div>
-              <NavRow href={`/s/capture?questionId=${q.id}`}>补充材料</NavRow>
+              <QuestionMeta q={q} mark={mark(q)} />
             </section>
           ))}
+          <UnplacedMaterial groups={props.unplaced ?? []} single={assetCount === 1} />
         </div>
-        <h2 className="group-label">批量处理</h2>
-        <div className="inset-group">
-          <BatchGradeForms namespace={namespace} documents={props.documents} questions={props.questions} />
-          <BatchAnswerForms namespace={namespace} documents={props.documents} questions={props.questions} />
-        </div>
-        <h2 className="group-label">原图和整页归属</h2>
-        <p className="group-footer">只有需要调整时才选；一次调整整页，不必逐题确认。</p>
-        {props.assets.map((a, i) => <AssetCard key={a.id} namespace={namespace} asset={a} index={(photoNumbers[a.id] ?? i + 1) - 1} assets={props.assets} documents={props.documents}
-          state={unsupported.find(u => u.assetId === a.id) ? `${unsupported.find(u => u.assetId === a.id)!.subject} · ${UNSUPPORTED_SUBJECT_MESSAGE}` : failedAssets.has(a.id) ? '没整理成功，可在页首重新整理' : undefined} />)}
-        {props.page > 0 || props.hasMore ? (
+        <details className="disclosure tools" data-testid="material-tools">
+          <summary><span className="row-text">整理工具<span className="summary-detail">刷新、批量批改、参考答案、原图归属</span></span></summary>
           <div className="inset-group">
-            {props.page > 0 ? <NavRow href={`/s/materials?page=${props.page - 1}`}>上一页原图</NavRow> : null}
-            {props.hasMore ? <NavRow href={`/s/materials?page=${props.page + 1}`}>下一页原图</NavRow> : null}
+            <NavRow href="/s/materials">刷新整理结果</NavRow>
+            <BatchGradeForms namespace={namespace} documents={props.documents} questions={props.questions} />
+            <BatchAnswerForms namespace={namespace} documents={props.documents} questions={props.questions} />
           </div>
-        ) : null}
-        {props.changes.length ? (
-          <div className="inset-group">
-            {props.changes.map((c, i) => (
-              <form method="post" action={`/s/materials/links/${c.id}/undo`} key={c.id}>
-                <Hidden namespace={namespace} revision={props.revision} />
-                <button className="btn" type="submit">撤销关联调整 {i + 1}</button>
-              </form>
-            ))}
-          </div>
-        ) : null}
+          <h2 className="group-label">原图和整页归属</h2>
+          <p className="group-footer">只有需要调整时才选；一次调整整页，不必逐题确认。</p>
+          {props.assets.map((a, i) => <AssetCard key={a.id} namespace={namespace} asset={a} index={(photoNumbers[a.id] ?? i + 1) - 1} assets={props.assets} documents={props.documents}
+            state={unsupported.find(u => u.assetId === a.id) ? `${unsupported.find(u => u.assetId === a.id)!.subject} · ${UNSUPPORTED_SUBJECT_MESSAGE}` : failedAssets.has(a.id) ? '没整理成功，可在页首重新整理' : undefined} />)}
+          {props.page > 0 || props.hasMore ? (
+            <div className="inset-group">
+              {props.page > 0 ? <NavRow href={`/s/materials?page=${props.page - 1}`}>上一页原图</NavRow> : null}
+              {props.hasMore ? <NavRow href={`/s/materials?page=${props.page + 1}`}>下一页原图</NavRow> : null}
+            </div>
+          ) : null}
+          {props.changes.length ? (
+            <div className="inset-group">
+              {props.changes.map((c, i) => (
+                <form method="post" action={`/s/materials/links/${c.id}/undo`} key={c.id}>
+                  <Hidden namespace={namespace} revision={props.revision} />
+                  <button className="btn" type="submit">撤销关联调整 {i + 1}</button>
+                </form>
+              ))}
+            </div>
+          ) : null}
+        </details>
       </div>
     </Page>
   );
@@ -343,76 +417,158 @@ function AssetCard(props: {
   );
 }
 
-export function MaterialQuestionPage({ namespace, question: q, questions, revision, materials, selectedAnswerIds = [], answerJobs = [], gradeJobs = [], included = null, legacy = false, notice = null }: {
+/** Photo crops first: what the question is, what I wrote, what the teacher marked. Empty blocks are not shown. */
+function MaterialBlock({ title, fragments, note }: { title: string; fragments: Fragment[]; note?: (f: Fragment) => string }): ReactNode {
+  if (!fragments.length) return null;
+  return (
+    <section className="card material-block">
+      <h2>{title}</h2>
+      {fragments.map(f => (
+        <figure key={f.fragmentId}>
+          <a href={`/s/materials/assets/${f.assetId}/image`}><img loading="lazy" className="crop" src={`/s/materials/fragments/${f.fragmentId}/crop?revision=${f.revision}`} alt={`${roleNames[f.role]}原图`} /></a>
+          {f.text.trim() ? <figcaption className="pre">{f.text}</figcaption> : null}
+          {note?.(f) ? <p className="hint">{note(f)}</p> : null}
+        </figure>
+      ))}
+    </section>
+  );
+}
+
+/** Where a reference answer came from, in the student's words. */
+function answerSource(a: ReferenceAnswer): string {
+  return a.source === 'manual' ? '你手填的' : a.source === 'ai' ? 'AI 给的' : a.fragmentIds.length ? '照片里的' : '粘贴的';
+}
+function answerSaid(a: ReferenceAnswer): string {
+  const where = a.source === 'manual' ? '你手填的是' : a.source === 'ai' ? 'AI 给的是' : a.fragmentIds.length ? '照片里是' : '粘贴的是';
+  return `${a.subpart ? `（${a.subpart}）` : ''}${where} ${shortText(a.text, 30)}`;
+}
+const countWord = (n: number) => n === 2 ? '两' : ` ${n} `;
+
+function AnswerChoices({ namespace, question: q, selected }: { namespace: string; question: QuestionBundle; selected: string[] }): ReactNode {
+  return (
+    <form method="post" action="/s/materials/answers/basis">
+      <Hidden namespace={namespace} revision={q.revision} />
+      <input type="hidden" name="questionId" value={q.id} />
+      {q.answers.filter(a => !a.stale).map(a => (
+        <label className="choice" key={a.id}>
+          <input type="checkbox" name="answerIds" value={a.id} defaultChecked={selected.includes(a.id)} />
+          <span>{answerSource(a)}{a.subpart ? `（${a.subpart}）` : ''}：{shortText(a.text, 80)}</span>
+        </label>
+      ))}
+      <button className="btn" type="submit">用选中的答案</button>
+    </form>
+  );
+}
+
+/** The reference answer in plain words. Two disagreeing versions are asked about directly; the choice
+ * itself is the same basis selection as before (several can be chosen, e.g. one per subpart). */
+function AnswerSummary({ namespace, question: q, selected, references }: { namespace: string; question: QuestionBundle; selected: string[]; references: Fragment[] }): ReactNode {
+  const valid = q.answers.filter(a => !a.stale);
+  if (!valid.length && !references.length) return null;
+  const chosen = valid.filter(a => selected.includes(a.id));
+  const shown = q.answerConflict ? chosen : valid;
+  return (
+    <section className="card material-block" data-testid="material-answer">
+      <h2>参考答案</h2>
+      {q.answerConflict && !chosen.length ? <>
+        <p className="tone-orange" data-testid="answer-conflict">答案有{countWord(valid.length)}个版本：{valid.map(answerSaid).join('，')}，用哪个？</p>
+        <AnswerChoices namespace={namespace} question={q} selected={selected} />
+      </> : null}
+      {q.answerConflict && chosen.length ? <p className="hint" data-testid="answer-conflict">答案有{countWord(valid.length)}个版本，这次用你选的：{chosen.map(a => `${shortText(a.text, 30)}（${answerSource(a)}）`).join('、')}。可以在下面“参考答案”里改选。</p> : null}
+      {shown.map(a => (
+        <div key={a.id}>
+          <p className="pre">{a.subpart ? `（${a.subpart}）` : ''}{a.text}</p>
+          <p className="hint">{answerSource(a)}{a.source === 'manual' ? '' : ' · 待核验'}{a.claimedSource ? ` · 填写者说明：${a.claimedSource}（未经核验）` : ''}</p>
+        </div>
+      ))}
+      {references.map(f => (
+        <figure key={f.fragmentId}>
+          <a href={`/s/materials/assets/${f.assetId}/image`}><img loading="lazy" className="crop" src={`/s/materials/fragments/${f.fragmentId}/crop?revision=${f.revision}`} alt="参考答案原图" /></a>
+          {valid.some(a => a.fragmentIds.includes(f.fragmentId)) ? null : <><figcaption className="pre">{f.text}</figcaption><p className="hint">照片里的参考答案 · 待核验</p></>}
+        </figure>
+      ))}
+    </section>
+  );
+}
+
+const answerJobStates: Record<string, string> = { queued: '等待处理', running: '正在生成', succeeded: '已生成', failed: '未完成', interrupted: '已中断', stale: '依据已过期' };
+const active = (state: string) => ['queued', 'running', 'failed', 'interrupted'].includes(state);
+
+export function MaterialQuestionPage({ namespace, question: q, questions, revision, materials, selectedAnswerIds = [], answerJobs = [], gradeJobs = [], included = null, legacy = false, notice = null, unplaced = false }: {
   namespace: string;
   notice?: string | null;
   included?: boolean | null;
   legacy?: boolean;
   question: QuestionBundle;
+  /** Where material can be moved: other questions in paper and number order. */
   questions: QuestionBundle[];
   revision: number;
   materials: Fragment[];
   selectedAnswerIds?: string[];
   answerJobs?: { id: string; state: string; error: string | null }[];
   gradeJobs?: { id: string; state: string; error: string | null }[];
+  /** No printed number and no stem: the only useful thing here is to place it under a question. */
+  unplaced?: boolean;
 }): ReactNode {
-  const fragments = materials;
+  const other = unsupportedSubject(q.subject);
+  const offerInclusion = !(other && !q.itemId && included !== false);
+  const stemMissing = q.missing.includes('stem');
+  const inclusion = (title: string, value: boolean): BarButton => ({ title, key: 'include', form: 'inclusion-form', name: 'included', value: String(value) });
+  const primary: BarButton | null = unplaced ? null
+    : included === false ? inclusion('恢复收录', true)
+    : q.itemId ? { title: '去练习', key: 'practice', href: '/s/practices' }
+    : !offerInclusion ? null
+    : included === true ? { title: '补拍题目', key: 'capture', href: `/s/capture?questionId=${q.id}` }
+    : inclusion('收录到错题本', true);
+  const caption = unplaced ? '没认出题号。对照原图，在下面把它归到对应的题。'
+    : included === false ? '已取消后续推荐，原材料和练习历史仍保留。'
+    : q.itemId ? '已收录，可以先结束，也可以安排练习。'
+    : included === true ? '收录意愿已保存，题干补齐后会进入错题本。'
+    : other ? `这道是${other}题。${UNSUPPORTED_SUBJECT_MESSAGE}`
+    : '做错、扣了分或没把握的题，收进错题本。';
+  const work = q.attempts.flatMap(a => a.fragments);
+  const attemptOf = (f: Fragment) => q.attempts.findIndex(a => a.fragments.some(x => x.fragmentId === f.fragmentId));
+  const references = materials.filter(f => f.role === 'reference_answer');
+  const others = materials.filter(f => f.role === 'unknown' || ((f.role === 'student_work' || f.role === 'correction') && attemptOf(f) < 0));
+  const status = [q.subject?.trim() || '学科待定', q.itemId && included !== false ? '已收录' : included === false ? '已移出错题本' : '未收录',
+    q.missing.length ? '缺' + q.missing.map(x => missingNames[x]).join('、') : '', q.unresolved.length ? '归属待确定' : ''].filter(Boolean).join(' · ');
+  const conflictInContent = q.answerConflict && !selectedAnswerIds.some(id => q.answers.some(a => a.id === id && !a.stale));
   return (
-    <Page title="题目材料" flash={{ ok: notice }} bar={{ caption: '可以对照原图修正关联。', primary: { title: '返回材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
+    <Page title="题目材料" back={{ href: '/s/materials', label: '我的材料' }} flash={{ ok: notice }} bar={{ caption, primary, secondary: [] }}>
       <div className="material-surface" data-draft-namespace={namespace}>
-        <h1>{q.number ? `第 ${q.number} 题` : '题目材料'}</h1>
-        {summary(q)}
-        <a className="btn" href={`/s/capture?questionId=${q.id}`}>补充材料</a>
-        {q.missing.includes('stem') ? <div className="inset-group"><ManualAnswerForm namespace={namespace} question={q} /></div> : null}
+        <h1>{unplaced ? '没对上题号的内容' : q.number ? `第 ${q.number} 题` : '题号不清'}</h1>
+        {unplaced ? null : <p className="meta-line muted" data-testid="material-question-status">{status}</p>}
         {legacy ? <p className="hint">这道旧题的学习转写沿用原识别版本；后来补充的页在这里独立保留。原题文字修正会同步到原材料转写。</p> : null}
-        <section className="inset-group">
-          <div className="group-pad">
-            <h2>错题本</h2>
-            <p>{included === false ? '已取消后续推荐，原材料和练习历史仍保留。' : q.itemId ? '已收录，可以先结束，也可以安排练习。' : included === true ? '收录意愿已保存，题干补齐后会进入错题本。' : unsupportedSubject(q.subject) ? `这道是${unsupportedSubject(q.subject)}题。${UNSUPPORTED_SUBJECT_MESSAGE}` : '做错、扣了分或没把握的题，点下面收进错题本。'}</p>
-            {unsupportedSubject(q.subject) && !q.itemId && included !== false ? null : <form method="post" action={`/s/materials/questions/${q.id}/inclusion`}>
-              <Hidden namespace={namespace} revision={q.revision} />
-              <button className="btn" name="included" value={included === false || !q.itemId ? 'true' : 'false'} type="submit">{included === false ? '恢复收录' : !q.itemId ? '收录到错题本' : '取消后续推荐'}</button>
-            </form>}
-          </div>
-          {q.itemId ? <NavRow href={`/s/items/${q.itemId}`}>查看错题与修改转写</NavRow> : null}
-          <NavRow href="/s/choose">安排本周练习（可稍后）</NavRow>
-          <NavRow href="/s/">今天先到这里</NavRow>
-        </section>
-        {q.missing.includes('stem') ? (
-          <div className="inset-group"><Disclosure title="补齐题目后可批改"><GradePanel namespace={namespace} question={q} jobs={gradeJobs} /></Disclosure></div>
-        ) : <GradePanel namespace={namespace} question={q} jobs={gradeJobs} />}
-        <AnswerPanel namespace={namespace} question={q} selected={selectedAnswerIds} />
-        {answerJobs.map(job => (
-          <div key={job.id}>
-            <p>AI 参考答案：{({ queued: '等待处理', running: '正在生成', succeeded: '已生成', failed: '未完成', interrupted: '已中断', stale: '依据已过期' } as Record<string, string>)[job.state]}</p>
-            {['failed', 'interrupted'].includes(job.state) && (!job.error || JSON.parse(job.error).retryable) ? (
-              <form method="post" action={`/s/materials/jobs/${job.id}/retry`}>
-                <Hidden namespace={namespace} />
-                <input type="hidden" name="requestId" value={randomUUID()} />
-                <button className="btn" type="submit">重试生成参考答案</button>
-              </form>
-            ) : null}
-          </div>
-        ))}
-        {q.attempts.length ? (
+        {offerInclusion ? <form id="inclusion-form" method="post" action={`/s/materials/questions/${q.id}/inclusion`}><Hidden namespace={namespace} revision={q.revision} /></form> : null}
+        {stemMissing && !unplaced && primary?.key !== 'capture' ? (
           <div className="inset-group">
-            {q.attempts.map((a, i) => <NavRow key={a.id} href={`/s/capture?questionId=${q.id}&attemptId=${a.id}`}>补充第 {i + 1} 次作答</NavRow>)}
+            <p className="group-pad">还没找到这道题的题目，拍到题目后才能练习。</p>
+            <NavRow href={`/s/capture?questionId=${q.id}`}>补拍题目</NavRow>
           </div>
         ) : null}
-        <form method="post" action="/s/materials/links">
-          <Hidden namespace={namespace} revision={revision} />
-          {fragments.map(f => (
-            <section className="card" key={f.fragmentId}>
-              <a href={`/s/materials/assets/${f.assetId}/image`}><img loading="lazy" className="crop" src={`/s/materials/assets/${f.assetId}/image`} alt="材料原图" /></a>
-              <p>{roleNames[f.role]}{f.role === 'reference_answer' ? '材料 · 待核验' : ''}{q.attempts.find(a => a.fragments.some(x => x.fragmentId === f.fragmentId)) ? ' · 第 ' + (q.attempts.findIndex(a => a.fragments.some(x => x.fragmentId === f.fragmentId)) + 1) + ' 次作答' : ''}</p>
-              <p className="pre">{f.text}</p>
-              <label className="choice"><input type="checkbox" name="fragmentIds" value={f.fragmentId} /><span>调整这部分材料</span></label>
-            </section>
-          ))}
-          <div className="inset-group">
-            <Disclosure title="手动调整关联或另记一次作答">
+        <MaterialBlock title="题目" fragments={q.stem} note={f => f.check !== 'passed' ? '识别还有不确定处，请对照原图。' : ''} />
+        <MaterialBlock title="我的作答" fragments={work} note={f => [q.attempts.length > 1 ? `第 ${attemptOf(f) + 1} 次作答` : '', f.role === 'correction' ? '订正' : ''].filter(Boolean).join(' · ')} />
+        <MaterialBlock title="老师批改" fragments={q.teacherMarks} />
+        <AnswerSummary namespace={namespace} question={q} selected={selectedAnswerIds} references={references} />
+        <MaterialBlock title={unplaced ? '这段内容' : '其他材料'} fragments={others} note={f => roleNames[f.role]} />
+
+        <ToolGroup title="补充或调整材料" id="adjust" open={unplaced}>
+          <NavRow href={`/s/capture?questionId=${q.id}`}>补充材料</NavRow>
+          {q.attempts.map((a, i) => <NavRow key={a.id} href={`/s/capture?questionId=${q.id}&attemptId=${a.id}`}>补充第 {i + 1} 次作答</NavRow>)}
+          {materials.length ? (
+            <form method="post" action="/s/materials/links">
+              <Hidden namespace={namespace} revision={revision} />
+              <fieldset>
+                <legend>选要调整的内容</legend>
+                {materials.map(f => (
+                  <label className="choice" key={f.fragmentId}>
+                    <input type="checkbox" name="fragmentIds" value={f.fragmentId} defaultChecked={unplaced && materials.length === 1} />
+                    <span>调整这部分材料：{roleNames[f.role]}{attemptOf(f) >= 0 && q.attempts.length > 1 ? ` · 第 ${attemptOf(f) + 1} 次作答` : ''}{f.text.trim() ? ` · ${shortText(f.text, 20)}` : ''}</span>
+                  </label>
+                ))}
+              </fieldset>
               <label className="field-label">放到哪道题
-                <select name="questionId" defaultValue={q.id}>{questions.map((other, i) => <option key={other.id} value={other.id}>{other.number ? `第 ${other.number} 题` : '题号待定'} · 材料 {i + 1}</option>)}</select>
+                <select name="questionId" defaultValue={q.id}>{[q, ...questions.filter(o => o.id !== q.id)].map(o => <option key={o.id} value={o.id}>{o.id === q.id ? `${unplaced ? '先不动' : '不改，还是这道题'}` : `${questionTitle(o)}${stemFirstSentence(o, 16) ? ` · ${stemFirstSentence(o, 16)}` : ''}`}</option>)}</select>
               </label>
               <label className="field-label">继续哪次作答
                 <select name="attemptId" defaultValue="">
@@ -424,10 +580,64 @@ export function MaterialQuestionPage({ namespace, question: q, questions, revisi
                 <button className="btn" type="submit">保存关联</button>
                 <button className="btn" type="submit" name="newAttempt" value="1">选中的作答另记为一次</button>
               </div>
-              <p className="hint">另记一次时，只选“我的作答”或“订正”。原来的作答仍会保留。</p>
-            </Disclosure>
-          </div>
-        </form>
+              <p className="hint">作答或订正放到别的题时，用“另记为一次”。原来的作答仍会保留。</p>
+            </form>
+          ) : null}
+        </ToolGroup>
+        {unplaced ? null : <>
+          <ToolGroup title="参考答案" open={answerJobs.some(j => active(j.state))}>
+            <p className="hint">保留各自来源，不代表已经核验；输入或生成答案不会自动批改。</p>
+            <NavRow href={`/s/materials/questions/${q.id}/answers`}>查看所有版本与录入时间</NavRow>
+            {[['provided', '提供的参考答案'], ['ai', 'AI 参考答案']].map(([group, title]) => {
+              const list = q.answers.filter(a => group === 'ai' ? a.source === 'ai' : a.source !== 'ai');
+              return list.length ? (
+                <div key={group}>
+                  <h3>{title}</h3>
+                  {list.map(a => (
+                    <div key={a.id}>
+                      <p>{a.source === 'manual' ? '手工输入' : a.source === 'ai' ? 'AI 生成' : a.fragmentIds.length ? '照片导入' : '粘贴导入'} · 版本 {a.revision}{a.subpart ? ` · 小问 ${a.subpart}` : ''}{a.stale ? ' · 已过期' : ''}{selectedAnswerIds.includes(a.id) ? ' · 已采用' : ''}</p>
+                      <p className="pre">{a.text}</p>
+                      {a.run ? <p className="hint">模型：{a.run.model} · 耗时 {a.run.durationMs} 毫秒</p> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null;
+            })}
+            {!conflictInContent && q.answers.some(a => !a.stale) ? <AnswerChoices namespace={namespace} question={q} selected={selectedAnswerIds} /> : null}
+            <ManualAnswerForm namespace={namespace} question={q} />
+            <form method="post" action="/s/materials/answers/generate">
+              <Hidden namespace={namespace} />
+              <input type="hidden" name="requestId" value={randomUUID()} />
+              <input type="hidden" name="questionIds" value={q.id} />
+              <button className="btn" type="submit">生成 AI 参考答案</button>
+            </form>
+            {answerJobs.map(job => (
+              <div key={job.id}>
+                <p>AI 参考答案：{answerJobStates[job.state]}</p>
+                {['failed', 'interrupted'].includes(job.state) && (!job.error || JSON.parse(job.error).retryable) ? (
+                  <form method="post" action={`/s/materials/jobs/${job.id}/retry`}>
+                    <Hidden namespace={namespace} />
+                    <input type="hidden" name="requestId" value={randomUUID()} />
+                    <button className="btn" type="submit">重试生成参考答案</button>
+                  </form>
+                ) : null}
+              </div>
+            ))}
+          </ToolGroup>
+          <ToolGroup title={stemMissing ? 'AI 批改（补齐题目后可用）' : 'AI 批改'} open={gradeJobs.some(j => active(j.state))}>
+            <GradePanel namespace={namespace} question={q} jobs={gradeJobs} />
+          </ToolGroup>
+          {q.itemId && included !== false ? (
+            <ToolGroup title="错题本">
+              <NavRow href={`/s/items/${q.itemId}`}>查看错题与修改转写</NavRow>
+              <form method="post" action={`/s/materials/questions/${q.id}/inclusion`}>
+                <Hidden namespace={namespace} revision={q.revision} />
+                <button className="btn" name="included" value="false" type="submit">取消后续推荐</button>
+              </form>
+              <p className="hint">取消后不再推荐练习，原材料和练习历史仍保留，随时可以恢复。</p>
+            </ToolGroup>
+          ) : null}
+        </>}
       </div>
     </Page>
   );
@@ -441,10 +651,10 @@ export function MaterialMatchPage({ namespace, asset, candidates, page, hasMore 
   hasMore: boolean;
 }): ReactNode {
   return (
-    <Page title="对照整页材料" bar={{ caption: '对照后一次确认整页归属。', primary: { title: '返回材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
+    <Page title="对照整页材料" back={{ href: '/s/materials', label: '我的材料' }}>
       <div className="material-surface">
         <h1>对照整页材料</h1>
-        <p>这是要补充的这一页：</p>
+        <p className="lead">这是要补充的这一页。对照下面的原图，找到同一份试卷，一次确认整页归属。</p>
         <img loading="lazy" className="crop big" src={`/s/materials/assets/${asset.id}/image`} alt="要关联的原图" />
         {candidates.map(candidate => (
           <section className="card" key={candidate.id}>
@@ -476,54 +686,12 @@ function ManualAnswerForm({ namespace, question: q }: { namespace: string; quest
       <form method="post" action="/s/materials/answers/manual">
         <Hidden namespace={namespace} revision={q.revision} />
         <input type="hidden" name="questionId" value={q.id} />
-        <label className="field-label">小问（整题留空）<input name="subpart" maxLength={64} /></label>
+        <label className="field-label">小问（整题留空）<input type="text" name="subpart" maxLength={64} /></label>
         <label className="field-label">答案<textarea name="text" required maxLength={40000} /></label>
-        <label className="field-label">来源说明（可不填）<input name="claimedSource" maxLength={200} /></label>
+        <label className="field-label">来源说明（可不填）<input type="text" name="claimedSource" maxLength={200} /></label>
         <button className="btn" type="submit">保存手工答案</button>
       </form>
     </Disclosure>
-  );
-}
-
-function AnswerPanel({ namespace, question: q, selected }: { namespace: string; question: QuestionBundle; selected: string[] }): ReactNode {
-  return (
-    <section className="card">
-      <h2>参考答案</h2>
-      <NavRow href={`/s/materials/questions/${q.id}/answers`}>查看所有版本与录入时间</NavRow>
-      <p className="hint">保留各自来源，不代表已经核验；输入或生成答案不会自动批改。</p>
-      {q.answerConflict ? <p className="tone-orange">{selected.length ? '答案内容有冲突，本次已采用所选依据；可以调整选择。' : '答案存在冲突，请明确选择本次使用依据。'}</p> : null}
-      {['provided', 'ai'].map(group => (
-        <div key={group}>
-          <h3>{group === 'provided' ? '提供的参考答案' : 'AI 参考答案'}</h3>
-          {q.answers.filter(a => group === 'ai' ? a.source === 'ai' : a.source !== 'ai').map(a => (
-            <div key={a.id}>
-              <p>{a.source === 'manual' ? '手工输入' : a.source === 'ai' ? 'AI 生成' : a.fragmentIds.length ? '照片导入' : '粘贴导入'} · 版本 {a.revision}{a.subpart ? ` · 小问 ${a.subpart}` : ''}{a.stale ? ' · 已过期' : ''}{selected.includes(a.id) ? ' · 已采用' : ''}</p>
-              {a.claimedSource ? <p>填写者说明：{a.claimedSource}（未经核验）</p> : null}
-              <p className="pre">{a.text}</p>
-              {a.run ? <p className="hint">模型：{a.run.model} · 耗时 {a.run.durationMs} 毫秒</p> : null}
-            </div>
-          ))}
-        </div>
-      ))}
-      <form method="post" action="/s/materials/answers/basis">
-        <Hidden namespace={namespace} revision={q.revision} />
-        <input type="hidden" name="questionId" value={q.id} />
-        {q.answers.filter(a => !a.stale).map(a => (
-          <label className="choice" key={a.id}>
-            <input type="checkbox" name="answerIds" value={a.id} defaultChecked={selected.includes(a.id)} />
-            <span>{a.source === 'ai' ? 'AI' : a.source === 'manual' ? '手工' : '导入'} · {a.subpart || '整题'} · 版本 {a.revision}：{a.text.slice(0, 80)}</span>
-          </label>
-        ))}
-        {q.answers.some(a => !a.stale) ? <button className="btn" type="submit">采用所选答案作为依据</button> : null}
-      </form>
-      {!q.missing.includes('stem') ? <ManualAnswerForm namespace={namespace} question={q} /> : null}
-      <form method="post" action="/s/materials/answers/generate">
-        <Hidden namespace={namespace} />
-        <input type="hidden" name="requestId" value={randomUUID()} />
-        <input type="hidden" name="questionIds" value={q.id} />
-        <button className="btn" type="submit">生成 AI 参考答案</button>
-      </form>
-    </section>
   );
 }
 
@@ -534,7 +702,7 @@ function BatchAnswerForms({ namespace, documents, questions }: { namespace: stri
       <form method="post" action="/s/materials/answers/generate">
         <Hidden namespace={namespace} />
         <input type="hidden" name="requestId" value={randomUUID()} />
-        {questions.map(q => <label className="choice" key={q.id}><input type="checkbox" name="questionIds" value={q.id} /><span>第 {q.number || '待定'} 题</span></label>)}
+        {questions.map(q => <label className="choice" key={q.id}><input type="checkbox" name="questionIds" value={q.id} /><span>{questionTitle(q)}</span></label>)}
         <button className="btn" type="submit">为所选题生成 AI 参考答案</button>
       </form>
       {documents.length ? <>
@@ -558,14 +726,20 @@ function BatchAnswerForms({ namespace, documents, questions }: { namespace: stri
   );
 }
 
-export function MaterialAnswerActionPage({ namespace, action, imported }: { namespace: string; action?: BatchAction; imported?: { saved: ReferenceAnswer[]; pending: { number: string; text: string }[] } }): ReactNode {
+/** After a request from one question, the task is to look at that question again; otherwise just go back. */
+function backToQuestion(questionId: string | undefined, title: string): BarButton | null {
+  return questionId ? { title, key: 'question', href: `/s/materials/questions/${questionId}` } : null;
+}
+
+export function MaterialAnswerActionPage({ namespace, action, imported, questionId }: { namespace: string; action?: BatchAction; imported?: { saved: ReferenceAnswer[]; pending: { number: string; text: string }[] }; questionId?: string }): ReactNode {
+  const primary = backToQuestion(questionId, '查看这道题的参考答案');
   return (
-    <Page title="参考答案处理" bar={{ caption: '没有自动批改。', primary: { title: '返回材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
+    <Page title="参考答案处理" back={{ href: '/s/materials', label: '我的材料' }} bar={primary ? { caption: '没有自动批改。', primary, secondary: [] } : null}>
       <div className="material-surface" data-draft-namespace={namespace}>
         <h1>参考答案处理</h1>
         {action ? <>
           <p>已接收或复用 {action.jobs.length} 道题。</p>
-          {action.jobs.map(j => <p key={j.id}>任务状态：{j.state}</p>)}
+          {action.jobs.map(j => <p key={j.id}>任务状态：{answerJobStates[j.state] ?? j.state}</p>)}
           {action.skipped.map(s => (
             <section key={s.questionId}>
               <div className="inset-group"><NavRow href={`/s/materials/questions/${s.questionId}`}>查看未处理题目</NavRow></div>
@@ -578,7 +752,7 @@ export function MaterialAnswerActionPage({ namespace, action, imported }: { name
           <h2 className="group-label">待确定的原文</h2>
           {imported.pending.map((p, i) => <p className="pre" key={i}>{p.text}</p>)}
         </> : null}
-        <div className="inset-group"><NavRow href="/s/materials">刷新查看答案</NavRow></div>
+        {primary ? null : <p className="hint">没有自动批改。生成好的答案会出现在各题的“参考答案”里。</p>}
       </div>
     </Page>
   );
@@ -586,9 +760,10 @@ export function MaterialAnswerActionPage({ namespace, action, imported }: { name
 
 export function MaterialAnswerHistoryPage({ questionId, history, page }: { questionId: string; history: { answer: ReferenceAnswer; createdAt: string }[]; page: number }): ReactNode {
   return (
-    <Page title="答案版本记录" bar={{ caption: '历史版本和真实来源会保留。', primary: { title: '返回题目', key: 'question', href: `/s/materials/questions/${questionId}` }, secondary: [] }}>
+    <Page title="答案版本记录" back={{ href: `/s/materials/questions/${questionId}`, label: '返回题目' }}>
       <div className="material-surface">
         <h1>答案版本记录</h1>
+        <p className="hint">历史版本和真实来源会保留。</p>
         {history.map(({ answer: a, createdAt }) => (
           <section className="card" key={`${a.id}:${a.revision}`}>
             <p>{a.source === 'ai' ? 'AI 参考答案' : a.source === 'manual' ? '手工输入' : a.fragmentIds.length ? '照片导入' : '粘贴导入'} · 版本 {a.revision}{a.stale ? ' · 已过期' : ''}</p>
@@ -610,9 +785,10 @@ export function MaterialAnswerHistoryPage({ questionId, history, page }: { quest
 
 export function MaterialImportHistoryPage({ imports, page }: { imports: { original_text: string; pending_json: string; created_at: string }[]; page: number }): ReactNode {
   return (
-    <Page title="粘贴导入记录" bar={{ caption: '未确定的答案保留原文，可按题单独填写。', primary: { title: '返回材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
+    <Page title="粘贴导入记录" back={{ href: '/s/materials', label: '我的材料' }}>
       <div className="material-surface">
         <h1>粘贴导入记录</h1>
+        <p className="hint">未确定的答案保留原文，可按题单独填写。</p>
         {imports.map((record, i) => (
           <section className="card" key={i}>
             <p>{record.created_at} UTC · 粘贴导入，未经核验</p>
@@ -636,8 +812,7 @@ const gradeStates: Record<string, string> = { queued: '等待批改', running: '
 
 function GradePanel({ namespace, question: q, jobs }: { namespace: string; question: QuestionBundle; jobs: { id: string; state: string; error: string | null }[] }): ReactNode {
   return (
-    <section className="card">
-      <h2>AI 批改建议</h2>
+    <>
       <p className="hint">只在你点击后批改。没有参考答案时，本次会先生成并单独保存 AI 参考答案。不会修改原作、反思或掌握状态。</p>
       <p className="hint">只有题干中明确的评分条件与分值才支持计分；老师批改痕迹单独保留。</p>
       {!q.grades.length ? <p>未批改</p> : null}
@@ -674,7 +849,7 @@ function GradePanel({ namespace, question: q, jobs }: { namespace: string; quest
         <button className="btn" type="submit">帮我批改</button>
       </form>
       <NavRow href={`/s/materials/questions/${q.id}`}>刷新批改状态</NavRow>
-    </section>
+    </>
   );
 }
 
@@ -685,7 +860,7 @@ function BatchGradeForms({ namespace, documents, questions }: { namespace: strin
       <form method="post" action="/s/materials/grades">
         <Hidden namespace={namespace} />
         <input type="hidden" name="requestId" value={randomUUID()} />
-        {questions.map(q => <label className="choice" key={q.id}><input type="checkbox" name="questionIds" value={q.id} /><span>第 {q.number || '待定'} 题</span></label>)}
+        {questions.map(q => <label className="choice" key={q.id}><input type="checkbox" name="questionIds" value={q.id} /><span>{questionTitle(q)}</span></label>)}
         <button className="btn" type="submit">批改所选题</button>
       </form>
       {documents.length ? (
@@ -700,9 +875,10 @@ function BatchGradeForms({ namespace, documents, questions }: { namespace: strin
   );
 }
 
-export function MaterialGradeActionPage({ namespace, action }: { namespace: string; action: BatchAction }): ReactNode {
+export function MaterialGradeActionPage({ namespace, action, questionId }: { namespace: string; action: BatchAction; questionId?: string }): ReactNode {
+  const primary = backToQuestion(questionId, '查看这道题的批改');
   return (
-    <Page title="批改请求" bar={{ caption: 'AI 建议单独保存，刷新不会发起新批改。', primary: { title: '查看材料', key: 'materials', href: '/s/materials' }, secondary: [] }}>
+    <Page title="批改请求" back={{ href: '/s/materials', label: '我的材料' }} bar={primary ? { caption: 'AI 建议单独保存，刷新不会发起新批改。', primary, secondary: [] } : null}>
       <div className="material-surface" data-draft-namespace={namespace}>
         <h1>批改请求</h1>
         <p>已接收或复用 {action.jobs.length} 道题。</p>
@@ -713,6 +889,7 @@ export function MaterialGradeActionPage({ namespace, action }: { namespace: stri
             <p className="group-footer">{s.reason}</p>
           </section>
         ))}
+        {primary ? null : <p className="hint">AI 建议单独保存，刷新不会发起新批改。结果会出现在各题的“AI 批改”里。</p>}
       </div>
     </Page>
   );

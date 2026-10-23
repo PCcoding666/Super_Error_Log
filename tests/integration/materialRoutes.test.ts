@@ -216,7 +216,7 @@ it('returns an actionable 409 for pre-fingerprint saved uploads without guessing
     migrateMaterials(f.db);
     const replay = await f.upload(capture.id, uploadId);
     expect(replay.status).toBe(409);
-    expect(await replay.json()).toMatchObject({ error: { code: 'upload_identity_unavailable', message: expect.stringMatching(/已保留在服务器.*查看已经保存的材料.*删除这条待传记录/) } });
+    expect(await replay.json()).toMatchObject({ error: { code: 'upload_identity_unavailable', message: expect.stringMatching(/已保留在服务器.*拍完了，查看材料.*删除这条待传记录/) } });
     expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
     expect(f.db.prepare('SELECT count(*) n FROM material_job').get()).toEqual({ n: 1 });
     expect((await fetch(f.base + `/materials/assets/${saved.assetId}/image`)).status).toBe(200);
@@ -228,7 +228,8 @@ it('saves inclusion intent with owner/namespace/CAS boundaries and read-only mat
  expect((await fetch(f.base+`/materials/questions/${q}/inclusion`,{method:'POST',headers:{...f.headers,origin:'https://foreign.example'},body:JSON.stringify({included:true,expectedRevision:1})})).status).toBe(403);
  const saved=await f.post(`/materials/questions/${q}/inclusion`,{included:true,expectedRevision:1});expect(saved.status).toBe(200);expect(await saved.json()).toEqual({itemId:null,revision:2});
  expect((await f.post(`/materials/questions/${q}/inclusion`,{included:false,expectedRevision:1})).status).toBe(409);
- const before=f.db.prepare('SELECT total_changes() n').get();const html=await (await fetch(f.base+`/materials/questions/${q}`)).text();expect(html).toContain('收录意愿已保存');expect(html).toContain('今天先到这里');expect(html).toContain('安排本周练习');
+ const before=f.db.prepare('SELECT total_changes() n').get();const html=await (await fetch(f.base+`/materials/questions/${q}`)).text();expect(html).toContain('收录意愿已保存');// The task now is the missing stem: one primary action, no navigation-only rows.
+ expect(html).toContain('aria-label="补拍题目" data-testid="next-step-primary"');expect(html).not.toContain('今天先到这里');expect(html).not.toContain('返回材料');
  expect(f.db.prepare('SELECT total_changes() n').get()).toEqual(before);expect(f.db.prepare('SELECT * FROM error_item').all()).toHaveLength(0);
 });
 
@@ -268,6 +269,33 @@ it('lists subject, first stem sentence and inclusion marks, and includes a whole
  const one=f.question('5','5. 求 5+5。');const single=await f.form(`/materials/questions/${one}/inclusion`,[['namespace',f.namespace],['included','true'],['expectedRevision',String(f.store.getQuestion(one)!.revision)]]);
  expect(single.headers.get('location')).toBe(`/s/materials/questions/${one}?included=1`);
  expect(await(await fetch(f.base+single.headers.get('location')!.slice(2))).text()).toContain('已收进错题本。');
+});
+it('lists questions in number order, keeps ticked ones out of the batch list and folds unnumbered material into one line per photo',async()=>{
+ const f=await intakeFixture();
+ const ten=f.question('10','10. 求 10+1。'),two=f.question('2','2. 求 2+1。','√'),one=f.question('1','1. 求 1+1。','× 漏了单位');
+ const hash=(f.db.prepare('SELECT s.content_hash h FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.id=?').get(f.assetId) as {h:string}).h;
+ // What the real model returns for work and marks it cannot number: each becomes its own provisional record.
+ const loose=['×','符号！'].map(text=>{const id=f.store.createQuestion({number:null,subject:'数学'}).id,fragmentId=`mfr_${randomUUID().slice(0,8)}`;
+  f.store.putFragment({assetId:f.assetId,fragmentId,revision:1,box:{x:0,y:0,width:1,height:1},sourceHash:hash,role:'teacher_mark',text,number:null,subpart:null,page:1,order:0,requiresDiagram:false,check:'passed',uncertainties:[]});
+  f.store.linkFragment(fragmentId,1,{questionId:id,attemptId:null});return id;});
+ expect(f.store.getQuestion(one)!.itemId).toBeTruthy();
+ f.db.prepare("UPDATE material_job SET state='succeeded' WHERE kind='extract'").run();
+ const html=await(await fetch(f.base+'/materials')).text();
+ const order=[...html.matchAll(/href="\/s\/materials\/questions\/([^"#]+)"><span class="row-text">第 /g)].map(m=>m[1]);
+ expect(order).toEqual([one,two,ten]);
+ expect(html).toContain('共找到 3 道题');
+ expect(html).not.toContain('待确定题号');
+ expect(html).toContain('这张照片还有 2 段内容没对上题号（老师批改 2）');
+ for(const id of loose)expect(html).toContain(`href="/s/materials/questions/${id}#adjust"`);
+ expect(html).toContain('照片 1：本页还有 1 道没收录');
+ expect(html).toContain('>老师判对<');
+ expect(html).toContain('aria-label="收录勾选的题" data-testid="next-step-primary"');
+ expect(html).not.toContain('aria-label="继续拍照" data-testid="next-step-primary"');
+ // The unplaced record opens on the existing association form, with nothing to include or practise.
+ const page=await(await fetch(f.base+`/materials/questions/${loose[0]}`)).text();
+ expect(page).toContain('<details class="disclosure" open="" id="adjust">');
+ expect(page).toContain('action="/s/materials/links"');
+ expect(page).not.toContain('data-testid="next-step-primary"');
 });
 it('summarizes failed photos at the top, retries all retryable ones in one tap, and explains other subjects',async()=>{
  const f=await intakeFixture();
