@@ -288,8 +288,9 @@ export function PairPage(props: { code: string; clientId: string; inAppBrowser: 
   );
 }
 
-export function InstallPage(): ReactNode {
-  const bar: BarModel = { caption: '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
+/** invitation：邀请码登录的学生；旧的单人配对版仍按配对链接说明。 */
+export function InstallPage(props: { invitation?: boolean } = {}): ReactNode {
+  const bar: BarModel = { caption: '', primary: { title: '回到错题本', key: 'goHome', href: '/s/' }, secondary: [] };
   return (
     <Page title="放到主屏幕" bar={bar}>
       <h1>放到主屏幕</h1>
@@ -303,7 +304,9 @@ export function InstallPage(): ReactNode {
           <li>以后从主屏幕上的「错题本」图标打开。</li>
         </ol>
       </section>
-      <p className="hint">如果主屏幕上的错题本打开后让你重新连接，请大人再给一个新链接，粘贴进去就好。</p>
+      <p className="hint">{props.invitation
+        ? '如果从主屏幕打开后要你登录，重新输入自己的邀请码就好，学习记录都还在。'
+        : '如果主屏幕上的错题本打开后让你重新连接，请大人再给一个新链接，粘贴进去就好。'}</p>
     </Page>
   );
 }
@@ -349,7 +352,7 @@ export function BusyPage(props: { retryAfterSeconds: number; reason: BusyReason 
 }
 
 export function ErrorPage(props: { title: string; detail: string; reason?: string | null }): ReactNode {
-  const bar: BarModel = { caption: '', primary: { title: '回到今天', key: 'goHome', href: '/s/' }, secondary: [] };
+  const bar: BarModel = { caption: '', primary: { title: '回到错题本', key: 'goHome', href: '/s/' }, secondary: [] };
   return (
     <Page title={props.title} bar={bar}>
       <h1>{props.title}</h1>

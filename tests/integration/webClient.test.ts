@@ -645,7 +645,9 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const { jobId } = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
     const choose = await browser.text('/s/choose');
-    expect(choose).toContain('就练这 3 道');
+    // 刚收的错题 3 天后才到期：这里是学生自己选题提前练。
+    expect(choose).toContain('今天没有到期的题');
+    expect(choose).toContain('可以提前练的（3）');
     const itemIds = [...choose.matchAll(/name="itemIds"(?: checked="")? value="(itm_[0-9a-f]+)"/g)].map(match => match[1]!);
     expect((await browser.post('/s/choose', { itemIds: [] })).status).toBe(400);
     const created = await browser.post('/s/choose', { itemIds, practiceSlot: '__other', practiceSlotOther: '周四午休' });
@@ -684,15 +686,21 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const {browser,packetId}=await chosen(env);
     const current=await browser.text('/s/practices');
     expect(current).toContain('这次的练习');
-    expect(current).toContain('拍照交练习');
+    expect(current).toContain('开始做');
+    expect(current).toContain(`href="/s/practice/${packetId}?mode=paper&amp;view=check"`);
+    expect(current).toContain('拍照交给 AI 核对');
     expect(current).not.toContain('新建练习');
     expect(current).not.toContain('继续练习 · 0/');
     const count=()=>getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get();
     await browser.get('/s/practices');
     expect(count()).toEqual({n:1});
     expect((await browser.post(`/s/practice/${packetId}/cancel`)).status).toBe(303);
+    // 刚收的题还没到期：只说下一批哪天，不建包。
+    expect(await browser.text('/s/practices')).toContain('今天没有到期的题');
+    expect((await browser.post('/s/practices/start',{key:crypto.randomUUID()})).status).toBe(409);
+    getDb().prepare('UPDATE error_item SET created_at=?').run(new Date(Date.now()-4*86400000).toISOString());
     const recommended=await browser.text('/s/practices');
-    expect(recommended).toContain('这次建议练');
+    expect(recommended).toContain('今天该做 3 道');
     expect(recommended).toContain('为什么练');
     expect(count()).toEqual({n:1});
     const key=crypto.randomUUID();
@@ -816,7 +824,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const url=`/s/practice/${packetId}`;
     await waitFor(async()=>(await browser.text(url)).includes('practice-question'));
     const html=await browser.text(url);
-    expect(html).toContain('在白纸上写题号和过程');
+    expect(html).toContain('一次一道：在草稿纸上写过程');
     expect(html).toContain(`href="${url}/submit"`);
     expect(html).toContain('还没有记录作答结果');
     expect(html).not.toContain('data-testid="practice-answer"');
@@ -835,9 +843,13 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const {browser,packetId,itemIds} = await chosen(env);
     await waitFor(async () => (await browser.text(`/s/practice/${packetId}`)).includes('practice-question'));
     getDb().prepare('UPDATE review_packet SET generated_at = ? WHERE id = ?').run('2026-10-17T16:30:00Z',packetId);
-    const html = await browser.text(`/s/practice/${packetId}?item=${itemIds[0]}&view=check`);
+    // 纸上回录可以选日期；在线做题日期就是今天。
+    const html = await browser.text(`/s/practice/${packetId}?item=${itemIds[0]}&mode=paper&view=check`);
     expect(html).toMatch(/min="2026-10-18"/);
     expect(html).toMatch(/max="2026-10-18"/);
+    const online = await browser.text(`/s/practice/${packetId}?item=${itemIds[0]}&view=check`);
+    expect(online).toContain('name="performedOn" value="2026-10-18"');
+    expect(online).not.toContain('type="date"');
   });
 
   it('作答照片遵守磁盘、容量和上传准入，失败后释放预约', async () => {
@@ -910,9 +922,14 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const { browser, packetId, itemIds } = await chosen(env);
     const url = `/s/practice/${packetId}`;
     await waitFor(async () => (await browser.text(url)).includes('data-testid="practice-question"'));
-    const done = await browser.text(`${url}?item=${itemIds[0]}&view=done`);
-    expect(done).toContain('拍照上传作答');
-    expect(done).toContain('不上传，直接核对');
+    const question = await browser.text(`${url}?item=${itemIds[0]}`);
+    expect(question).toContain('做完了，对答案');
+    expect(question).toContain(`href="${url}?item=${itemIds[0]}&amp;view=upload"`);
+    const upload = await browser.text(`${url}?item=${itemIds[0]}&view=upload`);
+    expect(upload).toContain('上传手写作答');
+    expect(upload).toContain('不上传，直接对答案');
+    // 旧链接的 view=done 直接进对答案。
+    expect(await browser.text(`${url}?item=${itemIds[0]}&view=done`)).toContain('data-testid="practice-answer"');
     const key = crypto.randomUUID(), bytes = await photo('#f8f8f8');
     const send = async (item: string) => {
       const form = new FormData(); form.append('key', key); form.append('photo', new Blob([new Uint8Array(bytes)], {type:'image/jpeg'}), 'work.jpg');
@@ -942,7 +959,8 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(getDb().prepare('SELECT * FROM review_packet WHERE id = ?').get(packetId)).toEqual(before);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({n:0});
     const recorded = await browser.post(`${url}/${itemIds[0]}/result`,{correct:'no',performedOn:new Date().toLocaleDateString('en-CA'),mode:'paper'});
-    expect(recorded.headers.get('location')).toBe(`${url}?mode=paper&view=check`);
+    expect(recorded.headers.get('location')).toBe(`${url}?mode=paper&view=check&recorded=${itemIds[0]}`);
+    expect(await browser.visibleText(recorded.headers.get('location')!)).toContain('第 1 题记下了：做错了');
     expect(await browser.text(url)).toContain('已记录 1 道结果，共 3 道');
     await browser.get(`/s/print/${packetId}/sheet?answers=1`);
     expect(await browser.text(url)).toContain('已记录 1 道结果，共 3 道');
@@ -1518,7 +1536,8 @@ describe('年级、学科、章节分类', () => {
     expect(unknown).toContain(`id="item-${rows[2]!.id}"`);
     await browser.get('/s/items?grade=高中&subject=数学');
     const remembered = await browser.text('/s/items');
-    expect(remembered).toContain('data-filter="grade" data-value="初中" aria-current="true"');
+    expect(remembered).toContain('name="grade" value="初中"');
+    expect(remembered).not.toContain('data-filter="grade"');
     expect(remembered).not.toContain('data-value="高中"');
   });
 
@@ -1556,7 +1575,7 @@ describe('年级、学科、章节分类', () => {
     const ids=rows.map(row=>row.id);
     getDb().prepare("UPDATE error_item SET status='scheduled' WHERE id=?").run(ids[1]!);
     await browser.post(`/s/items/${ids[2]}/category`,{grade:'初中',subject:'数学',chapter:'筛选外章节'});
-    const fields={grade:'初中',subject:'数学',chapter:'一元一次方程',status:'ready_for_reflection',q:'x',mode:'select'};
+    const fields={grade:'初中',subject:'数学',chapter:'一元一次方程',status:'todo',q:'x',mode:'select'};
     const checked=(html:string)=>[...html.matchAll(/<input[^>]*name="itemIds"[^>]*>/g)].filter(m=>/checked/.test(m[0])).map(m=>/value="([^"]+)"/.exec(m[0])![1]);
     for(const selection of [ids.slice(0,2),ids,[],[ids[0]!, 'itm_ffffffffffffffff']]){
       const opened=await browser.post('/s/items/select',{...fields,itemIds:selection,openItem:ids[0]!});
@@ -1592,7 +1611,7 @@ describe('年级、学科、章节分类', () => {
   it('preserves canonical filter and item-anchor context and rejects arbitrary return paths', async () => {
     const { browser, rows } = await categoryFixture();
     const id = rows[0]!.id;
-    const returnTo = `/s/items?${new URLSearchParams({grade:'初中',subject:'数学',chapter:'一元一次方程',status:'ready_for_reflection',q:'1x'})}#item-${id}`;
+    const returnTo = `/s/items?${new URLSearchParams({grade:'初中',subject:'数学',chapter:'一元一次方程',status:'todo',q:'1x'})}#item-${id}`;
     const html = await browser.text(`/s/items/${id}?${new URLSearchParams({returnTo})}`);
     expect(html).toContain(`href="${returnTo.replaceAll('&','&amp;')}"`);
     for (const bad of ['https://evil.example/s/items','//evil.example/s/items','/s/settings','/s/items/../settings','/s/items?returnTo=https://evil.example']) {
@@ -1628,10 +1647,10 @@ describe('年级、学科、章节分类', () => {
       expect(senior).not.toContain(`id="item-${rows[1]!.id}"`);
       const chemistry = await browser.text(`/s/items?subject=${encodeURIComponent('化学')}`);
       expect(chemistry).toContain('还没有化学错题');
-      expect(chemistry).toContain('data-filter="grade" data-value="全部"');
+      expect(chemistry).toContain('name="grade" value="全部"');
       expect(chemistry).not.toContain('data-filter="grade" data-value="初中"');
       const math = await browser.text(`/s/items?subject=${encodeURIComponent('数学')}`);
-      expect(math).toContain('data-filter="grade" data-value="初中" aria-current="true"');
+      expect(math).toContain('name="grade" value="初中"');
       expect(math).not.toContain('data-filter="grade" data-value="全部"');
       expect((await browser.post('/s/settings/grade', { grade: '高中' })).status).toBe(303);
       expect((await uploadPhoto(browser, await photo('#c83030', 640))).status).toBe(200);
@@ -1691,7 +1710,7 @@ describe('single-question learning detail', () => {
   it('stale eligibility stays on detail with recovery and safe return context, and missing items are 404', async () => {
     const {browser,id} = await fixture();
     getDb().prepare("UPDATE error_item SET status='needs_recheck' WHERE id=?").run(id);
-    const query = new URLSearchParams({grade:'初中',subject:'数学',chapter:'一元一次方程',status:'needs_recheck',q:'方程'});
+    const query = new URLSearchParams({grade:'初中',subject:'数学',chapter:'一元一次方程',status:'todo',q:'方程'});
     const returnTo = `/s/items?${query}#item-${id}`;
     const library = await browser.text(`/s/items?${query}`);
     const href = new RegExp(`href="(/s/items/${id}\\?[^"]+)"`).exec(library)?.[1];
@@ -1707,7 +1726,7 @@ describe('single-question learning detail', () => {
     expect(html).toContain('尚未到复习时间');
     expect(html).toContain('q=%E6%96%B9%E7%A8%8B');
     expect(html).toContain('chapter=%E4%B8%80%E5%85%83%E4%B8%80%E6%AC%A1%E6%96%B9%E7%A8%8B');
-    expect(html).toContain('status=needs_recheck');
+    expect(html).toContain('status=todo');
     expect(html).toContain(`#item-${id}`);
     expect(html).toContain('data-testid="question-text"');
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
@@ -1748,7 +1767,7 @@ describe('single-question learning detail', () => {
     const {browser,id}=await fixture();
     const other=(getDb().prepare('SELECT id FROM error_item WHERE id!=? ORDER BY item_index LIMIT 1').get(id) as {id:string}).id;
     await browser.post(`/s/items/${id}/category`,{grade:'初中',subject:'管理原学科',chapter:'管理原章节'});
-    const query=new URLSearchParams({grade:'初中',subject:'管理原学科',chapter:'管理原章节',status:'ready_for_reflection',q:'x',mode:'select'});
+    const query=new URLSearchParams({grade:'初中',subject:'管理原学科',chapter:'管理原章节',status:'todo',q:'x',mode:'select'});
     for(const itemId of [id,other]) query.append('itemIds',itemId);
     const returnTo=`/s/items?${query}#item-${other}`;
     const detailUrl=`/s/items/${id}?${new URLSearchParams({returnTo})}`;
@@ -1773,7 +1792,7 @@ describe('single-question learning detail', () => {
     expect(library).toContain('管理原章节');
     expect(library).toContain('name="subject" value="管理原学科"');
     expect(library).toContain('这个学段还没有管理原学科错题');
-    expect(library).toContain('data-filter="grade" data-value="初中" aria-current="true"');
+    expect(library).toContain('name="grade" value="初中"');
     expect(library).toContain('清除筛选');
     expect(library).toContain('保留的选择');
   });
@@ -1859,14 +1878,13 @@ describe('single-question learning detail', () => {
     const dueText = `${due.getMonth()+1} 月 ${due.getDate()} 日`;
     expect(await browser.visibleText(`${packetPath}/feedback`)).toContain(`下次再做：${dueText}（3 天后）`);
     const practices = await browser.visibleText('/s/practices');
-    // 当天做对的这道在冷却期：不在「就练这几道」里，只给日期。
-    expect(practices).toContain(`下次再做：${dueText}（1 道）`);
-    expect(practices).toContain('就练这 2 道');
-    expect(await browser.visibleText('/s/')).not.toContain('该再做了');
+    // 当天做对的这道和刚收的两道都要 3 天后才到期：只给日期。
+    expect(practices).toContain(`下一批：${dueText}，3 道`);
+    expect(await browser.visibleText('/s/')).not.toContain('今天该做');
     // 3 天后：首页提示到期。
     getDb().prepare('UPDATE review_attempt SET performed_at=? WHERE item_id=?').run(new Date(today.getTime() - 3 * 86400000).toLocaleDateString('en-CA'),id);
     getDb().prepare('UPDATE error_item SET created_at=? WHERE id=?').run(new Date(today.getTime() - 4 * 86400000).toISOString(),id);
-    expect(await browser.visibleText('/s/')).toContain('今天有 1 道题该再做了');
-    expect(await browser.visibleText('/s/practices')).toContain('就练这 3 道');
+    expect(await browser.visibleText('/s/')).toContain('今天该做 1 道题');
+    expect(await browser.visibleText('/s/practices')).toContain('开始做这 1 道');
   });
 });

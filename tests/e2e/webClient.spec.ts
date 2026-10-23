@@ -32,6 +32,15 @@ async function synthetic(color: string, width: number): Promise<Buffer> {
 }
 
 const primary = (page: Page) => page.getByTestId('next-step-primary');
+/** 刚收的错题 3 天后才到期：测试里走「自己选题提前练」，勾前几道。 */
+async function chooseEarly(page: Page, count = 3): Promise<void> {
+  await page.goto(`${WEB}/s/choose`);
+  const rows = page.getByTestId('choose-row');
+  await expect(rows.first()).toBeVisible();
+  const total = Math.min(count, await rows.count());
+  for (let i = 0; i < total; i++) await rows.nth(i).click();
+  await expect(primary(page)).toHaveText(`就练这 ${total} 道`);
+}
 const secondary = (page: Page, key: string) => page.getByTestId(`next-step-secondary-${key}`);
 
 /** 底部下一步按钮在，并且主按钮写的是 title；然后点它。 */
@@ -89,7 +98,7 @@ test('三栏：手机看题、跳过、直接核对、恢复进度与可选打�
   await upload(page,'#efb7b2');
   await page.goto(`${WEB}/s/photos`);
   await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
-  await page.goto(`${WEB}/s/choose`);
+  await chooseEarly(page);
   await primary(page).click();
   await page.waitForURL(/\/s\/practice\/pkt_/);
   const practice = page.url();
@@ -98,14 +107,16 @@ test('三栏：手机看题、跳过、直接核对、恢复进度与可选打�
   const first = await page.getByTestId('practice-question').getAttribute('data-item');
   await page.getByRole('button',{name:'跳过，之后再做'}).click();
   await expect(page.getByTestId('practice-question')).not.toHaveAttribute('data-item',first!);
-  await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
-  await expect(page.getByRole('link',{name:'拍照上传作答',exact:true})).toBeVisible();
-  await page.getByRole('link',{name:'不上传，直接核对'}).click();
+  await expect(page.getByRole('link',{name:'拍下过程，让 AI 识别',exact:true})).toBeVisible();
+  await page.getByRole('link',{name:'做完了，对答案',exact:true}).click();
   await expect(page.getByTestId('practice-answer')).toBeVisible();
+  // 在线做题日期就是今天，不用选。
+  await expect(page.getByTestId('practice-answer').locator('input[type=date]')).toHaveCount(0);
   await page.getByRole('button',{name:'做对了',exact:true}).click();
   await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
+  await expect(page.getByText(/^第 \d 题记下了：做对了/)).toBeVisible();
   await page.goto(`${WEB}/s/practices`);
-  await page.getByTestId('practice-latest').getByRole('link',{name:'查看题目',exact:true}).click();
+  await page.getByTestId('practice-latest').getByRole('link',{name:'继续',exact:true}).click();
   await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
   await page.getByRole('link',{name:'打印练习',exact:true}).click();
   await expect(page.locator('.sheet .answers')).toHaveCount(0);
@@ -127,11 +138,10 @@ test('手写拍照为可选步骤，上传后可回看照片和识别文字', as
   await upload(page,'#f3b0b4');
   await page.goto(`${WEB}/s/photos`);
   await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
-  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await chooseEarly(page);await primary(page).click();
   await page.waitForURL(/\/s\/practice\/pkt_/);
   await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
-  await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
-  await page.getByRole('link',{name:'拍照上传作答',exact:true}).click();
+  await page.getByRole('link',{name:'拍下过程，让 AI 识别',exact:true}).click();
   await expect(page.getByRole('heading',{name:'上传手写作答',exact:true})).toBeVisible();
   await page.screenshot({path:testInfo.outputPath('handwriting-upload.png'),fullPage:true});
   await page.locator('#camera-input').setInputFiles({name:'broken.jpg',mimeType:'image/jpeg',buffer:Buffer.from('broken image')});
@@ -152,11 +162,13 @@ test('无脚本：三栏入口、选题、逐题核对和打印选项仍然可�
   await page.getByRole('button',{name:'上传这张'}).click();
   await page.goto(`${WEB}/s/photos`);
   await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/, {timeout:30000});
-  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  // 没有脚本时底栏按钮不会随勾选变化，用表单里的提交按钮。
+  await page.goto(`${WEB}/s/choose`);
+  for (let i = 0; i < 3; i++) await page.getByTestId('choose-row').nth(i).click();
+  await page.getByRole('button',{name:'提交调整后的选择'}).click();
   await page.waitForURL(/\/s\/practice\/pkt_/);
   await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
-  await page.getByRole('link',{name:'这道做完了，自己核对',exact:true}).click();
-  await page.getByRole('link',{name:'不上传，直接核对'}).click();
+  await page.getByRole('link',{name:'做完了，对答案',exact:true}).click();
   await page.getByRole('button',{name:'做错了',exact:true}).click();
   await expect(page.getByText(/已记录 1 道结果/)).toBeVisible();
   await page.context().close();
@@ -174,13 +186,17 @@ test('主动推荐到纸上作答，多张拍照、关联题号和一次确认�
     await page.getByText('调整这次练习',{exact:true}).click();
     await page.getByRole('button',{name:'稍后再做',exact:true}).click();
   }
-  await expect(page.getByTestId('practice-recommendation')).toBeVisible();
-  await page.getByRole('button',{name:/就练这 \d 道/}).click();
+  // 刚收的题还没到期：练习页说下一批哪天，可以自己选题提前练。
+  await expect(page.getByTestId('redo-wait')).toContainText('下一批');
+  await page.getByRole('link',{name:'想提前练，自己选题',exact:true}).click();
+  await expect(page.getByText('今天没有到期的题。想提前练，点一下选上',{exact:false})).toBeVisible();
+  for (let i = 0; i < 3; i++) await page.getByTestId('choose-row').nth(i).click();
+  await primary(page).click();
   await page.waitForURL(/\/s\/practice\/pkt_/);
   const practice=page.url();
   await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
-  await expect(page.getByText('在白纸上写题号和过程，做完后拍照交到这里。')).toBeVisible();
-  await page.getByRole('link',{name:'拍照交练习',exact:true}).click();
+  await expect(page.getByText('一次一道：在草稿纸上写过程，做完点「对答案」，自己记对错。')).toBeVisible();
+  await page.getByRole('link',{name:'整份拍照交给 AI 核对',exact:true}).click();
   await expect(page.locator('#library-input')).toHaveAttribute('multiple','');
   const image=await synthetic('#fefefe',900);
   await page.locator('#library-input').setInputFiles([{name:'page1.jpg',mimeType:'image/jpeg',buffer:image},{name:'page2.jpg',mimeType:'image/jpeg',buffer:image}]);
@@ -212,10 +228,10 @@ test('整份作答部分上传失败只补传失败照片，关闭脚本仍可�
   const page=await pairedPage(browser);
   await upload(page,'#eebac9');await page.goto(`${WEB}/s/photos`);
   await expect(page.locator('body')).not.toHaveAttribute('data-poll',/.*/,{timeout:30000});
-  await page.goto(`${WEB}/s/choose`);await primary(page).click();
+  await chooseEarly(page);await primary(page).click();
   await page.waitForURL(/\/s\/practice\/pkt_/);
   const practice=page.url();await expect(page.getByTestId('practice-question')).toBeVisible({timeout:30000});
-  await page.getByRole('link',{name:'拍照交练习',exact:true}).click();
+  await page.getByRole('link',{name:'整份拍照交给 AI 核对',exact:true}).click();
   const keys:string[]=[];
   await page.route('**/s/practice/*/submission',async route=>{
     keys.push(/name="key"\r\n\r\n([^\r]+)/.exec(route.request().postData()??'')?.[1]??'');
@@ -455,8 +471,7 @@ test.describe('说说为什么错：录音时的反馈，选项断行', () => {
     await upload(page, '#efc4bc');
     await page.goto(`${WEB}/s/photos`);
     await expect(page.locator('body')).not.toHaveAttribute('data-poll', /.*/, { timeout: 30_000 });
-    await page.goto(`${WEB}/s/choose`);
-    await expect(primary(page)).toHaveText(/^就练这 \d 道$/);
+    await chooseEarly(page);
     await primary(page).click();
     await page.waitForURL(/\/s\/practice\/pkt_[0-9a-f]+$/);
     await page.goto(page.url().replace('/s/practice/', '/s/why/'));

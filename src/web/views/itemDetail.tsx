@@ -10,6 +10,16 @@ import { Page, Problem, quoted, type BarModel } from './layout.js';
 import { AnswerText } from './answerText.js';
 
 const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
+/** 每张材料图按内容命名，几张图不再都叫「第 1 页 · 查看原图」。 */
+const FRAGMENT_TITLE: Record<string, string> = { question: '题目', diagram: '题目图形', student_work: '你写的', correction: '订正', teacher_mark: '老师批注', reference_answer: '参考答案', unknown: '其他材料' };
+/** 大标题：练习纸编号；没有编号的题（拍材料收录的）用题干开头。 */
+function detailTitle(item: ItemDetailProps['item']): string {
+  if (item.shortId) return item.shortId;
+  const text = (item.questionExcerpt ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return '这道错题';
+  const chars = [...text];
+  return chars.length > 20 ? `${chars.slice(0, 20).join('')}…` : text;
+}
 
 export interface ItemDetailProps {
   item: Omit<V2WeekItem, 'jobId'> & { source?: { kind: 'legacy' | 'material'; questionId?: string; jobId?: string } };
@@ -43,15 +53,24 @@ export function ItemDetailPage(props: ItemDetailProps): ReactNode {
     secondary: [],
   };
   const groups = Object.entries(KIND_TITLE).map(([kind,title]) => ({title,notes:(evidence?.observations ?? []).filter(note => note.kind === kind)})).filter(group => group.notes.length);
-  return <Page title={item.shortId ?? '题目'} bodyClass="item-learning" back={{href:returnTo,label:'错题本'}} bar={bar}>
-    <p className="eyebrow">单题学习{item.shortId ? ' · 练习纸编号' : ''}</p>
-    <h1>{item.shortId ?? '题目'}</h1>
+  const title = detailTitle(item);
+  // 题目和图形放在上面；作答、订正、答案这些图收进一个展开项，题干不再被挤到几屏之后。
+  const stemImages = (props.images ?? []).filter(fragment => fragment.role === 'question' || fragment.role === 'diagram');
+  const otherImages = (props.images ?? []).filter(fragment => !stemImages.includes(fragment));
+  const leadImages = stemImages.length ? stemImages : otherImages.slice(0, 1);
+  const foldedImages = otherImages.filter(fragment => !leadImages.includes(fragment));
+  const figure = (fragment: Fragment) => <figure key={fragment.fragmentId}>
+    <a href={`/s/materials/assets/${fragment.assetId}/image`} target="_blank" rel="noreferrer" className="photo-link learning-photo"><img className="crop big" loading="lazy" src={`/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}`} alt={`这道题的材料：${FRAGMENT_TITLE[fragment.role] ?? '其他材料'}`} /></a>
+    <figcaption className="hint">{FRAGMENT_TITLE[fragment.role] ?? '其他材料'}{fragment.page ? ` · 第 ${fragment.page} 页` : ''} · 查看整页原图</figcaption>
+  </figure>;
+  return <Page title={title} bodyClass="item-learning" back={{href:returnTo,label:'错题本'}} bar={bar}>
+    <h1>{title}</h1>
     <p className="small muted" data-testid="item-category">{[item.grade,item.subject,item.chapter].filter(Boolean).join(' · ')}</p>
     {props.error ? <Problem title="暂时不能开始" detail={props.error} /> : null}
-    {props.images?.length ? props.images.map(fragment => <figure key={fragment.fragmentId}>
-      <a href={`/s/materials/assets/${fragment.assetId}/image`} target="_blank" rel="noreferrer" className="photo-link learning-photo"><img className="crop big" loading="lazy" src={`/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}`} alt="这道题的材料" /></a>
-      <figcaption className="hint">{fragment.page ? `第 ${fragment.page} 页 · ` : ''}查看原图</figcaption>
-    </figure>) : <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link learning-photo" data-key="item-full-photo" aria-label="打开整题原图（新窗口）"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /><span className="hint">查看原图</span></a>}
+    {props.images?.length ? <>
+      {leadImages.map(figure)}
+      {foldedImages.length ? <details className="learning-more-images"><summary>{`其他材料图（${foldedImages.length} 张）`}</summary>{foldedImages.map(figure)}</details> : null}
+    </> : <a href={`/s/img/item/${item.id}?scope=full`} target="_blank" rel="noreferrer" className="photo-link learning-photo" data-key="item-full-photo" aria-label="打开整题原图（新窗口）"><img className="crop big" src={`/s/img/item/${item.id}?scope=full&s=big`} alt="整题照片" /><span className="hint">查看原图</span></a>}
     <p className="hint">照片未显示时可阅读下面的题目。</p>
     {props.item.source?.kind === 'material' && props.item.source.questionId ? <a className="more" href={`/s/materials/questions/${props.item.source.questionId}`}>查看这道题的全部材料与批改来源</a> : null}
     <section className="card" aria-labelledby="learning-question">

@@ -34,8 +34,10 @@ test('material questions: capture -> include -> practice -> per-item result -> p
     await page.getByRole('button', { name: '收录到错题本', exact: true }).click();
     await expect.poll(async () => (await g.snapshot()).error_item!.length).toBe(3);
 
+    // 收录 3 天后才排进「今天该做」。
+    await g.age();
     await page.goto(g.base + '/s/practices');
-    await page.getByRole('button', { name: /就练这 3 道/ }).click();
+    await page.getByRole('button', { name: /开始做这 3 道/ }).click();
     await page.waitForURL(/\/s\/practice\/pkt_/);
     const pid = page.url().match(/pkt_[^/?]+/)![0];
     await expect(page.getByTestId('practice-question')).toBeVisible({ timeout: 60000 });
@@ -43,9 +45,7 @@ test('material questions: capture -> include -> practice -> per-item result -> p
     // Tapping a question number / "done, check myself" must work for material items.
     const items = (await g.snapshot()).error_item!;
     expect((await page.request.get(g.base + `/s/practice/${pid}?item=${items[0]!.id}`)).status()).toBe(200);
-    await page.getByRole('link', { name: '这道做完了，自己核对' }).click();
-    await noServerError(page);
-    await page.getByRole('link', { name: '不上传，直接核对' }).click();
+    await page.getByRole('link', { name: '做完了，对答案' }).click();
     await noServerError(page);
     await page.getByRole('button', { name: '做对了' }).click();
     await noServerError(page);
@@ -69,8 +69,8 @@ test('material questions: capture -> include -> practice -> per-item result -> p
 
     const final = await g.snapshot();
     expect(final.review_attempt).toHaveLength(3);
-    // Same-day correct answers never count as mastery.
-    expect(final.error_item!.map(i => i.status).sort()).toEqual(['attempted', 'attempted', 'needs_recheck']);
+    // 「今天该做」只排已经隔够天数的题，所以这里独立做对就算数（当天做对不算掌握见 masteryLoop.test.ts）。
+    expect(final.error_item!.map(i => i.status).sort()).toEqual(['needs_recheck', 'temporarily_mastered', 'temporarily_mastered']);
     expect((await page.request.get(g.base + `/s/practice/${pid}?item=${items[1]!.id}&view=check`)).status()).toBe(200);
   } finally { await g.close(); }
 });

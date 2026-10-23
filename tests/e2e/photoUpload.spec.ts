@@ -82,6 +82,8 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   }
   await page.goto(gateway.base + '/s/choose');
   await expect(page.getByTestId('choose-row')).toHaveCount(5);
+  // 刚收的题 3 天后才到期：自己选题提前练。
+  for (let i = 0; i < 5; i++) await page.getByTestId('choose-row').nth(i).click();
   await page.getByTestId('next-step-primary').click();
   await expect(page.getByTestId('practice-question')).toBeVisible({timeout:15000});
   await page.getByRole('link',{name:'打印练习',exact:true}).click();

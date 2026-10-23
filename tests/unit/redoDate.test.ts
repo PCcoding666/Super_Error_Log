@@ -47,17 +47,33 @@ describe('P0-3「X 月 X 日再做」文案', () => {
   });
 
   it('首页只在到期当天及以后提示；没到期时 compact 不打扰', () => {
-    expect(html(RedoReminder({ overview: { dueCount: 2, nextDay: null, nextCount: 0 }, compact: true }))).toContain('今天有 2 道题该再做了');
+    expect(html(RedoReminder({ overview: { dueCount: 2, nextDay: null, nextCount: 0 }, compact: true }))).toContain('今天该做 2 道题');
+    // 和练习页同一个上限：到期 8 道，今天只说 5 道。
+    expect(html(RedoReminder({ overview: { dueCount: 8, nextDay: null, nextCount: 0 }, compact: true }))).toContain('今天该做 5 道题');
+    // 有没记完的练习时先提示继续那份。
+    const active = html(RedoReminder({ overview: { dueCount: 2, nextDay: null, nextCount: 0 }, active: { id: 'pkt_1', left: 3 }, compact: true }));
+    expect(active).toContain('这次练习还有 3 道没记录');
+    expect(active).toContain('href="/s/practice/pkt_1"');
+    expect(active).not.toContain('今天该做');
     expect(html(RedoReminder({ overview: { dueCount: 0, nextDay: '2026-10-25', nextCount: 3 }, compact: true }))).toBe('');
     expect(html(RedoReminder({ overview: { dueCount: 0, nextDay: '2026-10-25', nextCount: 3 } }))).toContain('下次再做：10 月 25 日（3 道）');
   });
 
-  it('练习页没有可练的题但有冷却中的题时，告诉学生哪天再来，而不是「没有需要新增的练习」', () => {
+  it('练习页今天没有到期的题时，告诉学生下一批哪天，而不是「没有需要新增的练习」', () => {
     const out = html(PracticeDashboardPage({ tasks: [], activeId: null, requestKey: 'k', recommendation: { recommended: [], redo: { dueCount: 0, nextDay: '2026-10-25', nextCount: 3 } } }));
-    expect(out).toContain('10 月 25 日再来做');
-    expect(out).toContain('有 3 道之前做对过的题');
+    expect(out).toContain('今天没有到期的题');
+    expect(out).toContain('下一批：10 月 25 日，3 道');
+    expect(out).toContain('想提前练，自己选题');
     expect(out).not.toContain('现在没有需要新增的练习');
     const none = html(PracticeDashboardPage({ tasks: [], activeId: null, requestKey: 'k', recommendation: { recommended: [], redo: { dueCount: 0, nextDay: null, nextCount: 0 } } }));
     expect(none).toContain('现在没有需要新增的练习');
+  });
+
+  it('今天该做：题数、大约几分钟、顺延几道', () => {
+    const card = (id: string) => ({ id, knowledgeTags: [], reason: '本周新错题', questionExcerpt: `题 ${id}` });
+    const out = html(PracticeDashboardPage({ tasks: [], activeId: null, requestKey: 'k', recommendation: { recommended: ['a', 'b', 'c', 'd', 'e'].map(card), dueTotal: 7 } }));
+    expect(out).toContain('今天该做 5 道 · 约 15 分钟');
+    expect(out).toContain('另有 2 道也到期了，明天接着排');
+    expect(out).toContain('开始做这 5 道');
   });
 });
