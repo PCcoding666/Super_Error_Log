@@ -29,14 +29,14 @@
 |---|---|
 | 服务没有在运行 / 刚自动重启 | `systemctl status super-error-log`；`journalctl -u super-error-log -n 100 --no-pager \| grep -E 'sel_worker_error\|Error'` |
 | 学生进程错误 | `journalctl -u super-error-log --since -30min --no-pager \| grep sel_worker_error`（只有学生 ID 前 8 位，`sel-admin list` 对照） |
-| 改走按量付费 N 次 / 备用通道已到上限 | Token Plan 在出问题：看 `/admin/` 按调用线路的失败率；百炼控制台看 Token Plan 额度。确需放宽，改 env 里的两个上限后在窗口内重启；上限到了学生会看到「AI 服务今天有点忙…最晚明天恢复」，照片不丢 |
+| 改走按量付费 N 次 / 备用通道已到上限 | Token Plan 在出问题：看 `/admin/` 按调用线路的失败率；百炼控制台看 Token Plan 额度。确需放宽，改 env 里的两个上限后重启服务（会短暂停服）；上限到了学生会看到「AI 服务今天有点忙…最晚明天恢复」，照片不丢 |
 | AI 失败率高 / 队列积压 | `/admin/` 失败原因；排队多是正常高峰就等；持续 30 分钟不降再查日志 |
 | 磁盘只剩 N GiB | `du -sh /var/backups/* /opt/super-error-log/releases /var/lib/super-error-log`；低于 3 GiB 会拒收上传，低于 2 GiB 不能发布 |
 | 每日备份失败 / 异地没成功 | `journalctl -u sel-backup -n 50 --no-pager`；`cat /var/backups/super-error-log-daily/last-status.json last-push.json` |
 | HTTPS 证书还有 N 天 | `journalctl -u super-error-log-caddy --since -1d \| grep -i renew`（11/16–11/18 是续期窗口，那周每天看一次） |
 | 登录页打不开 | 先看服务和 Caddy 是否 active；再从手机流量打开 `https://study.pccoding666.com/s/` |
 
-**真要从备份恢复线上数据**（会覆盖当前数据，先跟老师说好）：在窗口内 `systemctl stop super-error-log` → `sel-restore.mjs --from <快照目录> --target /var/lib/super-error-log --live --confirm-service-stopped`（现有目录会整体改名为 `*.before-restore-<时间>` 保留，不删）→ `systemctl start super-error-log` → 后台核对错题数。env 和证书不在备份里，从密码管理器 / 证书目录恢复。
+**真要从备份恢复线上数据**（会覆盖当前数据，先跟老师说好）：`systemctl stop super-error-log` → `sel-restore.mjs --from <快照目录> --target /var/lib/super-error-log --live --confirm-service-stopped`（现有目录会整体改名为 `*.before-restore-<时间>` 保留，不删）→ `systemctl start super-error-log` → 后台核对错题数。env 和证书不在备份里，从密码管理器 / 证书目录恢复。
 
 ## 三、每天 / 每周
 
