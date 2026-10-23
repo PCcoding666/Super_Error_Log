@@ -5,12 +5,12 @@ import { practiceReviewer, type PracticeReviewer } from '../ai/practiceReview.js
 import type { AdmissionController } from '../mobile/admission.js';
 import type { RateLimiter } from '../mobile/rateLimit.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
-import { attachSubmission, submissionState, submissionImage, reviewSubmission, isReviewing, assignFinding, confirmSubmission } from '../v2/practiceSubmission.js';
-import type { PracticeDetail } from '../v2/practiceService.js';
+import { attachSubmission, submissionState, submissionImage, reviewSubmission, isReviewing, assignFinding, confirmSubmission, recordReviewFailure } from '../v2/practiceSubmission.js';
+import type { LearningPracticeDetail as PracticeDetail } from '../learning/contracts.js';
 import { getPrintStatus } from '../v2/printService.js';
 import { practiceProgress } from '../v2/practiceProgress.js';
 import { taskLifecycle } from '../v2/practiceTasks.js';
-import { getReturnSummary } from '../v2/returnService.js';
+import { getLearningReturnSummary } from '../v2/returnService.js';
 import { sendHtml } from '../views/render.js';
 import { localDayText } from './weekPlan.js';
 import { PracticeSubmitPage, PracticeFeedbackPage } from './views/practiceSubmission.js';
@@ -21,7 +21,7 @@ export function practiceSubmissionRouter(options:{reviewer?:PracticeReviewer;lim
   const feedback=(req:Request,res:Response,error?:string)=>{
     const p=res.locals.practice as PracticeDetail;
     const legacy=getDb().prepare('SELECT COUNT(*) n FROM practice_work WHERE packet_id=?').get(p.id) as {n:number};
-    sendHtml(res,PracticeFeedbackPage({practice:p,state:submissionState(p.id),progress:practiceProgress(p.id),summary:getReturnSummary(p.id),cancelled:taskLifecycle(p.id)==='cancelled',today:localDayText(options.now(),options.timeZone),earliestDay:localDayText(new Date(p.generatedAt??p.createdAt),options.timeZone),legacyPhotos:legacy.n,error,draft:req.method==='POST'?req.body:undefined}));
+    sendHtml(res,PracticeFeedbackPage({practice:p,state:submissionState(p.id),progress:practiceProgress(p.id),summary:getLearningReturnSummary(p.id,'all'),cancelled:taskLifecycle(p.id)==='cancelled',today:localDayText(options.now(),options.timeZone),earliestDay:localDayText(new Date(p.generatedAt??p.createdAt),options.timeZone),legacyPhotos:legacy.n,error,draft:req.method==='POST'?req.body:undefined}));
   };
   const uploadPage=(req:Request,res:Response,error?:string)=>{
     const p=res.locals.practice as PracticeDetail,cancelled=taskLifecycle(p.id)==='cancelled';
@@ -68,7 +68,9 @@ export function practiceSubmissionRouter(options:{reviewer?:PracticeReviewer;lim
     // The request returns immediately after the durable analysis state is written.
     // The task owns capacity until completion, independent of the browser connection.
     const job=reviewSubmission(pid,options.reviewer??practiceReviewer(),admission?work=>admission.withImage(work):undefined);
-    void job.catch(()=>undefined).finally(()=>admission?.releaseJobCapacity());
+    // A rejected job is logged and stored as a failed review, so the feedback page shows
+    // "这次没能完成核对" with a retry instead of silently staying pending.
+    job.catch(error=>recordReviewFailure(pid,error)).finally(()=>admission?.releaseJobCapacity());
     res.redirect(303,dest);
   });
   r.post('/practice/:pid/assign',form,(req,res)=>{
