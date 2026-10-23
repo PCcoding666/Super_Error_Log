@@ -1,4 +1,4 @@
-import { setQuestionIncluded, inclusionIntent, inclusionIntents, includeQuestions, notYetIncluded, unsupportedSubject } from '../materials/learning.js';
+import { setQuestionIncluded, inclusionIntent, inclusionIntents, includeQuestions, markedRight, notYetIncluded, sortQuestions, unplacedMaterial, unsupportedSubject } from '../materials/learning.js';
 import { createHash } from 'node:crypto';
 import { canRecover } from '../mobile/contracts.js';
 import { requestGrades } from '../materials/grading.js';
@@ -12,14 +12,14 @@ import { newId } from '../db/connection.js';
 import type { MaterialStore } from '../materials/store.js';
 import type { MaterialUploads } from '../materials/uploads.js';
 import type { MaterialJobs } from '../materials/jobs.js';
-import type { CaptureHints, MaterialRole, Fragment } from '../materials/contracts.js';
+import type { CaptureHints, MaterialRole } from '../materials/contracts.js';
 import { assignDocument, assetLinkRevision, linkRevision, relink, relinkNewAttempt, undoLink } from '../materials/links.js';
-import { answerHistory, latestFragments } from '../materials/queries.js';
+import { answerHistory, latestFragments, linkedFragments } from '../materials/queries.js';
 import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
 import { sendHtml } from '../views/render.js';
-import { type MaterialInclusionMark, type MaterialJobView, MaterialGradeActionPage, MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
+import { type MaterialInclusionMark, type MaterialJobView, type MaterialUnplacedGroup, MaterialGradeActionPage, MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const roles: MaterialRole[] = ['question', 'diagram', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown'];
 const text = (v: unknown): string => typeof v === 'string' ? v : '';
@@ -75,7 +75,7 @@ export function createMaterialsRouter(options: {
     const assetCount = (): number => (store.db.prepare('SELECT count(*) n FROM material_asset WHERE owner_id=?').get(store.studentId) as {
         n: number;
     }).n;
-    const assets = (page = 0, exclude = ''): MaterialAssetView[] => (store.db.prepare('SELECT id,hints_json,document_id,status,link_revision FROM material_asset WHERE owner_id=? AND id!=? ORDER BY created_at,id LIMIT 8 OFFSET ?').all(store.studentId, exclude, page * 8) as {
+    const assets = (page = 0, exclude = ''): MaterialAssetView[] => (store.db.prepare('SELECT id,hints_json,document_id,status,link_revision FROM material_asset WHERE owner_id=? AND id!=? ORDER BY created_at,rowid LIMIT 8 OFFSET ?').all(store.studentId, exclude, page * 8) as {
         id: string;
         hints_json: string;
         document_id: string | null;
@@ -218,16 +218,25 @@ export function createMaterialsRouter(options: {
         const changes = store.db.prepare("SELECT id FROM material_link_event WHERE owner_id=? AND decision='manual' AND json_extract(basis_json,'$.operation') IS NOT NULL ORDER BY rowid DESC LIMIT 5").all(store.studentId) as {
             id: string;
         }[];
-        const questions = store.listQuestions();
-        const allAssets = store.db.prepare("SELECT id,json_extract(extraction_json,'$.document.subject') AS subject FROM material_asset WHERE owner_id=? ORDER BY created_at,id").all(store.studentId) as { id: string; subject: string | null }[];
+        const all = sortQuestions(store, store.listQuestions());
+        const questions = all.filter(q => !unplacedMaterial(q));
+        const allAssets = store.db.prepare("SELECT id,json_extract(extraction_json,'$.document.subject') AS subject FROM material_asset WHERE owner_id=? ORDER BY created_at,rowid").all(store.studentId) as { id: string; subject: string | null }[];
         const photoNumbers = Object.fromEntries(allAssets.map((a, i) => [a.id, i + 1]));
         const unsupported = allAssets.flatMap(a => { const other = unsupportedSubject(a.subject); return other ? [{ assetId: a.id, subject: other }] : []; });
         const intents = inclusionIntents(store);
-        const marks: Record<string, MaterialInclusionMark> = Object.fromEntries(questions.map(q => [q.id, intents.get(q.id) === false ? 'removed' : q.itemId ? 'included' : 'pending']));
+        const marks: Record<string, MaterialInclusionMark> = Object.fromEntries(questions.map(q => [q.id, intents.get(q.id) === false ? 'removed' : q.itemId ? 'included' : markedRight(q) ? 'correct' : 'pending']));
         const pending = notYetIncluded(store, questions, intents).map(g => ({ ...g, photo: photoNumbers[g.assetId] ?? 0 }));
+        // Unplaced material is summarized per photo (in photo order), never guessed into a question.
+        const unplacedByPhoto = new Map<string, MaterialUnplacedGroup>();
+        for (const q of all.filter(unplacedMaterial)) for (const fragment of linkedFragments(store, q.id)) {
+            const group = unplacedByPhoto.get(fragment.assetId) ?? { assetId: fragment.assetId, photo: photoNumbers[fragment.assetId] ?? 0, items: [] };
+            group.items.push({ questionId: q.id, fragment });
+            unplacedByPhoto.set(fragment.assetId, group);
+        }
+        const unplaced = [...unplacedByPhoto.values()].sort((a, b) => a.photo - b.photo).map(g => ({ ...g, items: g.items.sort((x, y) => (x.fragment.page ?? 0) - (y.fragment.page ?? 0) || x.fragment.order - y.fragment.order) }));
         const included = Number(req.query.included), skipped = Number(req.query.skipped) || 0, retried = Number(req.query.retried);
         const notice = Number.isSafeInteger(retried) && retried >= 0 && req.query.retried !== undefined ? { included: 0, skipped: 0, retried } : Number.isSafeInteger(included) && included >= 0 && req.query.included !== undefined ? { included, skipped: Number.isSafeInteger(skipped) && skipped >= 0 ? skipped : 0 } : null;
-        sendHtml(res, MaterialsPage({ namespace: draftNamespace, questions, assets: assets(page), page, hasMore: (page + 1) * 8 < assetCount(), documents, changes, jobs: extractJobs().failed, processing: extractJobs().processing, assetCount: allAssets.length, photoNumbers, unsupported, pending, marks, notice, revision: linkRevision(store) }));
+        sendHtml(res, MaterialsPage({ namespace: draftNamespace, questions, assets: assets(page), page, hasMore: (page + 1) * 8 < assetCount(), documents, changes, jobs: extractJobs().failed, processing: extractJobs().processing, assetCount: allAssets.length, photoNumbers, unsupported, pending, unplaced, marks, notice, revision: linkRevision(store) }));
     });
     r.get('/materials/assets/:id/match', (req, res) => {
         const id = text(req.params.id);
@@ -247,9 +256,8 @@ export function createMaterialsRouter(options: {
             throw new MobileRequestError(404, 'not_found', '题目不存在。');
         const flag = text(req.query.included);
         const notice = flag === '1' && q.itemId ? '已收进错题本。可以接着看下一题，也可以去错题本看看。' : flag === 'later' ? '已记下要收录，题目补齐后会进入错题本。' : flag === '0' ? '已移出错题本，原材料仍保留。' : null;
-        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, notice, question: q, included: inclusionIntent(store,q.id), legacy: !!(q.itemId&&store.db.prepare('SELECT 1 FROM mobile_item_link WHERE item_id=?').get(q.itemId)), gradeJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='grade' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], answerJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='answer' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], selectedAnswerIds: selectedAnswerIds(store,q.id), questions: store.listQuestions(), revision: linkRevision(store), materials: (store.db.prepare('SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)').all(store.studentId, q.id) as {
-                content_json: string;
-            }[]).map(row => JSON.parse(row.content_json) as Fragment) }));
+        sendHtml(res, MaterialQuestionPage({ namespace: draftNamespace, notice, question: q, included: inclusionIntent(store,q.id), legacy: !!(q.itemId&&store.db.prepare('SELECT 1 FROM mobile_item_link WHERE item_id=?').get(q.itemId)), gradeJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='grade' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], answerJobs: store.db.prepare("SELECT id,state,error FROM material_job WHERE owner_id=? AND question_id=? AND kind='answer' ORDER BY rowid DESC LIMIT 20").all(store.studentId,q.id) as {id:string;state:string;error:string|null}[], selectedAnswerIds: selectedAnswerIds(store,q.id), questions: sortQuestions(store, store.listQuestions().filter(o => !unplacedMaterial(o))), unplaced: unplacedMaterial(q), revision: linkRevision(store),
+            materials: linkedFragments(store, q.id).sort((a, b) => (a.page ?? 0) - (b.page ?? 0) || a.order - b.order || a.fragmentId.localeCompare(b.fragmentId)) }));
     });
     r.get('/materials/fragments/:id/crop', async (req,res)=>{
         const id=text(req.params.id);
@@ -324,11 +332,12 @@ export function createMaterialsRouter(options: {
         if(req.body.attemptByQuestion!==undefined){if(!req.body.attemptByQuestion||typeof req.body.attemptByQuestion!=='object'||Array.isArray(req.body.attemptByQuestion))bad();attemptByQuestion=req.body.attemptByQuestion;}
         if(req.body.attemptId){const ids=list(req.body.questionIds);if(ids.length!==1||attemptByQuestion)bad();attemptByQuestion={[ids[0]!]:text(req.body.attemptId)};}
         const action=requestGrades(store,jobs,{...('documentId' in req.body?{requestId:text(req.body.requestId),documentId:text(req.body.documentId)}:{requestId:text(req.body.requestId),questionIds:list(req.body.questionIds)}),...(attemptByQuestion?{attemptByQuestion}:{})});
-        if(json(req))res.json({ok:true,...action});else sendHtml(res,MaterialGradeActionPage({namespace:draftNamespace,action}));
+        const single='questionIds' in req.body&&list(req.body.questionIds).length===1?list(req.body.questionIds)[0]:undefined;
+        if(json(req))res.json({ok:true,...action});else sendHtml(res,MaterialGradeActionPage({namespace:draftNamespace,action,questionId:single}));
     });
     r.post('/materials/answers/manual', (req,res) => result(req,res,{ok:true,answer:saveManualAnswer(store,{questionId:text(req.body.questionId),subpart:text(req.body.subpart)||null,text:text(req.body.text),claimedSource:text(req.body.claimedSource)||null,expectedRevision:revision(req.body.expectedRevision)})}));
     r.post('/materials/answers/import', (req,res) => { const imported=importAnswerText(store,text(req.body.documentId),text(req.body.text)); if(json(req))res.json({ok:true,...imported});else sendHtml(res, MaterialAnswerActionPage({namespace:draftNamespace,imported})); });
-    r.post('/materials/answers/generate', (req,res) => { if(('documentId' in req.body)===('questionIds' in req.body))bad(); const action=requestAnswers(store,jobs,'documentId' in req.body?{requestId:text(req.body.requestId),documentId:text(req.body.documentId)}:{requestId:text(req.body.requestId),questionIds:list(req.body.questionIds)}); if(json(req))res.json({ok:true,...action});else sendHtml(res,MaterialAnswerActionPage({namespace:draftNamespace,action})); });
+    r.post('/materials/answers/generate', (req,res) => { if(('documentId' in req.body)===('questionIds' in req.body))bad(); const action=requestAnswers(store,jobs,'documentId' in req.body?{requestId:text(req.body.requestId),documentId:text(req.body.documentId)}:{requestId:text(req.body.requestId),questionIds:list(req.body.questionIds)}); const single='questionIds' in req.body&&list(req.body.questionIds).length===1?list(req.body.questionIds)[0]:undefined; if(json(req))res.json({ok:true,...action});else sendHtml(res,MaterialAnswerActionPage({namespace:draftNamespace,action,questionId:single})); });
     r.post('/materials/answers/basis', (req,res) => {selectAnswerBasis(store,text(req.body.questionId),list(req.body.answerIds),revision(req.body.expectedRevision));result(req,res,{ok:true});});
     r.post('/materials/links', (req, res) => { const input = { fragmentIds: list(req.body.fragmentIds), questionId: text(req.body.questionId), expectedRevision: revision(req.body.expectedRevision) }; const change = req.body.newAttempt === '1' || req.body.newAttempt === true ? relinkNewAttempt(store, input) : relink(store, { ...input, target: { questionId: input.questionId, attemptId: text(req.body.attemptId) || null } }); result(req, res, { ok: true, change }); });
     r.post('/materials/links/:id/undo', (req, res) => result(req, res, { ok: true, change: undoLink(store, text(req.params.id), revision(req.body.expectedRevision)) }));

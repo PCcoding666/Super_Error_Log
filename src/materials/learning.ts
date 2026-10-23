@@ -46,7 +46,12 @@ export function fullMarksOf(stem:string):number|null {
  * and a bare score below the stem's printed full marks. */
 export function teacherMarkMeansWrong(raw:string,fullMarks:number|null=null):boolean {
  const text=raw.trim().replace(/[。.!！,，;；]+$/u,'').replace(/\s+/gu,' ');
- if(!text||text.length>24)return false;
+ if(!text||text.length>60)return false;
+ // A cross followed by the teacher's comment, e.g.「× 漏了 x≤5」. The cross itself is the verdict.
+ if(/^[×✗✘╳✕❌]\s*\S/u.test(text))return true;
+ // A transcribed Latin X: alone, or followed by a comment (not an expression such as「x = 5」).
+ if(/^[Xx](?:\s+(?![=<>≤≥+\-−])\S.*)?$/u.test(text)&&!/(?<!不)正确|很好|不错|真棒|满分/u.test(text))return true;
+ if(text.length>24)return false;
  if(/^(?:错|错误|答错|做错|不对|不正确|答案错误|错了|半对|对一半|部分正确|不完整|未答|没做|空)$/u.test(text))return true;
  if(/^[^\p{L}\p{N}]*[×✗✘╳✕❌][^\p{L}\p{N}]*$/u.test(text))return true;
  // Half ticks: a tick with a slash through or beside it, or the word on its own.
@@ -60,6 +65,44 @@ export function teacherMarkMeansWrong(raw:string,fullMarks:number|null=null):boo
  const bare=/^(?:得\s*)?[+＋]?\s*(\d+(?:\.\d+)?)\s*分?$/u.exec(text);
  if(bare&&fullMarks!==null)return Number(bare[1])<fullMarks;
  return false;
+}
+/** A tick on its own (optionally with full marks), or the plain word for "right". Never a half tick. */
+export function teacherMarkMeansRight(raw:string,fullMarks:number|null=null):boolean {
+ const text=raw.trim().replace(/[。.!！,，;；]+$/u,'').replace(/\s+/gu,' ');
+ if(!text||text.length>24||teacherMarkMeansWrong(text,fullMarks))return false;
+ if(/^(?:对|正确|全对|满分|[√✓✔☑]+)$/u.test(text))return true;
+ const scored=/^[√✓✔☑]\s*(?:得\s*)?[+＋]?\s*(\d+(?:\.\d+)?)\s*分?$/u.exec(text);
+ return !!scored&&fullMarks!==null&&Number(scored[1])>=fullMarks;
+}
+/** Every certain teacher mark on the question is a tick, and no current AI grade says otherwise. */
+export function markedRight(q:import('./contracts.js').QuestionBundle):boolean {
+ if(!q.teacherMarks.length||q.grades.some(g=>!g.stale&&g.result!=='correct'))return false;
+ const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
+ return q.teacherMarks.every(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansRight(f.text,full));
+}
+/** Photo material without a printed number or stem (work, marks, corrections): the model saw it on the page
+ * but could not place it. It stays where it is (no inferred association) and is summarized per photo instead
+ * of listed as a question. Anything with learning or result history is still listed. */
+export function unplacedMaterial(q:import('./contracts.js').QuestionBundle):boolean {
+ return q.number===null&&!q.itemId&&!q.answers.length&&!q.grades.length&&!q.stem.some(f=>f.role==='question')
+  &&(q.stem.length>0||q.teacherMarks.length>0||q.attempts.some(a=>a.fragments.length>0));
+}
+const numbered=new Intl.Collator('zh-CN',{numeric:true});
+/** Paper, then printed number (2 before 10, 3(1) after 3), then photo. A question without a paper is
+ * placed by the photo of its stem (or its first material). Unnumbered questions follow their paper. */
+export function sortQuestions<T extends import('./contracts.js').QuestionBundle>(store:MaterialStore,questions:T[]):T[] {
+ const photos=new Map((store.db.prepare('SELECT id FROM material_asset WHERE owner_id=? ORDER BY created_at,rowid').all(store.studentId) as {id:string}[]).map((a,i)=>[a.id,i]));
+ const anchor=(q:T)=>{const stem=q.stem.filter(f=>f.role==='question');const fragments=stem.length?stem:[...q.stem,...q.attempts.flatMap(a=>a.fragments),...q.teacherMarks];
+  return Math.min(Number.MAX_SAFE_INTEGER,...fragments.map(f=>photos.get(f.assetId)??Number.MAX_SAFE_INTEGER));};
+ const keys=new Map(questions.map(q=>[q.id,{photo:anchor(q),paper:q.documentId??`photo:${anchor(q)}`}]));
+ const paperRank=new Map<string,number>();
+ for(const {photo,paper} of keys.values())paperRank.set(paper,Math.min(paperRank.get(paper)??Number.MAX_SAFE_INTEGER,photo));
+ return [...questions].sort((a,b)=>{
+  const x=keys.get(a.id)!,y=keys.get(b.id)!;
+  return paperRank.get(x.paper)!-paperRank.get(y.paper)!||x.paper.localeCompare(y.paper)
+   ||(a.number===null?1:0)-(b.number===null?1:0)||numbered.compare(a.number??'',b.number??'')
+   ||x.photo-y.photo||a.id.localeCompare(b.id);
+ });
 }
 function automaticMistake(store:MaterialStore,questionId:string):boolean {
  const q=readQuestion(store,questionId)!;
@@ -117,11 +160,12 @@ export function setQuestionIncluded(store:MaterialStore,questionId:string,includ
 }
 
 /** Questions the student can still add in one step: a readable stem, a supported subject,
- * not yet in the notebook and never explicitly removed. Grouped by the photo of their first stem. */
+ * not yet in the notebook, never explicitly removed and not ticked by the teacher.
+ * Grouped by the photo of their first stem, in paper and question-number order. */
 export function notYetIncluded(store:MaterialStore,questions=store.listQuestions(),intents=inclusionIntents(store)):{assetId:string;questions:import('./contracts.js').QuestionBundle[]}[] {
  const groups=new Map<string,import('./contracts.js').QuestionBundle[]>();
- for(const q of questions){
-  if(q.itemId||q.missing.includes('stem')||unsupportedSubject(q.subject)||intents.has(q.id))continue;
+ for(const q of sortQuestions(store,questions)){
+  if(q.itemId||q.missing.includes('stem')||unsupportedSubject(q.subject)||intents.has(q.id)||markedRight(q))continue;
   const assetId=q.stem.find(f=>f.role==='question')!.assetId;
   groups.set(assetId,[...(groups.get(assetId)??[]),q]);
  }

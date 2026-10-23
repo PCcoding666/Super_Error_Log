@@ -62,7 +62,7 @@ export class MaterialUploads {
     const existing = this.store.db.prepare('SELECT id,upload_request_fingerprint FROM material_asset WHERE owner_id=? AND upload_request_id=?')
       .get(this.store.studentId, input.uploadId) as { id: string; upload_request_fingerprint: string | null } | undefined;
     if (existing) {
-      if (existing.upload_request_fingerprint === null) throw new MobileRequestError(409, 'upload_identity_unavailable', '这张照片已保留在服务器，但旧上传信息无法核对。请先查看已经保存的材料，再删除这条待传记录；不用重新拍照。');
+      if (existing.upload_request_fingerprint === null) throw new MobileRequestError(409, 'upload_identity_unavailable', '这张照片已保留在服务器，但旧上传信息无法核对。请先点“拍完了，查看材料”核对，再删除这条待传记录；不用重新拍照。');
       if (existing.upload_request_fingerprint !== fingerprint) throw new MobileRequestError(409, 'idempotency_conflict', '这个上传请求已保存其他内容，请使用新的上传请求。');
       const job = this.store.db.prepare("SELECT id,kind,state FROM material_job WHERE owner_id=? AND asset_id=? AND kind='extract' AND request_id=?").get(this.store.studentId, existing.id, input.uploadId) as JobTicket | undefined;
       if (!job) throw new MobileRequestError(503, 'storage_unavailable', '材料任务暂时无法读取。');
