@@ -104,6 +104,8 @@ function defaultWorkerScript(): { script: string; execArgv: string[] } {
   return { script: path.join(here, 'worker.ts'), execArgv: [`--${'impor'}t`, 'tsx'] };
 }
 
+export interface CapacitySnapshot { live: number; maxLive: number; aiLimit: number; aiInUse: number; aiWaiting: number; aiAverageMs: number | null }
+
 export class StudentWorkerPool {
   private readonly entries = new Map<string, WorkerEntry>();
   private readonly starting = new Map<string, Promise<WorkerEndpoint>>();
@@ -145,6 +147,11 @@ export class StudentWorkerPool {
   /** 当前存活 worker 数（测试与容量观察用）。 */
   get size(): number {
     return this.entries.size;
+  }
+
+  /** 「人有点多」页用：只有计数，不含任何学生身份。 */
+  capacitySnapshot(): CapacitySnapshot {
+    return { live: this.entries.size, maxLive: this.maxLive, aiLimit: this.aiPermits.limit, aiInUse: this.aiPermits.inUse, aiWaiting: this.aiPermits.waiting, aiAverageMs: this.aiPermits.averageHoldMs };
   }
 
   isRunning(studentId: string): boolean {

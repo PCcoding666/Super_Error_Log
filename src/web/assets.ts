@@ -680,13 +680,19 @@ export const JS_PATH = `/s/assets/app.${SCRIPT_HASH}.js`;
 /** 带指纹的资源：一年、不变。 */
 export const IMMUTABLE = 'public, max-age=31536000, immutable';
 
+/** 发布重启时代理返回空 5xx：Service Worker 合成的「正在更新」页多久自动重试一次。 */
+export const SW_UPDATING_RETRY_SECONDS = 15;
 /** Service Worker：只缓存外壳（离线页、样式、脚本、图标），学生数据一律不缓存（只在导航失败时换成离线页）。 */
 export const SERVICE_WORKER = `const CACHE='sel-shell-${ASSET_VERSION}';
 const SHELL=['/s/offline','${CSS_PATH}','${JS_PATH}','/s/assets/icon-192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
+// Only a real network failure shows the offline page. A 5xx with a body (e.g. "人有点多") is shown as is;
+// an empty 5xx means the proxy reached no app (restart during a release): say so and retry by itself.
+const UPDATING='<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="${SW_UPDATING_RETRY_SECONDS}"><title>正在更新</title><style>body{font:17px/1.6 -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px;background:#f2f2f7;color:#1c1c1e}@media (prefers-color-scheme:dark){body{background:#000;color:#f2f2f7}}a{display:inline-block;margin-top:12px;padding:12px 20px;border-radius:12px;background:#0a84ff;color:#fff;text-decoration:none}</style></head><body><h1 data-testid="updating-title">服务器正在更新</h1><p>一般不到一分钟就好。这一页每 ${SW_UPDATING_RETRY_SECONDS} 秒会自己重试，不用一直点。</p><p>传上去的照片和错题都在服务器上；还没传完的照片先存在这台手机上，回到拍照页会接着传。</p><a href="__URL__">现在重试</a></body></html>';
+function updating(url,status){const safe=new URL(url).pathname.startsWith('/s')?new URL(url).pathname+new URL(url).search:'/s/';return new Response(UPDATING.replace('__URL__',safe.replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';')),{status:status,headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}})}
 self.addEventListener('fetch',e=>{const r=e.request;
-  if(r.mode==='navigate'){e.respondWith(fetch(r).then(res=>res.status>=502&&res.status<=504?caches.match('/s/offline').then(o=>o||res):res).catch(()=>caches.match('/s/offline').then(o=>o||Response.error())));return}
+  if(r.mode==='navigate'){e.respondWith(fetch(r).then(res=>res.status>=500?res.clone().text().then(t=>t.trim()?res:updating(r.url,res.status)).catch(()=>res):res).catch(()=>caches.match('/s/offline').then(o=>o||Response.error())));return}
   if(r.method==='GET'&&SHELL.some(p=>new URL(r.url).pathname+new URL(r.url).search===p)){e.respondWith(caches.match(r).then(c=>c||fetch(r)))}
 });
 `;

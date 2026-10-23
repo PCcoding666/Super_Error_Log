@@ -133,3 +133,54 @@ test('name and phone registration works without JavaScript and its code works af
     await expect(page.getByTestId('account-role')).toHaveText('学生');
   } finally { await context.close(); }
 });
+
+test('P1-9: the service worker shows server answers as they are and the offline page only without a network', async ({ browser }) => {
+  // A tiny stand-in for the reverse proxy: pass through, answer an empty 502 (app restarting),
+  // answer the app's own 503 body, or drop the connection (no network).
+  const http = await import('node:http');
+  let mode: 'pass' | 'empty502' | 'body503' | 'down' = 'pass';
+  const upstream = new URL(base);
+  const proxy = http.createServer((req, res) => {
+    if (mode === 'down') { req.socket.destroy(); return; }
+    if (mode === 'empty502' && req.headers['sec-fetch-mode'] === 'navigate') { res.writeHead(502, { 'content-length': '0' }); res.end(); return; }
+    if (mode === 'body503' && req.headers['sec-fetch-mode'] === 'navigate') { res.writeHead(503, { 'content-type': 'text/html; charset=utf-8', 'retry-after': '30' }); res.end('<!doctype html><title>人有点多</title><h1 data-testid="busy-title">人有点多</h1>'); return; }
+    const forward = http.request({ host: upstream.hostname, port: upstream.port, method: req.method, path: req.url, headers: req.headers }, r => { res.writeHead(r.statusCode ?? 502, r.headers); r.pipe(res); });
+    forward.on('error', () => { if (!res.headersSent) { res.writeHead(502, { 'content-length': '0' }); res.end(); } else res.destroy(); });
+    req.pipe(forward);
+  });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  const front = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  try {
+    const page = await context.newPage();
+    await page.goto(front + '/s/');
+    await page.getByLabel('12 位邀请码').fill(codes[0]!);
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+
+    mode = 'body503';
+    await page.goto(front + '/s/settings');
+    await expect(page.getByTestId('busy-title')).toBeVisible();
+    await expect(page.getByTestId('offline-title')).toHaveCount(0);
+
+    mode = 'empty502';
+    await page.goto(front + '/s/settings');
+    await expect(page.getByTestId('updating-title')).toHaveText('服务器正在更新');
+    await expect(page.getByText('还没传完的照片先存在这台手机上')).toBeVisible();
+    expect(await page.locator('meta[http-equiv="refresh"]').getAttribute('content')).toBe('15');
+    await expect(page.getByTestId('offline-title')).toHaveCount(0);
+    mode = 'pass';
+    await page.getByRole('link', { name: '现在重试' }).click();
+    await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
+
+    mode = 'down';
+    await page.goto(front + '/s/settings').catch(() => undefined);
+    await expect(page.getByTestId('offline-title')).toBeVisible();
+    await expect(page.getByText('还没传完的照片先存在这台手机上')).toBeVisible();
+  } finally {
+    await context.close();
+    await new Promise<void>(resolve => { proxy.closeAllConnections(); proxy.close(() => resolve()); });
+  }
+});

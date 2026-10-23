@@ -318,7 +318,7 @@ export function OfflinePage(): ReactNode {
     <Page title="连不上服务器" back={null} showSettings={false} bar={bar}>
       <h1 data-offline-title="" data-testid="offline-title">连不上服务器</h1>
       <section className="card">
-        <p data-offline-detail="">检查一下 Wi-Fi 或流量。拍过的照片和错题都在服务器上，不会丢；刚才没传上去的照片要重新拍一次。</p>
+        <p data-offline-detail="">检查一下 Wi-Fi 或流量。传上去的照片和错题都在服务器上，不会丢；还没传完的照片先存在这台手机上，连上网回到拍照页会接着传。</p>
         <p className="muted small">用网页拍的照片不会存进手机相册，所以没联网的时候先别拍，连上再拍。</p>
       </section>
     </Page>

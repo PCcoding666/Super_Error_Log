@@ -71,6 +71,8 @@ export interface NotebookPageProps {
   items: V2WeekItem[]; backlog: V2WeekItem[]; anyPhoto: boolean; finding: boolean; bar: BarModel;
   category: { grade: string; subject: string; subjects: string[]; stages?: string[] };
   materials?: boolean;
+  /** Material intake still needing the student: questions not yet added, failed photos, photos in progress. */
+  materialIntake?: { pending: number; failed: number; processing: number };
   filters?: NotebookFilters; chapters?: string[]; total?: number; selection?: boolean; selectedIds?: string[];
   eligibleIds?: string[]; recoveryItems?: V2WeekItem[]; removed?: string | null; undoReturnTo?: string;
   flash?: { ok?: string | null; err?: string | null };
@@ -122,6 +124,11 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
     <div className="notebook-title"><h1>{subjectSwitch}</h1>{props.selection ? <a className="link-btn" href={context}>取消选题</a> : nothingStored ? null : <a className="btn primary practice-fab" href={selectionUrl}>选题练习</a>}</div>
     <p className="page-subtitle" role="status">{grade} · {all.length} 道错题 · {pending} 道待练习{totalNote}</p>
     {props.selection ? null : <RedoReminder overview={props.redo} active={props.activePractice} compact />}
+    {!props.selection && props.materialIntake && (props.materialIntake.pending || props.materialIntake.failed || props.materialIntake.processing) ? <div className="material-surface"><div className="inset-group" data-testid="material-intake">
+      {props.materialIntake.pending ? <a className="nav-row" href="/s/materials#material-pending"><span className="row-text">拍的材料里还有 {props.materialIntake.pending} 道题没收进错题本，去勾选</span><span className="chev" aria-hidden="true">›</span></a> : null}
+      {props.materialIntake.failed ? <a className="nav-row" href="/s/materials"><span className="row-text tone-orange">{props.materialIntake.failed} 张照片没整理成功，去一键重新整理</span><span className="chev" aria-hidden="true">›</span></a> : null}
+      {props.materialIntake.processing ? <a className="nav-row" href="/s/materials"><span className="row-text">还有 {props.materialIntake.processing} 张照片在整理，看看进度</span><span className="chev" aria-hidden="true">›</span></a> : null}
+    </div></div> : null}
     {props.selection ? <p className="hint">选 1–8 道题加入练习。更改筛选或学科会结束本次选题；已建练习不受影响。</p> : null}
     <form method="get" action="/s/items" className="notebook-filters" role="search" aria-label="搜索错题">
       <input type="hidden" name="subject" value={subject} />

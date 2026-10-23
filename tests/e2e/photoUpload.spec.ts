@@ -33,6 +33,8 @@ async function enter(page: Page, gateway: { base: string; codes: string[] }) {
   await page.getByLabel('12 位邀请码').fill(gateway.codes[0]!);
   await page.getByRole('button', { name: '进入我的错题本' }).click();
   await expect(page).toHaveURL(/login=1/);
+  // A new account picks its stage once; the gate stays on the post-login page.
+  await page.getByRole('button', { name: '初中', exact: true }).click();
   await page.goto(gateway.base + '/s/capture');
   await expect(page.getByRole('heading', { name: '错题录入', exact: true })).toBeVisible();
   await expect(page.getByText('阿里云')).toHaveCount(0);

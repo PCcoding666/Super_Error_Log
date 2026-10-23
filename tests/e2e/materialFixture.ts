@@ -7,7 +7,8 @@ import { registerMaterialGrading } from '../../src/materials/grading.js';
 import { MaterialProviderError } from '../../src/materials/provider.js';
 import type { CloudAssemblyOverrides } from '../../src/mobile/cloudAssembly.js';
 import type { Fragment } from '../../src/materials/contracts.js';
-export type FixturePage = { parts: Array<Partial<Fragment>>; code?: string; date?: string; delayMs?: number; failOnce?: boolean };
+import { unsupportedSubject } from '../../src/materials/subjects.js';
+export type FixturePage = { parts: Array<Partial<Fragment>>; code?: string; date?: string; delayMs?: number; failOnce?: boolean; failAlways?: boolean; subject?: string };
 export type FixtureControl = { pages?: FixturePage[]; delayMs?: number; failOnce?: ('answer'|'grade')[] };
 export const configureMaterials: NonNullable<CloudAssemblyOverrides['configureMaterials']> = (jobs, uploads) => {
   const control = (): FixtureControl => JSON.parse(fs.readFileSync(process.env.SEL_E2E_MATERIAL_CONTROL!, 'utf8'));
@@ -27,6 +28,7 @@ export const configureMaterials: NonNullable<CloudAssemblyOverrides['configureMa
     const page=control().pages?.[assets.findIndex(a=>a.id===row.asset_id)]??{parts:[{role:'question',text:'1 + 1 = ?'},{role:'student_work',text:'3'},{role:'reference_answer',text:'2'}]};
     if(page.delayMs)await new Promise(resolve=>setTimeout(resolve,page.delayMs));
     if(page.failOnce&&!failed.has(id)){failed.add(id);throw new MaterialProviderError('provider_unavailable','合成提取暂时失败，原图已保存。',true);}
-    await extractMaterial(jobs.store,{extract:async input=>jobs.request(id,'synthetic-extraction',async()=>({assetId:input.assetId,revision:input.revision,document:{title:'Synthetic acceptance paper',subject:'数学',date:page.date??null,printedCode:page.code??null,page:1},fragments:page.parts.map((part,order)=>({assetId:input.assetId,sourceHash:uploads.source(input.assetId).sourceHash,fragmentId:newId('mfr'),revision:input.revision,role:'question',text:'1 + 1 = ?',number:'1',subpart:null,page:1,order,box:{x:0,y:order/page.parts.length,width:1,height:1/page.parts.length},requiresDiagram:false,check:'passed',uncertainties:[],...part})),warnings:['synthetic_acceptance_only'],runs:[]}))},id,signal);
+    if(page.failAlways)throw new MaterialProviderError('provider_unavailable','合成提取暂时失败，原图已保存。',true);
+    await extractMaterial(jobs.store,{extract:async input=>jobs.request(id,'synthetic-extraction',async()=>({assetId:input.assetId,revision:input.revision,document:{title:'Synthetic acceptance paper',subject:page.subject??'数学',date:page.date??null,printedCode:page.code??null,page:1},fragments:(unsupportedSubject(page.subject)?[]:page.parts).map((part,order)=>({assetId:input.assetId,sourceHash:uploads.source(input.assetId).sourceHash,fragmentId:newId('mfr'),revision:input.revision,role:'question',text:'1 + 1 = ?',number:'1',subpart:null,page:1,order,box:{x:0,y:order/page.parts.length,width:1,height:1/page.parts.length},requiresDiagram:false,check:'passed',uncertainties:[],...part})),warnings:['synthetic_acceptance_only'],runs:[]}))},id,signal);
   });
 };

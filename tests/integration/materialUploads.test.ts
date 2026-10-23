@@ -100,7 +100,9 @@ describe('durable material uploads', () => {
   });
   it('rejects full capacity with retryable 429 before creating files or rows', async () => {
     const f = await fixture(1); await f.uploads.save(f.input);
-    await expect(f.uploads.save({ ...f.input, uploadId: randomUUID() })).rejects.toMatchObject({ status: 429, code: 'capacity_full' });
+    // Different bytes: an identical photo is a duplicate and needs no new capacity (P1-1).
+    const other = await sharp({ create: { width: 24, height: 16, channels: 3, background: '#000' } }).jpeg().toBuffer();
+    await expect(f.uploads.save({ ...f.input, uploadId: randomUUID(), bytes: other })).rejects.toMatchObject({ status: 429, code: 'capacity_full' });
     expect(f.db.prepare('SELECT count(*) n FROM source_asset').get()).toEqual({ n: 1 });
   });
   it('publishes both files atomically before committing the saved material and job', async () => {
@@ -153,5 +155,39 @@ describe('durable material uploads', () => {
     await expect(f.uploads.save({ ...f.input, bytes: Buffer.from('bad image') })).rejects.toMatchObject({ status: 400, code: 'invalid_image' });
     await expect(f.uploads.save({ ...f.input, bytes: Buffer.alloc(15 * 1024 * 1024 + 1) })).rejects.toMatchObject({ status: 413 });
     expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 0 });
+  });
+  it('P1-1: byte-identical re-upload by the same student reuses the saved photo and never starts a second AI job', async () => {
+    const f = await fixture(); const first = await f.uploads.save(f.input);
+    const again = await f.uploads.save({ ...f.input, uploadId: randomUUID(), captureId: f.store.createCapture(randomUUID()).id, filename: 'again.jpg' });
+    expect(again).toMatchObject({ assetId: first.assetId, job: { id: first.job.id, kind: 'extract' }, created: false, duplicate: true });
+    // Replaying the duplicate's own (unrecorded) upload ID stays idempotent.
+    const replay = await f.uploads.save({ ...f.input, uploadId: randomUUID() });
+    expect(replay).toMatchObject({ assetId: first.assetId, duplicate: true });
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
+    expect(f.db.prepare('SELECT count(*) n FROM source_asset').get()).toEqual({ n: 1 });
+    expect(f.db.prepare("SELECT count(*) n FROM material_job WHERE kind='extract'").get()).toEqual({ n: 1 });
+    const other = await sharp({ create: { width: 24, height: 16, channels: 3, background: '#000' } }).jpeg().toBuffer();
+    const retake = await f.uploads.save({ ...f.input, uploadId: randomUUID(), bytes: other });
+    expect(retake.created).toBe(true); expect(retake.duplicate).toBeUndefined();
+    expect(f.db.prepare("SELECT count(*) n FROM material_job WHERE kind='extract'").get()).toEqual({ n: 2 });
+  });
+  it('P1-1: content dedup is per student; another student with the same bytes gets their own copy', async () => {
+    const a = await fixture(); const b = await fixture();
+    await a.uploads.save(a.input);
+    const saved = await b.uploads.save({ ...b.input, bytes: a.input.bytes });
+    expect(saved.created).toBe(true); expect(saved.duplicate).toBeUndefined();
+    expect(b.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
+  });
+  it('P1-1: the same bytes with different role, marking, label or document hints stay a separate material and are processed', async () => {
+    const f = await fixture(10); const first = await f.uploads.save({ ...f.input, hints: { roles: ['question'], label: '第一次' } });
+    const same = await f.uploads.save({ ...f.input, uploadId: randomUUID(), hints: { label: '第一次', roles: ['question'] } });
+    expect(same).toMatchObject({ assetId: first.assetId, duplicate: true });
+    const documentId = (f.db.prepare("INSERT INTO material_document(id,owner_id) VALUES ('mdoc_synthetic','student') RETURNING id").get() as { id: string }).id;
+    for (const hints of [{ roles: ['reference_answer'], label: '第一次' }, { roles: ['question'], label: '第一次', marking: 'unmarked' }, { roles: ['question'], label: '另一个备注' }, { roles: ['question'], label: '第一次', documentId }, {}]) {
+      const saved = await f.uploads.save({ ...f.input, uploadId: randomUUID(), hints: hints as never });
+      expect(saved.created).toBe(true); expect(saved.duplicate).toBeUndefined(); expect(saved.assetId).not.toBe(first.assetId);
+      expect(JSON.parse((f.db.prepare('SELECT hints_json FROM material_asset WHERE id=?').get(saved.assetId) as { hints_json: string }).hints_json)).toEqual(hints);
+    }
+    expect(f.db.prepare("SELECT count(*) n FROM material_job WHERE kind='extract'").get()).toEqual({ n: 6 });
   });
 });

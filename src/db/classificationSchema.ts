@@ -10,6 +10,11 @@ export const ITEM_CATEGORY_COLUMNS_SQL = `
 
 /** Additive classification schema. Keep migrations here: production deployment must review them. */
 export const CLASSIFICATION_SCHEMA_SQL = `
+-- A student's explicit 初中/高中 choice (first-run gate or settings). Additive; no row means "never chosen".
+CREATE TABLE IF NOT EXISTS student_stage_choice (
+  student_id TEXT NOT NULL PRIMARY KEY REFERENCES student_profile(id) ON DELETE CASCADE,
+  chosen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS learning_stage (
   id TEXT NOT NULL PRIMARY KEY,
   name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 100)
