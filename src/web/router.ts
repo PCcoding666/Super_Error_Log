@@ -1,6 +1,6 @@
 import type { PracticeReviewer } from '../ai/practiceReview.js';
 import { submissionState } from '../v2/practiceSubmission.js';
-import { NOTEBOOK_STATUSES, matchesNotebook, notebookUrl, safeNotebookReturn, validNotebookSelection, type NotebookFilters } from './notebook.js';
+import { matchesNotebook, notebookStatusFilter, notebookUrl, safeNotebookReturn, validNotebookSelection, type NotebookFilters } from './notebook.js';
 import type { NotebookPageProps } from './views/items.js';
 import type { HandwritingRecognizer } from '../ai/handwriting.js';
 import { practiceRouter } from './practiceRouter.js';
@@ -367,7 +367,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     render(response, await itemsPage(request, response));
   }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
-  r.get('/install', page((_request, response) => render(response, InstallPage())));
+  r.get('/install', page((_request, response) => render(response, InstallPage({ invitation: options.studentHostWorker === true }))));
 
   /** 「今天」在等 AI 吗：找题中的照片（从最早那张算）或正在准备的练习纸（从开始准备算）。都不在等时 null。 */
   const todayWait = (state: TodayState): TodayWait | null => {
@@ -579,7 +579,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     // Keep unavailable chapter filters visible so a changed category never silently broadens search.
     if (chapter && !chapters.includes(chapter)) chapters.push(chapter);
     const status = str(input?.status);
-    const filters: NotebookFilters = {grade,subject,chapter,status:Object.hasOwn(NOTEBOOK_STATUSES,status) ? status : '',q:str(input?.q).trim().slice(0,200)};
+    const filters: NotebookFilters = {grade,subject,chapter,status:notebookStatusFilter(status),q:str(input?.q).trim().slice(0,200)};
     const matches = (item: V2WeekItem): boolean => matchesNotebook(item,filters,filters.q ? getEvidenceView(item.id)?.questionText : '');
     const items = library.items.filter(matches), backlog = library.backlog.filter(matches);
     const requestedSelection = request.method === 'POST' || request.query.mode === 'select' ? list(input?.itemIds) : [];
@@ -1160,14 +1160,14 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     response.type('image/jpeg').send(await displayImage(media, displaySize(request.query.s)));
   }));
 
-  r.use((_request, response) => render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整。回到今天接着做。' }), 404));
+  r.use((_request, response) => render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整。回到错题本接着做。' }), 404));
 
   const errors: ErrorRequestHandler = (error, request, response, _next) => {
     if (response.headersSent) return;
     const isImage = request.path.startsWith('/img/');
     if (error instanceof NotFound || (error instanceof MobileRequestError && error.status === 404)) {
       if (isImage) { response.status(404).type('text/plain').send('not found'); return; }
-      render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整，或者这道题已经不在了。回到今天接着做。' }), 404);
+      render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整，或者这道题已经不在了。回到错题本接着做。' }), 404);
       return;
     }
     if ((error as { type?: string }).type === 'entity.too.large') {
