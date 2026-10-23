@@ -105,6 +105,8 @@ describe('Slice C：回传到掌握', () => {
   it('延迟 4 天独立做对 → temporarily_mastered，写入掌握事件与确认日期', () => {
     getDb().prepare('UPDATE review_packet SET generated_at = ? WHERE id = ?').run(daysAgo(4), packetId);
     const item = packetItems(packetId)[5]!;
+    // 延迟从这道题的录入日 / 上次作答日算（P0-3），把录入拨到 4 天前。
+    getDb().prepare('UPDATE error_item SET created_at = ? WHERE id = ?').run(daysAgo(4), item.id);
     const r = recordAttempt(packetId, item.id, { completion: 'independent', correct: true }, 'student');
     expect(r.toStatus).toBe('temporarily_mastered');
 
@@ -211,6 +213,9 @@ describe('Slice C：回传到掌握', () => {
     expect((getDb().prepare('SELECT status FROM error_item WHERE id = ?').get(confirmItem.id) as { status: string }).status)
       .toBe('temporarily_mastered');
     getDb().prepare("UPDATE review_packet SET status = 'generated', generated_at = ? WHERE id = ?").run(daysAgo(10), packet2Id);
+    // 确认轮的延迟从进入暂时掌握那次作答算：把那次作答拨到 10 天前。
+    getDb().prepare('UPDATE review_attempt SET performed_at = ? WHERE packet_id = ? AND item_id = ?')
+      .run(daysAgo(10).slice(0, 10), packetId, confirmItem.id);
 
     const r = recordAttempt(packet2Id, confirmItem.id, { completion: 'independent', correct: true }, 'student');
     expect(r.ok).toBe(true);

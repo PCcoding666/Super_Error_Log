@@ -1,3 +1,4 @@
+import { RedoReminder, type RedoOverviewView } from './redoDate.js';
 import { itemContextUrl, itemNotebookReturn } from '../itemLearning.js';
 import { NOTEBOOK_STATUSES, notebookUrl, type NotebookFilters } from '../notebook.js';
 import { stageChoices } from '../../classification/itemCategories.js';
@@ -80,6 +81,8 @@ export interface NotebookPageProps {
   filters?: NotebookFilters; chapters?: string[]; total?: number; selection?: boolean; selectedIds?: string[];
   eligibleIds?: string[]; recoveryItems?: V2WeekItem[]; removed?: string | null; undoReturnTo?: string;
   flash?: { ok?: string | null; err?: string | null };
+  /** 到了「再做」日子的题（P0-3 首页提醒）。 */
+  redo?: RedoOverviewView;
 }
 export function ItemsPage(props: NotebookPageProps): ReactNode {
   const { grade, subject, subjects } = props.category;
@@ -122,6 +125,7 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
     barExtra={props.selection ? <p className="hint notebook-bar-hint" data-notebook-limit="" id="notebook-selection-hint">{selected.size > 8 ? '超过 8 道了，请取消几道后继续。' : selected.size === 0 ? '至少选 1 道题' : '可逐题取消'}</p> : undefined}>
     <div className="notebook-title"><h1>{subjectSwitch}</h1>{props.selection ? <a className="link-btn" href={context}>取消选题</a> : <a className="btn primary practice-fab" href={selectionUrl}>选题练习</a>}</div>
     <p className="page-subtitle" role="status">{grade} · {all.length} 道错题 · {pending} 道待练习{totalNote}</p>
+    {props.selection ? null : <RedoReminder overview={props.redo} compact />}
     {!props.selection && props.materialIntake && (props.materialIntake.pending || props.materialIntake.failed || props.materialIntake.processing) ? <div className="material-surface"><div className="inset-group" data-testid="material-intake">
       {props.materialIntake.pending ? <a className="nav-row" href="/s/materials#material-pending"><span className="row-text">拍的材料里还有 {props.materialIntake.pending} 道题没收进错题本，去勾选</span><span className="chev" aria-hidden="true">›</span></a> : null}
       {props.materialIntake.failed ? <a className="nav-row" href="/s/materials"><span className="row-text tone-orange">{props.materialIntake.failed} 张照片没整理成功，去一键重新整理</span><span className="chev" aria-hidden="true">›</span></a> : null}

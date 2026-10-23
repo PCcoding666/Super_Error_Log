@@ -1,7 +1,8 @@
 import { getDb, now } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
-import { createLearningPractice, getLearningPractice, recommendLearningPractice } from '../learning/queries.js';
-import type { LearningCreateResult, LearningPracticeDetail, LearningRecommendation } from '../learning/contracts.js';
+import { createLearningPractice, getLearningPractice, learningRedoOverview, recommendLearningPractice, type LearningRedoOverview } from '../learning/queries.js';
+import type { LearningCreateResult, LearningPracticeCard, LearningPracticeDetail, LearningRecommendation } from '../learning/contracts.js';
+import { cooldownUntil, todayText } from '../learning/redoSchedule.js';
 
 export type TaskLifecycle = 'active' | 'paused' | 'cancelled';
 export function taskLifecycle(packetId: string): TaskLifecycle {
@@ -25,9 +26,25 @@ export function activePractice(): LearningPracticeDetail | null {
     ORDER BY rp.created_at, rp.rowid LIMIT 1`).get() as {id:string} | undefined;
   return row ? getLearningPractice(row.id, 'all') : null;
 }
-export function suggestedPractice(dir: string): LearningRecommendation {
+export const SUGGESTED_SIZE = 3;
+export type SuggestedPractice = LearningRecommendation & {redo: LearningRedoOverview};
+/**
+ * 首页建议的一小组（3 道）。重练题分数高于新错题，为了让积压的新错题轮得到：
+ * 只要候选里还有新错题（tier 4），这 3 道里至少放 1 道（P0-3）。冷却中的当场做对题已在推荐层排除。
+ */
+export function suggestedPractice(dir: string): SuggestedPractice {
   const all = recommendLearningPractice(dir, 'all');
-  return {...all,recommended:all.recommended.slice(0,3),others:[...all.recommended.slice(3),...all.others],notes:[],limits:{min:1,max:8}};
+  const today = todayText();
+  const cooling = (card: LearningPracticeCard): boolean => card.status === 'attempted' && (cooldownUntil(card.id) ?? '') > today;
+  const ranked = [...all.recommended, ...all.others.filter(card => !cooling(card))];
+  const picked = all.recommended.slice(0, SUGGESTED_SIZE);
+  if (picked.length === SUGGESTED_SIZE && !picked.some(card => card.tier === 4)) {
+    const fresh = ranked.find(card => card.tier === 4 && !picked.includes(card));
+    if (fresh) picked[SUGGESTED_SIZE - 1] = fresh;
+  }
+  const chosen = new Set(picked.map(card => card.id));
+  const others = [...all.recommended, ...all.others].filter(card => !chosen.has(card.id));
+  return {...all,recommended:picked,others,notes:[],limits:{min:1,max:8},redo:learningRedoOverview('all')};
 }
 export function startSuggestedPractice(dir: string, key: string): LearningCreateResult {
   if (!/^[0-9a-f-]{36}$/i.test(key)) return {ok:false,httpStatus:400,message:'请重新打开推荐后再试。'};

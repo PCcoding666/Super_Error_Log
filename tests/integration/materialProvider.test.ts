@@ -114,6 +114,32 @@ describe('grounded material provider protocol', () => {
     expect(checkpoints).toBe(fault === 'reference' ? 1 : 0);
   });
 
+  // Shapes observed from qwen3.8-max, qwen3.8-27b, qwen3.6-plus and qwen3-vl-plus on a real photo:
+  // no source echo, roles as one-item lists, a read that mirrors the request, a verification wrapped in `schema`.
+  it('accepts the output shapes real models return without loosening content checks', async () => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate') send(res, { document, candidates: [{ ...candidate('q', 'question', 0), role: ['question'] }, { ...candidate('w', 'student_work', 1), role: ['student_work'] }], warnings: [] });
+      else if (c.operation === 'read') send(res, { operation: 'read', source: { ...source }, items: [{ ...c.candidate!, text: `visible ${c.candidate!.key}`, uncertainties: [] }] });
+      else send(res, { schema: { candidateKey: c.candidate!.key, check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] } });
+    });
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(result.fragments.map(x => [x.role, x.text, x.check])).toEqual([['question', 'visible q', 'passed'], ['student_work', 'visible w', 'passed']]);
+    expect(result.fragments.every(x => x.sourceHash === source.sourceHash)).toBe(true);
+    expect(result.runs.every(r => r.promptVersion === 'material-v1.1')).toBe(true);
+    expect(f.requests[0]!.messages[0]!.content).toContain('不要外包schema');
+  });
+
+  it.each(['two-roles', 'mirrored-key', 'wrapped-key', 'wrapped-source'])('still rejects %s after unwrapping', async fault => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate') send(res, { document, candidates: [{ ...candidate('q', 'question', 0), role: fault === 'two-roles' ? ['question', 'student_work'] : 'question' }], warnings: [] });
+      else if (c.operation === 'read') send(res, { items: [{ key: fault === 'mirrored-key' ? 'another' : c.candidate!.key, text: 'visible', uncertainties: [] }] });
+      else send(res, { schema: { candidateKey: fault === 'wrapped-key' ? 'another' : c.candidate!.key, ...(fault === 'wrapped-source' ? { source: { ...source, sourceHash: 'invented' } } : {}), check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] } });
+    });
+    await expect(createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+  });
+
   it('retains failed and low verification rather than treating HTTP success as evidence', async () => {
     const f = await local((body, res) => {
       const value = response(body) as any;

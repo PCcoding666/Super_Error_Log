@@ -161,6 +161,9 @@ async function makePractice(base: string, auth: { authorization: string }, itemI
 function printPacket(packetId: string, daysAgo: number): string {
   const generatedAt = new Date(Date.now() - daysAgo * 86400000);
   getDb().prepare("UPDATE review_packet SET status = 'generated', generated_at = ? WHERE id = ?").run(generatedAt.toISOString(), packetId);
+  // 延迟从录入日 / 上次作答日算（P0-3）：真实流程里题目不会晚于练习纸录入，把录入时间拨到打印那天。
+  getDb().prepare('UPDATE error_item SET created_at = ? WHERE created_at > ? AND id IN (SELECT item_id FROM review_packet_item WHERE packet_id = ?)')
+    .run(generatedAt.toISOString(), generatedAt.toISOString(), packetId);
   return localDay(generatedAt);
 }
 
