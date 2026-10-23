@@ -102,7 +102,8 @@ button,a,label,summary{touch-action:manipulation}
 .menu-section{padding:4px 0}
 .menu-section+.menu-section{border-top:1px solid var(--line)}
 .menu-label{margin:6px 16px 2px;font-size:var(--fs-1);color:var(--muted)}
-.menu a{display:flex;align-items:center;gap:8px;min-height:44px;padding:8px 16px;color:var(--ink);text-decoration:none}
+/* 菜单在顶栏里：撤掉 .top a 的居中、粗体和胶囊圆角，行首对齐，勾号占固定前导列。 */
+.menu a{display:flex;align-items:center;justify-content:flex-start;gap:8px;min-height:44px;min-width:0;padding:8px 16px;border-radius:0;color:var(--ink);font-size:var(--fs-3);font-weight:400;text-align:left;text-decoration:none}
 .menu a[aria-current=true]{font-weight:600}
 .menu .mark{width:1.25em;flex:none;text-align:center}
 .group-label{margin:18px 0 8px;font-size:var(--fs-2);font-weight:400;color:var(--muted)}
@@ -160,7 +161,10 @@ main p,main li{max-width:32em}
 .practice-task-actions>.btn,.practice-task-actions>form{flex:1 1 180px;min-width:0}
 .practice-task-actions form .btn{width:100%}
 .practice-task-actions .more{flex-basis:100%}
+/* 短的中文说明按词组和标点断行（keep-all），平衡行宽时不会把「完成」拆成两行；没有标点的长串仍可在任意处换行。
+   底栏说明不用：无脚本时底栏按固定高度留位，大字下多折一行会盖住页面最后一行。 */
 .lead,.hint,.small,.steps-text li,.flash{text-wrap:balance}
+.lead,.hint,.small,.flash,.page-subtitle,.group-footer{word-break:keep-all;overflow-wrap:anywhere}
 .card{background:var(--card);border:1px solid transparent;border-radius:var(--r-2);padding:20px;margin:var(--s-4) 0;box-shadow:var(--surface-shadow)}
 .card>:first-child{margin-top:0}.card>:last-child{margin-bottom:0}
 .card-title{font-size:var(--fs-4);line-height:var(--lh-tight);font-weight:600;margin:0 0 var(--s-2)}
@@ -324,6 +328,12 @@ label[aria-disabled=true]{opacity:.6;cursor:default}
 .wait-line{color:var(--muted);margin:var(--s-2) 0 0;font-variant-numeric:tabular-nums}
 details{margin:var(--s-3) 0}
 summary{cursor:pointer;font-weight:600;min-height:var(--tap);padding:10px 0;line-height:24px}
+/* 展开控件：系统实心 ▶ 换成行首 chevron，收起向右、展开向下。菜单、弹层和自带样式的 .disclosure 不受影响。 */
+:where(details:not(.pop-menu,.week-overview,.today-install))>summary{display:flex;align-items:center;gap:10px;list-style:none}
+:where(details:not(.pop-menu,.week-overview,.today-install))>summary::-webkit-details-marker{display:none}
+:where(details:not(.pop-menu,.week-overview,.today-install,.disclosure))>summary::before{content:"";width:7px;height:7px;flex:none;margin:0 2px;border-right:1.8px solid var(--muted);border-bottom:1.8px solid var(--muted);transform:rotate(-45deg);transition:transform var(--dur-1) var(--ease)}
+:where(details[open]:not(.pop-menu,.week-overview,.today-install,.disclosure))>summary::before{transform:rotate(45deg)}
+@media (forced-colors:active){:where(details:not(.pop-menu,.week-overview,.today-install,.disclosure))>summary::before{border-color:CanvasText}}
 .compare{display:grid;grid-template-columns:1fr;gap:var(--s-2)}
 .compare>div{border-radius:var(--r-1);padding:var(--s-2) var(--s-3);background:var(--card);border:1px solid var(--line)}
 .compare .label{display:block;font-size:var(--fs-1);color:var(--muted);line-height:var(--lh-tight)}
@@ -457,9 +467,15 @@ html:has(body.has-tabbar){scroll-padding-bottom:calc(6.625rem + env(safe-area-in
 .popup-value{position:relative;display:flex;align-items:center}
 .popup-value select{appearance:none;-webkit-appearance:none;width:auto;max-width:12rem;border:0;background:transparent;color:var(--muted);font:inherit;text-align:right;min-height:44px;padding:0 22px 0 8px}
 .popup-value select:focus{border-color:transparent}
-.popup-value::after{content:"⌃⌄";position:absolute;right:0;color:var(--muted);font-size:.8rem;pointer-events:none}
+/* 弹出按钮的上下箭头：画出来的一对 chevron，和系统弹出按钮一致；不用两个文字符号拼。 */
+.popup-value::after{content:"";position:absolute;right:2px;top:50%;width:9px;height:14px;margin-top:-7px;background:var(--muted);pointer-events:none;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 14'%3E%3Cpath d='M1.5 5 4.5 2l3 3M1.5 9l3 3 3-3' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 14'%3E%3Cpath d='M1.5 5 4.5 2l3 3M1.5 9l3 3 3-3' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat}
+@media (forced-colors:active){.popup-value::after{background:CanvasText}}
 .settings-page .inset-group{margin:12px 0}
 .settings-page .settings-list,.settings-page .settings-link{margin:0}
+/* 分组里的行和其他分组列表一样左右各留 16px，分隔线从文字处开始；最后一行不画线。 */
+.settings-page .inset-group .settings-row,.settings-page .inset-group .settings-link{padding:var(--s-2) 16px;border-bottom:0;background-image:linear-gradient(var(--line),var(--line));background-repeat:no-repeat;background-size:calc(100% - 16px) 1px;background-position:right bottom}
+.settings-page .inset-group>:last-child,.settings-page .inset-group .settings-list:last-child>.settings-row:last-child{background-image:none}
+.settings-page .settings-link .chev{color:var(--muted);font-size:var(--fs-4);line-height:1}
 .settings-page .group-footer{margin:6px 16px 16px}
 .choose-list .choice.pick{align-items:center;margin:0;padding:10px 12px;border:0;border-radius:0;background:transparent;box-shadow:none}
 .choose-list .choice.pick+.choice.pick{box-shadow:inset 0 1px 0 var(--line)}
