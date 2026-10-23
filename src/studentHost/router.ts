@@ -224,8 +224,8 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
           recoveryPin: field('pin').slice(0, 16),
           ...(requireCode ? { registrationCode: values.regcode } : {}),
         });
-        // 成功不计入失败次数，只计入全站注册总预算。
-        registrationGuard.success(key);
+        // 成功不计入失败次数，只计入全站注册总预算和这个 IP 的每小时注册上限。
+        registrationGuard.success(key, ip);
         response.status(201);
         response.setHeader('referrer-policy', 'no-referrer');
         sendHtml(response, RegistrationCompletePage({ ...registration, inAppBrowser: inApp(request) }));
@@ -255,7 +255,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       }
       try {
         const invitation = registry.recoverInvitation(values.name, values.phone, field('pin'));
-        recoveryGuard.success(key);
+        recoveryGuard.success(key, ip);
         response.setHeader('referrer-policy', 'no-referrer');
         sendHtml(response, RegistrationCompletePage({ ...invitation, recovered: true, inAppBrowser: inApp(request) }));
       } catch (error) {
@@ -281,7 +281,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       }
       try {
         const session = registry.redeem(raw);
-        loginGuard.success(key);
+        loginGuard.success(key, ip);
         const seconds = Math.max(1, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000));
         const previous = readCookies(request)[SESSION_COOKIE];
         if (previous) registry.revokeSession(previous);

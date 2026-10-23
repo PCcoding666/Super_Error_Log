@@ -8,6 +8,8 @@
  * - 成功不计数；成功后清掉该码的失败记录。
  * - 同一 IP 只有一个很宽的上限（防一台机器乱刷），远高于一个班的正常输错量。
  * - 全站再加一个总预算：失败总数（防大规模猜码），以及注册成功总数（防刷满名额）。
+ * - 注册不要注册码时（默认），同一 IP 每小时成功注册另有上限（防一台机器批量开号），
+ *   仍够一个班在同一个 Wi-Fi 下一起注册。
  * 码本身有 40–60 bit 随机性，限速主要用来挡噪声和滥用，不是唯一的安全措施。
  */
 
@@ -56,14 +58,16 @@ export interface AttemptGuardLimits {
   globalFailures: number;
   /** 全站成功总预算（只对注册有意义；0 = 不限）。 */
   globalSuccesses: number;
+  /** 同一个 IP 的成功上限（只对注册有意义；不设 = 不限）。窗口单独设，通常比失败窗口长。 */
+  perIpSuccess?: { limit: number; windowMs: number };
 }
 
 export const LOGIN_LIMITS: AttemptGuardLimits = { windowMs: 600_000, perCode: 10, perIp: 100, globalFailures: 1000, globalSuccesses: 0 };
-export const REGISTRATION_LIMITS: AttemptGuardLimits = { windowMs: 600_000, perCode: 20, perIp: 100, globalFailures: 1000, globalSuccesses: 200 };
+export const REGISTRATION_LIMITS: AttemptGuardLimits = { windowMs: 600_000, perCode: 20, perIp: 100, globalFailures: 1000, globalSuccesses: 200, perIpSuccess: { limit: 60, windowMs: 3_600_000 } };
 /** 自助找回：按 IP 计失败（每个账号另有落库的 5 次锁定，见 registry.recoverInvitation）。 */
 export const RECOVERY_LIMITS: AttemptGuardLimits = { windowMs: 600_000, perCode: 20, perIp: 30, globalFailures: 300, globalSuccesses: 0 };
 
-export type AttemptBlock = { seconds: number; scope: 'code' | 'ip' | 'global' } | null;
+export type AttemptBlock = { seconds: number; scope: 'code' | 'ip' | 'ip_success' | 'global' } | null;
 
 /** 输入码 → 限速用的主键：规范化后取前 4 位；格式不对的输入按 IP 单独记（不会影响任何真实码）。 */
 export function codeKey(input: string, ip: string): string {
@@ -77,6 +81,7 @@ export class AttemptGuard {
   private readonly perIp: SlidingWindowCounter;
   private readonly failures: SlidingWindowCounter;
   private readonly successes: SlidingWindowCounter | null;
+  private readonly ipSuccesses: SlidingWindowCounter | null;
   private calls = 0;
 
   constructor(readonly limits: AttemptGuardLimits, now: () => number = () => Date.now()) {
@@ -84,17 +89,20 @@ export class AttemptGuard {
     this.perIp = new SlidingWindowCounter(now, limits.perIp, limits.windowMs);
     this.failures = new SlidingWindowCounter(now, limits.globalFailures, limits.windowMs);
     this.successes = limits.globalSuccesses > 0 ? new SlidingWindowCounter(now, limits.globalSuccesses, limits.windowMs) : null;
+    this.ipSuccesses = limits.perIpSuccess ? new SlidingWindowCounter(now, limits.perIpSuccess.limit, limits.perIpSuccess.windowMs) : null;
   }
 
   /** 这次尝试是否要先挡下（挡下时不检查码，防探测）。 */
   blocked(key: string, ip: string): AttemptBlock {
-    if ((this.calls += 1) % 500 === 0) { this.perCode.sweep(); this.perIp.sweep(); }
+    if ((this.calls += 1) % 500 === 0) { this.perCode.sweep(); this.perIp.sweep(); this.ipSuccesses?.sweep(); }
     const global = Math.max(this.failures.blockedSeconds('all'), this.successes?.blockedSeconds('all') ?? 0);
     if (global > 0) return { seconds: global, scope: 'global' };
     const byCode = this.perCode.blockedSeconds(key);
     if (byCode > 0) return { seconds: byCode, scope: 'code' };
     const byIp = this.perIp.blockedSeconds(ip);
     if (byIp > 0) return { seconds: byIp, scope: 'ip' };
+    const byIpSuccess = this.ipSuccesses?.blockedSeconds(ip) ?? 0;
+    if (byIpSuccess > 0) return { seconds: byIpSuccess, scope: 'ip_success' };
     return null;
   }
 
@@ -104,8 +112,9 @@ export class AttemptGuard {
     this.failures.record('all');
   }
 
-  success(key: string): void {
+  success(key: string, ip: string): void {
     this.perCode.clear(key);
     this.successes?.record('all');
+    this.ipSuccesses?.record(ip);
   }
 }

@@ -15,7 +15,7 @@ import { StudentWorkerPool } from '../../src/studentHost/workers.js';
 import { liveWorkerPid, WORKER_PID_FILE, writeWorkerPid } from '../../src/studentHost/workerLock.js';
 import { spawn } from 'node:child_process';
 import { createStudentHostGateway, SESSION_COOKIE, type StudentHostGateway } from '../../src/studentHost/router.js';
-import { AttemptGuard, codeKey, LOGIN_LIMITS } from '../../src/studentHost/attemptGuard.js';
+import { AttemptGuard, codeKey, LOGIN_LIMITS, REGISTRATION_LIMITS } from '../../src/studentHost/attemptGuard.js';
 import { runAdminCli } from '../../src/studentHost/admin-cli.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
 import { accountLabel, parseAdminFilters, readAdminReport } from '../../src/admin/report.js';
@@ -123,12 +123,46 @@ describe('同一个 Wi-Fi 下全班注册和登录（P0-6）', () => {
     const guard = new AttemptGuard({ windowMs: 600_000, perCode: 3, perIp: 100, globalFailures: 1000, globalSuccesses: 2 });
     const key = codeKey('ABCD-EFGH', '192.0.2.1');
     guard.failure(key, '192.0.2.1'); guard.failure(key, '192.0.2.1');
-    guard.success(key);
+    guard.success(key, '192.0.2.1');
     guard.failure(key, '192.0.2.1'); guard.failure(key, '192.0.2.1');
     expect(guard.blocked(key, '192.0.2.1')).toBeNull();
-    guard.success(key);
+    guard.success(key, '192.0.2.1');
     expect(guard.blocked(key, '192.0.2.1')).toMatchObject({ scope: 'global' });
   });
+
+  it('注册成功另按 IP 每小时限量：同一网络够一个班，再多就要等；别的网络不受影响', () => {
+    let now = 1_000_000;
+    const guard = new AttemptGuard(REGISTRATION_LIMITS, () => now);
+    const key = codeKey('', '203.0.113.7');
+    for (let i = 0; i < 59; i++) { guard.success(key, '203.0.113.7'); now += 1_000; }
+    expect(guard.blocked(key, '203.0.113.7')).toBeNull();
+    guard.success(key, '203.0.113.7');
+    // 全站 10 分钟预算（200）远没用完，挡的是这个 IP。
+    expect(guard.blocked(key, '203.0.113.7')).toMatchObject({ scope: 'ip_success' });
+    expect(guard.blocked(codeKey('', '203.0.113.8'), '203.0.113.8')).toBeNull();
+    // 10 分钟的失败窗口过了还不够，要等满一小时。
+    now += REGISTRATION_LIMITS.windowMs;
+    expect(guard.blocked(key, '203.0.113.7')).toMatchObject({ scope: 'ip_success' });
+    now += REGISTRATION_LIMITS.perIpSuccess!.windowMs;
+    expect(guard.blocked(key, '203.0.113.7')).toBeNull();
+  });
+
+  it('不要注册码时，同一个 IP 一小时最多注册 60 个，第 61 个被挡且页面说清楚', async () => {
+    const env = await setup();
+    const statuses: number[] = [];
+    for (let i = 1; i <= 60; i++) {
+      const response = await env.post('/s/register', { name: `测试学生${i}`, phone: `+65800001${String(i).padStart(2, '0')}`, ...pinField }, { 'x-test-ip': '203.0.113.7' });
+      statuses.push(response.status);
+      await response.text();
+    }
+    expect(statuses.every(status => status === 201)).toBe(true);
+    const blocked = await env.post('/s/register', { name: '测试学生61', phone: '+6580000261', ...pinField }, { 'x-test-ip': '203.0.113.7' });
+    expect(blocked.status).toBe(429);
+    expect(await blocked.text()).toContain('刚注册的人太多了');
+    expect(env.registry.listStudents()).toHaveLength(60);
+    const elsewhere = await env.post('/s/register', { name: '测试学生61', phone: '+6580000261', ...pinField }, { 'x-test-ip': '198.51.100.20' });
+    expect(elsewhere.status).toBe(201);
+  }, 60_000);
 
   it('限速时页面说清楚是谁太频繁', async () => {
     const env = await setup();
