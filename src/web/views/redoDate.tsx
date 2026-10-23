@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { dayOrdinal, localDayText, monthDayText } from '../../domain/calendarDay.js';
+import { TODAY_LIMIT } from '../../domain/scheduling.js';
 
 /** 「下次再做」与首页到期提示用到的总览（与 learning/queries 的 LearningRedoOverview 同形）。 */
 export interface RedoOverviewView { dueCount: number; nextDay: string | null; nextCount: number }
@@ -53,15 +54,24 @@ export function pendingRedoText(first: string | null, last: string | null, today
   return `${start}，最晚的要到 ${monthDayText(end)}；每道到期后练习页会排给你，没到日期的先别做。`;
 }
 
-/** 首页 / 练习页的到期提示：到了再做的日子才出现；还没到时只给一句日期。 */
-export function RedoReminder(props: { overview: RedoOverviewView | null | undefined; compact?: boolean }): ReactNode {
+/** 首页的提示：有没记完的练习先提示继续；否则到期了提示今天该做几道；还没到时只给一句日期。 */
+export function RedoReminder(props: { overview: RedoOverviewView | null | undefined; active?: { id: string; left: number } | null; compact?: boolean }): ReactNode {
   const overview = props.overview;
+  if (props.active && props.active.left > 0) {
+    return (
+      <section className="card" data-testid="practice-continue">
+        <h2 className="card-title tone-orange">这次练习还有 {props.active.left} 道没记录</h2>
+        <p className="small muted">做完一道，对一下答案，点「做对了」或「做错了」就记下了。</p>
+        <a className="btn primary" href={`/s/practice/${props.active.id}`}>继续</a>
+      </section>
+    );
+  }
   if (!overview) return null;
   if (overview.dueCount > 0) {
     return (
       <section className="card" data-testid="redo-due">
-        <h2 className="card-title tone-orange">今天有 {overview.dueCount} 道题该再做了</h2>
-        <p className="small muted">之前做对过，已经隔了几天。这次再独立做对，就算掌握。</p>
+        <h2 className="card-title tone-orange">今天该做 {Math.min(overview.dueCount, TODAY_LIMIT)} 道题</h2>
+        <p className="small muted">这几道都隔了几天，今天独立做对就算数。</p>
         <a className="btn primary" href="/s/practices">去练习</a>
       </section>
     );

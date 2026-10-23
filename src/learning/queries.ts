@@ -130,13 +130,23 @@ function scoreCandidates(scope:LearningScope): ScoredCandidate[] {
   return scored.map((entry, index) => ({ ...entry, order: index }));
 }
 
-/** 本周推荐：先懒桥接，再分层打分，selectWeeklyPlan 负责 5–8 与同知识点上限。 */
-export function recommendLearningPractice(mobileDataDir: string, scope:LearningScope='all'): LearningRecommendation {
+function bridgeQuietly(mobileDataDir: string): void {
   try {
     bridgePending(mobileDataDir);
   } catch {
     // 懒桥接整体失败不影响返回。
   }
+}
+
+/** 全部候选按推荐分排好（含冷却中的题），供「今天该做」按到期日筛选。 */
+export function rankedLearningCards(mobileDataDir: string, scope: LearningScope = 'all'): LearningPracticeCard[] {
+  bridgeQuietly(mobileDataDir);
+  return scoreCandidates(scope).map(entry => entry.card);
+}
+
+/** 本周推荐：先懒桥接，再分层打分，selectWeeklyPlan 负责 5–8 与同知识点上限。 */
+export function recommendLearningPractice(mobileDataDir: string, scope:LearningScope='all'): LearningRecommendation {
+  bridgeQuietly(mobileDataDir);
   const scored = scoreCandidates(scope);
   // 冷却中的题不进推荐（仍出现在 others 里，可以手动选）。
   const candidates: PlanCandidate[] = scored.filter(entry => entry.coolingUntil === null).map(entry => ({
@@ -311,7 +321,7 @@ export function listLearningPractices(scope: LearningScope = 'all', limit = 8): 
 }
 
 export interface LearningRedoOverview {
-  /** 今天（含）之前已到「再做」日期的题数：冷却已过的当场做对题 + 到期的确认题。 */
+  /** 今天（含）之前已到「再做」日期的题数（「今天该做」队列截断前的总数）。 */
   dueCount: number;
   /** 还没到日期的题里最早的再做日（YYYY-MM-DD）；没有则 null。 */
   nextDay: string | null;
@@ -320,13 +330,13 @@ export interface LearningRedoOverview {
 }
 
 /**
- * 「下次哪天再做」总览：只看有日期约束的题（attempted、temporarily_mastered），
+ * 「下次哪天再做」总览：待练的题各有到期日（见 nextRedoDay），
  * 已在未完成练习里的题不算（那份练习本身会提示）。
  */
 export function learningRedoOverview(scope: LearningScope = 'all'): LearningRedoOverview {
   const rows = getDb().prepare(
     `SELECT ei.id, ei.status, ei.next_review_at FROM error_item ei
-     WHERE ei.status IN ('attempted','temporarily_mastered')
+     WHERE ei.status IN ('ready_for_reflection','eligible_for_review','needs_recheck','attempted','temporarily_mastered')
      AND NOT EXISTS (
        SELECT 1 FROM review_packet_item rpi
        WHERE rpi.item_id = ei.id

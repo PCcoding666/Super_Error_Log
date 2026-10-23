@@ -551,6 +551,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     throw new NotFound();
   };
 
+  /** 首页「这次练习还有 N 道没记录」：最早一份没做完的练习。 */
+  const activeLeft = (): {id:string;left:number}|null => {
+    const active=activePractice();
+    return active?{id:active.id,left:active.items.length-Object.keys(practiceProgress(active.id).answers).length}:null;
+  };
   const notebookData = async (request: Request, response: Response): Promise<NotebookPageProps> => {
     const state = await loadToday(ctx, request);
     const library = getLearningWeek(ctx.mobileDataDir, 'all', true);
@@ -592,7 +597,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       selection:selecting,
       category:{grade,subject,subjects,stages:stageOptions},anyPhoto:state.week.photos.length > 0,
       finding:state.photos.some(photo=>photo.state === 'finding'),
-      bar:{caption:'',primary:null,secondary:[]},removed,materials:!!ctx.materials,redo:learningRedoOverview('all'),
+      bar:{caption:'',primary:null,secondary:[]},removed,materials:!!ctx.materials,redo:learningRedoOverview('all'),activePractice:activeLeft(),
       flash:{ok:request.query.paired === '1' ? '连上了 ✓' : null,err:!validReturnSelection && request.method !== 'POST' ? '返回的选题信息不可用，请重新选择。' : null}};
   };
   const itemsPage = async (request: Request, response: Response): Promise<ReactNode> => ItemsPage(await notebookData(request,response));
@@ -790,7 +795,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   // ---------- 选这周要练的题 ----------
   const choosePage = async (request: Request, error?: string | null, reason?: string | null): Promise<ReactNode> => {
     const state = await loadToday(ctx, request);
-    return ChoosePage({ recommend: recommendPractice(ctx.mobileDataDir), practiceSlot: getV2Settings().practiceSlot, caption: '', error, reason, ...(request.method === 'POST' ? { selectedIds: list(request.body?.itemIds) } : {}) });
+    // 默认勾选与练习页「今天该做」同一组；没到期的题在「其他可以选的」里。
+    return ChoosePage({ recommend: suggestedPractice(ctx.mobileDataDir), practiceSlot: getV2Settings().practiceSlot, caption: '', error, reason, ...(request.method === 'POST' ? { selectedIds: list(request.body?.itemIds) } : {}) });
   };
   r.get('/choose', page(async (request, response) => render(response, await choosePage(request))));
 
@@ -1053,24 +1059,24 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     render(response, ResultsPage({ practice, summary, next }));
   }));
 
-  const dashboard = (response:Response, error?:string): void => {
+  const dashboard = (response:Response, error?:string, status=200): void => {
     const recommendation=suggestedPractice(ctx.mobileDataDir);
     const tasks=listLearningPractices('all', -1).map(p=>({
       practice:getPractice(p.id)!,lifecycle:taskLifecycle(p.id),recorded:Object.keys(practiceProgress(p.id).answers).length,received:submissionState(p.id).photos.length,reviewStatus:submissionState(p.id).status,
     }));
-    render(response,PracticeDashboardPage({tasks,activeId:activePractice()?.id??null,recommendation,requestKey:crypto.randomUUID(),error}));
+    render(response,PracticeDashboardPage({tasks,activeId:activePractice()?.id??null,recommendation,requestKey:crypto.randomUUID(),error}),status);
   };
   r.get('/practices',page((_request,response)=>dashboard(response)));
   r.post('/practices/start',form,page((request,response)=>{
     const result=startSuggestedPractice(ctx.mobileDataDir,str(request.body?.key));
-    if(!result.ok){response.status(result.httpStatus);dashboard(response,result.message);return;}
+    if(!result.ok){dashboard(response,result.message,result.httpStatus);return;}
     if (taskLifecycle(result.detail.id) !== 'cancelled') requestPrint(result.detail.id, options.coachProvider, 'all');
     response.redirect(303,`/s/practice/${result.detail.id}`);
   }));
   for(const [action,lifecycle] of [['pause','paused'],['resume','active'],['cancel','cancelled']] as const){
     r.post(`/practice/:pid/${action}`,form,page((request,response)=>{
       const p=practiceOf(String(request.params.pid));
-      try{setTaskLifecycle(p.id,lifecycle);}catch(error){response.status(409);dashboard(response,error instanceof Error?error.message:'任务没有更新');return;}
+      try{setTaskLifecycle(p.id,lifecycle);}catch(error){dashboard(response,error instanceof Error?error.message:'任务没有更新',409);return;}
       response.redirect(303,action==='cancel'&&request.body?.next==='choose'?'/s/choose':'/s/practices');
     }));
   }

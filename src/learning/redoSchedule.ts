@@ -48,19 +48,25 @@ export function delayAnchorDay(itemId: string, excludePacketId?: string): string
   return latest ?? intakeDay(itemId);
 }
 
-/** 当场做对（attempted）后，最早哪天再做对才算数：上次作答日 + 3 天。 */
+/** 最早哪天再做对才算数：上次作答日（没作答过是录入日）+ 3 天。 */
 export function cooldownUntil(itemId: string): string | null {
   const anchor = delayAnchorDay(itemId);
   return anchor ? addDayText(anchor, MIN_DELAY_DAYS) : null;
 }
 
+/** 按「上次接触 + 3 天」排期的状态：新错题、上次没独立做对、当场做对。 */
+const DELAYED_STATUSES = new Set(['ready_for_reflection', 'eligible_for_review', 'needs_recheck', 'attempted']);
+
 /**
- * 某题下次该做的日子：attempted → 上次作答 + 3 天；temporarily_mastered → 确认日（next_review_at）；
- * 其余状态没有日期约束（needs_recheck 随时可以重练），返回 null。
+ * 某题下次该做的日子（「今天该做」队列的到期日）：
+ * - temporarily_mastered → 确认日（next_review_at）；
+ * - 新错题、上次没独立做对、当场做对 → 上次作答日（没作答过是录入日）+ 3 天；
+ * - 其余状态（稳定掌握、练习中、归档）没有日期，返回 null。
+ * 到期那天独立做对就算数：没到日期做对只记 attempted，还要再排一次。
  */
 export function nextRedoDay(item: { id: string; status: string; next_review_at?: string | null }): string | null {
-  if (item.status === 'attempted') return cooldownUntil(item.id);
   if (item.status === 'temporarily_mastered') return dayOf(item.next_review_at ?? null);
+  if (DELAYED_STATUSES.has(item.status)) return cooldownUntil(item.id);
   return null;
 }
 

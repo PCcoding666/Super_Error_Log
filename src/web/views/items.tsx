@@ -81,6 +81,7 @@ export interface NotebookPageProps {
   flash?: { ok?: string | null; err?: string | null };
   /** 到了「再做」日子的题（P0-3 首页提醒）。 */
   redo?: RedoOverviewView;
+  activePractice?: { id: string; left: number } | null;
 }
 export function ItemsPage(props: NotebookPageProps): ReactNode {
   const { grade, subject, subjects } = props.category;
@@ -123,7 +124,7 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
     barExtra={props.selection ? <p className="hint notebook-bar-hint" data-notebook-limit="" id="notebook-selection-hint">{selected.size > 8 ? '超过 8 道了，请取消几道后继续。' : selected.size === 0 ? '至少选 1 道题' : '可逐题取消'}</p> : undefined}>
     <div className="notebook-title"><h1>{subjectSwitch}</h1>{props.selection ? <a className="link-btn" href={context}>取消选题</a> : <a className="btn primary practice-fab" href={selectionUrl}>选题练习</a>}</div>
     <p className="page-subtitle" role="status">{grade} · {all.length} 道错题 · {pending} 道待练习{totalNote}</p>
-    {props.selection ? null : <RedoReminder overview={props.redo} compact />}
+    {props.selection ? null : <RedoReminder overview={props.redo} active={props.activePractice} compact />}
     {props.selection ? <p className="hint">选 1–8 道题加入练习。更改筛选或学科会结束本次选题；已建练习不受影响。</p> : null}
     <form method="get" action="/s/items" className="notebook-filters" role="search" aria-label="搜索错题">
       <input type="hidden" name="subject" value={subject} />
