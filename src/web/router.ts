@@ -357,6 +357,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   // 新注册的账号先选学段（初中/高中）才能用其他页面：直接打开拍照、错题本、材料页或上传都会先被拦下。
   // 已有题目、照片（含旧版照片）或已经选过的账号不会被问。只在邀请码网关里生效；设置页本身也能选学段。
+  // 设置页「退出登录」先只读查一次本机草稿属于哪个账号（GET /materials/session），这一步也放行，否则没选学段的新账号退不出去。
   r.post('/stage', form, page((request, response) => {
     if (!chooseStudentStage(getDb(), requireProfile().id, request.body?.grade)) { render(response, StageChoicePage({ error: STAGE_REQUIRED_MESSAGE }), 400); return; }
     clearCookie(request, response, COOKIE.itemsGrade);
@@ -365,7 +366,8 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
   r.use((request, response, next) => {
     try {
-      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path.startsWith('/api/settings') || request.path === '/install' || request.path === '/install/seen') { next(); return; }
+      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path.startsWith('/api/settings') || request.path === '/install' || request.path === '/install/seen'
+        || (request.method === 'GET' && request.path === '/materials/session')) { next(); return; }
       if (!stageChoiceNeeded(getDb(), requireProfile().id)) { next(); return; }
       failed(response, 'stage_required');
       const isPage = (request.method === 'GET' || request.method === 'HEAD') && !wantsJson(request) && !request.path.startsWith('/img/') && !/\/(?:image|crop)\/?$/.test(request.path);

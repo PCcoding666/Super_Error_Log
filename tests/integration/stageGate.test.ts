@@ -33,10 +33,10 @@ class Browser {
   post(p: string, fields: Record<string, string>) { return this.request(p, { method: 'POST', body: new URLSearchParams(fields), headers: { 'content-type': 'application/x-www-form-urlencoded' } }); }
 }
 
-async function login() {
+async function login(options: { materials?: boolean } = {}) {
   const hostDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-stage-')); roots.push(hostDir);
   const registry = StudentRegistry.open(hostDir);
-  const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock', SEL_E2E_LEGACY_CAPTURE: '1' } });
+  const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock', SEL_E2E_LEGACY_CAPTURE: options.materials ? '0' : '1' } });
   const gateway = await createStudentHostGateway({ hostDir, registry, pool }); gateways.push(gateway);
   const app = express(); app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: r => r.socket.remoteAddress ?? 'unknown' }));
   const server = app.listen(0, '127.0.0.1'); servers.push(server); await new Promise<void>(r => server.once('listening', r));
@@ -79,4 +79,19 @@ it('deep links and uploads cannot bypass the stage choice; settings and the choi
   expect(await (await browser.get('/s/settings')).text()).toContain('我的学段');
   expect((await browser.post('/s/stage', { grade: '初中' })).status).toBe(303);
   expect(await (await browser.get('/s/capture')).text()).not.toContain('你现在读初中还是高中？');
+}, 60_000);
+
+it('a new account can still log out before choosing a stage (the logout draft check is not gated)', async () => {
+  const browser = await login({ materials: true });
+  expect(await (await browser.get('/s/?login=1')).text()).toContain('你现在读初中还是高中？');
+  // 设置页的退出脚本先用这个只读接口确认本机草稿属于当前账号；以前被学段拦截成 409，点退出没反应。
+  const session = await browser.request('/s/materials/session', { headers: { accept: 'application/json' } });
+  expect(session.status).toBe(200);
+  expect(await session.json()).toMatchObject({ draftNamespace: expect.any(String), assetCount: 0 });
+  // 拍照和整理仍然要先选学段。
+  const upload = await browser.request('/s/materials/uploads?uploadId=' + crypto.randomUUID(), { method: 'POST', headers: { accept: 'application/json', 'x-upload-id': crypto.randomUUID() }, body: new FormData() });
+  expect(upload.status).toBe(409);
+  const logout = await browser.post('/s/logout', {});
+  expect(logout.status).toBe(303); expect(logout.headers.get('location')).toBe('/s/');
+  expect(await (await browser.get('/s/')).text()).toContain('12 位邀请码');
 }, 60_000);
