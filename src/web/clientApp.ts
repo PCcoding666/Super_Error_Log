@@ -41,6 +41,12 @@ export function sendClientAsset(request: Request, response: Response): void {
   response.send(readFileSync(file));
 }
 
+/** 单页应用自己的路由（相对 /s）；其余路径仍由服务端页面处理。 */
+export const CLIENT_SHELL_ROUTES = ['/', '/new', '/me', '/q/:id'] as const;
+export function isClientShell(pathname: string): boolean {
+  return pathname === '/' || pathname === '/new' || pathname === '/me' || /^\/q\/[^/]+$/.test(pathname);
+}
+
 /** 单页壳：每次读文件（很小），构建更新后无需重启。 */
 export function sendClientShell(response: Response): void {
   const dir = clientAppDir();
