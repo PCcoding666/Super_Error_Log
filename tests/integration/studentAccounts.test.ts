@@ -10,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import express from 'express';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SESSION_TTL_MS, StudentRegistry } from '../../src/studentHost/registry.js';
+import { RECOVERY_LOCK_MS, SESSION_TTL_MS, StudentRegistry } from '../../src/studentHost/registry.js';
 import { StudentWorkerPool } from '../../src/studentHost/workers.js';
 import { liveWorkerPid, WORKER_PID_FILE, writeWorkerPid } from '../../src/studentHost/workerLock.js';
 import { spawn } from 'node:child_process';
@@ -20,7 +20,6 @@ import { runAdminCli } from '../../src/studentHost/admin-cli.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
 import { accountLabel, parseAdminFilters, readAdminReport } from '../../src/admin/report.js';
 import { SettingsPage } from '../../src/web/views/practice.js';
-import { PRIVACY_VERSION } from '../../src/studentHost/privacyText.js';
 
 const DAY = 86_400_000;
 const WECHAT_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50(0x1800322f) NetType/WIFI Language/zh_CN';
@@ -49,10 +48,10 @@ function openRegistry(dir = root(), now?: () => Date): StudentRegistry {
 }
 
 /** 网关 + 合成 IP（x-test-ip 只在测试夹具里被 ipOf 采信）。 */
-async function setup(options: { now?: () => Date } = {}) {
+async function setup(options: { now?: () => Date; requireRegistrationCode?: boolean } = {}) {
   const dir = root();
   const registry = StudentRegistry.open(dir, options.now ? { now: options.now } : undefined);
-  const gateway = await createStudentHostGateway({ registry, now: options.now });
+  const gateway = await createStudentHostGateway({ registry, now: options.now, requireRegistrationCode: options.requireRegistrationCode ?? false });
   gateways.push(gateway);
   const app = express();
   app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: request => String(request.headers['x-test-ip'] ?? '192.0.2.10') }));
@@ -76,18 +75,19 @@ function sessionCookie(response: Response): string {
   expect(line).toBeTruthy();
   return line!.split(';')[0]!;
 }
-const consent = { age: '14plus', consent: '1' };
+/** 注册时自己设的 4 位找回码（合成）。 */
+const pinField = { pin: '2580' };
 
 // ---------- P0-6 限流按码计数 + 全站预算 ----------
 
 describe('同一个 Wi-Fi 下全班注册和登录（P0-6）', () => {
   it('40 个同学同一出口 IP 用班级注册码注册全部成功；10 次别人的错码后，正确的码照样能登录', async () => {
-    const env = await setup();
+    const env = await setup({ requireRegistrationCode: true });
     const { code: classCode } = env.registry.createRegistrationCode({ label: '合成高三一班', maxUses: 45 });
     const statuses: number[] = [];
     const codes: string[] = [];
     for (let i = 1; i <= 40; i++) {
-      const response = await env.post('/s/register', { regcode: classCode, name: `测试学生${i}`, phone: `+65800000${String(i).padStart(2, '0')}`, ...consent }, { 'x-test-ip': '203.0.113.7' });
+      const response = await env.post('/s/register', { regcode: classCode, name: `测试学生${i}`, phone: `+65800000${String(i).padStart(2, '0')}`, ...pinField }, { 'x-test-ip': '203.0.113.7' });
       statuses.push(response.status);
       if (response.status === 201) codes.push(codeFrom(await response.text())); else await response.text();
     }
@@ -141,11 +141,11 @@ describe('同一个 Wi-Fi 下全班注册和登录（P0-6）', () => {
 
 // ---------- P0-6 注册码门槛 ----------
 
-describe('注册必须用老师发的注册码（P0-6）', () => {
+describe('打开班级注册码时（SEL_REGISTRATION_CODE_REQUIRED=1），注册必须用老师发的注册码（P0-6）', () => {
   it('没有注册码、错码、作废、过期、名额用完都不能注册，也不占名额', async () => {
     let now = new Date('2026-10-22T08:00:00Z');
-    const env = await setup({ now: () => now });
-    const fields = { name: '测试学生甲', phone: '+6581234567', ...consent };
+    const env = await setup({ now: () => now, requireRegistrationCode: true });
+    const fields = { name: '测试学生甲', phone: '+6581234567', ...pinField };
     for (const regcode of ['', 'WRNG-0000', 'not a code']) {
       const response = await env.post('/s/register', { ...fields, regcode });
       expect(response.status).toBe(400);
@@ -169,7 +169,7 @@ describe('注册必须用老师发的注册码（P0-6）', () => {
   });
 
   it('注册码只存哈希；已有账号、已有邀请码和管理员建号不受影响', async () => {
-    const env = await setup();
+    const env = await setup({ requireRegistrationCode: true });
     const { studentId } = env.registry.createStudent();
     const oldCode = env.registry.issueInvitation(studentId).code;
     const created = env.registry.createRegistrationCode({ label: '合成班' });
@@ -182,58 +182,150 @@ describe('注册必须用老师发的注册码（P0-6）', () => {
   });
 
   it('同一班级码重复登记（含姓名里多一个空格）算失败，且不会给出原码', async () => {
-    const env = await setup();
+    const env = await setup({ requireRegistrationCode: true });
     const { code } = env.registry.createRegistrationCode({ label: '合成班' });
-    const first = await env.post('/s/register', { regcode: code, name: '测试 甲', phone: '13800000001', ...consent });
+    const first = await env.post('/s/register', { regcode: code, name: '测试 甲', phone: '13800000001', ...pinField });
     expect(first.status).toBe(201);
     const invite = codeFrom(await first.text());
-    const again = await env.post('/s/register', { regcode: code, name: '测试甲', phone: '+86 138-0000-0001', ...consent });
+    const again = await env.post('/s/register', { regcode: code, name: '测试甲', phone: '+86 138-0000-0001', ...pinField });
     expect(again.status).toBe(400);
     expect(await again.text()).not.toContain(invite);
     expect(env.registry.listStudents()).toHaveLength(1);
   });
 });
 
-// ---------- P0-10 同意与未满 14 周岁 ----------
+// ---------- 注册降门槛与自助找回（2026-10-23） ----------
 
-describe('隐私规则与同意（P0-10）', () => {
-  it('隐私规则页公开可看，标明草稿，联系方式是占位；注册页有不预先勾选的同意框', async () => {
+describe('默认注册：姓名 + 手机号 + 自己设的 4 位找回码', () => {
+  it('不要注册码，也没有同意勾选和隐私规则页；登录页能去找回', async () => {
     const env = await setup();
-    const privacy = await env.get('/s/privacy');
-    expect(privacy.status).toBe(200);
-    const html = await privacy.text();
-    expect(html).toContain('个人信息处理规则');
-    expect(html).toContain('data-testid="privacy-draft"');
-    expect(html).toContain('联系方式待定');
-    expect(html).toContain('阿里云百炼');
-    expect(html).toContain('未满 14 周岁');
     const register = await (await env.get('/s/register')).text();
-    const consentInput = /<input[^>]*name="consent"[^>]*>/.exec(register)![0];
-    expect(consentInput).toContain('required=""');
-    expect(consentInput).not.toContain('checked');
-    expect(register).toContain('href="/s/privacy"');
-    expect(register).toContain('name="regcode"');
-    expect(await (await env.get('/s/')).text()).toContain('href="/s/privacy"');
+    expect(register).not.toContain('name="regcode"');
+    expect(register).not.toContain('name="consent"');
+    expect(register).not.toContain('/s/privacy');
+    expect(register).toContain('name="pin"');
+    expect(await (await env.get('/s/')).text()).toContain('href="/s/recover"');
+    const privacy = await env.get('/s/privacy');
+    expect(await privacy.text()).not.toContain('个人信息处理规则');
+    const response = await env.post('/s/register', { name: '测试学生甲', phone: '+6581234567', ...pinField });
+    expect(response.status).toBe(201);
+    codeFrom(await response.text());
   });
 
-  it('不勾同意、不选年龄、未满 14 周岁没有家长同意都不能注册；注册码名额不被消耗', async () => {
+  it('找回码必须是 4 位数字且不能太好猜；只存加盐摘要，不存明文', async () => {
     const env = await setup();
-    const { code } = env.registry.createRegistrationCode({ label: '合成班', maxUses: 5 });
-    const base = { regcode: code, name: '测试学生甲', phone: '+6581234567' };
-    for (const fields of [{ age: '14plus' }, { consent: '1' }, { age: 'under14', consent: '1' }, { age: 'adult', consent: '1' }] as Array<Record<string, string>>) {
-      const response = await env.post('/s/register', { ...base, ...fields });
+    for (const pin of ['', '12', '12345', 'abcd', '1234', '0000', '9876', '3456']) {
+      const response = await env.post('/s/register', { name: '测试学生甲', phone: '+6581234567', pin });
       expect(response.status).toBe(400);
-      expect(await response.text()).not.toContain('registered-invite-code');
+      expect(await response.text()).toContain('4 位数字');
     }
     expect(env.registry.listStudents()).toHaveLength(0);
-    expect(env.registry.listRegistrationCodes()[0]!.usedCount).toBe(0);
-    const guardian = await env.post('/s/register', { ...base, age: 'under14', guardian: '1', consent: '1' });
-    expect(guardian.status).toBe(201);
+    expect((await env.post('/s/register', { name: '测试学生甲', phone: '+6581234567', pin: '1212' })).status).toBe(201);
     const db = new DatabaseSync(path.join(env.dir, 'registry.db'), { readOnly: true });
-    const row = db.prepare('SELECT consent_version, consent_at, age_band, guardian_consent, registration_code_id FROM student_registration').get() as Record<string, string>;
+    const row = db.prepare('SELECT recovery_hash FROM student_registration').get() as { recovery_hash: string };
     db.close();
-    expect(row).toMatchObject({ consent_version: PRIVACY_VERSION, age_band: 'under14', guardian_consent: '1', registration_code_id: env.registry.listRegistrationCodes()[0]!.id });
-    expect(row.consent_at).toBeTruthy();
+    expect(row.recovery_hash).toMatch(/^scrypt\$[\w-]+\$[\w-]+$/);
+    expect(row.recovery_hash).not.toContain('1212');
+  });
+
+  it('同一姓名手机号再注册：不建新账号，提示用找回码找回', async () => {
+    const env = await setup();
+    await (await env.post('/s/register', { name: '测试 甲', phone: '13800000001', ...pinField })).text();
+    const again = await env.post('/s/register', { name: '测试甲', phone: '+86 138-0000-0001', ...pinField });
+    expect(again.status).toBe(400);
+    const html = await again.text();
+    expect(html).toContain('已经注册过了');
+    expect(html).toContain('href="/s/recover"');
+    expect(html).not.toContain('registered-invite-code');
+    expect(env.registry.listStudents()).toHaveLength(1);
+  });
+});
+
+describe('自助找回：姓名 + 手机号 + 找回码', () => {
+  it('对上就发新码；旧码和所有已登录的设备都失效，学习目录不变', async () => {
+    const env = await setup();
+    const registered = await env.post('/s/register', { name: '测试学生甲', phone: '13800000001', ...pinField });
+    const oldCode = codeFrom(await registered.text());
+    const oldSession = sessionCookie(await env.post('/s/login', { code: oldCode }));
+    const [student] = env.registry.listStudents();
+    for (const fields of [{ pin: '1357' }, { pin: '' }, { phone: '13800000002' }, { name: '测试学生乙' }]) {
+      const response = await env.post('/s/recover', { name: '测试学生甲', phone: '138 0000 0001', ...pinField, ...fields });
+      expect(response.status).toBe(400);
+      const html = await response.text();
+      expect(html).toContain('姓名、手机号或找回码不对');
+      expect(html).not.toContain('registered-invite-code');
+    }
+    const recovered = await env.post('/s/recover', { name: '测试 学生甲', phone: '+86 138-0000-0001', ...pinField });
+    expect(recovered.status).toBe(200);
+    const html = await recovered.text();
+    expect(html).toContain('找回成功');
+    const newCode = codeFrom(html);
+    expect(newCode).not.toBe(oldCode);
+    expect((await env.post('/s/login', { code: oldCode })).status).toBe(400);
+    expect((await env.get('/s/account', { cookie: oldSession })).status).toBe(401);
+    expect((await env.post('/s/login', { code: newCode })).status).toBe(303);
+    expect(env.registry.listStudents().map(s => s.studentId)).toEqual([student!.studentId]);
+  });
+
+  it('同一账号连续错 5 次锁 24 小时，计数存在注册表里（重开也还锁着）；到时间后找回码对就能找回', async () => {
+    let now = new Date('2026-10-23T08:00:00Z');
+    const dir = root();
+    const first = openRegistry(dir, () => now);
+    first.registerStudent('测试学生甲', '+6581234567', { recoveryPin: '2580' });
+    for (let i = 0; i < 4; i++) expect(() => first.recoverInvitation('测试学生甲', '+6581234567', '1357')).toThrow('姓名、手机号或找回码不对');
+    first.close();
+    registries.splice(registries.indexOf(first), 1);
+    const reopened = openRegistry(dir, () => now);
+    expect(() => reopened.recoverInvitation('测试学生甲', '+6581234567', '1357')).toThrow('姓名、手机号或找回码不对');
+    // 第 5 次错之后，连正确的找回码也要等。
+    expect(() => reopened.recoverInvitation('测试学生甲', '+6581234567', '2580')).toThrow('以后再试');
+    now = new Date(now.getTime() + RECOVERY_LOCK_MS + 1000);
+    expect(reopened.recoverInvitation('测试学生甲', '+6581234567', '2580').code).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+  });
+
+  it('停用的账号不能自助找回', () => {
+    const registry = openRegistry();
+    const { studentId } = registry.registerStudent('测试学生甲', '+6581234567', { recoveryPin: '2580' });
+    registry.disableStudent(studentId);
+    expect(() => registry.recoverInvitation('测试学生甲', '+6581234567', '2580')).toThrow('姓名、手机号或找回码不对');
+  });
+
+  it('老账号没有找回码：找回不行；登录后在「我的邀请码」里补设，之后就能找回；管理员建的号没有找回', async () => {
+    const env = await setup();
+    const legacy = env.registry.registerStudent('测试学生甲', '+6581234567');
+    const cookie = sessionCookie(await env.post('/s/login', { code: legacy.code }));
+    expect((await env.post('/s/recover', { name: '测试学生甲', phone: '+6581234567', pin: '2580' })).status).toBe(400);
+    const before = await (await env.get('/s/account', { cookie })).text();
+    expect(before).toContain('还没设找回码');
+    const weak = await env.post('/s/account/recovery', { pin: '1111' }, { cookie });
+    expect(weak.status).toBe(400);
+    expect(await weak.text()).toContain('没能保存找回码');
+    const saved = await env.post('/s/account/recovery', { pin: '2580' }, { cookie });
+    expect(saved.status).toBe(303);
+    const flash = saved.headers.getSetCookie().find(line => line.startsWith('sel_account_flash='))!.split(';')[0];
+    const after = await (await env.get('/s/account', { cookie: `${cookie}; ${flash}` })).text();
+    expect(after).toContain('找回码已保存');
+    expect(after).toContain('已经设好了');
+    expect((await env.post('/s/recover', { name: '测试学生甲', phone: '+6581234567', pin: '2580' })).status).toBe(200);
+
+    const { studentId } = env.registry.createStudent();
+    const adminCookie = sessionCookie(await env.post('/s/login', { code: env.registry.issueInvitation(studentId).code }));
+    expect(await (await env.get('/s/account', { cookie: adminCookie })).text()).not.toContain('data-testid="recovery-pin"');
+    const refused = await env.post('/s/account/recovery', { pin: '2580' }, { cookie: adminCookie });
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain('不是用姓名和手机号注册的');
+  });
+
+  it('找回页按 IP 限速，被挡时不检查姓名手机号', async () => {
+    const env = await setup();
+    for (let i = 0; i < 20; i++) {
+      const response = await env.post('/s/recover', { name: `测试学生${i}`, phone: '+6581234567', pin: '2580' }, { 'x-test-ip': '198.51.100.9' });
+      expect(response.status).toBe(400);
+      await response.text();
+    }
+    const blocked = await env.post('/s/recover', { name: '测试学生甲', phone: '+6581234567', pin: '2580' }, { 'x-test-ip': '198.51.100.9' });
+    expect(blocked.status).toBe(429);
+    expect(await blocked.text()).toContain('试得太频繁了');
   });
 });
 
@@ -275,8 +367,7 @@ describe('会话续期与我的邀请码（P0-11）', () => {
 
   it('设置里的「我的邀请码」能看到并复制本机登录用的码；一键重新生成后旧码和别的设备失效、本机继续可用', async () => {
     const env = await setup();
-    const { code: classCode } = env.registry.createRegistrationCode({ label: '合成班' });
-    const registered = await env.post('/s/register', { regcode: classCode, name: '测试学生甲', phone: '+6581234567', ...consent });
+    const registered = await env.post('/s/register', { name: '测试学生甲', phone: '+6581234567', ...pinField });
     const code = codeFrom(await registered.text());
     const phone = sessionCookie(await env.post('/s/login', { code }));
     const tablet = sessionCookie(await env.post('/s/login', { code }));
@@ -432,7 +523,7 @@ describe('管理 CLI（P1-5、P1-6）', () => {
     const lines: string[] = [];
     expect(runAdminCli(['registration-code', 'create', '--uses', '35', '--days', '7', '合成', '高三一班'], line => lines.push(line))).toBe(0);
     const code = /注册码（只显示这一次）：([A-Z0-9]{4}-[A-Z0-9]{4})/.exec(lines.join('\n'))![1]!;
-    expect(registry.registerStudent('测试学生甲', '+6581234567', { registrationCode: code, consent: { privacyVersion: PRIVACY_VERSION, ageBand: '14plus', guardianConsent: false } }).code).toBeTruthy();
+    expect(registry.registerStudent('测试学生甲', '+6581234567', { registrationCode: code, recoveryPin: '2580' }).code).toBeTruthy();
     const listed: string[] = [];
     expect(runAdminCli(['registration-code', 'list'], line => listed.push(line))).toBe(0);
     expect(listed.join('\n')).toContain('「合成 高三一班」  已用 1/35  可用');

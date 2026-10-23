@@ -764,7 +764,6 @@ export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?:
       </dl>
       {props.studentHostWorker ? <a className="settings-link" href="/s/account" data-testid="settings-my-invite" data-key="settings-my-invite">我的邀请码<span className="chev" aria-hidden="true">›</span></a> : null}
       <a className="settings-link" href="/s/install" data-key="settings-install"><Phrased text="怎么放到主屏幕" /><span className="chev" aria-hidden="true">›</span></a>
-      {props.studentHostWorker ? <a className="settings-link" href="/s/privacy" data-key="settings-privacy">个人信息处理规则<span className="chev" aria-hidden="true">›</span></a> : null}
       </div>
       {props.studentHostWorker ? (
         <form method="post" action="/s/logout" className="settings-logout">

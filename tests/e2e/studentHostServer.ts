@@ -18,8 +18,7 @@ const codes = students.map(id => registry.issueInvitation(id).code);
 const reloginCodes = students.map(id => registry.issueInvitation(id).code);
 // Third code reauthenticates A without deleting A's pending browser namespace.
 codes.push(registry.issueInvitation(students[0]!).code);
-// 2026-10-22：公开注册要用注册码；另有一个邀请码 3 天后到期的合成学生，用来看设置页提醒。
-const registrationCode = registry.createRegistrationCode({ label: '合成浏览器班级', maxUses: 50 }).code;
+// 另有一个邀请码 3 天后到期的合成学生，用来看设置页提醒。
 const expiringStudent = registry.createStudent().studentId;
 const expiringCode = registry.issueInvitation(expiringStudent).code;
 {
@@ -31,13 +30,13 @@ const control = path.join(root, 'material-control.json');
 fs.writeFileSync(control, process.env.SEL_E2E_MATERIAL_CONFIG ?? '{}');
 const fixtureEnv = process.env.SEL_E2E_MATERIAL_JOURNEY === '1' ? { SEL_E2E_MATERIAL_FIXTURE: pathToFileURL(path.resolve('tests/e2e/materialFixture.ts')).href, SEL_E2E_MATERIAL_CONTROL: control } : {};
 const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { ...fixtureEnv, NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_STUDENT_WORKER_FAKE: '1', SEL_E2E_LEGACY_CAPTURE: process.env.SEL_E2E_MATERIAL_CAPTURE === '1' ? '0' : '1', SEL_E2E_MATERIAL_DELAY: process.env.SEL_E2E_MATERIAL_CAPTURE === '1' ? '1' : '0' } });
-const gateway = await createStudentHostGateway({ registry, pool });
+const gateway = await createStudentHostGateway({ registry, pool, requireRegistrationCode: false });
 const app = express();
 app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: req => req.socket.remoteAddress ?? '127.0.0.1' }));
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-process.send?.({ base, codes, reloginCodes, registrationCode, expiringCode });
+process.send?.({ base, codes, reloginCodes, expiringCode });
 let stopping = false;
 async function stop() {
   if (stopping) return;

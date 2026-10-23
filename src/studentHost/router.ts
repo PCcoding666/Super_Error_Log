@@ -4,9 +4,11 @@
  * - 登录：POST /s/login（同源校验）兑换邀请码 → sel_student 会话 cookie
  *   （HttpOnly、SameSite=Lax、Path=/s、非本机 Secure、30 天，活跃使用时滑动续期）。错误提示统一，不暴露学生存在性。
  *   限速按「码」计失败次数（成功不计），另有很宽的单 IP 上限和全站预算，见 attemptGuard.ts（P0-6）。
- * - 注册：POST /s/register 需要老师/管理员预发的注册码，并勾选同意隐私规则（未满 14 周岁需家长同意）。
- * - 我的邀请码：GET /s/account 查看/复制本设备登录用的码；POST /s/account/regenerate 一键换新码（P0-11）。
- * - 隐私规则：GET /s/privacy（公开）。
+ * - 注册：POST /s/register 填姓名、手机号和自己设的 4 位找回码。设了 SEL_REGISTRATION_CODE_REQUIRED=1 时
+ *   还要老师/管理员预发的班级注册码（默认不要）。
+ * - 找回：POST /s/recover 姓名 + 手机号 + 找回码对上，作废旧码和会话，当场发新码；同一账号连续错 5 次锁 24 小时。
+ * - 我的邀请码：GET /s/account 查看/复制本设备登录用的码；POST /s/account/regenerate 一键换新码（P0-11）；
+ *   POST /s/account/recovery 设置或修改找回码（老账号在这里补设）。
  * - 退出：POST /s/logout 立即撤销会话并清掉本机页面标记（业务 cookie），不删除学习数据。
  * - 转发：其余 /s/* 按会话找到学生，流式代理到该学生的独立 worker 进程。
  *   - 禁止旧 /s/pair（绕过新登录的口子）与任何含编码/穿越字符的路径，绝不转发到 /v1 /v2。
@@ -21,9 +23,8 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import express, { Router, type Request, type Response } from 'express';
 import { isAccountRole } from './accountRole.js';
-import { INVITATION_WARN_MS, RegistryError, StudentRegistry, resolveStudentHostDir, type AgeBand } from './registry.js';
-import { AttemptGuard, codeKey, LOGIN_LIMITS, REGISTRATION_LIMITS } from './attemptGuard.js';
-import { PRIVACY_VERSION } from './privacyText.js';
+import { INVITATION_WARN_MS, RegistryError, StudentRegistry, resolveStudentHostDir } from './registry.js';
+import { AttemptGuard, codeKey, LOGIN_LIMITS, RECOVERY_LIMITS, REGISTRATION_LIMITS } from './attemptGuard.js';
 import { isInAppBrowserAgent } from '../web/inAppBrowser.js';
 import { StudentWorkerPool, WorkerStartError } from './workers.js';
 import { registerStaticAssets } from '../web/staticAssets.js';
@@ -31,7 +32,7 @@ import { COOKIE, clearCookie, readCookies, setCookie } from '../web/session.js';
 import { TRAIL_COOKIE } from '../web/trail.js';
 import type { RateLimiter } from '../mobile/rateLimit.js';
 import { sendHtml } from '../views/render.js';
-import { AccountPage, HostErrorPage, LoginPage, PrivacyPage, RegistrationPage, RegistrationCompletePage } from './loginView.js';
+import { AccountPage, HostErrorPage, LoginPage, RecoveryPage, RegistrationPage, RegistrationCompletePage } from './loginView.js';
 import { CAPACITY_RETRY_SECONDS, CapacityWaitlist, capacityLines, capacityPageHtml } from './busyView.js';
 
 /** 「我的邀请码」换码成功的一次性提示（网关自用，不转发给 worker，也不在业务 cookie 白名单里）。 */
@@ -112,7 +113,7 @@ function safeRelativeUrl(rawUrl: string): string | null {
   if (!pathname.startsWith('/')) return null;
   if (pathname.includes('%') || pathname.includes('\\') || pathname.includes('..') || pathname.includes('\0')) return null;
   if (pathname === '/pair' || pathname.startsWith('/pair/')) return null;
-  if (/^\/(?:login|logout|register|privacy|account-copy\.js)\/?$/i.test(pathname)) return null;
+  if (/^\/(?:login|logout|register|recover|account-copy\.js)\/?$/i.test(pathname)) return null;
   if (/^\/account(?:\/|$)/i.test(pathname)) return null;
   return rawUrl;
 }
@@ -131,6 +132,8 @@ export interface StudentHostGatewayOptions {
   now?: () => Date;
   /** 测试注入：限速器用的时钟（毫秒）。 */
   throttleNow?: () => number;
+  /** 注册要不要班级注册码；缺省读 SEL_REGISTRATION_CODE_REQUIRED=1（默认不要）。 */
+  requireRegistrationCode?: boolean;
 }
 
 /** 「复制邀请码」的小脚本：网关自己提供（script-src 'self'），没有脚本时码本身可以长按选择。 */
@@ -167,6 +170,8 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   const pool = options.pool ?? new StudentWorkerPool({ dirFor: studentId => registry.studentDir(studentId), sharedDir: registry.hostDir });
   const loginGuard = new AttemptGuard(LOGIN_LIMITS, options.throttleNow);
   const registrationGuard = new AttemptGuard(REGISTRATION_LIMITS, options.throttleNow);
+  const recoveryGuard = new AttemptGuard(RECOVERY_LIMITS, options.throttleNow);
+  const requireCode = options.requireRegistrationCode ?? process.env.SEL_REGISTRATION_CODE_REQUIRED === '1';
   const now = options.now ?? ((): Date => new Date());
   let built: Router | null = null;
 
@@ -192,51 +197,72 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
 
     const inApp = (request: Request): boolean => isInAppBrowserAgent(request.headers['user-agent']);
 
-    // ---------- 公开页：隐私规则与复制脚本（无学生数据） ----------
-    r.get('/privacy', (_request, response) => sendHtml(response, PrivacyPage()));
+    // ---------- 公开资源：复制脚本（无学生数据） ----------
     r.get('/account-copy.js', (_request, response) => {
       response.setHeader('cache-control', 'public, max-age=3600');
       response.type('application/javascript').send(COPY_SCRIPT);
     });
 
-    // ---------- 公开注册（注册码 + 姓名手机号 + 同意；不能指定账号身份或学生 ID） ----------
-    r.get('/register', (request, response) => sendHtml(response, RegistrationPage({ inAppBrowser: inApp(request) })));
+    // ---------- 公开注册（姓名手机号 + 找回码；打开时另要注册码；不能指定账号身份或学生 ID） ----------
+    r.get('/register', (request, response) => sendHtml(response, RegistrationPage({ inAppBrowser: inApp(request), requireCode })));
     r.post('/register', form, (request, response) => {
       if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
       const ip = deps.ipOf(request);
       const field = (name: string): string => typeof request.body?.[name] === 'string' ? request.body[name] : '';
-      const values = {
-        name: field('name').slice(0, 60), phone: field('phone').slice(0, 40), regcode: field('regcode').slice(0, 20),
-        ageBand: field('age'), consent: field('consent') === '1', guardian: field('guardian') === '1',
-      };
-      const key = codeKey(values.regcode, ip);
+      const values = { name: field('name').slice(0, 60), phone: field('phone').slice(0, 40), regcode: field('regcode').slice(0, 20) };
+      const page = (extra: Parameters<typeof RegistrationPage>[0]): void => sendHtml(response, RegistrationPage({ inAppBrowser: inApp(request), requireCode, values, ...extra }));
+      const key = codeKey(requireCode ? values.regcode : '', ip);
       const blocked = registrationGuard.blocked(key, ip);
       if (blocked) {
         response.setHeader('retry-after', String(blocked.seconds));
         response.status(429);
-        sendHtml(response, RegistrationPage({ blocked, inAppBrowser: inApp(request), values }));
+        page({ blocked });
         return;
       }
       try {
-        const ageBand: AgeBand | '' = values.ageBand === '14plus' || values.ageBand === 'under14' ? values.ageBand : '';
-        if (!values.consent || !ageBand) {
-          throw new RegistryError('consent_required', '请选择年龄，并勾选「我已阅读并同意《个人信息处理规则》」。');
-        }
         const registration = registry.registerStudent(values.name, values.phone, {
-          registrationCode: values.regcode,
-          consent: { privacyVersion: PRIVACY_VERSION, ageBand, guardianConsent: values.guardian },
+          recoveryPin: field('pin').slice(0, 16),
+          ...(requireCode ? { registrationCode: values.regcode } : {}),
         });
-        // 成功不计入「这个码」的失败次数，只计入全站注册总预算。
+        // 成功不计入失败次数，只计入全站注册总预算。
         registrationGuard.success(key);
         response.status(201);
         response.setHeader('referrer-policy', 'no-referrer');
         sendHtml(response, RegistrationCompletePage({ ...registration, inAppBrowser: inApp(request) }));
       } catch (error) {
         if (!(error instanceof RegistryError)) throw error;
-        // 只有「码不对」和「重复登记」算失败（后者可被用来探测谁注册过）；填错格式、没勾同意不算。
+        // 只有「码不对」和「重复登记」算失败（后者可被用来探测谁注册过）；填错格式不算。
         if (error.code === 'invalid_registration_code' || error.code === 'duplicate_registration') registrationGuard.failure(key, ip);
         response.status(error.code === 'capacity_full' ? 503 : 400);
-        sendHtml(response, RegistrationPage({ error: error.message, inAppBrowser: inApp(request), values: error.code === 'invalid_registration_code' ? { ...values, regcode: '' } : values }));
+        page({ error: error.message, duplicate: error.code === 'duplicate_registration', values: error.code === 'invalid_registration_code' ? { ...values, regcode: '' } : values });
+      }
+    });
+
+    // ---------- 自助找回（姓名 + 手机号 + 找回码 → 作废旧码，发新码） ----------
+    r.get('/recover', (request, response) => sendHtml(response, RecoveryPage({ inAppBrowser: inApp(request) })));
+    r.post('/recover', form, (request, response) => {
+      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      const ip = deps.ipOf(request);
+      const field = (name: string): string => typeof request.body?.[name] === 'string' ? request.body[name] : '';
+      const values = { name: field('name').slice(0, 60), phone: field('phone').slice(0, 40) };
+      const key = `ip:${ip}`;
+      const blocked = recoveryGuard.blocked(key, ip);
+      if (blocked) {
+        response.setHeader('retry-after', String(blocked.seconds));
+        response.status(429);
+        sendHtml(response, RecoveryPage({ blocked, inAppBrowser: inApp(request), values }));
+        return;
+      }
+      try {
+        const invitation = registry.recoverInvitation(values.name, values.phone, field('pin'));
+        recoveryGuard.success(key);
+        response.setHeader('referrer-policy', 'no-referrer');
+        sendHtml(response, RegistrationCompletePage({ ...invitation, recovered: true, inAppBrowser: inApp(request) }));
+      } catch (error) {
+        if (!(error instanceof RegistryError)) throw error;
+        if (error.code === 'recovery_failed') recoveryGuard.failure(key, ip);
+        response.status(error.code === 'recovery_locked' ? 429 : 400);
+        sendHtml(response, RecoveryPage({ error: error.message, inAppBrowser: inApp(request), values }));
       }
     });
 
@@ -338,10 +364,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       const info = registry.sessionInvitation(String(response.locals.sessionToken));
       if (!info) { response.redirect(303, '/s/'); return; }
       // 换码成功的提示只显示一次：读到就清掉（刷新不会再显示，更不会再换一次码）。
-      const regenerated = readCookies(request)[ACCOUNT_FLASH_COOKIE] === '1';
-      if (regenerated) clearCookie(request, response, ACCOUNT_FLASH_COOKIE);
+      const flash = readCookies(request)[ACCOUNT_FLASH_COOKIE];
+      if (flash) clearCookie(request, response, ACCOUNT_FLASH_COOKIE);
       response.setHeader('referrer-policy', 'no-referrer');
-      sendHtml(response, AccountPage({ ...info, now: now(), regenerated }));
+      sendHtml(response, AccountPage({ ...info, now: now(), regenerated: flash === '1', pinSaved: flash === 'pin',
+        recovery: registry.hasRecoveryPin(String(response.locals.studentId)) }));
     });
     // POST/Redirect/GET：换码成功后 303 回到 /s/account，刷新页面只是重新查看，不会再换一次。
     // 新码保存在本会话可解的副本里，跳转后的页面照样能看到、能复制。
@@ -355,6 +382,23 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         return;
       }
       setCookie(request, response, ACCOUNT_FLASH_COOKIE, '1', 120);
+      response.redirect(303, '/s/account');
+    });
+    r.post(/^\/account\/recovery\/?$/, form, (request, response) => {
+      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      const studentId = String(response.locals.studentId);
+      try {
+        registry.setRecoveryPin(studentId, typeof request.body?.pin === 'string' ? request.body.pin.slice(0, 16) : '');
+      } catch (error) {
+        if (!(error instanceof RegistryError)) throw error;
+        const info = registry.sessionInvitation(String(response.locals.sessionToken));
+        if (!info) { response.redirect(303, '/s/'); return; }
+        response.status(400);
+        response.setHeader('referrer-policy', 'no-referrer');
+        sendHtml(response, AccountPage({ ...info, now: now(), recovery: registry.hasRecoveryPin(studentId), pinError: error.message }));
+        return;
+      }
+      setCookie(request, response, ACCOUNT_FLASH_COOKIE, 'pin', 120);
       response.redirect(303, '/s/account');
     });
 

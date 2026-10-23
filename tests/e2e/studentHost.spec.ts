@@ -5,22 +5,20 @@ import { expect, test } from '@playwright/test';
 
 let base: string;
 let codes: string[];
-let registrationCode: string;
 let expiringCode: string;
 let child: ChildProcess;
 const WECHAT_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50(0x1800322f) NetType/WIFI Language/zh_CN';
 
 test.beforeAll(async () => {
   child = fork(path.resolve('tests/e2e/studentHostServer.ts'), [], { execArgv: ['--import', 'tsx'], env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
-  const ready = await new Promise<{ base: string; codes: string[]; registrationCode: string; expiringCode: string }>((resolve, reject) => {
+  const ready = await new Promise<{ base: string; codes: string[]; expiringCode: string }>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('browser fixture startup timed out')), 20000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('exit', () => { clearTimeout(timer); reject(new Error('browser fixture exited during startup')); });
-    child.once('message', message => { clearTimeout(timer); resolve(message as { base: string; codes: string[]; registrationCode: string; expiringCode: string }); });
+    child.once('message', message => { clearTimeout(timer); resolve(message as { base: string; codes: string[]; expiringCode: string }); });
   });
   base = ready.base;
   codes = ready.codes;
-  registrationCode = ready.registrationCode;
   expiringCode = ready.expiringCode;
 });
 
@@ -113,18 +111,17 @@ test('mobile invitation login, compact settings, connection retry, logout, and o
 });
 
 
-test('name and phone registration works without JavaScript and its code works after logout', async ({ browser }) => {
+test('name, phone and recovery-code registration works without JavaScript; the code works after logout and can be recovered', async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
   try {
     const page = await context.newPage();
     await page.goto(base + '/s/');
     await page.getByRole('link', { name: '首次使用，注册账号' }).click();
     await expect(page.getByRole('heading', { name: '注册账号' })).toBeVisible();
-    await page.getByLabel('注册码（8 位，老师发的）').fill(registrationCode);
+    await expect(page.getByLabel('注册码（8 位，老师发的）')).toHaveCount(0);
     await page.getByLabel('学生姓名（可以写化名）').fill('合成浏览器学生');
     await page.getByLabel('手机号', { exact: true }).fill('+6587654321');
-    await page.getByTestId('age-14plus').check();
-    await page.getByTestId('privacy-consent').check();
+    await page.getByLabel('设一个找回码（4 位数字）').fill('2580');
     await page.getByRole('button', { name: '注册并生成邀请码' }).click();
     await expect(page.getByRole('heading', { name: '注册成功' })).toBeVisible();
     const code = (await page.getByTestId('registered-invite-code').textContent())!;
@@ -139,32 +136,41 @@ test('name and phone registration works without JavaScript and its code works af
     await page.goto(base + '/s/settings');
     await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
     await expect(page.getByTestId('account-role')).toHaveText('学生');
+    // 忘了邀请码：用姓名、手机号和找回码换新码，旧码作废。
+    await page.getByRole('button', { name: '退出登录', exact: true }).click();
+    await page.getByTestId('recover-link').click();
+    await expect(page.getByRole('heading', { name: '找回邀请码' })).toBeVisible();
+    await page.getByLabel('学生姓名（和注册时一样）').fill('合成浏览器学生');
+    await page.getByLabel('手机号', { exact: true }).fill('+65 8765 4321');
+    await page.getByLabel('找回码（4 位数字）').fill('2580');
+    await page.getByRole('button', { name: '找回邀请码' }).click();
+    await expect(page.getByRole('heading', { name: '找回成功' })).toBeVisible();
+    const recovered = (await page.getByTestId('registered-invite-code').textContent())!;
+    expect(recovered).not.toBe(code);
+    await page.goto(base + '/s/');
+    await page.getByLabel('12 位邀请码').fill(code);
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await expect(page.getByText('这个邀请码进不去')).toBeVisible();
+    await page.getByLabel('12 位邀请码').fill(recovered);
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await page.goto(base + '/s/settings');
+    await expect(page.getByTestId('account-role')).toHaveText('学生');
   } finally { await context.close(); }
 });
 
-test('registration without a class code or consent is refused, and the privacy draft is readable', async ({ page }) => {
+test('registration refuses an easy-to-guess recovery code on the server too, and there is no privacy-rules page', async ({ page }) => {
   await page.goto(base + '/s/register');
-  await page.getByRole('link', { name: '《个人信息处理规则》' }).evaluate(link => link.removeAttribute('target'));
-  await page.getByRole('link', { name: '《个人信息处理规则》' }).click();
-  await expect(page.getByRole('heading', { name: '个人信息处理规则' })).toBeVisible();
-  await expect(page.getByTestId('privacy-draft')).toBeVisible();
-  await expect(page.getByTestId('privacy-contact')).toContainText('联系方式待定');
-  await page.goto(base + '/s/register');
-  // 绕过浏览器端 required，确认服务端也拦。
+  await expect(page.getByRole('link', { name: '《个人信息处理规则》' })).toHaveCount(0);
+  // 绕过浏览器端的格式检查，确认服务端也拦。
   await page.locator('#register-form').evaluate(form => form.setAttribute('novalidate', ''));
-  await page.getByLabel('注册码（8 位，老师发的）').fill('WRNG-0000');
   await page.getByLabel('学生姓名（可以写化名）').fill('合成无码学生');
   await page.getByLabel('手机号', { exact: true }).fill('+6587650000');
-  await page.getByTestId('age-14plus').check();
-  await page.getByTestId('privacy-consent').check();
+  await page.getByLabel('设一个找回码（4 位数字）').fill('1234');
   await page.getByRole('button', { name: '注册并生成邀请码' }).click();
-  await expect(page.getByText('注册码不正确或已经失效')).toBeVisible();
-  await page.locator('#register-form').evaluate(form => form.setAttribute('novalidate', ''));
-  await page.getByLabel('注册码（8 位，老师发的）').fill(registrationCode);
-  await page.getByTestId('age-under14').check();
-  await page.getByRole('button', { name: '注册并生成邀请码' }).click();
-  await expect(page.getByText('未满 14 周岁需要家长（监护人）同意')).toBeVisible();
+  await expect(page.getByText('请设一个 4 位数字的找回码')).toBeVisible();
   await expect(page.getByTestId('registered-invite-code')).toHaveCount(0);
+  await page.goto(base + '/s/privacy');
+  await expect(page.getByRole('heading', { name: '个人信息处理规则' })).toHaveCount(0);
 });
 
 test('WeChat in-app browser sees an "open in browser" hint on login and registration', async ({ browser }, info) => {

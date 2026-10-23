@@ -1,10 +1,7 @@
-/** 学生邀请码网关自己的两个页面：登录页与网关错误页（不含任何学生数据，由父进程直接渲染）。 */
+/** 学生邀请码网关自己的页面：登录、注册、找回、我的邀请码与网关错误页（不含学习数据，由父进程直接渲染）。 */
 import type { ReactNode } from 'react';
 import { Page, Problem } from '../web/views/layout.js';
-import { PRIVACY_CONTACT, PRIVACY_IS_DRAFT, PRIVACY_SECTIONS, PRIVACY_SUMMARY, PRIVACY_UPDATED } from './privacyText.js';
 import type { AttemptBlock } from './attemptGuard.js';
-
-const CHECK_ROW = { display: 'flex', gap: '8px', alignItems: 'flex-start', margin: '8px 0', lineHeight: 1.5 } as const;
 
 /** 页面上显示北京时间（与学习页一致）。 */
 function beijing(date: Date): string {
@@ -15,11 +12,11 @@ function beijingDate(date: Date): string {
   return date.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' });
 }
 
-/** 限速提示：说清楚是谁太频繁、要等多久。 */
-function throttleText(block: NonNullable<AttemptBlock>): string {
+/** 限速提示：说清楚是谁太频繁、要等多久。subject 是按什么计的（码 / 这个网络）。 */
+function throttleText(block: NonNullable<AttemptBlock>, subject = '这个码'): string {
   const minutes = Math.max(1, Math.ceil(block.seconds / 60));
   if (block.scope === 'global') return `现在同时试的人太多了，等 ${minutes} 分钟左右再试。`;
-  if (block.scope === 'ip') return `你们这个网络里输错的次数太多了，等 ${minutes} 分钟左右再试；也可以换手机流量试试。`;
+  if (block.scope === 'ip' || subject !== '这个码') return `你们这个网络里输错的次数太多了，等 ${minutes} 分钟左右再试；也可以换手机流量试试。`;
   return `这个码输错的次数太多了，等 ${minutes} 分钟左右再试。先对照一下有没有输错。`;
 }
 
@@ -37,15 +34,6 @@ export function InAppBrowserNotice(props: { show: boolean; where: 'login' | 'reg
         ? '注册后会给你一个邀请码，换到浏览器以后要用它再登录一次，请先截图或复制保存。'
         : '换到浏览器以后要重新输入邀请码；登录后在「设置 → 我的邀请码」里可以再看到它。'}</p>
     </section>
-  );
-}
-
-/** 页脚：规则与联系方式（每个公开页都有）。 */
-function PublicFooter(): ReactNode {
-  return (
-    <p className="hint" data-testid="public-footer">
-      <a href="/s/privacy">个人信息处理规则</a> · 联系我们：{PRIVACY_CONTACT}
-    </p>
   );
 }
 
@@ -67,7 +55,7 @@ export function LoginPage(props: { error?: string | null; blocked?: AttemptBlock
       {props.blocked ? (
         <Problem title="试得太频繁了" detail={throttleText(props.blocked)} />
       ) : props.error ? (
-        <Problem title="这个邀请码进不去" detail="检查一下有没有输错（12 位，老师发的 8 位注册码要在注册页用）。还是进不去，联系老师或管理员补发。" reason={props.error} />
+        <Problem title="这个邀请码进不去" detail="检查一下有没有输错（12 位）。忘了或过期了，可以用注册时设的找回码换一个新的。" reason={props.error} />
       ) : null}
       <section className="card" data-testid="login-card">
         <form method="post" action="/s/login" id="login-form">
@@ -89,8 +77,8 @@ export function LoginPage(props: { error?: string | null; blocked?: AttemptBlock
         <p className="hint">短横线和空格不用管，大小写都可以。邀请码 60 天内可重复登录；登录后经常用的话不用每次输。请妥善保存，不要发给别人。</p>
       </section>
       <p><a href="/s/register" className="btn">首次使用，注册账号</a></p>
-      <p className="hint">忘记或过期了？联系老师或管理员，核验注册时的姓名和手机号后补发，学习记录保留。</p>
-      <PublicFooter />
+      <p><a href="/s/recover" data-testid="recover-link">忘了邀请码？找回</a></p>
+      <p className="hint">用注册时的姓名、手机号和找回码换一个新邀请码，学习记录都在。没设过找回码的老账号，请老师或管理员帮你找回。</p>
     </Page>
   );
 }
@@ -108,46 +96,78 @@ export function HostErrorPage(props: { title: string; detail: string }): ReactNo
   );
 }
 
-export interface RegistrationFormValues { name?: string; phone?: string; regcode?: string; ageBand?: string; consent?: boolean; guardian?: boolean }
+export interface RegistrationFormValues { name?: string; phone?: string; regcode?: string }
+
+/** 4 位找回码输入框（注册、找回、我的邀请码共用）。 */
+function PinInput(props: { id: string; label: string; hint: string }): ReactNode {
+  return <>
+    <label htmlFor={props.id} className="field-label">{props.label}</label>
+    <input id={props.id} name="pin" type="text" inputMode="numeric" autoComplete="off" pattern="[0-9]{4}" minLength={4} maxLength={4} required
+      placeholder="4 位数字" aria-describedby={`${props.id}-hint`} data-testid={`${props.id}-input`} />
+    <p className="hint" id={`${props.id}-hint`}>{props.hint}</p>
+  </>;
+}
 
 /**
- * 注册（P0-6 / P0-10）：要老师发的注册码；收集姓名（可写化名）和手机号；
- * 必须勾选同意《个人信息处理规则》；未满 14 周岁要家长同意。号码归属尚未验证，不作为自动找回的凭据。
+ * 注册：填姓名（可写化名）、手机号，自己设一个 4 位找回码；网关打开班级注册码时另要注册码。
+ * 手机号不发短信、不验证归属，只和找回码一起用来自助找回。
  */
-export function RegistrationPage(props: { error?: string; blocked?: AttemptBlock; inAppBrowser?: boolean; values?: RegistrationFormValues }): ReactNode {
+export function RegistrationPage(props: { error?: string; duplicate?: boolean; blocked?: AttemptBlock; inAppBrowser?: boolean; values?: RegistrationFormValues; requireCode?: boolean }): ReactNode {
   const values = props.values ?? {};
   return (
     <Page title="注册账号" back={{ href: '/s/', label: '邀请码登录' }} showSettings={false}
       bar={{ caption: '注册后请保存你的专属邀请码', primary: { title: '注册并生成邀请码', key: 'register', form: 'register-form' }, secondary: [] }}>
       <h1>注册账号</h1>
-      <p className="lead">用老师发的注册码，填姓名和手机号，创建自己的错题本。以后只需输入邀请码登录。</p>
+      <p className="lead">填姓名和手机号，设一个找回码，就能有自己的错题本。以后输入邀请码登录。</p>
       <InAppBrowserNotice show={props.inAppBrowser === true} where="register" />
       {props.blocked
-        ? <Problem title="提交太频繁了" detail={throttleText(props.blocked)} />
+        ? <Problem title="提交太频繁了" detail={throttleText(props.blocked, props.requireCode ? '这个码' : '这个网络')} />
         : props.error ? <Problem title="暂时没能注册" detail={props.error} /> : null}
+      {props.duplicate ? <p><a className="btn" href="/s/recover">用找回码找回邀请码</a></p> : null}
       <section className="card">
         <form method="post" action="/s/register" id="register-form">
-          <label htmlFor="register-code" className="field-label">注册码（8 位，老师发的）</label>
-          <input id="register-code" name="regcode" type="text" autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
-            maxLength={20} placeholder="XXXX-XXXX" required defaultValue={values.regcode ?? ''} data-testid="registration-code-input" />
-          <p className="hint">没有注册码？问老师要；只有拿到注册码的同学才能注册。</p>
+          {props.requireCode ? <>
+            <label htmlFor="register-code" className="field-label">注册码（8 位，老师发的）</label>
+            <input id="register-code" name="regcode" type="text" autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
+              maxLength={20} placeholder="XXXX-XXXX" required defaultValue={values.regcode ?? ''} data-testid="registration-code-input" />
+          </> : null}
           <label htmlFor="register-name" className="field-label">学生姓名（可以写化名）</label>
           <input id="register-name" name="name" type="text" autoComplete="name" maxLength={60} required defaultValue={values.name ?? ''} />
           <label htmlFor="register-phone" className="field-label">手机号</label>
           <input id="register-phone" name="phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={40} required defaultValue={values.phone ?? ''}
-            placeholder="填写常用手机号，可含国家区号" aria-describedby="registration-privacy" />
-          <p className="hint" id="registration-privacy">姓名和手机号只用来在你忘了邀请码时核对本人；不会发短信。可以填家长的手机号，不同学生可共用同一号码。</p>
-          <fieldset className="consent-fieldset" style={{ border: 0, padding: 0, margin: '12px 0' }}>
-            <legend className="field-label">年龄</legend>
-            <label className="check-row" style={CHECK_ROW}><input type="radio" name="age" value="14plus" required defaultChecked={values.ageBand === '14plus'} data-testid="age-14plus" /> 我已满 14 周岁</label>
-            <label className="check-row" style={CHECK_ROW}><input type="radio" name="age" value="under14" defaultChecked={values.ageBand === 'under14'} data-testid="age-under14" /> 我未满 14 周岁</label>
-            <label className="check-row" style={CHECK_ROW}><input type="checkbox" name="guardian" value="1" defaultChecked={values.guardian === true} data-testid="guardian-consent" /> （未满 14 周岁必填）我的家长（监护人）已经看过规则，同意我注册使用</label>
-          </fieldset>
-          <label className="check-row" style={CHECK_ROW}><input type="checkbox" name="consent" value="1" required defaultChecked={values.consent === true} data-testid="privacy-consent" /> 我已阅读并同意<a href="/s/privacy" target="_blank" rel="noopener">《个人信息处理规则》</a></label>
+            placeholder="填写常用手机号，可含国家区号" aria-describedby="registration-phone-hint" />
+          <p className="hint" id="registration-phone-hint">不会发短信。可以填家长的手机号，不同学生可共用同一号码。</p>
+          <PinInput id="register-pin" label="设一个找回码（4 位数字）" hint="忘了邀请码时，用姓名、手机号和这 4 位数字找回。不要用 1234、0000 这种好猜的，也别告诉别人。" />
         </form>
       </section>
       <p><a href="/s/">已有邀请码，直接登录</a></p>
-      <PublicFooter />
+    </Page>
+  );
+}
+
+/** 自助找回：姓名 + 手机号 + 找回码。对不上统一一句话，不说是哪一项错。 */
+export function RecoveryPage(props: { error?: string; blocked?: AttemptBlock; inAppBrowser?: boolean; values?: { name?: string; phone?: string } }): ReactNode {
+  const values = props.values ?? {};
+  return (
+    <Page title="找回邀请码" back={{ href: '/s/', label: '邀请码登录' }} showSettings={false}
+      bar={{ caption: '找回后旧邀请码作废，学习记录都在', primary: { title: '找回邀请码', key: 'recover', form: 'recover-form' }, secondary: [] }}>
+      <h1>找回邀请码</h1>
+      <p className="lead">填注册时的姓名、手机号和找回码，换一个新的邀请码。</p>
+      <InAppBrowserNotice show={props.inAppBrowser === true} where="register" />
+      {props.blocked
+        ? <Problem title="试得太频繁了" detail={throttleText(props.blocked, '这个网络')} />
+        : props.error ? <Problem title="没能找回" detail={props.error} /> : null}
+      <section className="card">
+        <form method="post" action="/s/recover" id="recover-form">
+          <label htmlFor="recover-name" className="field-label">学生姓名（和注册时一样）</label>
+          <input id="recover-name" name="name" type="text" autoComplete="name" maxLength={60} required defaultValue={values.name ?? ''} />
+          <label htmlFor="recover-phone" className="field-label">手机号</label>
+          <input id="recover-phone" name="phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={40} required defaultValue={values.phone ?? ''} />
+          <PinInput id="recover-pin" label="找回码（4 位数字）" hint="连续输错 5 次，要等 24 小时才能再试。" />
+        </form>
+      </section>
+      <p className="hint">没设过找回码的老账号，请老师或管理员帮你找回。</p>
+      <p><a href="/s/register">还没注册过？注册账号</a></p>
     </Page>
   );
 }
@@ -164,13 +184,15 @@ function CopyableCode(props: { code: string; testId: string }): ReactNode {
   );
 }
 
-/** 凭证只随本次成功响应展示；不放进 URL、日志或浏览器持久存储。 */
-export function RegistrationCompletePage(props: { code: string; expiresAt: Date; inAppBrowser?: boolean }): ReactNode {
+/** 凭证只随本次成功响应展示；不放进 URL、日志或浏览器持久存储。找回成功也用这一页。 */
+export function RegistrationCompletePage(props: { code: string; expiresAt: Date; inAppBrowser?: boolean; recovered?: boolean }): ReactNode {
   return (
     <Page title="保存你的邀请码" back={null} showSettings={false}
       bar={{ caption: '这是你的登录凭证，请勿发给别人', primary: { title: '我已保存，进入错题本', key: 'registered-login', form: 'registered-login-form' }, secondary: [] }}>
-      <h1>注册成功</h1>
-      <p className="lead">请复制或截图保存邀请码，下次登录、换手机、换浏览器都要用它。</p>
+      <h1>{props.recovered ? '找回成功' : '注册成功'}</h1>
+      <p className="lead">{props.recovered
+        ? '这是新的邀请码，旧的已经作废；其他手机要用新码重新登录。学习记录都在。'
+        : '请复制或截图保存邀请码，下次登录、换手机、换浏览器都要用它。'}</p>
       <section className="card">
         <p>你的专属邀请码</p>
         <CopyableCode code={props.code} testId="registered-invite-code" />
@@ -180,7 +202,7 @@ export function RegistrationCompletePage(props: { code: string; expiresAt: Date;
         </form>
       </section>
       {props.inAppBrowser ? <p className="hint tone-orange" data-testid="in-app-browser-notice">现在在微信里：换到浏览器打开时要用这个码再登录一次。</p> : null}
-      <p className="hint">忘记邀请码时，请联系老师或管理员核验后补发。不要重复注册，以免建立新的错题本。</p>
+      <p className="hint">忘了邀请码，用姓名、手机号和找回码找回。不要重复注册，以免建立新的错题本。</p>
     </Page>
   );
 }
@@ -190,7 +212,9 @@ export function RegistrationCompletePage(props: { code: string; expiresAt: Date;
  * - 本设备用可重复登录的码登录时，能再看到并复制这个码；
  * - 快到期（7 天内）或已经看不到时，一键重新生成：旧码作废，其他手机要用新码重新登录，学习记录不变。
  */
-export function AccountPage(props: { code: string | null; expiresAt: Date | null; studentExpiresAt: Date | null; now: Date; regenerated?: boolean }): ReactNode {
+export function AccountPage(props: { code: string | null; expiresAt: Date | null; studentExpiresAt: Date | null; now: Date; regenerated?: boolean;
+  /** 有没有设过找回码；null = 不是自助注册的账号，没有找回。 */
+  recovery?: boolean | null; pinSaved?: boolean; pinError?: string }): ReactNode {
   const expiry = props.expiresAt ?? props.studentExpiresAt;
   const daysLeft = expiry ? Math.ceil((expiry.getTime() - props.now.getTime()) / 86_400_000) : null;
   const expiring = daysLeft === null || daysLeft <= 7;
@@ -199,6 +223,8 @@ export function AccountPage(props: { code: string | null; expiresAt: Date | null
       bar={{ caption: '重新生成后，旧邀请码立刻作废；其他手机要用新码再登录一次', primary: { title: '重新生成邀请码', key: 'regenerate-invitation', form: 'regenerate-form' }, secondary: [] }}>
       <h1>我的邀请码</h1>
       {props.regenerated ? <div className="flash" role="status" data-testid="flash-ok">已经换成新邀请码，旧的不能再用了。请复制或截图保存。</div> : null}
+      {props.pinSaved ? <div className="flash" role="status" data-testid="flash-ok">找回码已保存。</div> : null}
+      {props.pinError && (props.recovery === null || props.recovery === undefined) ? <Problem title="没能保存找回码" detail={props.pinError} /> : null}
       {expiring ? (
         <section className="card tone-orange" role="alert" data-testid="invite-expiring">
           <p><b>{daysLeft === null || daysLeft <= 0 ? '你的邀请码已经过期了。' : `你的邀请码 ${daysLeft} 天后（${beijingDate(expiry!)}）到期。`}</b></p>
@@ -218,29 +244,19 @@ export function AccountPage(props: { code: string | null; expiresAt: Date | null
         <p className="hint">邀请码就是你的钥匙：别发给别人。换手机、换浏览器（比如从微信换到 Safari）时，用它重新登录。</p>
         <form method="post" action="/s/account/regenerate" id="regenerate-form" />
       </section>
-      <p className="hint"><a href="/s/privacy">个人信息处理规则</a> · 联系我们：{PRIVACY_CONTACT}</p>
-    </Page>
-  );
-}
-
-/** 《个人信息处理规则》（公开页，草稿文字在 privacyText.ts，等 Peng 改定）。 */
-export function PrivacyPage(): ReactNode {
-  return (
-    <Page title="个人信息处理规则" back={{ href: '/s/', label: '返回' }} showSettings={false}>
-      <h1>个人信息处理规则</h1>
-      {PRIVACY_IS_DRAFT ? <p className="card tone-orange" data-testid="privacy-draft">这是草稿版本，内容还会修改；正式版本确定后会在这里更新。</p> : null}
-      <p className="lead">{PRIVACY_SUMMARY}</p>
-      {PRIVACY_SECTIONS.map(section => (
-        <section className="card" key={section.title}>
-          <h2 className="card-title">{section.title}</h2>
-          <ul>{section.items.map(item => <li key={item}>{item}</li>)}</ul>
+      {props.recovery === null || props.recovery === undefined ? null : (
+        <section className="card" data-testid="recovery-pin">
+          <h2 className="card-title">找回码</h2>
+          {props.pinError ? <Problem title="没能保存找回码" detail={props.pinError} /> : null}
+          <p>{props.recovery
+            ? '已经设好了。忘了邀请码时，用姓名、手机号和找回码就能换一个新的。想改可以在下面重新设。'
+            : <b className="tone-orange">还没设找回码。设一个，以后忘了邀请码可以自己找回。</b>}</p>
+          <form method="post" action="/s/account/recovery">
+            <PinInput id="account-pin" label={props.recovery ? '新的找回码（4 位数字）' : '设一个找回码（4 位数字）'} hint="不要用 1234、0000 这种好猜的，也别告诉别人。" />
+            <button className="btn" type="submit">保存找回码</button>
+          </form>
         </section>
-      ))}
-      <section className="card" data-testid="privacy-contact">
-        <h2 className="card-title">联系我们</h2>
-        <p>{PRIVACY_CONTACT}</p>
-        <p className="muted small">更新日期：{PRIVACY_UPDATED}</p>
-      </section>
+      )}
     </Page>
   );
 }

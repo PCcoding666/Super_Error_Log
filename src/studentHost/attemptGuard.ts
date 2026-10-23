@@ -60,6 +60,8 @@ export interface AttemptGuardLimits {
 
 export const LOGIN_LIMITS: AttemptGuardLimits = { windowMs: 600_000, perCode: 10, perIp: 100, globalFailures: 1000, globalSuccesses: 0 };
 export const REGISTRATION_LIMITS: AttemptGuardLimits = { windowMs: 600_000, perCode: 20, perIp: 100, globalFailures: 1000, globalSuccesses: 200 };
+/** 自助找回：按 IP 计失败（每个账号另有落库的 5 次锁定，见 registry.recoverInvitation）。 */
+export const RECOVERY_LIMITS: AttemptGuardLimits = { windowMs: 600_000, perCode: 20, perIp: 30, globalFailures: 300, globalSuccesses: 0 };
 
 export type AttemptBlock = { seconds: number; scope: 'code' | 'ip' | 'global' } | null;
 

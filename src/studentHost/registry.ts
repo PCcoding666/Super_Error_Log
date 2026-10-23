@@ -29,7 +29,8 @@ const CODE_LENGTH = 12;
 const BUSY_TIMEOUT_MS = 5000;
 
 export type RegistryErrorCode = 'capacity_full' | 'invalid_code' | 'student_not_found' | 'invalid_role' | 'invalid_registration'
-  | 'invalid_registration_code' | 'duplicate_registration' | 'consent_required' | 'student_active';
+  | 'invalid_registration_code' | 'duplicate_registration' | 'student_active'
+  | 'invalid_recovery_pin' | 'recovery_failed' | 'recovery_locked' | 'not_self_registered';
 
 /** 会话离到期不足（30 天 − 1 天）时顺延：活跃学生最多每天写一次注册表。 */
 export const SESSION_RENEW_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -40,14 +41,11 @@ const REGISTRATION_CODE_LENGTH = 8;
 export const REGISTRATION_CODE_DEFAULT_DAYS = 14;
 export const REGISTRATION_CODE_DEFAULT_USES = 60;
 
-export type AgeBand = '14plus' | 'under14';
-export interface RegistrationConsent {
-  /** 学生同意的隐私规则版本（见 privacyText.ts）。 */
-  privacyVersion: string;
-  ageBand: AgeBand;
-  /** 未满 14 周岁必须为 true（监护人已同意）。 */
-  guardianConsent: boolean;
-}
+/** 找回码：注册时自己设的 4 位数字；忘了邀请码时和姓名、手机号一起用来自助换新码。 */
+const RECOVERY_PIN_LENGTH = 4;
+/** 同一账号连续输错几次找回码后锁定；锁定多久。计数存在注册表里，服务重启不清零。 */
+export const RECOVERY_MAX_FAILURES = 5;
+export const RECOVERY_LOCK_MS = 24 * 60 * 60 * 1000;
 
 export interface RegistrationCodeRecord {
   id: string;
@@ -188,6 +186,32 @@ function sha256(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
+/** 4 位数字；太好猜的（四位相同、顺着或倒着数）不收。不合格返回 null。 */
+export function normalizeRecoveryPin(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const pin = input.normalize('NFKC').replace(/\s+/g, '');
+  if (!new RegExp(`^[0-9]{${RECOVERY_PIN_LENGTH}}$`).test(pin)) return null;
+  const digits = [...pin].map(Number);
+  const steps = new Set(digits.slice(1).map((digit, index) => digit - digits[index]!));
+  if (steps.size === 1 && [0, 1, -1].includes([...steps][0]!)) return null;
+  return pin;
+}
+
+/** 找回码只存加盐的 scrypt 摘要。 */
+function hashRecoveryPin(pin: string): string {
+  const salt = crypto.randomBytes(16);
+  return `scrypt$${salt.toString('base64url')}$${crypto.scryptSync(pin, salt, 32).toString('base64url')}`;
+}
+
+function recoveryPinMatches(pin: string, stored: string | null): boolean {
+  const [scheme, salt, hash] = (stored ?? '').split('$');
+  // 没有存过找回码时也算一遍，回应时间不暴露账号是否设过找回码。
+  const actual = crypto.scryptSync(pin, Buffer.from(salt ?? '', 'base64url'), 32);
+  if (scheme !== 'scrypt' || !salt || !hash) return false;
+  const expected = Buffer.from(hash, 'base64url');
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
 /** 管理员存储位置：SEL_STUDENT_HOST_DIR，缺省 <旧 dataDir>/student-host。 */
 export function resolveStudentHostDir(mobileDataDir?: string): string {
   const explicit = process.env.SEL_STUDENT_HOST_DIR;
@@ -270,6 +294,7 @@ export class StudentRegistry {
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     this.migrateRegistration();
     this.migrateAccountsAndPrivacy();
+    this.migrateRecovery();
     fs.chmodSync(path.join(this.hostDir, 'registry.db'), 0o600);
   }
 
@@ -356,6 +381,22 @@ export class StudentRegistry {
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
 
+  /**
+   * 增量迁移（2026-10-23）：自助找回。只 ADD COLUMN，旧登记没有找回码（NULL），登录后可以补设。
+   * - recovery_hash：找回码的加盐摘要；recovery_failures / recovery_locked_until：连续输错次数与锁定到期时间。
+   */
+  private migrateRecovery(): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const has = (column: string): boolean =>
+        (this.db.prepare('PRAGMA table_info(student_registration)').all() as Array<{ name: string }>).some(row => row.name === column);
+      if (!has('recovery_hash')) this.db.exec('ALTER TABLE student_registration ADD COLUMN recovery_hash TEXT');
+      if (!has('recovery_failures')) this.db.exec('ALTER TABLE student_registration ADD COLUMN recovery_failures INTEGER NOT NULL DEFAULT 0');
+      if (!has('recovery_locked_until')) this.db.exec('ALTER TABLE student_registration ADD COLUMN recovery_locked_until TEXT');
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
   static open(hostDir: string, options?: StudentRegistryOptions): StudentRegistry {
     const resolved = path.resolve(hostDir);
     fs.mkdirSync(resolved, { recursive: true, mode: 0o700 });
@@ -405,22 +446,18 @@ export class StudentRegistry {
 
   /**
    * 注册、身份资料、邀请码与目录是同一个工作单元；失败不留下占用名额的空账号。
-   * 公开注册（网关）必须给 options.registrationCode 与 options.consent；只在注册成功时才消耗注册码的一次名额。
-   * 不带 options 的调用只供本机管理/测试（例如 CLI 以外的脚本），不经过任何公开入口。
+   * 公开注册（网关）必须给 options.recoveryPin（4 位找回码）；网关打开了班级注册码时再带 options.registrationCode，
+   * 只在注册成功时才消耗注册码的一次名额。不带 options 的调用只供本机管理/测试，不经过任何公开入口。
    */
-  registerStudent(name: string, phone: string, options?: { registrationCode?: string; consent?: RegistrationConsent }): { studentId: string; code: string; expiresAt: Date } {
-    // 公开注册先认注册码（码不对时不评估姓名手机号，也计入限速）；管理入口直接校验资料。
-    if (options && !this.registrationCodeUsable(options.registrationCode ?? '')) {
+  registerStudent(name: string, phone: string, options?: { recoveryPin?: string; registrationCode?: string }): { studentId: string; code: string; expiresAt: Date } {
+    // 注册码先认（码不对时不评估姓名手机号，也计入限速）；管理入口直接校验资料。
+    if (options?.registrationCode !== undefined && !this.registrationCodeUsable(options.registrationCode)) {
       throw new RegistryError('invalid_registration_code', '注册码不正确或已经失效。请向老师要班级注册码。');
     }
     const identity = registrationIdentity(name, phone);
-    const consent = options?.consent;
-    if (options && !consent) throw new RegistryError('consent_required', '请先阅读并勾选同意《个人信息处理规则》。');
-    if (consent && (!consent.privacyVersion || (consent.ageBand !== '14plus' && consent.ageBand !== 'under14')
-      || (consent.ageBand === 'under14' && consent.guardianConsent !== true))) {
-      throw new RegistryError('consent_required', consent.ageBand === 'under14'
-        ? '未满 14 周岁需要家长（监护人）同意，请让家长看过规则后勾选。'
-        : '请先阅读并勾选同意《个人信息处理规则》，并选择年龄。');
+    const pin = options ? normalizeRecoveryPin(options.recoveryPin) : null;
+    if (options && pin === null) {
+      throw new RegistryError('invalid_recovery_pin', '请设一个 4 位数字的找回码（不要用 1234、0000 这种），忘了邀请码时要用它。');
     }
     const studentId = crypto.randomUUID();
     const studentDir = this.studentDir(studentId);
@@ -428,8 +465,8 @@ export class StudentRegistry {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       let registrationCodeId: string | null = null;
-      if (options) {
-        const normalized = normalizeRegistrationCode(options.registrationCode ?? '');
+      if (options?.registrationCode !== undefined) {
+        const normalized = normalizeRegistrationCode(options.registrationCode);
         type CodeRow = { public_id: string; expires_at: string; max_uses: number; used_count: number; revoked_at: string | null };
         const row = normalized === null ? undefined
           : this.db.prepare('SELECT public_id, expires_at, max_uses, used_count, revoked_at FROM registration_codes WHERE code_hash = ?').get(sha256(normalized)) as CodeRow | undefined;
@@ -439,8 +476,8 @@ export class StudentRegistry {
         registrationCodeId = row.public_id;
       }
       // 「测试 甲」和「测试甲」是同一个人：判重时忽略姓名里的空格（A19）。
-      if (this.db.prepare("SELECT 1 FROM student_registration WHERE replace(name, ' ', '') = ? AND phone = ?").get(identity.name.replace(/ /g, ''), identity.phone)) {
-        throw new RegistryError('duplicate_registration', '无法完成注册；如果以前注册过，请用邀请码登录或联系管理员找回。');
+      if (this.registrationRow(identity)) {
+        throw new RegistryError('duplicate_registration', '这个姓名和手机号已经注册过了。忘了邀请码，可以用注册时设的找回码找回。');
       }
       this.checkCapacity();
       fs.mkdirSync(studentDir, { recursive: false, mode: 0o700 });
@@ -448,10 +485,8 @@ export class StudentRegistry {
       fs.chmodSync(studentDir, 0o700);
       const nowIso = this.now().toISOString();
       this.db.prepare("INSERT INTO students (id, created_at, account_role) VALUES (?, ?, 'student')").run(studentId, nowIso);
-      this.db.prepare(`INSERT INTO student_registration (student_id, name, phone, consent_version, consent_at, age_band, guardian_consent, registration_code_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(studentId, identity.name, identity.phone,
-        consent?.privacyVersion ?? null, consent ? nowIso : null, consent?.ageBand ?? null,
-        consent ? (consent.guardianConsent ? '1' : '0') : null, registrationCodeId);
+      this.db.prepare('INSERT INTO student_registration (student_id, name, phone, registration_code_id, recovery_hash) VALUES (?, ?, ?, ?, ?)')
+        .run(studentId, identity.name, identity.phone, registrationCodeId, pin === null ? null : hashRecoveryPin(pin));
       if (registrationCodeId !== null) {
         this.db.prepare('UPDATE registration_codes SET used_count = used_count + 1 WHERE public_id = ?').run(registrationCodeId);
       }
@@ -463,6 +498,70 @@ export class StudentRegistry {
       if (madeDirectory) fs.rmSync(studentDir, { recursive: true, force: true });
       throw error;
     }
+  }
+
+  private registrationRow(identity: RegistrationIdentity): { student_id: string; recovery_hash: string | null; recovery_failures: number; recovery_locked_until: string | null } | undefined {
+    return this.db.prepare("SELECT student_id, recovery_hash, recovery_failures, recovery_locked_until FROM student_registration WHERE replace(name, ' ', '') = ? AND phone = ?")
+      .get(identity.name.replace(/ /g, ''), identity.phone) as { student_id: string; recovery_hash: string | null; recovery_failures: number; recovery_locked_until: string | null } | undefined;
+  }
+
+  /**
+   * 自助找回：姓名 + 手机号 + 注册时设的找回码都对，就作废旧码和全部会话，当场发一个新码。
+   * 对不上一律同一句话（不说是哪一项错、账号在不在）；同一账号连续错 RECOVERY_MAX_FAILURES 次锁 24 小时，计数落库。
+   * 停用的账号不能自助找回（停用要由管理员恢复）。
+   */
+  recoverInvitation(name: string, phone: string, pinInput: string): { code: string; expiresAt: Date } {
+    const identity = registrationIdentity(name, phone);
+    const pin = typeof pinInput === 'string' ? pinInput.normalize('NFKC').replace(/\s+/g, '').slice(0, 16) : '';
+    const failed = new RegistryError('recovery_failed', '姓名、手机号或找回码不对。');
+    const now = this.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    let outcome: { code: string; expiresAt: Date } | RegistryError;
+    try {
+      const row = this.registrationRow(identity);
+      // 先比对再看账号在不在：没有这个账号时也算一遍，回应时间不暴露谁注册过。
+      const matches = recoveryPinMatches(pin, row?.recovery_hash ?? null);
+      if (row?.recovery_locked_until && Date.parse(row.recovery_locked_until) > now.getTime()) {
+        const until = new Date(row.recovery_locked_until).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        outcome = new RegistryError('recovery_locked', `找回码输错的次数太多了，${until}（北京时间）以后再试；也可以请老师或管理员帮你找回。`);
+      } else if (!row || !matches || this.isDisabled(row.student_id)) {
+        if (row) {
+          const failures = row.recovery_failures + 1;
+          if (failures >= RECOVERY_MAX_FAILURES) {
+            this.db.prepare('UPDATE student_registration SET recovery_failures = 0, recovery_locked_until = ? WHERE student_id = ?')
+              .run(new Date(now.getTime() + RECOVERY_LOCK_MS).toISOString(), row.student_id);
+          } else {
+            this.db.prepare('UPDATE student_registration SET recovery_failures = ? WHERE student_id = ?').run(failures, row.student_id);
+          }
+        }
+        outcome = failed;
+      } else {
+        const nowIso = now.toISOString();
+        this.db.prepare('UPDATE student_registration SET recovery_failures = 0, recovery_locked_until = NULL WHERE student_id = ?').run(row.student_id);
+        this.db.prepare('UPDATE invitations SET expires_at = ? WHERE student_id = ? AND expires_at > ?').run(nowIso, row.student_id, nowIso);
+        this.db.prepare('UPDATE sessions SET revoked = 1 WHERE student_id = ?').run(row.student_id);
+        outcome = this.issueInvitation(row.student_id);
+      }
+      // 输错也要提交：错误次数必须记下来。
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    if (outcome instanceof RegistryError) throw outcome;
+    return outcome;
+  }
+
+  /** 登录后设置或修改找回码（老账号补设也走这里）。只有自助注册（有姓名手机号登记）的账号才有找回。 */
+  setRecoveryPin(studentId: string, pinInput: string): void {
+    const pin = normalizeRecoveryPin(pinInput);
+    if (pin === null) throw new RegistryError('invalid_recovery_pin', '找回码要 4 位数字，不要用 1234、0000 这种好猜的。');
+    const result = this.db.prepare('UPDATE student_registration SET recovery_hash = ?, recovery_failures = 0, recovery_locked_until = NULL WHERE student_id = ?')
+      .run(hashRecoveryPin(pin), studentId);
+    if (Number(result.changes) !== 1) throw new RegistryError('not_self_registered', '这个账号不是用姓名和手机号注册的，找回请联系老师或管理员。');
+  }
+
+  /** 这个账号有没有设过找回码；null 表示不是自助注册的账号。 */
+  hasRecoveryPin(studentId: string): boolean | null {
+    const row = this.db.prepare('SELECT recovery_hash FROM student_registration WHERE student_id = ?').get(studentId) as { recovery_hash: string | null } | undefined;
+    return row ? row.recovery_hash !== null : null;
   }
 
   // ---------- 注册码（班级码） ----------
