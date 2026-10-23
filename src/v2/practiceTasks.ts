@@ -1,8 +1,9 @@
 import { getDb, now } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
-import { createLearningPractice, getLearningPractice, learningRedoOverview, recommendLearningPractice, type LearningRedoOverview } from '../learning/queries.js';
-import type { LearningCreateResult, LearningPracticeCard, LearningPracticeDetail, LearningRecommendation } from '../learning/contracts.js';
+import { createLearningPractice, getLearningPractice, learningRedoOverview, rankedLearningCards, type LearningRedoOverview } from '../learning/queries.js';
+import type { LearningCreateResult, LearningPracticeDetail, LearningRecommendation } from '../learning/contracts.js';
 import { cooldownUntil, todayText } from '../learning/redoSchedule.js';
+import { TODAY_LIMIT } from '../domain/scheduling.js';
 
 export type TaskLifecycle = 'active' | 'paused' | 'cancelled';
 export function taskLifecycle(packetId: string): TaskLifecycle {
@@ -26,25 +27,24 @@ export function activePractice(): LearningPracticeDetail | null {
     ORDER BY rp.created_at, rp.rowid LIMIT 1`).get() as {id:string} | undefined;
   return row ? getLearningPractice(row.id, 'all') : null;
 }
-export const SUGGESTED_SIZE = 3;
-export type SuggestedPractice = LearningRecommendation & {redo: LearningRedoOverview};
+export type SuggestedPractice = LearningRecommendation & {redo: LearningRedoOverview; dueTotal: number};
 /**
- * 首页建议的一小组（3 道）。重练题分数高于新错题，为了让积压的新错题轮得到：
- * 只要候选里还有新错题（tier 4），这 3 道里至少放 1 道（P0-3）。冷却中的当场做对题已在推荐层排除。
+ * 「今天该做」：只排今天到期的题（到期日见 nextRedoDay），每天最多 5 道，到期多的顺延。
+ * 队列里的每一道，今天独立做对都算数；没到期的题在 others 里，可以自己选题提前练。
+ * 推荐分里重练和确认题高于新错题；为了让积压的新错题轮得到，到期的里只要有新错题，至少放 1 道（P0-3）。
  */
 export function suggestedPractice(dir: string): SuggestedPractice {
-  const all = recommendLearningPractice(dir, 'all');
   const today = todayText();
-  const cooling = (card: LearningPracticeCard): boolean => card.status === 'attempted' && (cooldownUntil(card.id) ?? '') > today;
-  const ranked = [...all.recommended, ...all.others.filter(card => !cooling(card))];
-  const picked = all.recommended.slice(0, SUGGESTED_SIZE);
-  if (picked.length === SUGGESTED_SIZE && !picked.some(card => card.tier === 4)) {
-    const fresh = ranked.find(card => card.tier === 4 && !picked.includes(card));
-    if (fresh) picked[SUGGESTED_SIZE - 1] = fresh;
+  const ranked = rankedLearningCards(dir, 'all');
+  // 候选里的确认题都已到确认日；其余按「上次接触 + 3 天」。
+  const due = ranked.filter(card => card.status === 'temporarily_mastered' || (cooldownUntil(card.id) ?? today) <= today);
+  const picked = due.slice(0, TODAY_LIMIT);
+  if (picked.length === TODAY_LIMIT && !picked.some(card => card.tier === 4)) {
+    const fresh = due.find(card => card.tier === 4 && !picked.includes(card));
+    if (fresh) picked[TODAY_LIMIT - 1] = fresh;
   }
   const chosen = new Set(picked.map(card => card.id));
-  const others = [...all.recommended, ...all.others].filter(card => !chosen.has(card.id));
-  return {...all,recommended:picked,others,notes:[],limits:{min:1,max:8},redo:learningRedoOverview('all')};
+  return {recommended:picked,others:ranked.filter(card => !chosen.has(card.id)),notes:[],limits:{min:1,max:8},redo:learningRedoOverview('all'),dueTotal:due.length};
 }
 export function startSuggestedPractice(dir: string, key: string): LearningCreateResult {
   if (!/^[0-9a-f-]{36}$/i.test(key)) return {ok:false,httpStatus:400,message:'请重新打开推荐后再试。'};
@@ -56,7 +56,7 @@ export function startSuggestedPractice(dir: string, key: string): LearningCreate
   const current=activePractice();
   if (current) return {ok:true,detail:current};
   const ids=suggestedPractice(dir).recommended.map(item=>item.id);
-  if (!ids.length) return {ok:false,httpStatus:409,message:'现在没有需要安排的题，可以查看错题本或录入新错题。'};
+  if (!ids.length) return {ok:false,httpStatus:409,message:'今天没有到期的题，可以自己选题提前练，或录入新错题。'};
   return createLearningPractice({itemIds:ids,requestKey:key}, 'all');
 }
 export function setTaskLifecycle(packetId: string, lifecycle: TaskLifecycle): void {

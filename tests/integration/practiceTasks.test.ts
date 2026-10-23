@@ -16,15 +16,20 @@ function make(ids: string[]) {
 }
 
 describe('proactive paper task lifecycle',()=>{
-  it('recommends without creating and starts at most three with stable retries',()=>{
-    seedPracticeItems(6);
+  it('recommends only due questions without creating, starts at most five with stable retries',()=>{
+    seedPracticeItems(7);
+    // 刚录入的题 3 天后才到期。
+    expect(tasks.suggestedPractice('/does-not-exist')).toMatchObject({recommended:[],dueTotal:0});
+    expect(tasks.startSuggestedPractice('/does-not-exist',crypto.randomUUID())).toMatchObject({ok:false,httpStatus:409});
+    getDb().prepare('UPDATE error_item SET created_at=?').run(new Date(Date.now()-4*86400000).toISOString());
     const key=crypto.randomUUID();
     const proposal=tasks.suggestedPractice('/does-not-exist');
-    expect(proposal.recommended).toHaveLength(3);
+    expect(proposal.recommended).toHaveLength(5);
+    expect(proposal.dueTotal).toBe(7);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:0});
     const first=tasks.startSuggestedPractice('/does-not-exist',key);
     const retry=tasks.startSuggestedPractice('/does-not-exist',key);
-    expect(first.ok && first.detail.items).toHaveLength(3);
+    expect(first.ok && first.detail.items).toHaveLength(5);
     expect(retry).toEqual(first);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get()).toEqual({n:1});
   });

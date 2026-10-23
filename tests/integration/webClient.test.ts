@@ -645,7 +645,9 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const { jobId } = await (await uploadPhoto(browser, await photo('#f0d0c8'))).json() as { jobId: string };
     await waitFor(async () => (await env.service.getJob(jobId)).status === 'completed');
     const choose = await browser.text('/s/choose');
-    expect(choose).toContain('就练这 3 道');
+    // 刚收的错题 3 天后才到期：这里是学生自己选题提前练。
+    expect(choose).toContain('今天没有到期的题');
+    expect(choose).toContain('可以提前练的（3）');
     const itemIds = [...choose.matchAll(/name="itemIds"(?: checked="")? value="(itm_[0-9a-f]+)"/g)].map(match => match[1]!);
     expect((await browser.post('/s/choose', { itemIds: [] })).status).toBe(400);
     const created = await browser.post('/s/choose', { itemIds, practiceSlot: '__other', practiceSlotOther: '周四午休' });
@@ -684,15 +686,21 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const {browser,packetId}=await chosen(env);
     const current=await browser.text('/s/practices');
     expect(current).toContain('这次的练习');
-    expect(current).toContain('拍照交练习');
+    expect(current).toContain('开始做');
+    expect(current).toContain(`href="/s/practice/${packetId}?mode=paper&amp;view=check"`);
+    expect(current).toContain('拍照交给 AI 核对');
     expect(current).not.toContain('新建练习');
     expect(current).not.toContain('继续练习 · 0/');
     const count=()=>getDb().prepare('SELECT COUNT(*) AS n FROM review_packet').get();
     await browser.get('/s/practices');
     expect(count()).toEqual({n:1});
     expect((await browser.post(`/s/practice/${packetId}/cancel`)).status).toBe(303);
+    // 刚收的题还没到期：只说下一批哪天，不建包。
+    expect(await browser.text('/s/practices')).toContain('今天没有到期的题');
+    expect((await browser.post('/s/practices/start',{key:crypto.randomUUID()})).status).toBe(409);
+    getDb().prepare('UPDATE error_item SET created_at=?').run(new Date(Date.now()-4*86400000).toISOString());
     const recommended=await browser.text('/s/practices');
-    expect(recommended).toContain('这次建议练');
+    expect(recommended).toContain('今天该做 3 道');
     expect(recommended).toContain('为什么练');
     expect(count()).toEqual({n:1});
     const key=crypto.randomUUID();
@@ -816,7 +824,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const url=`/s/practice/${packetId}`;
     await waitFor(async()=>(await browser.text(url)).includes('practice-question'));
     const html=await browser.text(url);
-    expect(html).toContain('在白纸上写题号和过程');
+    expect(html).toContain('一次一道：在草稿纸上写过程');
     expect(html).toContain(`href="${url}/submit"`);
     expect(html).toContain('还没有记录作答结果');
     expect(html).not.toContain('data-testid="practice-answer"');
@@ -835,9 +843,13 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const {browser,packetId,itemIds} = await chosen(env);
     await waitFor(async () => (await browser.text(`/s/practice/${packetId}`)).includes('practice-question'));
     getDb().prepare('UPDATE review_packet SET generated_at = ? WHERE id = ?').run('2026-10-17T16:30:00Z',packetId);
-    const html = await browser.text(`/s/practice/${packetId}?item=${itemIds[0]}&view=check`);
+    // 纸上回录可以选日期；在线做题日期就是今天。
+    const html = await browser.text(`/s/practice/${packetId}?item=${itemIds[0]}&mode=paper&view=check`);
     expect(html).toMatch(/min="2026-10-18"/);
     expect(html).toMatch(/max="2026-10-18"/);
+    const online = await browser.text(`/s/practice/${packetId}?item=${itemIds[0]}&view=check`);
+    expect(online).toContain('name="performedOn" value="2026-10-18"');
+    expect(online).not.toContain('type="date"');
   });
 
   it('作答照片遵守磁盘、容量和上传准入，失败后释放预约', async () => {
@@ -910,9 +922,14 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     const { browser, packetId, itemIds } = await chosen(env);
     const url = `/s/practice/${packetId}`;
     await waitFor(async () => (await browser.text(url)).includes('data-testid="practice-question"'));
-    const done = await browser.text(`${url}?item=${itemIds[0]}&view=done`);
-    expect(done).toContain('拍照上传作答');
-    expect(done).toContain('不上传，直接核对');
+    const question = await browser.text(`${url}?item=${itemIds[0]}`);
+    expect(question).toContain('做完了，对答案');
+    expect(question).toContain(`href="${url}?item=${itemIds[0]}&amp;view=upload"`);
+    const upload = await browser.text(`${url}?item=${itemIds[0]}&view=upload`);
+    expect(upload).toContain('上传手写作答');
+    expect(upload).toContain('不上传，直接对答案');
+    // 旧链接的 view=done 直接进对答案。
+    expect(await browser.text(`${url}?item=${itemIds[0]}&view=done`)).toContain('data-testid="practice-answer"');
     const key = crypto.randomUUID(), bytes = await photo('#f8f8f8');
     const send = async (item: string) => {
       const form = new FormData(); form.append('key', key); form.append('photo', new Blob([new Uint8Array(bytes)], {type:'image/jpeg'}), 'work.jpg');
@@ -942,7 +959,8 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(getDb().prepare('SELECT * FROM review_packet WHERE id = ?').get(packetId)).toEqual(before);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM review_attempt').get()).toEqual({n:0});
     const recorded = await browser.post(`${url}/${itemIds[0]}/result`,{correct:'no',performedOn:new Date().toLocaleDateString('en-CA'),mode:'paper'});
-    expect(recorded.headers.get('location')).toBe(`${url}?mode=paper&view=check`);
+    expect(recorded.headers.get('location')).toBe(`${url}?mode=paper&view=check&recorded=${itemIds[0]}`);
+    expect(await browser.visibleText(recorded.headers.get('location')!)).toContain('第 1 题记下了：做错了');
     expect(await browser.text(url)).toContain('已记录 1 道结果，共 3 道');
     await browser.get(`/s/print/${packetId}/sheet?answers=1`);
     expect(await browser.text(url)).toContain('已记录 1 道结果，共 3 道');
@@ -1844,14 +1862,13 @@ describe('single-question learning detail', () => {
     const dueText = `${due.getMonth()+1} 月 ${due.getDate()} 日`;
     expect(await browser.visibleText(`${packetPath}/feedback`)).toContain(`下次再做：${dueText}（3 天后）`);
     const practices = await browser.visibleText('/s/practices');
-    // 当天做对的这道在冷却期：不在「就练这几道」里，只给日期。
-    expect(practices).toContain(`下次再做：${dueText}（1 道）`);
-    expect(practices).toContain('就练这 2 道');
-    expect(await browser.visibleText('/s/')).not.toContain('该再做了');
+    // 当天做对的这道和刚收的两道都要 3 天后才到期：只给日期。
+    expect(practices).toContain(`下一批：${dueText}，3 道`);
+    expect(await browser.visibleText('/s/')).not.toContain('今天该做');
     // 3 天后：首页提示到期。
     getDb().prepare('UPDATE review_attempt SET performed_at=? WHERE item_id=?').run(new Date(today.getTime() - 3 * 86400000).toLocaleDateString('en-CA'),id);
     getDb().prepare('UPDATE error_item SET created_at=? WHERE id=?').run(new Date(today.getTime() - 4 * 86400000).toISOString(),id);
-    expect(await browser.visibleText('/s/')).toContain('今天有 1 道题该再做了');
-    expect(await browser.visibleText('/s/practices')).toContain('就练这 3 道');
+    expect(await browser.visibleText('/s/')).toContain('今天该做 1 道题');
+    expect(await browser.visibleText('/s/practices')).toContain('开始做这 1 道');
   });
 });
