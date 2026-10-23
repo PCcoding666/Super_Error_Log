@@ -120,11 +120,11 @@ struct TodayStepsCard: View {
   @ViewBuilder private func connectContent(_ reason: WeekPlan.ConnectReason) -> some View {
     let (title, detail): (String, String) = switch reason {
     case .unpaired:
-      ("先连上服务器", "这一步要大人帮一下：请帮你装 App 的人打开配对二维码，你点下面的按钮扫一下。只要做一次。")
+      ("先登录", "输入老师或家长给你的邀请码，和手机网页版是同一个账号。只要做一次。")
     case .unauthorized:
-      ("需要重新扫码", "连接过期了。请帮你装 App 的人给你一个新的二维码。照片和错题都还在。")
+      ("需要重新登录", "登录过期了，重新输入邀请码就行。照片和错题都还在。")
     case .incompatible:
-      ("App 和服务器对不上", "请帮你装 App 的人更新 App，或者给你一个新的二维码。")
+      ("App 和服务器对不上", "请帮你装 App 的人更新 App，然后重新登录。")
     }
     VStack(alignment: .leading, spacing: 6) {
       Text(title).font(.headline).foregroundStyle(Palette.ink)

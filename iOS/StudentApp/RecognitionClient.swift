@@ -89,6 +89,28 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
     } catch { throw RecognitionClientError.invalidResponse }
   }
 
+  // MARK: - 邀请码登录（2026-10-23；网关 /s/api）
+
+  /// 邀请码登录（POST <入口>/s/api/login）——原生 App 的免鉴权入口，只在 invitation 模式下可用。
+  /// 新码可重复登录，网络丢失后重试会得到另一枚令牌，旧令牌保持有效直到退出或 30 天不用。
+  func loginInvitation(code: String, deviceInfo: String) async throws -> InvitationLoginResult {
+    guard configuration.isInvitation else { throw RecognitionClientError.invalidPairing }
+    var request = makeRequest("login", method: "POST")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    // 本方法在会话令牌就位前调用：不携带 Authorization 头。
+    request.setValue(nil, forHTTPHeaderField: "Authorization")
+    request.httpBody = try JSONSerialization.data(withJSONObject: ["code": code, "deviceInfo": deviceInfo])
+    let (data, _) = try await send(request, authenticated: false)
+    do { return try RecognitionCodec.decoder().decode(InvitationLoginResult.self, from: data) }
+    catch { throw RecognitionClientError.invalidResponse }
+  }
+
+  /// 退出登录（POST <入口>/s/api/logout）：服务器立即撤销这枚令牌；204 无正文。
+  func logoutInvitation() async throws {
+    guard configuration.isInvitation else { throw RecognitionClientError.invalidPairing }
+    _ = try await send(makeRequest("logout", method: "POST"))
+  }
+
   // MARK: - Existing job operations
 
   func upload(file: URL, idempotencyKey: UUID, photoName: String) async throws -> RecognitionJob {
@@ -216,6 +238,35 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
       text = text.replacingOccurrences(of: deviceId, with: "[设备已隐藏]")
     }
     return text
+  }
+}
+
+/// 邀请码登录响应（服务端 studentHost/router.ts `POST /s/api/login` 契约）。
+struct InvitationLoginResult: Codable, Equatable, Sendable {
+  let token: String
+  let serviceId: String
+  let expiresAt: Date
+  let protocolVersion: Int
+
+  enum CodingKeys: String, CodingKey { case token, serviceId, expiresAt, protocolVersion }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    token = try values.decode(String.self, forKey: .token)
+    serviceId = try values.decode(String.self, forKey: .serviceId)
+    expiresAt = try values.decode(Date.self, forKey: .expiresAt)
+    protocolVersion = try values.decode(Int.self, forKey: .protocolVersion)
+    guard protocolVersion == 1, token.count >= 16, !token.contains("\n"), !token.contains("\r"),
+      UUID(uuidString: serviceId) != nil
+    else { throw RecognitionClientError.invalidResponse }
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(token, forKey: .token)
+    try container.encode(serviceId, forKey: .serviceId)
+    try container.encode(expiresAt, forKey: .expiresAt)
+    try container.encode(protocolVersion, forKey: .protocolVersion)
   }
 }
 

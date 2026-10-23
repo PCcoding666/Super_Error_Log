@@ -23,7 +23,7 @@ struct UploadConsentView: View {
           Text("原始照片保存在本机。上传使用一次生成并保存的 JPEG 副本，可能改变压缩和方向表示；重试会发送同一份副本。服务商的数据处理不由本应用控制。")
             .font(.subheadline).foregroundStyle(Palette.muted)
           if store.pairing == nil {
-            Text("尚未连接识别服务，请返回连接设置或扫码配对后再上传。").font(.subheadline).foregroundStyle(Palette.teal)
+            Text("还没登录，请先输入邀请码再上传。").font(.subheadline).foregroundStyle(Palette.teal)
           } else if store.pairing?.isCloud == true, let state = store.connectionState, state != .ready {
             Text("当前云端连接状态：\(state.title)。上传前会重新检查连接。").font(.subheadline).foregroundStyle(Palette.teal)
           }

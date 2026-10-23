@@ -7,9 +7,9 @@ import Foundation
 
 /// 下一步按钮与清单行能做的事。视图层把它翻译成导航或主页上的现有动作（拍照、勾选面板、上传）。
 enum NextStepAction: Hashable, Sendable {
-  /// 未配对：打开扫码页。
+  /// 未登录：打开邀请码登录页（旧扫码配对是登录页里的次要入口）。
   case scan
-  /// 授权失效 / 版本不一致：先清凭据，再打开扫码页。
+  /// 登录失效 / 版本不一致：先清凭据，再打开登录页。
   case rescan
   /// 拍照（真机打开系统相机；没有相机的设备打开相册）。
   case capture
@@ -306,12 +306,12 @@ enum WeekPlan {
 
   private static func connect(_ reason: ConnectReason) -> Result {
     let primary: NextStepModel.Choice = switch reason {
-    case .unpaired: .init(title: "扫码连接", systemImage: "qrcode.viewfinder", action: .scan)
-    case .unauthorized: .init(title: "重新扫码", systemImage: "qrcode.viewfinder", action: .rescan)
-    case .incompatible: .init(title: "扫新的二维码", systemImage: "qrcode.viewfinder", action: .rescan)
+    case .unpaired: .init(title: "输入邀请码", systemImage: "person.badge.key", action: .scan)
+    case .unauthorized: .init(title: "重新登录", systemImage: "person.badge.key", action: .rescan)
+    case .incompatible: .init(title: "重新登录", systemImage: "person.badge.key", action: .rescan)
     }
     return Result(stage: .connect(reason), steps: [], currentIndex: nil,
-      next: NextStepModel(caption: "这一步要大人帮一下", primary: primary), practice: nil)
+      next: NextStepModel(caption: "用老师或家长给的邀请码", primary: primary), practice: nil)
   }
 
   // MARK: - 做完了 / 周中（§4.9）

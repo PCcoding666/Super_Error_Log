@@ -58,18 +58,18 @@ final class WeekPlanTests: XCTestCase {
     let result = WeekPlan.make(input(connection: .unpaired, practices: [thisWeekPractice()]))
     XCTAssertEqual(result.stage, .connect(.unpaired))
     XCTAssertTrue(result.steps.isEmpty, "没连上时不显示步骤")
-    XCTAssertEqual(result.next?.primary?.title, "扫码连接")
+    XCTAssertEqual(result.next?.primary?.title, "输入邀请码")
     XCTAssertEqual(result.next?.primary?.action, .scan)
   }
 
   func testUnauthorizedAndIncompatibleAskForANewQRCode() {
     let unauthorized = WeekPlan.make(input(connection: .unauthorized))
     XCTAssertEqual(unauthorized.stage, .connect(.unauthorized))
-    XCTAssertEqual(unauthorized.next?.primary?.title, "重新扫码")
+    XCTAssertEqual(unauthorized.next?.primary?.title, "重新登录")
     XCTAssertEqual(unauthorized.next?.primary?.action, .rescan)
     let incompatible = WeekPlan.make(input(connection: .incompatible))
     XCTAssertEqual(incompatible.stage, .connect(.incompatible))
-    XCTAssertEqual(incompatible.next?.primary?.title, "扫新的二维码", "原「查看帮助」名不副实")
+    XCTAssertEqual(incompatible.next?.primary?.title, "重新登录", "原「查看帮助」名不副实")
     XCTAssertEqual(incompatible.next?.primary?.action, .rescan)
   }
 

@@ -258,6 +258,9 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
 /// 双模式配对（Task 4）：
 /// - loopback：现有回环校验不变（http + 127.0.0.1/localhost/[::1] + 16 位口令）。
 /// - cloud：白名单入口 HTTPS（IP 直连或域名，取自配对二维码）+ 设备令牌 + deviceId（UUID）+ 可选到期。
+/// - invitation（2026-10-23）：邀请码登录。入口是白名单主机下的 `/s/api`（网关的原生接口），令牌是网关发的
+///   会话令牌（与手机网页版同一张表），serviceId 是该学生自己 worker 的服务标识；没有 deviceId。
+///   `isCloud` 对它也为 true：健康检查、归属校验、连接状态机全部沿用云端逻辑。
 /// 注意：Codable 按模式存储；`baseURL`/`token` 提供模式无关访问。
 struct PairingConfiguration: Codable, Equatable, Sendable {
   #if DEBUG
@@ -288,7 +291,7 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
   private let cloudDeviceId: String?
   private let cloudExpiresAt: Date?
 
-  enum Mode: String, Codable, Sendable { case loopback, cloud }
+  enum Mode: String, Codable, Sendable { case loopback, cloud, invitation }
 
   init(baseURL: String, token: String) throws {
     guard let parts = URLComponents(string: baseURL), parts.scheme == "http",
@@ -314,6 +317,16 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
       cloudServiceId: serviceId, cloudToken: token, cloudDeviceId: deviceId, cloudExpiresAt: expiresAt)
   }
 
+  /// 邀请码登录：`baseURL` 必须恰为白名单主机的原生接口入口（`CloudPairing.nativeAPIURL(forHost:)` 的规范形式）。
+  static func invitation(baseURL: String, serviceId: String, token: String, expiresAt: Date?) throws -> PairingConfiguration {
+    guard let url = URL(string: baseURL), let host = url.host(), CloudPairing.nativeAPIURL(forHost: host) == baseURL,
+      UUID(uuidString: serviceId) != nil,
+      token.count >= 16, !token.contains("\n"), !token.contains("\r")
+    else { throw RecognitionClientError.invalidPairing }
+    return PairingConfiguration(mode: .invitation, loopbackURL: nil, loopbackToken: nil, cloudURL: url,
+      cloudServiceId: serviceId, cloudToken: token, cloudDeviceId: nil, cloudExpiresAt: expiresAt)
+  }
+
   private init(mode: Mode, loopbackURL: URL?, loopbackToken: String?, cloudURL: URL?,
     cloudServiceId: String?, cloudToken: String?, cloudDeviceId: String?, cloudExpiresAt: Date?) {
     self.mode = mode
@@ -326,13 +339,18 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
     self.cloudExpiresAt = cloudExpiresAt
   }
 
-  var isCloud: Bool { mode == .cloud }
+  /// 云端语义（设备令牌配对或邀请码登录）：两者都走 HTTPS 白名单入口、Bearer 令牌与归属校验。
+  var isCloud: Bool { mode != .loopback }
+  /// 邀请码登录（有「退出登录」、没有 deviceId）。
+  var isInvitation: Bool { mode == .invitation }
 
   /// 模式无关的请求基地址（回环：本机 URL；云端：配对时的白名单入口；DEBUG UI 测试：回环覆盖）。
   var baseURL: URL {
     switch mode {
     case .loopback: loopbackURL!
     case .cloud: Self.testCloudOverride ?? cloudURL!
+    // DEBUG UI 测试的回环覆盖同样要落在网关的原生接口前缀下。
+    case .invitation: Self.testCloudOverride.map { $0.appending(path: CloudPairing.nativeAPIPath) } ?? cloudURL!
     }
   }
 
@@ -340,7 +358,7 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
   var token: String {
     switch mode {
     case .loopback: loopbackToken!
-    case .cloud: cloudToken!
+    case .cloud, .invitation: cloudToken!
     }
   }
 
@@ -358,11 +376,17 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     if let mode = try values.decodeIfPresent(Mode.self, forKey: .mode) {
-      guard mode == .cloud else { throw RecognitionClientError.invalidPairing }
       let serviceId = try values.decode(String.self, forKey: .serviceId)
       let token = try values.decode(String.self, forKey: .token)
-      let deviceId = try values.decode(String.self, forKey: .deviceId)
       let expiresAt = try values.decodeIfPresent(Date.self, forKey: .expiresAt)
+      if mode == .invitation {
+        // 邀请码登录：入口重新走白名单校验，不信任磁盘字段。
+        let baseURL = try values.decode(String.self, forKey: .baseURL)
+        self = try PairingConfiguration.invitation(baseURL: baseURL, serviceId: serviceId, token: token, expiresAt: expiresAt)
+        return
+      }
+      guard mode == .cloud else { throw RecognitionClientError.invalidPairing }
+      let deviceId = try values.decode(String.self, forKey: .deviceId)
       // 2026-10-03 之前的云端配对没有入口字段，当时只有域名入口：按域名读取，行为不变。
       // 存了入口的也重新走白名单校验，不信任磁盘字段。
       let baseURL = try values.decodeIfPresent(String.self, forKey: .baseURL) ?? CloudPairing.domainURL
@@ -388,6 +412,12 @@ struct PairingConfiguration: Codable, Equatable, Sendable {
       try container.encode(cloudToken!, forKey: .token)
       try container.encode(cloudDeviceId!, forKey: .deviceId)
       if let cloudExpiresAt { try container.encode(cloudExpiresAt, forKey: .expiresAt) }
+    case .invitation:
+      try container.encode(Mode.invitation, forKey: .mode)
+      try container.encode(cloudURL!.absoluteString, forKey: .baseURL)
+      try container.encode(cloudServiceId!, forKey: .serviceId)
+      try container.encode(cloudToken!, forKey: .token)
+      if let cloudExpiresAt { try container.encode(cloudExpiresAt, forKey: .expiresAt) }
     }
   }
 }
@@ -407,7 +437,7 @@ enum RecognitionClientError: Error, LocalizedError {
     case .service(let message): message
     case .missingMedia: "题目需要的安全图示尚未完整保存在本机，暂时不能生成练习包。"
     case .server(_, let message): message
-    case .incompatiblePairing: "识别服务版本或归属与配对不一致，请重新扫码配对。"
+    case .incompatiblePairing: "识别服务版本或归属与登录时不一致，请重新登录。"
     case .networkFailure(let error): "暂时连不上识别服务。已保存的照片和结果仍可查看，请检查连接后重试。（\(error.code.rawValue)）"
     }
   }

@@ -15,6 +15,13 @@ enum CloudPairing {
     allowedHosts.contains(host) ? "https://\(host)" : nil
   }
 
+  /// 邀请码登录用的网关原生接口前缀（服务端 studentHost/router.ts 的 /s/api）。
+  static let nativeAPIPath = "s/api"
+  /// 白名单主机下的原生接口入口（无尾斜杠）：`https://<host>/s/api`；其他主机返回 nil。
+  static func nativeAPIURL(forHost host: String) -> String? {
+    url(forHost: host).map { "\($0)/\(nativeAPIPath)" }
+  }
+
   struct ParsedQR: Equatable, Sendable {
     let v: Int
     let serviceId: String
@@ -133,27 +140,27 @@ enum ConnectionState: Equatable, Sendable {
 
   var title: String {
     switch self {
-    case .unpaired: "还没连上服务器"
+    case .unpaired: "还没登录"
     case .pairedNeedsCheck: "等待检查连接"
     case .checking: "正在检查连接"
     case .ready: "可以上传"
     case .busy: "服务繁忙"
     case .failed: "连接失败"
-    case .unauthorized: "授权已失效"
+    case .unauthorized: "登录已失效"
     case .incompatible: "版本不兼容"
     }
   }
 
   var actionTitle: String {
     switch self {
-    case .unpaired: "扫码连接"
+    case .unpaired: "输入邀请码"
     case .pairedNeedsCheck: "检查连接"
     case .checking: "请稍候"
     case .ready: "开始上传"
     case .busy: "稍后再试"
     case .failed: "重试连接"
-    case .unauthorized: "重新扫码"
-    case .incompatible: "扫新的二维码"
+    case .unauthorized: "重新登录"
+    case .incompatible: "重新登录"
     }
   }
 }

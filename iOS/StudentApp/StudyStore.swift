@@ -195,6 +195,36 @@ final class StudyStore {
     } catch { errorMessage = error.localizedDescription }
   }
 
+  /// 邀请码登录（2026-10-23）：老师/家长给的 12 位邀请码 → 网关 `/s/api/login` 换会话令牌 → 落库。
+  /// 与手机网页版同一个账号；错误文案来自服务器（不含令牌字节）。`transport`：测试注入合成传输。
+  @discardableResult
+  func loginWithInvitation(code: String, host: String = CloudPairing.domainHost, transport: RecognitionClient? = nil) async -> Bool {
+    guard let entry = CloudPairing.nativeAPIURL(forHost: host) else { errorMessage = "只接受官方云服务的入口。"; return false }
+    let client: RecognitionClient
+    let ownsClient: Bool
+    if let transport { client = transport; ownsClient = false }
+    else if let bootstrap = try? PairingConfiguration.invitation(
+      baseURL: entry, serviceId: UUID().uuidString, token: String(repeating: "x", count: 32), expiresAt: nil) {
+      client = RecognitionClient(configuration: bootstrap); ownsClient = true
+    } else { errorMessage = "登录请求无法构造，请重试。"; return false }
+    defer { if ownsClient { client.close() } }
+    do {
+      let result = try await client.loginInvitation(code: code, deviceInfo: "iPhone")
+      let configuration = try PairingConfiguration.invitation(
+        baseURL: entry, serviceId: result.serviceId, token: result.token, expiresAt: result.expiresAt)
+      adoptCloudPairing(configuration)
+      return true
+    } catch { errorMessage = error.localizedDescription; return false }
+  }
+
+  /// 退出登录：尽力让服务器撤销这枚令牌（失败不阻塞），然后清掉本机凭据回到未登录。
+  /// 本机照片不动；错题与练习记录在服务器上，重新登录就能看到。
+  /// `transport`：测试注入合成传输（缺省用当前客户端）。
+  func logout(transport: RecognitionClient? = nil) async {
+    if pairing?.isInvitation == true, let current = transport ?? client { try? await current.logoutInvitation() }
+    repairByRescan()
+  }
+
   /// 设备级客户端标识（非秘密；服务端兑换幂等键）。首次使用生成后稳定保存。
   private static let clientIdentifier: String = {
     let key = "sel-client-identifier"

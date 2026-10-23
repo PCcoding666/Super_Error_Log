@@ -88,9 +88,9 @@ final class WeekPlanJourneyTests: XCTestCase {
     app.launchArguments = ["-test-session", UUID().uuidString]
     app.launch()
     XCTAssertTrue(app.descendants(matching: .any)["today-connect"].waitForExistence(timeout: 10))
-    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "先连上服务器")).firstMatch.exists)
-    XCTAssertEqual(app.buttons["next-step-primary"].label, "扫码连接")
-    XCTAssertEqual(app.staticTexts["next-step-caption"].label, "这一步要大人帮一下")
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "先登录")).firstMatch.exists)
+    XCTAssertEqual(app.buttons["next-step-primary"].label, "输入邀请码")
+    XCTAssertEqual(app.staticTexts["next-step-caption"].label, "用老师或家长给的邀请码")
     shot(app, "stage-1-connect")
   }
 
@@ -220,14 +220,14 @@ final class WeekPlanJourneyTests: XCTestCase {
     shot(app, "wrong-3-server-unreachable")
   }
 
-  /// 连接失效（要重新扫码）：今天卡说清楚要大人帮，下一步按钮是「重新扫码」。
+  /// 登录失效（要重新登录）：今天卡说清楚，下一步按钮是「重新登录」。
   func testWrongDayConnectionExpired() throws {
     let server = try SyntheticRecognitionServer(cloudHealth: .unauthorized)
     defer { server.stop() }
     let app = launch(server)
     XCTAssertTrue(app.descendants(matching: .any)["today-connect"].waitForExistence(timeout: 15))
-    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "需要重新扫码")).firstMatch.exists)
-    XCTAssertEqual(app.buttons["next-step-primary"].label, "重新扫码")
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "需要重新登录")).firstMatch.exists)
+    XCTAssertEqual(app.buttons["next-step-primary"].label, "重新登录")
     shot(app, "wrong-4-connection-expired")
   }
 

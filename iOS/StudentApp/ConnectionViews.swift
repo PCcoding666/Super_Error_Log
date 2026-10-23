@@ -12,6 +12,14 @@ struct PairingSettingsView: View {
         Section("服务器") {
           CloudConnectionRow(state: store.connectionState ?? .unpaired, onScan: { showScanner = true })
         }
+        if store.pairing?.isInvitation == true {
+          Section {
+            Button("退出登录", role: .destructive) { Task { await store.logout(); dismiss() } }
+              .frame(minHeight: 44)
+              .accessibilityIdentifier("invite-logout")
+            Text("退出后本机照片仍在；错题和练习记录在服务器上，重新输入邀请码就能看到。").font(.caption)
+          }
+        }
         Section("开发者选项：本机地址连接（仅开发调试用）") {
           if store.pairing != nil { Text("已保存本机配对").accessibilityIdentifier("pairing-saved") }
           TextField("本机地址", text: $address).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("pairing-address")
@@ -21,12 +29,7 @@ struct PairingSettingsView: View {
         Button("保存连接") { if store.savePairing(address: address, token: token) { dismiss() } }
           .disabled((try? PairingConfiguration(baseURL: address, token: token)) == nil).accessibilityIdentifier("save-pairing")
       }.navigationTitle("连接设置").toolbar { Button("关闭") { dismiss() } }
-      .sheet(isPresented: $showScanner) {
-        CameraScanner { payload in
-          showScanner = false
-          Task { await store.redeemCloudPairing(qrText: payload) }
-        }
-      }
+      .sheet(isPresented: $showScanner) { InvitationLoginView() }
     }.onAppear { if store.pairing?.isCloud != true { address = store.pairing?.baseURL.absoluteString ?? address } }
   }
 }
@@ -48,10 +51,10 @@ struct CloudConnectionRow: View {
       }
       .accessibilityIdentifier("connection-state-\(state.key)")
       if state == .unpaired {
-        Text("这一步要大人帮一下：请帮你装 App 的人打开配对二维码，你点下面的按钮扫一下。")
+        Text("输入老师或家长给你的邀请码就能连上，和手机网页版是同一个账号。")
           .font(.caption).foregroundStyle(Palette.muted)
       } else if state == .incompatible {
-        Text("请帮你装 App 的人更新 App，或者给你一个新的二维码。")
+        Text("请帮你装 App 的人更新 App，然后重新登录。")
           .font(.caption).foregroundStyle(Palette.muted)
       }
       actionButton
@@ -87,7 +90,7 @@ struct CloudConnectionRow: View {
   private var actionButton: some View {
     switch state {
     case .unpaired:
-      // 未配对的「扫码配对」必须真的打开扫码页，绝不做无声无操作的死按钮。
+      // 未登录的「输入邀请码」必须真的打开登录页，绝不做无声无操作的死按钮。
       Button(state.actionTitle) { onScan?() }
         .buttonStyle(.borderedProminent)
         .accessibilityIdentifier("scan-to-pair")
@@ -99,23 +102,23 @@ struct CloudConnectionRow: View {
     case .pairedNeedsCheck, .checking, .busy:
       retryButton
     case .failed:
-      // 连不上时主按钮仍是「重试连接」（只重查，不动配对）。换了网络、旧入口不通的时候，
-      // 重试永远不会好——另给一个次要的「重新扫码」：清掉旧配对，打开扫码页换一个入口。
+      // 连不上时主按钮仍是「重试连接」（只重查，不动登录）。换了网络、旧入口不通的时候，
+      // 重试永远不会好——另给一个次要的「重新登录」：清掉旧凭据，打开登录页换一个入口。
       retryButton
       VStack(alignment: .leading, spacing: 4) {
-        Button("重新扫码") {
+        Button("重新登录") {
           store.repairByRescan()
           onScan?()
         }
         .buttonStyle(.bordered)
         .accessibilityIdentifier("rescan-connection")
-        Text("换了网络连不上？让大人再给一个二维码，重新扫一下。")
+        Text("换了网络连不上？重新输入邀请码，可以换一个入口试试。")
           .font(.caption).foregroundStyle(Palette.muted)
           .accessibilityIdentifier("rescan-connection-hint")
       }
     case .unauthorized, .incompatible:
       Button(state.actionTitle) {
-        // 先清凭据回到未配对，再弹出扫码页让用户立即重新配对。
+        // 先清凭据回到未登录，再弹出登录页让用户立即重新登录。
         Task {
           await store.connectionAction()
           onScan?()

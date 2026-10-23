@@ -74,12 +74,7 @@ struct LoopHomeView: View {
       if !presenting { firePendingHomeActionSoon() }
     }
     .sheet(isPresented: $showSettings) { LoopSettingsView() }
-    .sheet(isPresented: $showScanner) {
-      CameraScanner { payload in
-        showScanner = false
-        Task { await store.redeemCloudPairing(qrText: payload) }
-      }
-    }
+    .sheet(isPresented: $showScanner) { InvitationLoginView() }
     .sheet(isPresented: $showCamera) {
       CameraCapture { data in
         Task {
@@ -161,7 +156,7 @@ struct LoopHomeView: View {
     case .scan:
       showScanner = true
     case .rescan:
-      // 与连接行的「重新扫码」相同：先清凭据回到未配对，再打开扫码页。
+      // 与连接行的「重新登录」相同：先清凭据回到未登录，再打开登录页。
       // 直接走 repairByRescan（不看当前状态）；不经 connectionAction，它对「连不上」只会重查、不清凭据。
       store.repairByRescan()
       showScanner = true
@@ -496,7 +491,7 @@ struct LoopHomeView: View {
           }
         }
       } else if store.pairing == nil {
-        Text("连上服务器以后，这里会显示本周错题")
+        Text("登录以后，这里会显示本周错题")
           .font(.subheadline).foregroundStyle(Palette.muted)
           .accessibilityIdentifier("items-unpaired")
       } else {
