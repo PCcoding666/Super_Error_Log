@@ -5,6 +5,7 @@ import { COMPLETION_LABEL, type Completion } from '../domain/types.js';
 import { audit } from './eventLog.js';
 import { getItem } from './itemService.js';
 import { getPacket } from './planService.js';
+import { delayAnchorDay } from '../learning/redoSchedule.js';
 
 export interface AttemptInput {
   completion: Completion;
@@ -132,12 +133,15 @@ export function recordAttempt(
   if (performedDay.ordinal < generatedDay.ordinal) {
     return { ok: false, error: '实际作答日期不能早于复习包首次打印日期' };
   }
-  const daysSincePacket = performedDay.ordinal - generatedDay.ordinal;
+  // 延迟锚点：这道题上一次作答日；从没作答过就用录入日（P0-3）。不再看练习包生成日，
+  // 否则「接受建议当场做、隔几天再做」永远到不了掌握。当天做对仍然只算 attempted。
+  const anchor = parseCalendarDay(delayAnchorDay(itemId, packetId) ?? '') ?? generatedDay;
+  const delayDays = performedDay.ordinal - anchor.ordinal;
   const isConfirmation = item.status === 'temporarily_mastered';
   const transition = statusAfterAttempt(item.status, {
     completion,
     correct,
-    daysSincePacket,
+    delayDays,
     isConfirmation,
   });
 

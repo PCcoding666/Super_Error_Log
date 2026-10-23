@@ -14,8 +14,11 @@ export const ATTEMPTABLE_STATUSES: readonly ItemStatus[] = [
 export interface AttemptOutcome {
   completion: Completion;
   correct: boolean;
-  /** 距复习包生成的天数（用于判定是否为延迟作答，而非当场重做） */
-  daysSincePacket: number;
+  /**
+   * 距这道题上一次作答日（从未作答则为录入日）的天数。
+   * 用于判定是否为延迟作答，而非当场重做；与练习包哪天生成无关。
+   */
+  delayDays: number;
   /** 是否为本题在 temporarily_mastered 后的确认作答 */
   isConfirmation: boolean;
 }
@@ -27,8 +30,9 @@ export interface Transition {
 
 /**
  * 回传作答后的状态流转。核心规则：
- * - 当场/看过答案后做对不算掌握（daysSincePacket < MIN_DELAY_DAYS 不构成掌握证据）。
- * - 延迟 3–7 天独立做对 → temporarily_mastered；确认轮独立做对 → stably_mastered。
+ * - 当场/看过答案后做对不算掌握（delayDays < MIN_DELAY_DAYS 不构成掌握证据）。
+ * - 距上次接触 ≥3 天独立做对 → temporarily_mastered；确认轮独立做对 → stably_mastered。
+ * - 确认轮先判轮次再判天数：确认轮间隔不足时保持 temporarily_mastered，不降级。
  * - 使用提示 / 不确定 / 做错 / 未完成 → needs_recheck，优先进入下次计划。
  */
 export function statusAfterAttempt(current: ItemStatus, outcome: AttemptOutcome): Transition {
@@ -36,7 +40,7 @@ export function statusAfterAttempt(current: ItemStatus, outcome: AttemptOutcome)
     return { to: current, reason: `状态 ${current} 不可记录作答` };
   }
 
-  const { completion, correct, daysSincePacket, isConfirmation } = outcome;
+  const { completion, correct, delayDays, isConfirmation } = outcome;
 
   if (completion === 'unfinished') {
     return { to: 'needs_recheck', reason: '未完成，需再次安排' };
@@ -55,11 +59,14 @@ export function statusAfterAttempt(current: ItemStatus, outcome: AttemptOutcome)
   if (!correct) {
     return { to: 'needs_recheck', reason: '独立作答做错，需再次安排' };
   }
-  if (daysSincePacket < MIN_DELAY_DAYS) {
-    return { to: 'attempted', reason: '当场做对不构成延迟掌握，仍待延迟验证' };
-  }
   if (isConfirmation || current === 'temporarily_mastered') {
+    if (delayDays < MIN_DELAY_DAYS) {
+      return { to: current, reason: '确认轮离上次作答不足 3 天，保持暂时掌握，到期再确认' };
+    }
     return { to: 'stably_mastered', reason: '延迟确认再次独立做对，进入稳定掌握' };
+  }
+  if (delayDays < MIN_DELAY_DAYS) {
+    return { to: 'attempted', reason: '当场做对不构成延迟掌握，仍待延迟验证' };
   }
   return { to: 'temporarily_mastered', reason: '延迟 3–7 天独立做对，进入暂时掌握' };
 }

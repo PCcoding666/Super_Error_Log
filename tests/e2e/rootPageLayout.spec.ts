@@ -89,13 +89,13 @@ for (const scripting of [true, false]) test.describe(`root page layout ${scripti
       for (const hasPractices of [true, false]) {
         await page.goto(`${base}/s/practices${hasPractices ? '' : '?empty=1'}`);
         if (width === 320) await page.evaluate(() => document.documentElement.style.setProperty('font-size', '200%'));
-        const action=hasPractices?page.getByRole('link',{name:'查看题目',exact:true}):page.getByRole('button',{name:'就练这 3 道',exact:true});
+        const action=hasPractices?page.getByRole('link',{name:'开始做',exact:true}):page.getByRole('button',{name:'开始做这 3 道',exact:true});
         await expect(action).toBeVisible();
         expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
         expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
         const chooseLink=hasPractices?page.getByRole('link',{name:'自己选题',exact:true}):page.getByRole('link',{name:'调整题目和题量',exact:true});
         await expect(chooseLink).toHaveAttribute('href','/s/choose');
-        if(hasPractices)await expect(page.getByTestId('practice-latest')).toContainText('还没有收到作答');
+        if(hasPractices)await expect(page.getByRole('link',{name:'在纸上做完了，记录结果',exact:true})).toBeVisible();
         else await expect(page.getByTestId('practice-recommendation')).toContainText('为什么练');
         await page.screenshot({ path: info.outputPath(`practices-${width}-${hasPractices}.png`),fullPage:true });
       }

@@ -15,6 +15,10 @@ export interface PlanResult {
 export const PLAN_MIN = 5;
 export const PLAN_MAX = 8;
 export const SAME_TAG_CAP = 2;
+/** 「今天该做」每天最多几道，到期多的顺延。 */
+export const TODAY_LIMIT = 5;
+/** 暂时掌握后隔几天再确认一次。 */
+export const CONFIRMATION_DAYS = 10;
 
 /**
  * 每周选 5–8 题：按评分降序，同知识点最多 2 道；候选不足 5 道则全部纳入并提示。
@@ -87,7 +91,7 @@ export function plannedDateForPacket(confirmDate: Date): string {
 
 /** 暂时掌握后的确认复习日期：+10 天（落在 7–14 天窗口内） */
 export function confirmationDateFor(now: Date): string {
-  return toDay(addDays(now, 10));
+  return toDay(addDays(now, CONFIRMATION_DAYS));
 }
 
 export function daysBetween(a: Date, b: Date): number {
