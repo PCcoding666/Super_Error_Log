@@ -77,7 +77,7 @@ process.on('message', async (message: { id?: string; action?: string; student?: 
       result={jobId:id};
     }
     if (message.action === 'snapshot' || message.action === 'age') {
-      const db = new DatabaseSync(file);
+      const db = new DatabaseSync(file, { timeout: 5000 }); // wait for the worker's write lock instead of failing at once
       if (message.action === 'age') {
         db.exec("UPDATE review_packet SET generated_at=datetime('now','-7 days'); UPDATE error_item SET created_at=datetime('now','-7 days'); UPDATE material_asset SET created_at=datetime('now','-1 day'); UPDATE material_capture SET created_at=datetime('now','-1 day')");
       } else {
