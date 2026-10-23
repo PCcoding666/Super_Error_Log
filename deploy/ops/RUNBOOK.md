@@ -14,15 +14,14 @@
 | 6 | **清理旧发布备份（删除操作，你确认后再执行）**。旧包里有 env 密钥和证书私钥，只留最近 3 份 | 先看：`ls -1dt /var/backups/super-error-log-ci/*/ \| tail -n +4`；确认列表无误后：`ls -1dt /var/backups/super-error-log-ci/*/ \| tail -n +4 \| xargs -r rm -rf --` |
 | 7 | **重新安装发布程序**（本 PR 合并且自动发布成功后；服务器只运行管理员安装的固定副本，不会自动更新） | `diff /usr/local/sbin/sel-ci-deploy /opt/super-error-log/current/deploy/ci/sel-ci-deploy.py`；看过后 `install -m 0755 -o root -g root /opt/super-error-log/current/deploy/ci/sel-ci-deploy.py /usr/local/sbin/sel-ci-deploy`。之后每次发布：先在服务运行时打包照片 → 停服 → 只打包 SQLite（几秒）→ 启动；不再带 env 和私钥；自动只留 3 份备份、3 个旧 ci 版本 |
 | 8 | 阿里云控制台 | ① 云盘「自动快照策略」：每天 03:30、保留 7 天，绑定系统盘；② 云监控「站点监控」HTTPS GET `https://study.pccoding666.com/s/` 关键字「邀请码」，多个国内探测点，连续 2 次失败报警；主机监控磁盘 > 80%、内存 > 90%；③ 费用中心「预算/费用预警」按量日消费上限；④ 百炼控制台确认 Token Plan 用途条款、按量接口的消费上限 |
-| 9 | AI 按量付费熔断（应用内） | 在 `/etc/super-error-log/env` 加 `SEL_AI_FALLBACK_DAILY_CALLS=200`、`SEL_AI_FALLBACK_DAILY_TOKENS=2000000`（缺省就是这两个值；`0` = 完全不用备用）。改完要重启服务，**在发布窗口内**（不在 18:00–24:00）做：`systemctl restart super-error-log`。效果看 `/admin/` →「调用性能 → 按调用线路」 |
+| 9 | AI 按量付费熔断（应用内） | 在 `/etc/super-error-log/env` 加 `SEL_AI_FALLBACK_DAILY_CALLS=200`、`SEL_AI_FALLBACK_DAILY_TOKENS=2000000`（缺省就是这两个值；`0` = 完全不用备用）。改完要重启服务：`systemctl restart super-error-log`。效果看 `/admin/` →「调用性能 → 按调用线路」 |
 | 10 | 安装运维脚本与定时器 | `bash /opt/super-error-log/current/deploy/ops/install.sh --dry-run` → 看计划 → `bash /opt/super-error-log/current/deploy/ops/install.sh`（先不启用定时器） |
 | 11 | 异地备份目标（二选一） | **OSS**：开同地域私有桶，服务端加密，生命周期规则 14 天删除；建 RAM 子账号只给该桶前缀写权限；装 ossutil 到 `/usr/local/bin/ossutil`，以 root `ossutil config` 写入子账号 AK（存在 `/root/.ossutilconfig`，不放 env）；`ops.env` 写 `SEL_BACKUP_REMOTE=oss://<桶>/super-error-log`。**另一台主机**：`dnf install -y rsync`；root 生成专用密钥，对方 `authorized_keys` 限制该 key；`SEL_BACKUP_REMOTE=rsync:backup@<主机>:/srv/sel-backup` |
 | 12 | 推送 key | `/etc/super-error-log/alert.env`（0600）写 `SEL_ALERT_BARK_KEY=…` 或 `SEL_ALERT_WECOM_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…` |
 | 13 | 第一次手动跑 | 备份：`systemctl start sel-backup.service; journalctl -u sel-backup -n 30 --no-pager`（期望 `backup_ok` 和 `push_ok`；`ls /var/backups/super-error-log-daily/`）。巡检先演练：`set -a; . /etc/super-error-log/ops.env; . /etc/super-error-log/alert.env; set +a; /opt/super-error-log/node-v24/bin/node /usr/local/lib/sel-ops/sel-healthcheck.mjs check --dry-run`；再真发一次日报确认手机收得到：`systemctl start sel-daily-report.service` |
 | 14 | 恢复演练（必须做一次，记下用时） | `runuser -u supererrorlog -- /opt/super-error-log/node-v24/bin/node /usr/local/lib/sel-ops/sel-restore.mjs --from /var/backups/super-error-log-daily/$(date +%F) --target /var/tmp/sel-drill-$(date +%s)`（期望 `restore_ok`、`errorItems` 与后台错题数一致；看完删掉 `/var/tmp/sel-drill-*`）。从 OSS 演练：`ossutil cp -r oss://<桶>/super-error-log/<日期>/ /root/drill-<日期>/` 再用 `--from` 指向它 |
 | 15 | 启用定时器 | `systemctl enable --now sel-backup.timer sel-healthcheck.timer sel-daily-report.timer`；`systemctl list-timers 'sel-*'` |
-| 16 | 发布窗口 | **北京时间 18:00–24:00 不合并 PR**（学生晚上拍卷、练习的高峰；发布要停服）。万一合并了，自动发布会拒绝并标红，00:00 后在 Actions 点 **Re-run failed jobs**。紧急修复：GitHub → Settings → Environments → production 加变量 `SEL_ALLOW_EVENING_RELEASE=true`，发完立刻删掉 |
-| 17 | 首批规模 | 首批 ≤ 8 人；你预先 `sel-admin create` 发码给老师，不让全班当场注册；错峰使用 |
+| 16 | 首批规模 | 首批 ≤ 8 人；你预先 `sel-admin create` 发码给老师，不让全班当场注册；错峰使用 |
 
 ## 二、出事了怎么办
 
@@ -30,14 +29,14 @@
 |---|---|
 | 服务没有在运行 / 刚自动重启 | `systemctl status super-error-log`；`journalctl -u super-error-log -n 100 --no-pager \| grep -E 'sel_worker_error\|Error'` |
 | 学生进程错误 | `journalctl -u super-error-log --since -30min --no-pager \| grep sel_worker_error`（只有学生 ID 前 8 位，`sel-admin list` 对照） |
-| 改走按量付费 N 次 / 备用通道已到上限 | Token Plan 在出问题：看 `/admin/` 按调用线路的失败率；百炼控制台看 Token Plan 额度。确需放宽，改 env 里的两个上限后在窗口内重启；上限到了学生会看到「AI 服务今天有点忙…最晚明天恢复」，照片不丢 |
+| 改走按量付费 N 次 / 备用通道已到上限 | Token Plan 在出问题：看 `/admin/` 按调用线路的失败率；百炼控制台看 Token Plan 额度。确需放宽，改 env 里的两个上限后重启服务（会短暂停服）；上限到了学生会看到「AI 服务今天有点忙…最晚明天恢复」，照片不丢 |
 | AI 失败率高 / 队列积压 | `/admin/` 失败原因；排队多是正常高峰就等；持续 30 分钟不降再查日志 |
 | 磁盘只剩 N GiB | `du -sh /var/backups/* /opt/super-error-log/releases /var/lib/super-error-log`；低于 3 GiB 会拒收上传，低于 2 GiB 不能发布 |
 | 每日备份失败 / 异地没成功 | `journalctl -u sel-backup -n 50 --no-pager`；`cat /var/backups/super-error-log-daily/last-status.json last-push.json` |
 | HTTPS 证书还有 N 天 | `journalctl -u super-error-log-caddy --since -1d \| grep -i renew`（11/16–11/18 是续期窗口，那周每天看一次） |
 | 登录页打不开 | 先看服务和 Caddy 是否 active；再从手机流量打开 `https://study.pccoding666.com/s/` |
 
-**真要从备份恢复线上数据**（会覆盖当前数据，先跟老师说好）：在窗口内 `systemctl stop super-error-log` → `sel-restore.mjs --from <快照目录> --target /var/lib/super-error-log --live --confirm-service-stopped`（现有目录会整体改名为 `*.before-restore-<时间>` 保留，不删）→ `systemctl start super-error-log` → 后台核对错题数。env 和证书不在备份里，从密码管理器 / 证书目录恢复。
+**真要从备份恢复线上数据**（会覆盖当前数据，先跟老师说好）：`systemctl stop super-error-log` → `sel-restore.mjs --from <快照目录> --target /var/lib/super-error-log --live --confirm-service-stopped`（现有目录会整体改名为 `*.before-restore-<时间>` 保留，不删）→ `systemctl start super-error-log` → 后台核对错题数。env 和证书不在备份里，从密码管理器 / 证书目录恢复。
 
 ## 三、每天 / 每周
 
