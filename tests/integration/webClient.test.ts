@@ -181,12 +181,16 @@ describe('三栏入口', () => {
   it('默认打开错题本，三个入口独立可达', async () => {
     const env = await setup();
     const browser = await pairBrowser(env);
+    // 根地址下发学生端单页应用的壳；旧的服务端错题本页保留在 /s/items。
     const home = await browser.text('/s/');
-    expect(home).toContain('<title>错题本 · ');
-    expect(home).toContain('data-testid="subject-switch"');
-    expect(home).toContain('错题录入');
-    expect(home).toContain('href="/s/practices"');
-    expect(home).not.toContain('纸上练习');
+    expect(home).toContain('<div id="root"></div>');
+    expect(home).toContain('/s/app/assets/');
+    const items = await browser.text('/s/items');
+    expect(items).toContain('<title>错题本 · ');
+    expect(items).toContain('data-testid="subject-switch"');
+    expect(items).toContain('错题录入');
+    expect(items).toContain('href="/s/practices"');
+    expect(items).not.toContain('纸上练习');
     const capture = await browser.text('/s/capture');
     expect(capture).toContain('<h1>错题录入</h1>');
     expect(capture).toContain('已上传记录');
@@ -267,10 +271,13 @@ describe('连接：链接配对 → httpOnly cookie；没有 cookie 只看到连
     expect(reused.status).toBe(409);  // pairing_used，与 /v1/pairing/redeem 同一状态码
     expect(await reused.text()).toContain('这个二维码用不了');
     expect(other.cookies.has('sel_device')).toBe(false);
+    // 配对后回到根地址：单页应用的壳（「已连接」提示由它自己显示）；旧错题本页照常可达。
     const today = await browser.text('/s/?paired=1');
-    expect(today).toContain('连上了 ✓');
-    expect(today).toContain('<title>错题本 · ');
-    expect(today).toContain('data-testid="subject-switch"');
+    expect(today).toContain('<div id="root"></div>');
+    const items = await browser.text('/s/items?paired=1');
+    expect(items).toContain('连上了 ✓');
+    expect(items).toContain('<title>错题本 · ');
+    expect(items).toContain('data-testid="subject-switch"');
   });
 
   it('非本机主机名一律 Secure（生产只走 HTTPS）', async () => {
@@ -583,7 +590,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     });
     const before = frozen();
     const sheet = await browser.text(`/s/print/${packetId}/sheet`);
-    const home = await browser.text('/s/');
+    const home = await browser.text('/s/items');
     expect(home).toContain('data-testid="tab-capture"');
     expect(home).toContain('<title>错题本 · ');
     expect(home).toContain('data-testid="subject-switch"');
@@ -1880,11 +1887,11 @@ describe('single-question learning detail', () => {
     const practices = await browser.visibleText('/s/practices');
     // 当天做对的这道和刚收的两道都要 3 天后才到期：只给日期。
     expect(practices).toContain(`下一批：${dueText}，3 道`);
-    expect(await browser.visibleText('/s/')).not.toContain('今天该做');
+    expect(await browser.visibleText('/s/items')).not.toContain('今天该做');
     // 3 天后：首页提示到期。
     getDb().prepare('UPDATE review_attempt SET performed_at=? WHERE item_id=?').run(new Date(today.getTime() - 3 * 86400000).toLocaleDateString('en-CA'),id);
     getDb().prepare('UPDATE error_item SET created_at=? WHERE id=?').run(new Date(today.getTime() - 4 * 86400000).toISOString(),id);
-    expect(await browser.visibleText('/s/')).toContain('今天该做 1 道题');
+    expect(await browser.visibleText('/s/items')).toContain('今天该做 1 道题');
     expect(await browser.visibleText('/s/practices')).toContain('开始做这 1 道');
   });
 });
