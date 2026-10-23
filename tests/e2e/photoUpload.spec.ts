@@ -97,7 +97,7 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   await page.getByTestId('next-step-primary').click();
   await page.getByTestId('next-step-primary').click();
   await expect(page.getByTestId('practice-question')).toBeVisible();
-  await page.goto(gateway.base + '/s/');
+  await page.goto(gateway.base + '/s/items');
   const add = page.getByTestId('tab-capture');
   await expect(add).toBeVisible();
   await page.screenshot({ path: info.outputPath('home-paper-ready.png'), fullPage: true });

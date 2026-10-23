@@ -43,7 +43,8 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await page.getByLabel('12 位邀请码').fill(gateway.codes[0]!);
   await page.getByRole('button', { name: '进入我的错题本' }).click();
   await expect(page).toHaveURL(/login=1/);
-  await expect(page.getByTestId('stage-gate')).toBeVisible();
+  // 新账号先在服务端的选学段页选一次，然后才进单页应用。
+  await expect(page.getByRole('heading', { name: '你现在读初中还是高中？' })).toBeVisible();
   await page.getByRole('button', { name: '初中', exact: true }).click();
   await expect(page.getByTestId('empty-notebook')).toBeVisible();
   await page.locator('#library-input').setInputFiles([await jpeg()]);

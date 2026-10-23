@@ -58,7 +58,7 @@ import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
 import { registerStaticAssets } from './staticAssets.js';
-import { CLIENT_SHELL_ROUTES, isClientShell, sendClientShell } from './clientApp.js';
+import { CLIENT_SHELL_ROUTES, sendClientShell } from './clientApp.js';
 import { createStudentApi } from './api.js';
 import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
@@ -365,7 +365,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
   r.use((request, response, next) => {
     try {
-      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path.startsWith('/api/settings') || isClientShell(request.path) || request.path === '/install' || request.path === '/install/seen') { next(); return; }
+      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path.startsWith('/api/settings') || request.path === '/install' || request.path === '/install/seen') { next(); return; }
       if (!stageChoiceNeeded(getDb(), requireProfile().id)) { next(); return; }
       failed(response, 'stage_required');
       const isPage = (request.method === 'GET' || request.method === 'HEAD') && !wantsJson(request) && !request.path.startsWith('/img/') && !/\/(?:image|crop)\/?$/.test(request.path);
@@ -391,7 +391,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
 
   // 根地址和三个子路径下发学生端单页应用（Ionic React，client/）；数据走 /s/api。
   // 旧的服务端页面（/s/items、/s/photos、/s/settings …）仍然保留，直到单页应用完全接管。
-  // 单页壳自己处理「先选学段」（接口回 409 stage_required），所以上面的门槛放它过。
+  // 新账号先在服务端的选学段页选好（关掉脚本也能用）；深链接直接打接口时单页应用自己也会处理 409 stage_required。
   for (const route of CLIENT_SHELL_ROUTES) r.get(route, (_request, response) => sendClientShell(response));
   r.use('/api', createStudentApi(ctx, { studentHostWorker: options.studentHostWorker === true, service: options.service, materialsJobs: options.materials?.jobs, accountRoleOf: response => accountRoleOf(response), inviteExpiresOf: response => inviteExpiresOf(response) }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));

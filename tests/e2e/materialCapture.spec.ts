@@ -512,8 +512,8 @@ test('P1-3: photos chosen at the moment the login expired stay on the phone and 
     await page.getByRole('link', { name: '重新登录', exact: true }).click();
     await page.getByLabel('12 位邀请码').fill(gateway.codes[2]!);
     await page.getByRole('button', { name: '进入我的错题本' }).click();
-    await expect(page.locator('[data-pending-uploads]')).toContainText('还有 2 张照片没传完');
-    await page.getByRole('link', { name: '回拍照页继续上传' }).click();
+    // 登录后回到的根地址是学生端单页应用（还没有本机草稿提示）；旧拍照页仍会接着传。
+    await page.goto(gateway.base + '/s/capture');
     await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张');
     expect(await pendingDrafts(page)).toBe(0);
