@@ -15,7 +15,7 @@
  *   disable <studentId>                   停用：作废全部邀请码和会话，不能再登录；学习数据保留（reset-invitation 恢复）
  *   delete <studentId> --confirm          删除账号和全部学习数据（不可恢复）；要求先 disable，且该学生没有正在运行的进程
  *   export <studentId> <outDir>           导出该学生的登记资料和学习数据副本到 outDir 下的新目录（0700）
- *   registration-code create [--uses N] [--days D] [备注]   生成注册码（班级码），学生注册时必须填；明文只显示一次
+ *   registration-code create [--uses N] [--days D] [备注]   生成注册码（班级码）；服务设了 SEL_REGISTRATION_CODE_REQUIRED=1 时学生注册必须填；明文只显示一次
  *   registration-code list                列出注册码（编号、备注、已用/上限、状态；不含码本身）
  *   registration-code revoke <编号>       作废注册码（已注册的账号不受影响）
  *   admin-password                        生成/轮换独立管理后台密码
