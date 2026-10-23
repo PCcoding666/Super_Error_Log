@@ -32,6 +32,7 @@ import { TRAIL_COOKIE } from '../web/trail.js';
 import type { RateLimiter } from '../mobile/rateLimit.js';
 import { sendHtml } from '../views/render.js';
 import { AccountPage, HostErrorPage, LoginPage, PrivacyPage, RegistrationPage, RegistrationCompletePage } from './loginView.js';
+import { CAPACITY_RETRY_SECONDS, CapacityWaitlist, capacityLines, capacityPageHtml } from './busyView.js';
 
 /** 「我的邀请码」换码成功的一次性提示（网关自用，不转发给 worker，也不在业务 cookie 白名单里）。 */
 const ACCOUNT_FLASH_COOKIE = 'sel_account_flash';
@@ -382,6 +383,8 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     return r;
   };
 
+  /** Students turned away by the worker cap and still retrying (counts only, memory only). */
+  const capacityWaitlist = new CapacityWaitlist();
   const proxyToWorker = async (request: Request, response: Response, studentId: string, relUrl: string, deps: StudentHostGatewayDeps): Promise<void> => {
     let retained = false;
     const releaseWorker = (): void => {
@@ -392,13 +395,19 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     const failClosed = (error: unknown): void => {
       releaseWorker();
       const capacity = error instanceof WorkerStartError && error.reason === 'capacity';
-      const detail = capacity
-        ? '现在同时打开的人比较多，等一两分钟再试。'
-        : error instanceof WorkerStartError ? '你的学习空间正在准备中，等半分钟再试。' : '服务器暂时没准备好，过一会儿再试。';
-      if (!response.headersSent) {
-        if (capacity) response.setHeader('retry-after', '60');
+      if (capacity && !response.headersSent) {
+        // P0-7: say what the host actually knows (slots, AI queue, others waiting) and retry by itself.
+        const facts = { snapshot: pool.capacitySnapshot(), othersWaiting: capacityWaitlist.rejected(studentId) };
+        response.setHeader('retry-after', String(CAPACITY_RETRY_SECONDS));
         response.status(503);
-        sendHtml(response, HostErrorPage({ title: capacity ? '人有点多' : '暂时进不去', detail }));
+        if (wantsJson(request)) { response.json({ error: { code: 'capacity', message: capacityLines(facts).join('') } }); return; }
+        response.type('html').send(capacityPageHtml(facts, request.method === 'GET' ? `/s${relUrl}` : '/s/'));
+        return;
+      }
+      const detail = error instanceof WorkerStartError ? '你的学习空间正在准备中，等半分钟再试。' : '服务器暂时没准备好，过一会儿再试。';
+      if (!response.headersSent) {
+        response.status(503);
+        sendHtml(response, HostErrorPage({ title: '暂时进不去', detail }));
       } else response.destroy();
     };
     let endpoint;
@@ -406,6 +415,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       pool.retain(studentId);
       retained = true;
       endpoint = await pool.ensure(studentId);
+      capacityWaitlist.admitted(studentId);
     } catch (error) {
       failClosed(error);
       return;

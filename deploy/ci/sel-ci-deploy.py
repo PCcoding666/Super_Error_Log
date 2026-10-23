@@ -103,6 +103,10 @@ def safe_unpack(archive, destination):
             raise ValueError('Incomplete release archive')
 
 
+# A queued/running material job untouched for this long belongs to a worker that is not running.
+MATERIAL_BUSY_WINDOW_MINUTES = 120
+
+
 def busy_count():
     # Count only, never print photo names/questions. Unreadable state fails closed.
     count = 0
@@ -119,6 +123,12 @@ def busy_count():
         try:
             if db.execute("SELECT 1 FROM sqlite_master WHERE name='v2_print_snapshot'").fetchone():
                 count += db.execute("SELECT count(*) FROM v2_print_snapshot WHERE status='preparing'").fetchone()[0]
+            # Material extraction/answer/grade jobs are the main photo path. Only recently touched
+            # queued/running rows count, so a dormant student's leftover row cannot block deploys forever.
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='material_job'").fetchone():
+                count += db.execute("SELECT count(*) FROM material_job WHERE state IN ('queued','running') "
+                                    "AND updated_at >= datetime('now', ?)",
+                                    ('-%d minutes' % MATERIAL_BUSY_WINDOW_MINUTES,)).fetchone()[0]
         finally:
             db.close()
     return count

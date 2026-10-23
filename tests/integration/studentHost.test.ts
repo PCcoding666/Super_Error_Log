@@ -106,6 +106,8 @@ async function loginBrowser(env: HostSetup): Promise<{ browser: Browser; student
   const response = await browser.post('/s/login', { code });
   expect(response.status).toBe(303);
   expect(browser.cookies.has(SESSION_COOKIE)).toBe(true);
+  // New accounts pick a stage once before using the notebook or uploading.
+  expect((await browser.post('/s/stage', { grade: '初中' })).status).toBe(303);
   return { browser, studentId, code };
 }
 
@@ -436,6 +438,7 @@ describe('学生 worker 隔离与代理', () => {
     const { studentId: studentB } = env.registry.createStudent();
     const invitationB = env.registry.issueInvitation(studentB);
     expect((await browser.post('/s/login', { code: invitationB.code })).status).toBe(303);
+    expect((await browser.post('/s/stage', { grade: '初中' })).status).toBe(303);
     const contextB = await readContext();
     expect(contextB).not.toBe(contextA);
     const fileHashes = (): Record<string, string> => {
