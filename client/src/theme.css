@@ -1,0 +1,12 @@
+/* 和旧页面同一组色值：浅灰分组底、白卡片、蓝色交互。 */
+:root {
+  --ion-color-primary: #0066d6;
+  --ion-color-primary-rgb: 0, 102, 214;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-contrast-rgb: 255, 255, 255;
+  --ion-color-primary-shade: #005abc;
+  --ion-color-primary-tint: #1a75da;
+  --ion-font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+}
+ion-content { --background: #f2f2f7; }
+@media (prefers-color-scheme: dark) { ion-content { --background: #000000; } }

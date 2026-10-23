@@ -58,6 +58,8 @@ import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
 import { registerStaticAssets } from './staticAssets.js';
+import { sendClientShell } from './clientApp.js';
+import { createStudentApi } from './api.js';
 import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
@@ -363,7 +365,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
   r.use((request, response, next) => {
     try {
-      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path === '/install' || request.path === '/install/seen') { next(); return; }
+      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path.startsWith('/api/settings') || request.path === '/install' || request.path === '/install/seen') { next(); return; }
       if (!stageChoiceNeeded(getDb(), requireProfile().id)) { next(); return; }
       failed(response, 'stage_required');
       const isPage = (request.method === 'GET' || request.method === 'HEAD') && !wantsJson(request) && !request.path.startsWith('/img/') && !/\/(?:image|crop)\/?$/.test(request.path);
@@ -387,10 +389,10 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     r.use(createMaterialsRouter({ ...options.materials, draftNamespace: namespace, admission: options.admission }));
   }
 
-  // 默认进入错题本，保留根地址作为主屏幕入口。材料拍照由 /s/capture 接管。
-  r.get('/', page(async (request, response) => {
-    render(response, await itemsPage(request, response));
-  }));
+  // 根地址和三个子路径下发学生端单页应用（Ionic React，client/）；数据走 /s/api。
+  // 旧的服务端页面（/s/items、/s/photos、/s/settings …）仍然保留，直到单页应用完全接管。
+  for (const route of ['/', '/new', '/me', '/q/:id']) r.get(route, (_request, response) => sendClientShell(response));
+  r.use('/api', createStudentApi(ctx, { studentHostWorker: options.studentHostWorker === true, service: options.service, materialsJobs: options.materials?.jobs, accountRoleOf: response => accountRoleOf(response), inviteExpiresOf: response => inviteExpiresOf(response) }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
   r.get('/install', page((_request, response) => render(response, InstallPage({ invitation: options.studentHostWorker === true }))));
 
