@@ -47,6 +47,9 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await expect(page.getByRole('heading', { name: '你现在读初中还是高中？' })).toBeVisible();
   await page.getByRole('button', { name: '初中', exact: true }).click();
   await expect(page.getByTestId('empty-notebook')).toBeVisible();
+  // 首次从首页选照片：上传队列先问 /s/api/upload，材料空间不接受旧的 /s/capture。
+  const legacyUploads: string[] = [];
+  page.on('request', request => { if (request.method() === 'POST' && /\/s\/capture$/.test(request.url())) legacyUploads.push(request.url()); });
   await page.locator('#library-input').setInputFiles([await jpeg()]);
   await expect.poll(() => url(page)).toBe('/s/new');
   // 合成提取：一道题「1 + 1 = ?」带作答和参考答案，没有老师批改痕迹 → 等学生勾选。
@@ -57,6 +60,7 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await photo.getByTestId('pick-submit').click();
   await expect(page.locator('section.intake-photo[data-state="done"]')).toHaveCount(1, { timeout: 30_000 });
   await expect(page.locator('.intake-top p')).toContainText('找到 1 道');
+  expect(legacyUploads).toEqual([]);
   await page.getByTestId('intake-done').click();
   await expect(page.getByTestId('item-card')).toHaveCount(1);
   await page.getByTestId('item-card').first().click();

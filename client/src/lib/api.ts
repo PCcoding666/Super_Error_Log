@@ -1,4 +1,4 @@
-import type { ApiError, DiscardResponse, IntakeResponse, ItemDetailResponse, NotebookResponse, SettingsResponse } from '../../../src/web/apiTypes';
+import type { ApiError, DiscardResponse, IntakeResponse, ItemDetailResponse, NotebookResponse, SettingsResponse, UploadModeResponse } from '../../../src/web/apiTypes';
 
 export class RequestError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
@@ -34,6 +34,7 @@ export const api = {
   settings: () => call<SettingsResponse>('/s/api/settings'),
   grade: (grade: string) => call<{ ok: true }>('/s/api/settings/grade', { method: 'POST', body: JSON.stringify({ grade }) }),
   intake: () => call<IntakeResponse>('/s/api/intake'),
+  uploadMode: () => call<UploadModeResponse>('/s/api/upload'),
   select: (photoId: string, ids: string[]) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/select`, { method: 'POST', body: JSON.stringify({ ids }) }),
   retry: (photoId: string) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/retry`, { method: 'POST', body: '{}' }),
   dismiss: (photoId: string) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/dismiss`, { method: 'POST', body: '{}' }),

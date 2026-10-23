@@ -33,7 +33,7 @@ import { loadPhotos, type PhotoView, type WebContext } from './state.js';
 import { stemFirstSentence } from './views/materials.js';
 import type {
   DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemDetailResponse, ItemImage, ItemNote,
-  NotebookGroup, NotebookItem, NotebookResponse, SettingsResponse,
+  NotebookGroup, NotebookItem, NotebookResponse, SettingsResponse, UploadModeResponse,
 } from './apiTypes.js';
 
 const require = createRequire(import.meta.url);
@@ -300,6 +300,8 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
   };
 
   r.get('/intake', handler(async (request) => (ctx.materials ? materialsIntake() : legacyIntake(request))));
+  // 上传队列在发第一张之前先问这个：材料流程的学生空间不接受旧的 /s/capture。
+  r.get('/upload', handler((): UploadModeResponse => (ctx.materials ? { mode: 'materials', draftNamespace: ctx.materials.getWorkspace().draftNamespace } : { mode: 'legacy', draftNamespace: null })));
 
   r.post('/intake/photos/:id/select', handler(async (request) => {
     const photoId = String(request.params.id);

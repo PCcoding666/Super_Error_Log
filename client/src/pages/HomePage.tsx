@@ -32,7 +32,7 @@ export function HomePage(): ReactNode {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [searchOpen, setSearchOpen] = useState(!!query.q);
-  const [sheet, setSheet] = useState<'subject' | 'chapter' | 'status' | 'confirm' | null>(null);
+  const [sheet, setSheet] = useState<'subject' | 'stage' | 'chapter' | 'status' | 'confirm' | null>(null);
   const [toast, setToast] = useState<{ message: string; undo?: string[] } | null>(null);
   const [connected, setConnected] = useState(params.get('paired') === '1' || params.get('login') === '1');
   const [menuEvent, setMenuEvent] = useState<Event | null>(null);
@@ -117,7 +117,8 @@ export function HomePage(): ReactNode {
           <IonItem button detail={false} onClick={() => setView('grid')}><IonIcon icon={gridOutline} slot="start" /><IonLabel>网格</IonLabel>{view === 'grid' ? <IonIcon icon={checkmark} slot="end" /> : null}</IonItem>
           <IonItem button detail={false} onClick={() => setView('list')}><IonIcon icon={listOutline} slot="start" /><IonLabel>列表</IonLabel>{view === 'list' ? <IonIcon icon={checkmark} slot="end" /> : null}</IonItem>
           <IonItem button detail={false} className="menu-divider" onClick={() => { setSelecting(true); setSelected(new Set()); }} disabled={!items.length}><IonIcon icon={checkmarkCircleOutline} slot="start" /><IonLabel>选择</IonLabel></IonItem>
-          <IonItem button detail className="menu-divider" onClick={() => setSheet('chapter')}><IonLabel>章节</IonLabel><IonLabel slot="end" className="muted">{query.chapter || '全部'}</IonLabel></IonItem>
+          {data && data.stages.length > 1 ? <IonItem button detail className="menu-divider" onClick={() => setSheet('stage')} data-testid="stage-filter"><IonLabel>学段</IonLabel><IonLabel slot="end" className="muted">{data.grade}</IonLabel></IonItem> : null}
+          <IonItem button detail className={data && data.stages.length > 1 ? undefined : 'menu-divider'} onClick={() => setSheet('chapter')}><IonLabel>章节</IonLabel><IonLabel slot="end" className="muted">{query.chapter || '全部'}</IonLabel></IonItem>
           <IonItem button detail onClick={() => setSheet('status')}><IonLabel>状态</IonLabel><IonLabel slot="end" className="muted">{STATUS_CHOICES.find(choice => choice.value === query.status)?.label ?? '全部'}</IonLabel></IonItem>
         </IonList>
       </IonPopover>
@@ -152,6 +153,8 @@ export function HomePage(): ReactNode {
       </> : <IonFab vertical="bottom" horizontal="end" slot="fixed"><IonFabButton color="danger" className="corner" aria-label="移除所选" data-testid="discard-selected" disabled={!selected.size} onClick={() => setSheet('confirm')}><IonIcon icon={trashOutline} /></IonFabButton></IonFab>}
       <IonActionSheet isOpen={sheet === 'subject'} onDidDismiss={() => setSheet(null)} header="学科"
         buttons={[...(data?.subjects ?? []).map(name => ({ text: name, role: name === data?.subject ? 'selected' : undefined, handler: () => patch({ subject: name, grade: '', chapter: '', status: '', q: '' }) })), { text: '取消', role: 'cancel' }]} />
+      <IonActionSheet isOpen={sheet === 'stage'} onDidDismiss={() => setSheet(null)} header="学段"
+        buttons={[...(data?.stages ?? []).map(name => ({ text: name, role: name === data?.grade ? 'selected' : undefined, handler: () => patch({ grade: name, chapter: '' }) })), { text: '取消', role: 'cancel' }]} />
       <IonActionSheet isOpen={sheet === 'chapter'} onDidDismiss={() => setSheet(null)} header="章节"
         buttons={[{ text: '全部章节', role: query.chapter ? undefined : 'selected', handler: () => patch({ chapter: '' }) }, ...(data?.chapters ?? []).map(name => ({ text: name, role: name === query.chapter ? 'selected' : undefined, handler: () => patch({ chapter: name }) })), { text: '取消', role: 'cancel' }]} />
       <IonActionSheet isOpen={sheet === 'status'} onDidDismiss={() => setSheet(null)} header="状态"

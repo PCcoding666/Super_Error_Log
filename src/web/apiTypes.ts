@@ -78,6 +78,9 @@ export interface SettingsResponse {
   version: string;
 }
 
+/** 拍照上传该走哪套端点：旧识别流程（/s/capture）还是材料流程（/s/materials/*）。 */
+export interface UploadModeResponse { mode: 'legacy' | 'materials'; draftNamespace: string | null }
+
 export type IntakePhotoState = 'finding' | 'done' | 'needsPick' | 'failed' | 'unsupported';
 
 export interface IntakeQuestion {

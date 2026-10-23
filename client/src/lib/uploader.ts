@@ -118,7 +118,9 @@ class Uploader {
   private batchClosed = false;
   private listeners = new Set<Listener>();
   private active = 0;
-  private mode: UploadMode = { kind: 'legacy' };
+  /** 还没问过服务器时为 null：第一张发出去之前先取（材料流程不接受旧端点）。 */
+  private mode: UploadMode | null = null;
+  private modeRequest: Promise<UploadMode> | null = null;
   private materialsCaptureId: string | null = null;
   private materialsCaptureRequestId = uuid();
 
@@ -133,7 +135,26 @@ class Uploader {
     this.emit();
   }
   private emit(): void { this.entries = [...this.entries]; for (const listener of this.listeners) listener(); }
-  setMode(mode: UploadMode): void { if (mode.kind !== this.mode.kind || (mode.kind === 'materials' && this.mode.kind === 'materials' && mode.namespace !== this.mode.namespace)) { this.mode = mode; this.materialsCaptureId = null; this.materialsCaptureRequestId = uuid(); } }
+  setMode(mode: UploadMode): void {
+    const same = this.mode !== null && mode.kind === this.mode.kind && (mode.kind !== 'materials' || this.mode.kind !== 'materials' || mode.namespace === this.mode.namespace);
+    if (same) return;
+    this.mode = mode; this.materialsCaptureId = null; this.materialsCaptureRequestId = uuid();
+  }
+  /** 首次上传前向服务器确认该走哪套端点；网络失败按可重试处理，照片留在队列里。 */
+  private resolveMode(): Promise<UploadMode> {
+    if (this.mode) return Promise.resolve(this.mode);
+    this.modeRequest ??= (async () => {
+      let response: Response;
+      try { response = await fetch('/s/api/upload', { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } }); }
+      catch { throw new UploadFailure('mode_network', '网络没连上，没传上去。照片还在这个页面里。', true); }
+      const body = (await response.json().catch(() => null)) as { mode?: string; draftNamespace?: string | null; error?: { message?: string } } | null;
+      if (!response.ok || !body || (body.mode !== 'legacy' && body.mode !== 'materials')) throw new UploadFailure('mode_unavailable', body?.error?.message ?? '暂时连不上服务器，稍后再试。', response.status !== 400);
+      const mode: UploadMode = body.mode === 'materials' && body.draftNamespace ? { kind: 'materials', namespace: body.draftNamespace } : { kind: 'legacy' };
+      this.setMode(mode);
+      return mode;
+    })().finally(() => { this.modeRequest = null; });
+    return this.modeRequest;
+  }
   get busy(): boolean { return this.entries.some(entry => entry.state === 'queued' || entry.state === 'preparing' || entry.state === 'uploading'); }
   /** 本批里已经传好的张数；录入态据此等服务器把题找出来。 */
   get succeeded(): number { return this.entries.filter(entry => entry.state === 'succeeded').length; }
@@ -183,7 +204,8 @@ class Uploader {
   }
   private async send(entry: UploadEntry): Promise<string> {
     const onProgress = (p: number): void => { entry.progress = p; entry.message = p >= 100 ? '上传完成，正在处理照片…' : `正在上传 ${p}%`; this.emit(); };
-    if (this.mode.kind === 'legacy') {
+    const mode = await this.resolveMode();
+    if (mode.kind === 'legacy') {
       const data = new FormData();
       data.append('key', entry.key);
       data.append('photo', entry.blob!, 'photo.jpg');
@@ -192,9 +214,12 @@ class Uploader {
         return value && value.ok === true && typeof value.jobId === 'string' && value.jobId ? value.jobId : null;
       });
     }
-    const namespace = this.mode.namespace;
+    const namespace = mode.namespace;
     if (!this.materialsCaptureId) {
-      const response = await fetch('/s/materials/captures', { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json', 'x-draft-namespace': namespace }, body: JSON.stringify({ requestId: this.materialsCaptureRequestId }) });
+      // 断网时 fetch 直接抛错：按可重试的上传失败处理，照片和 requestId 都留着，不能当成图片读不了。
+      let response: Response;
+      try { response = await fetch('/s/materials/captures', { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json', 'x-draft-namespace': namespace }, body: JSON.stringify({ requestId: this.materialsCaptureRequestId }) }); }
+      catch { throw new UploadFailure('capture_network', '网络没连上，没传上去。照片还在这个页面里。', true); }
       const body = (await response.json().catch(() => ({}))) as { id?: string; error?: { message?: string } };
       if (!response.ok || !body.id) throw new UploadFailure('capture', body.error?.message ?? '暂时无法上传，稍后再试。', response.status >= 500 || response.status === 429);
       this.materialsCaptureId = body.id;
