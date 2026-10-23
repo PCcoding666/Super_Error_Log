@@ -3,23 +3,31 @@ import { describe, expect, it, vi } from 'vitest';
 import { getDb, newId, now } from '../../src/db/connection.js';
 import { ensureStudentProfile } from '../../src/services/studentService.js';
 import { MaterialStore } from '../../src/materials/store.js';
-import { fullMarksOf, includeQuestions, materialIntakeSummary, notYetIncluded, setQuestionIncluded, teacherMarkMeansWrong, unsupportedSubject } from '../../src/materials/learning.js';
+import { fullMarksOf, includeQuestions, markedRight, materialIntakeSummary, notYetIncluded, setQuestionIncluded, sortQuestions, teacherMarkMeansRight, teacherMarkMeansWrong, unplacedMaterial, unsupportedSubject } from '../../src/materials/learning.js';
 import type { Fragment } from '../../src/materials/contracts.js';
 
 function fixture(subject: string | null = '数学') {
-  const owner = ensureStudentProfile().id, db = getDb(), store = new MaterialStore(db, owner), batch = newId('bat'), asset = newId('ast');
+  const owner = ensureStudentProfile().id, db = getDb(), store = new MaterialStore(db, owner), batch = newId('bat');
   db.prepare('INSERT INTO source_batch(id,student_id,created_at) VALUES (?,?,?)').run(batch, owner, now());
-  db.prepare('INSERT INTO source_asset(id,batch_id,filename,mime,size,content_hash,storage_path,created_at) VALUES (?,?,?,?,?,?,?,?)').run(asset, batch, 'synthetic.jpg', 'image/jpeg', 1, 'hash', '/synthetic.jpg', now());
-  db.prepare('INSERT INTO material_asset(id,owner_id,capture_id,source_asset_id) VALUES (?,?,?,?)').run(asset, owner, store.createCapture(crypto.randomUUID()).id, asset);
-  const question = (stem: string, marks: string[] = [], extra: Partial<Fragment> = {}) => {
-    const id = store.createQuestion({ number: '1', subject }).id;
-    for (const [role, text] of [['question', stem], ...marks.map(m => ['teacher_mark', m])] as [Fragment['role'], string][]) {
-      const f: Fragment = { assetId: asset, fragmentId: newId('mfr'), revision: 1, box: { x: 0, y: 0, width: 1, height: 1 }, sourceHash: 'hash', role, text, number: '1', subpart: null, page: null, order: 0, requiresDiagram: false, check: 'passed', uncertainties: [], ...(role === 'teacher_mark' ? extra : {}) };
+  /** A synthetic photo; `at` fixes its capture order. */
+  const photo = (at?: string) => {
+    const id = newId('ast');
+    db.prepare('INSERT INTO source_asset(id,batch_id,filename,mime,size,content_hash,storage_path,created_at) VALUES (?,?,?,?,?,?,?,?)').run(id, batch, 'synthetic.jpg', 'image/jpeg', 1, 'hash', '/synthetic.jpg', now());
+    db.prepare('INSERT INTO material_asset(id,owner_id,capture_id,source_asset_id) VALUES (?,?,?,?)').run(id, owner, store.createCapture(crypto.randomUUID()).id, id);
+    if (at) db.prepare('UPDATE material_asset SET created_at=? WHERE id=?').run(at, id);
+    return id;
+  };
+  const asset = photo();
+  const question = (stem: string, marks: string[] = [], extra: Partial<Fragment> = {}, at: { number?: string | null; asset?: string; documentId?: string | null } = {}) => {
+    const number = at.number === undefined ? '1' : at.number;
+    const id = store.createQuestion({ number, subject, documentId: at.documentId ?? null }).id;
+    for (const [role, text] of [...(stem ? [['question', stem]] : []), ...marks.map(m => ['teacher_mark', m])] as [Fragment['role'], string][]) {
+      const f: Fragment = { assetId: at.asset ?? asset, fragmentId: newId('mfr'), revision: 1, box: { x: 0, y: 0, width: 1, height: 1 }, sourceHash: 'hash', role, text, number, subpart: null, page: null, order: 0, requiresDiagram: false, check: 'passed', uncertainties: [], ...(role === 'teacher_mark' ? extra : {}) };
       store.putFragment(f); store.linkFragment(f.fragmentId, 1, { questionId: id, attemptId: null });
     }
     return id;
   };
-  return { db, store, asset, question };
+  return { db, store, asset, owner, photo, question };
 }
 
 describe('teacher marks that mean "not full marks"', () => {
@@ -32,6 +40,16 @@ describe('teacher marks that mean "not full marks"', () => {
   });
   it('never counts praise, a full score or longer text that merely contains a mark', () => {
     for (const mark of ['√', '✓', '没有错误', '不错', '已批改', '5/5', '6分', '优', '注意 -6 是负数的写法，这里要写清楚并检查一遍过程', '']) expect(teacherMarkMeansWrong(mark), mark).toBe(false);
+  });
+  it('counts a cross followed by the teacher\'s comment, and a transcribed X, but never an expression', () => {
+    for (const mark of ['× 漏了 x≤5', '×漏了x≤5', '✗ 符号错', '✘ 单位', '× 第二步移项没有变号，结果应为 x=-3，请订正', 'X', 'x', 'X 漏解', 'x 漏了 x≤5', 'X 不正确']) expect(teacherMarkMeansWrong(mark), mark).toBe(true);
+    for (const mark of ['x=5', 'x = 5', 'x>2', 'x ≤ 5', 'X 很好', 'x 的值正确', 'xy', '√ 很好']) expect(teacherMarkMeansWrong(mark), mark).toBe(false);
+  });
+  it('reads a lone tick (or the word for right, or a ticked full score) as right, and nothing that means wrong', () => {
+    for (const mark of ['√', '✓', '✔', '√√', '对', '正确', '满分']) expect(teacherMarkMeansRight(mark), mark).toBe(true);
+    expect(teacherMarkMeansRight('√ 6', 6)).toBe(true);
+    expect(teacherMarkMeansRight('√ 4', 6)).toBe(false);
+    for (const mark of ['√/', '半对', '×', '× 漏了 x≤5', '-2', '不对', '5/5', '']) expect(teacherMarkMeansRight(mark), mark).toBe(false);
   });
   it('reads printed full marks from the stem', () => {
     expect(fullMarksOf('1. 计算（6分）')).toBe(6);
@@ -55,6 +73,56 @@ describe('automatic inclusion and the batch list', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]!.questions.map(q => q.id).sort()).toEqual([full, unsure, plain].sort());
     expect(materialIntakeSummary(f.store)).toEqual({ pending: 3, failed: 0, processing: 0 });
+  });
+  it('includes「× 漏了 x≤5」by itself and stops offering questions the teacher ticked', () => {
+    const f = fixture();
+    const before = materialIntakeSummary(f.store).pending;
+    const commented = f.question('4. 解不等式组。', ['× 漏了 x≤5']);
+    const ticked = f.question('5. 计算 sin30°+cos60°。', ['√']);
+    const unsureTick = f.question('6. 求 y。', ['√'], { uncertainties: ['blurry'] });
+    const plain = f.question('7. 求 z。');
+    expect(f.store.getQuestion(commented)!.itemId).toBeTruthy();
+    expect(f.store.getQuestion(ticked)!.itemId).toBeNull();
+    expect(markedRight(f.store.getQuestion(ticked)!)).toBe(true);
+    expect(markedRight(f.store.getQuestion(unsureTick)!)).toBe(false);
+    expect(markedRight(f.store.getQuestion(plain)!)).toBe(false);
+    const groups = notYetIncluded(f.store).filter(g => g.assetId === f.asset);
+    expect(groups.flatMap(g => g.questions.map(q => q.id)).sort()).toEqual([unsureTick, plain].sort());
+    expect(materialIntakeSummary(f.store).pending - before).toBe(2);
+    // A ticked question can still be included by hand.
+    expect(includeQuestions(f.store, [{ questionId: ticked, revision: f.store.getQuestion(ticked)!.revision }])).toEqual({ included: 1, skipped: 0 });
+  });
+  it('lists questions by paper and printed number (2 before 10), then photo; unnumbered last', () => {
+    const f = fixture();
+    const first = f.photo('2026-01-01 00:00:01'), second = f.photo('2026-01-01 00:00:02');
+    const paper = newId('mdoc');
+    f.db.prepare('INSERT INTO material_document(id,owner_id,label) VALUES (?,?,?)').run(paper, f.owner, null);
+    // Created out of order; question 6 of the paper was photographed first, questions 1-2 and 10 later.
+    const loose = f.question('另一张卷子的题。', [], {}, { number: '3', asset: second });
+    const q10 = f.question('10. 求 a。', [], {}, { number: '10', asset: second, documentId: paper });
+    const q6 = f.question('6. 求 b。', [], {}, { number: '6', asset: first, documentId: paper });
+    const unnumbered = f.question('求 c。', [], {}, { number: null, asset: second, documentId: paper });
+    const q2 = f.question('2. 求 d。', [], {}, { number: '2', asset: second, documentId: paper });
+    const q1 = f.question('1. 求 e。', [], {}, { number: '1', asset: second, documentId: paper });
+    const mine = [loose, q10, q6, unnumbered, q2, q1];
+    const sorted = sortQuestions(f.store, f.store.listQuestions().filter(q => mine.includes(q.id))).map(q => q.id);
+    expect(sorted).toEqual([q1, q2, q6, q10, unnumbered, loose]);
+    // The batch list keeps one group per photo, each in the same order; the paper's first question leads.
+    const groups = notYetIncluded(f.store).filter(g => g.assetId === first || g.assetId === second);
+    expect(groups.map(g => g.assetId)).toEqual([second, first]);
+    expect(groups.map(g => g.questions.map(q => q.id))).toEqual([[q1, q2, q10, unnumbered, loose], [q6]]);
+  });
+  it('treats material without a number and without a stem as unplaced, never as a question', () => {
+    const f = fixture();
+    const mark = f.store.getQuestion(f.question('', ['×'], {}, { number: null }))!;
+    const unnumberedStem = f.store.getQuestion(f.question('求 x。', [], {}, { number: null }))!;
+    const numberedWork = f.store.getQuestion(f.question('', ['√'], {}, { number: '3' }))!;
+    expect(unplacedMaterial(mark)).toBe(true);
+    expect(mark.itemId).toBeNull();
+    expect(unplacedMaterial(unnumberedStem)).toBe(false);
+    expect(unplacedMaterial(numberedWork)).toBe(false);
+    // An empty question the student created or kept is not material to place.
+    expect(unplacedMaterial(f.store.getQuestion(f.store.createQuestion({ subject: '数学' }).id)!)).toBe(false);
   });
   it('batch inclusion is idempotent, skips stale revisions and never re-offers a removed question', () => {
     const f = fixture();

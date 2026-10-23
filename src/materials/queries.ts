@@ -13,6 +13,12 @@ export function latestFragments(store: MaterialStore, assetId: string): Fragment
     (SELECT 1 FROM material_fragment n WHERE n.owner_id=f.owner_id AND n.id=f.id AND n.revision>f.revision) ORDER BY f.id`).all(store.studentId,assetId) as {content_json:string}[];
   return rows.map(row=>JSON.parse(row.content_json) as Fragment);
 }
+/** Every fragment currently linked to the question, including reference answers and unknown material. */
+export function linkedFragments(store: MaterialStore, questionId: string): Fragment[] {
+  const rows=store.db.prepare(`SELECT f.content_json FROM material_link_event l JOIN material_fragment f ON f.owner_id=l.owner_id AND f.id=l.fragment_id AND f.revision=l.fragment_revision
+    WHERE l.owner_id=? AND l.question_id=? AND NOT EXISTS (SELECT 1 FROM material_link_event n WHERE n.owner_id=l.owner_id AND n.fragment_id=l.fragment_id AND n.revision>l.revision)`).all(store.studentId,questionId) as {content_json:string}[];
+  return rows.map(row=>JSON.parse(row.content_json) as Fragment);
+}
 export function resolveQuestionId(store: MaterialStore, id: string): string {
   const visited=new Set<string>();
   while (!visited.has(id)) {
