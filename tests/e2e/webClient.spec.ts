@@ -588,7 +588,8 @@ test('页面缩放 200%（195×422 CSS px）：没有单字孤行或标点落行
   const hrefs = await page.getByTestId('practice-row').evaluateAll(rows => rows.map(row => row.getAttribute('href') ?? ''));
   const printed = hrefs.map(href => /\/s\/(?:record|results|practice)\/(pkt_[0-9a-f]+)/.exec(href)?.[1]).find(Boolean);
   expect(printed).toBeTruthy();
-  for (const path of ['/s/', '/s/settings', '/s/choose', `/s/print/${printed}`, `/s/print/${printed}/sheet`, '/s/practices']) {
+  // 根地址已是单页应用（Ionic），这里只看保留的服务端页面。
+  for (const path of ['/s/items', '/s/settings', '/s/choose', `/s/print/${printed}`, `/s/print/${printed}/sheet`, '/s/practices']) {
     await page.goto(`${WEB}${path}`);
     const inlinePrimary = page.locator('.next-bar-inline [data-testid=next-step-primary]');
     if (await inlinePrimary.count()) await inlinePrimary.scrollIntoViewIfNeeded();

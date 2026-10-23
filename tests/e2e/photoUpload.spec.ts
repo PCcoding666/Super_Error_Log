@@ -119,7 +119,7 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   }
   await page.getByTestId('item-card').last().click();
   await expect(page.getByTestId('question-text')).toHaveText('求 x 的值。');
-  await page.goto(gateway.base + '/s/');
+  await page.goto(gateway.base + '/s/items');
   await page.reload();
   await expect(add).toBeVisible();
   await expect(page).toHaveTitle(/^错题本 · /);
