@@ -194,10 +194,11 @@ function pendingChunks(questions: QuestionBundle[]): QuestionBundle[][] {
   return chunks;
 }
 export const PENDING_FORM_ID = 'material-pending-form';
-/** One form, submitted by the page's bottom button, unless there are too many questions for one request. */
+/** One form, submitted by the page's bottom button, unless the whole submission would not fit the same budget:
+ * a checkbox per question, a hidden page field per photo, the namespace and the pressed button. */
 export const pendingInOneForm = (groups: MaterialPendingGroup[]): boolean => {
   const total = groups.reduce((n, g) => n + g.questions.length, 0);
-  return total > 0 && total <= PENDING_FORM_MAX;
+  return total > 0 && total + groups.length + 2 <= PENDING_FORM_MAX;
 };
 
 function PendingFieldset({ g, questions, legend }: { g: MaterialPendingGroup; questions: QuestionBundle[]; legend: string }): ReactNode {

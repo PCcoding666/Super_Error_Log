@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { Fragment, QuestionBundle } from '../../src/materials/contracts.js';
 import { STYLES } from '../../src/web/assets.js';
-import { MaterialCapturePage, MaterialsPage, type MaterialAssetView } from '../../src/web/views/materials.js';
+import { MaterialCapturePage, MaterialsPage, PENDING_FORM_MAX, pendingInOneForm, type MaterialAssetView } from '../../src/web/views/materials.js';
 
 const question = (number: string | null, id = 'q1'): QuestionBundle => ({
   id, documentId: null, revision: 1, basisKey: 'basis', number, subject: null, tags: [],
@@ -15,6 +15,18 @@ const asset = (label?: string): MaterialAssetView => ({
 });
 
 describe('学习材料界面', () => {
+  it('待收录合成一个表单时，连每张照片的隐藏字段一起算，仍在表单字段上限以内', () => {
+    const groups = (photos: number, perPhoto: number) => Array.from({ length: photos }, (_, p) => ({
+      assetId: `asset-${p}`, photo: p + 1, questions: Array.from({ length: perPhoto }, (_, i) => question(String(i + 1), `q${p}-${i}`)),
+    }));
+    expect(pendingInOneForm(groups(1, 3))).toBe(true);
+    expect(pendingInOneForm(groups(1, PENDING_FORM_MAX - 3))).toBe(true);
+    // 题数本身没超，但每张照片多一个隐藏字段：81 张照片 120 道题会超过解析上限，必须分开提交。
+    expect(pendingInOneForm(groups(81, 1).concat(groups(1, 39)))).toBe(false);
+    expect(pendingInOneForm(groups(60, 1))).toBe(false);
+    expect(pendingInOneForm([])).toBe(false);
+  });
+
   it('拍学习材料只有一个实心主按钮；拍过之后才出现“拍完了”和上传状态，且只有一条去材料页的行', () => {
     const empty = renderToStaticMarkup(MaterialCapturePage({ namespace: 'ns', count: 0, uploadId: '11111111-1111-4111-8111-111111111111' }));
     expect(empty).toContain('data-testid="root-tabs"');
