@@ -267,6 +267,16 @@ test('contextual supplement survives a lost response and reload with explicit at
     expect(hints[1]).toEqual(hints[0]);
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张');
 });
+test('a new account can log out from settings before choosing 初中 or 高中', async ({ page, gateway }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(gateway.base + '/s/');
+    await page.getByLabel('12 位邀请码').fill(gateway.codes[0]!);
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await expect(page.getByTestId('stage-choice')).toBeVisible();
+    await page.goto(gateway.base + '/s/settings');
+    await page.getByTestId('logout').click();
+    await expect(page.getByLabel('12 位邀请码')).toBeVisible();
+});
 test('logout remains usable when browser draft storage is unavailable', async ({ page, gateway }) => {
     await page.addInitScript(() => { IDBFactory.prototype.open = function () { throw new DOMException('synthetic unavailable', 'SecurityError'); }; });
     await enter(page, gateway);
