@@ -1,6 +1,10 @@
-# 自动发布入口（2026-10-15）
+# 自动发布入口（2026-10-15，2026-10-22 更新）
 
-用户已批准集成分支合并后自动上线，见 [GitHub 自动发布](ci/README.md)。下面的手动步骤保留给首次装机和人工维护；日常修改通过 PR → CI → 自动发布。
+**合并到 `main` 且 CI 通过即自动上线**（用户已批准），见 [GitHub 自动发布](ci/README.md) 和发布前后要做的事 [发布检查单](../docs/quality/RELEASE_CHECKLIST.md)。下面的手动步骤保留给首次装机和人工维护；日常修改一律 PR → CI → 自动发布。
+
+- **发布窗口**：北京时间 18:00–24:00 不合并（学生高峰；发布要短暂停服）。`deploy.yml` 在这段时间拒绝自动发布，00:00 后 Re-run。
+- **发布备份**：只用于“发布坏了回滚”，不是数据备份。照片在服务运行时先打包，停服后只打包 SQLite，不含 env 与证书私钥，自动只留最近 3 份（`deploy/ci/sel-ci-deploy.py`，需管理员重新安装固定副本才生效）。
+- **数据备份、告警、恢复演练**：`deploy/ops/`，一页纸操作见 [RUNBOOK](ops/RUNBOOK.md)（每日 SQLite + 照片备份并推到 OSS 或另一台主机、保留 14 天；每 5 分钟巡检推送到 Bark/企业微信；每晚日报）。这些脚本只在本地合成数据测试过，生产上需由管理员按 RUNBOOK 安装后才运行。
 
 # 云端部署手册（广州 ECS 239 · cgroup v1 · study.pccoding666.com）
 
@@ -148,6 +152,16 @@ systemctl daemon-reload && systemctl enable --now super-error-log-caddy
 
 主用网络错误、超时、HTTP 401/403/404/408/429 或 5xx 时，最多切到原接口一次。输入错误、输出不完整/非法 JSON、取消和预算耗尽不触发切换。每次实际请求仍占原有阶段预算，图片调用共享全局许可；两次调用各保留用量记录（主用 provider 为 `bailian-token-plan`），单次超时分别计时。密钥不得进日志或仓库。删除该变量并重启可恢复仅使用原接口。
 
+**按量付费备用的每日上限（2026-10-22 起）**：配置了 Token Plan 时，原接口是按量付费的备用，切过去的次数和 token 按北京时间每天累计（所有学生进程共用一份计数，存于 `SEL_STUDENT_HOST_DIR/ai-fallback-ledger.db`）。到达上限后不再调用备用，这次调用直接失败，学生看到「AI 服务今天有点忙，备用线路今天的额度已经用完…最晚明天恢复」，照片和已完成内容保留；绝不退回 Mock。
+
+```sh
+# /etc/super-error-log/env（缺省值如下；0 = 完全不用备用；不是整数则备用通道按配置错误拒绝）
+SEL_AI_FALLBACK_DAILY_CALLS=200
+SEL_AI_FALLBACK_DAILY_TOKENS=2000000
+```
+
+每次切到备用，主进程 journald 里有一行 `{"event":"sel_ai_fallback",...}`；被上限拒绝时是 `sel_ai_fallback_blocked`（只含阶段、错误类别、当天计数，不含题目或密钥）。`deploy/ops` 的巡检据此告警；`/admin/`「调用性能 → 按调用线路」显示每路的次数、失败率、平均与 P95 耗时，以及今天备用已用/上限。没配 Token Plan 时按量付费就是主用，不受此上限限制（请在阿里云费用中心另设预算预警）。
+
 ```bash
 # cgroup v1 实测（systemctl show 不是内核读回）。先确认这台机器用的是哪一档，再对数字。
 # 推荐档（4 核 / 8 GB，单元文件默认值）：
@@ -188,6 +202,8 @@ curl -s https://study.pccoding666.com/s/ | grep -c '先连上服务器'         
 ln -sfn /opt/super-error-log/releases/<上一版号> /opt/super-error-log/current
 systemctl restart super-error-log
 ```
+
+**日常数据备份**用 `deploy/ops/`（每日、异地、可恢复演练，见 [RUNBOOK](ops/RUNBOOK.md)）。下面是人工发布前的一次性本机备份；env 只单独复制到 root 目录，不要放进任何会推到异地的备份里，证书私钥不备份（丢了就重新签发 / 按 §9.9 换证）。
 
 **发布前备份**（本机受限备份，不经 HTTP，root 身份在服务器上执行）：
 
@@ -522,14 +538,14 @@ curl -sS -o /dev/null https://8.163.96.197/v2/health; echo "exit=$?"
 
 学生入口为 `/s/`。设置 `SEL_STUDENT_HOST_ENABLED=1` 后，网页改用一次性邀请码登录，每个学生使用独立目录与子进程。`/v1`、`/v2` 原生App维持原数据。目录由 `SEL_STUDENT_HOST_DIR` 指定，建议 `/var/lib/super-error-log/student-host`，私有权限0700。注册上限缺省 100（`SEL_MAX_STUDENTS`，与自助注册同一处读取）。进程不按注册人数常驻：第一次打开才启动，空闲约 12 分钟后退出；同时存活的进程缺省最多 8 个（小机请改成 3）。视觉调用和重图片处理由父进程限流，缺省各 2 路（小机请改成 1）。学生之间不共享档案。容量相关变量和两档 cgroup 限制见 §7。本改动会让自动发布拒绝，须走人工发布，见 `docs/quality/2026-10-20-fifty-students.md`。
 
-管理员以服务用户运行 `dist/studentHost/admin-cli.js create [role] | list | invite <studentId> | set-role <studentId> <role> | revoke-sessions <studentId>`。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码7天一次性；登录30天。补发到同一学生保留记录。管理后台使用独立管理员密码，不能使用学生邀请码登录。
+管理员以服务用户运行 `dist/studentHost/admin-cli.js create [role] | list | invite <studentId> | set-role <studentId> <role> | revoke-sessions <studentId>`（固定包装脚本 `sel-admin` 见 [RUNBOOK](ops/RUNBOOK.md) 第 1 步；完整命令以 `admin-cli.js` 的帮助为准）。邀请码仅在生成时显示，勿写入日志或公开文档。邀请码有效期与会话时长以 `src/studentHost/registry.ts` 的 `INVITATION_TTL_MS`、`SESSION_TTL_MS` 为准（2026-10-22 时：码 60 天内可重复登录；会话 30 天。早先的“7 天一次性码”已不适用）。补发到同一学生保留记录。管理后台使用独立管理员密码，不能使用学生邀请码登录。
 
 账号身份（role）只是标签：`student`/`parent`/`teacher`/`admin`，新建缺省 `student`，老账号迁移后一律 `student`。身份只能由管理员在本机用 `set-role` 修改；浏览器、网页表单、查询串都不能改身份，身份也不参与任何鉴权——每个账号仍是自己独立的空间、会话和数据。家长/老师/管理员的专属权限与账号关系尚未实现：非学生身份登录看到的仍是同一套错题本学习功能，设置页会注明「专属功能后续开放」。
 
 本轮部署检查与回滚见 `docs/quality/2026-10-15-student-web-release.md`（源码文档不随生产包部署）。关闭flag/回滚旧包不会删除新的学生目录。
 
 
-## 管理后台：账号用量与 AI 性能（2026-10-20 开发版本，尚未部署）
+## 管理后台：账号用量与 AI 性能（2026-10-20；已随自动发布上线，口令需按下文初始化）
 
 在已启用 `SEL_STUDENT_HOST_ENABLED=1` 的同一服务上提供 `/admin/`。Caddy 现有整站反代已覆盖该路径，无需增加端口。只有 host 主进程提供后台，学生 worker 和旧单学生部署不提供。
 
@@ -548,6 +564,7 @@ sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-
 - 所有邀请码的独立编号、所属账号、创建/兑换/到期状态；编号不是登录原码。旧邀请码只存哈希，不能还原。
 - 每账号的累计录入题目照片、错题、练习包、已生成打印包、复盘、重做次数，以及最近活跃时间。题目照片统计不包含练习作答或反思附件。
 - 按账号、UTC+8日期、模型、功能筛选输入/输出 tokens、调用次数、接口成功率、平均与P95耗时；调用明细每页50条，汇总覆盖全部筛选结果。
+- 按调用线路（Token Plan 主用 / 百炼按量付费 / 历史日志）分的调用次数、失败率、平均与 P95 耗时；调用明细有「线路」列；今天按量付费备用已用次数、tokens 与每日上限（见 §5）。
 - 失败区分超时、取消、限流、网络/服务错误、配置认证错误和无效响应；不暴露模型原始错误正文、学生内容、音频、图片或密钥。
 
 统计口径与覆盖：

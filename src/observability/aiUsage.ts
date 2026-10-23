@@ -2,6 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+/**
+ * provider 取值：bailian-token-plan（Token Plan 主用）、bailian（百炼按量付费；配了 Token Plan 时就是失败后的备用）、
+ * openai-compatible（本机/其他兼容接口）。后台按它分路统计。
+ */
+export const PROVIDER_LABELS: Record<string, string> = {
+  'bailian-token-plan': 'Token Plan（主用）',
+  bailian: '百炼按量付费（配了 Token Plan 时为备用）',
+  'openai-compatible': 'OpenAI 兼容接口',
+  legacy: '历史识别日志（未记录线路）',
+};
+export const providerLabel = (name: string): string => PROVIDER_LABELS[name] ?? name;
+
 /** Metadata only. Never pass prompts, provider bodies, credentials or raw Error messages. */
 export interface AiUsageRecord {
   id: string;
@@ -135,7 +147,7 @@ export function aggregateUsage(db: DatabaseSync, query: UsageQuery): UsageAggreg
   return { ...row, durations, p95Ms: durations ? percentile(durations) : selectDurationP95(db, filter.sql, filter.params) };
 }
 
-export function groupedUsage(db: DatabaseSync, query: UsageQuery, column: 'model' | 'operation'): Array<{ name: string } & UsageAggregate> {
+export function groupedUsage(db: DatabaseSync, query: UsageQuery, column: 'model' | 'operation' | 'provider'): Array<{ name: string } & UsageAggregate> {
   const filter = usageWhere(query);
   const rows = db.prepare(`SELECT ${column} AS name, COUNT(*) AS calls,
       COALESCE(SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END), 0) AS succeeded,

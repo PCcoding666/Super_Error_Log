@@ -1,0 +1,17 @@
+# 每晚日报（deploy/ops/sel-healthcheck.mjs report）。
+[Unit]
+Description=Super Error Log nightly report push
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=TZ=Asia/Shanghai
+EnvironmentFile=-/etc/super-error-log/ops.env
+# 推送 key 单独放（root 0600），只给巡检和日报用，不进备份进程的环境。
+EnvironmentFile=-/etc/super-error-log/alert.env
+ExecStart=/opt/super-error-log/node-v24/bin/node /usr/local/lib/sel-ops/sel-healthcheck.mjs report
+TimeoutStartSec=3min
+Nice=10
+MemoryLimit=192M
+PrivateTmp=true
+SyslogIdentifier=sel-daily-report

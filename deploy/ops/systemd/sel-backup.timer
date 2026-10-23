@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Super Error Log backup at 03:40
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

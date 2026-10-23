@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { USAGE_DETAIL_CAP, type AdminFilters, type AdminReport, type UsageSummary } from './report.js';
+import { providerLabel } from '../observability/aiUsage.js';
 
 const number = (value: number | null): string => value === null ? '未采集' : value.toLocaleString('zh-CN');
 const percent = (value: number | null): string => value === null ? '未采集' : `${(value * 100).toFixed(1)}%`;
@@ -43,11 +44,23 @@ export function AdminLogin({ error }: { error?: string }): ReactNode {
 export function AdminProblem({ message }: { message: string }): ReactNode {
   return <Shell title="暂时无法查看"><section className="login-card"><h1>暂时无法查看</h1><p role="alert">{message}</p><a href="/admin/">返回后台</a></section></Shell>;
 }
-function PerformanceTable({ rows }: { rows: Array<{ name: string; usage: UsageSummary }> }): ReactNode {
-  return <div className="table-scroll"><table><thead><tr><th scope="col">模型 / 功能</th><th scope="col">调用</th><th scope="col">已报告 tokens</th><th scope="col">接口成功率</th><th scope="col">平均耗时</th><th scope="col">P95</th><th scope="col">耗时样本</th></tr></thead>
-    <tbody>{rows.map(row => <tr key={row.name}><td>{operation(row.name)}</td><td>{number(row.usage.calls)}</td><td>{number(row.usage.totalTokens)}</td><td>{percent(row.usage.successRate)}</td><td>{duration(row.usage.averageMs)}</td><td>{duration(row.usage.p95Ms)}</td><td>{row.usage.timedCalls} / {row.usage.calls}</td></tr>)}</tbody></table>
+function PerformanceTable({ rows, label = operation, heading = '模型 / 功能', testId }: { rows: Array<{ name: string; usage: UsageSummary }>; label?: (name: string) => string; heading?: string; testId?: string }): ReactNode {
+  return <div className="table-scroll" data-testid={testId}><table><thead><tr><th scope="col">{heading}</th><th scope="col">调用</th><th scope="col">已报告 tokens</th><th scope="col">接口成功率</th><th scope="col">平均耗时</th><th scope="col">P95</th><th scope="col">耗时样本</th></tr></thead>
+    <tbody>{rows.map(row => <tr key={row.name}><td>{label(row.name)}</td><td>{number(row.usage.calls)}</td><td>{number(row.usage.totalTokens)}</td><td>{percent(row.usage.successRate)}</td><td>{duration(row.usage.averageMs)}</td><td>{duration(row.usage.p95Ms)}</td><td>{row.usage.timedCalls} / {row.usage.calls}</td></tr>)}</tbody></table>
     {rows.length === 0 && <p className="empty">当前筛选下没有调用记录。</p>}</div>;
 }
+function FallbackStatus({ fallback }: { fallback: AdminReport['fallback'] }): ReactNode {
+  const { today, limits } = fallback;
+  if (!limits) return <p className="notice warning" role="status" data-testid="fallback-status">备用按量付费通道的每日上限配置无效，备用通道已停用。请检查 SEL_AI_FALLBACK_DAILY_CALLS / SEL_AI_FALLBACK_DAILY_TOKENS。</p>;
+  if (fallback.unreadable) return <p className="notice warning" role="status" data-testid="fallback-status">备用通道计数暂时读不到；读不到时备用通道不会放行。</p>;
+  const calls = today?.calls ?? 0; const tokens = today?.tokens ?? 0; const blocked = today?.blocked ?? 0;
+  const tripped = limits.calls === 0 || limits.tokens === 0 || calls >= limits.calls || tokens >= limits.tokens;
+  return <p className={`notice ${tripped || blocked > 0 ? 'warning' : ''}`} role="status" data-testid="fallback-status">
+    今天（北京时间）Token Plan 失败后改走按量付费 <strong>{number(calls)}</strong> / {number(limits.calls)} 次，已报告 tokens {number(tokens)} / {number(limits.tokens)}
+    {blocked > 0 ? `；已因到达上限拒绝 ${blocked} 次` : ''}{tripped ? '。今天的备用额度已用完，零点后自动恢复。' : '。'}
+  </p>;
+}
+
 export function AdminDashboard(report: AdminReport): ReactNode {
   const { filters, summary } = report;
   const warnings = report.accounts.flatMap(account => account.warnings.map(message => `${account.label}：${message}`));
@@ -87,12 +100,14 @@ export function AdminDashboard(report: AdminReport): ReactNode {
             <td>{time(invitation.createdAt)}</td><td>{invitation.redeemedAt ? time(invitation.redeemedAt) : '—'}</td><td>{time(invitation.expiresAt)}</td></tr>))}</tbody></table></div></details>
     </section>
     <section className="panel" id="performance"><div className="section-heading"><div><h2>调用性能</h2><p className="subtle small">耗时包含请求、响应读取与解析，不含排队。接口成功不代表题目识别正确。</p></div></div>
+      <h3>按调用线路</h3><FallbackStatus fallback={report.fallback} />
+      <PerformanceTable rows={report.byProvider} label={providerLabel} heading="线路" testId="provider-table" />
       <h3>按模型</h3><PerformanceTable rows={report.byModel} /><h3>按功能</h3><PerformanceTable rows={report.byOperation} />
       <div className="failures"><h3>失败原因</h3>{report.failures.length ? <ul>{report.failures.map(row => <li key={row.code}><span>{errorLabel(row.code)}</span><strong>{row.count} 次</strong></li>)}</ul> : <p className="subtle small">当前筛选下没有已记录的失败调用。</p>}</div>
     </section>
     <section className="panel" id="calls"><div className="section-heading"><div><h2>调用明细</h2><p className="subtle small">最新在前 · 每页 50 条{report.detailLimited ? ` · 明细最多展示 ${USAGE_DETAIL_CAP.toLocaleString('zh-CN')} 条，上方合计仍是全部调用` : ''} · 历史识别日志缺少的耗时保留为“未采集”。</p></div><span className="badge">{summary.calls} 条记录</span></div>
-      <div className="table-scroll"><table className="calls-table"><thead><tr><th scope="col">时间</th><th scope="col">账号</th><th scope="col">功能</th><th scope="col">模型</th><th scope="col">输入 tokens</th><th scope="col">输出 tokens</th><th scope="col">耗时</th><th scope="col">状态</th><th scope="col">失败原因 / HTTP</th></tr></thead>
-        <tbody>{report.records.map(row => <tr key={`${row.studentId}:${row.id}`}><td>{time(row.startedAt)}<small className="block subtle">{row.source === 'legacy' ? '历史识别日志' : '统一采集'}</small></td><td>{row.accountLabel}</td><td>{operation(row.operation)}</td><td>{row.model}</td>
+      <div className="table-scroll"><table className="calls-table"><thead><tr><th scope="col">时间</th><th scope="col">账号</th><th scope="col">功能</th><th scope="col">模型</th><th scope="col">线路</th><th scope="col">输入 tokens</th><th scope="col">输出 tokens</th><th scope="col">耗时</th><th scope="col">状态</th><th scope="col">失败原因 / HTTP</th></tr></thead>
+        <tbody>{report.records.map(row => <tr key={`${row.studentId}:${row.id}`}><td>{time(row.startedAt)}<small className="block subtle">{row.source === 'legacy' ? '历史识别日志' : '统一采集'}</small></td><td>{row.accountLabel}</td><td>{operation(row.operation)}</td><td>{row.model}</td><td>{providerLabel(row.provider)}</td>
           <td>{number(row.inputTokens)}</td><td>{number(row.outputTokens)}</td><td>{duration(row.durationMs)}</td><td><span className={`badge ${row.status === 'succeeded' ? 'success' : 'failure'}`}>{row.status === 'succeeded' ? '成功' : '失败'}</span></td><td>{errorLabel(row.errorCode)}<small className="block subtle">HTTP {row.httpStatus ?? '未返回'}</small></td></tr>)}</tbody></table>
         {report.records.length === 0 && <p className="empty">没有符合筛选条件的调用。</p>}</div>
       <div className="pagination"><span className="subtle small">第 {filters.page} 页 / 共 {report.pages} 页</span><div>{filters.page > 1 && <a className="button secondary" href={adminLink(filters, { page: filters.page - 1 })}>上一页</a>}{filters.page < report.pages && <a className="button secondary" href={adminLink(filters, { page: filters.page + 1 })}>下一页</a>}</div></div>

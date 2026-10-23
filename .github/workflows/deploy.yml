@@ -25,6 +25,24 @@ jobs:
       name: production
       url: https://study.pccoding666.com/s/
     steps:
+      # 发布窗口：北京时间 18:00–24:00 是学生晚上拍卷、练习的高峰，发布要停服，这段时间不自动上线。
+      # 约定是这段时间不合并；万一合并了，这里拦住并失败（不会部署），00:00 之后在 Actions 里点 Re-run failed jobs。
+      # 紧急修复：在 production environment 里临时把变量 SEL_ALLOW_EVENING_RELEASE 设为 true，发完立刻删掉。
+      - name: Check release window (Asia/Shanghai)
+        env:
+          SEL_ALLOW_EVENING_RELEASE: ${{ vars.SEL_ALLOW_EVENING_RELEASE }}
+        run: |
+          hour="$(TZ=Asia/Shanghai date +%H)"
+          if (( 10#$hour >= 18 )); then
+            if [ "${SEL_ALLOW_EVENING_RELEASE:-}" = "true" ]; then
+              echo "::warning::北京时间 ${hour} 点，在晚间高峰窗口内，但 SEL_ALLOW_EVENING_RELEASE=true，按紧急发布继续。"
+            else
+              echo "::error::北京时间 ${hour} 点，在 18:00–24:00 学生高峰窗口内，不自动发布。00:00 后重新运行本任务（Re-run failed jobs）。"
+              echo "未发布：北京时间 ${hour} 点在 18:00–24:00 发布窗口外。00:00 后 Re-run failed jobs。" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          fi
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false

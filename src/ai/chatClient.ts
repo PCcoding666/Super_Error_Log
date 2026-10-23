@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { recordAiUsage, tokenCount } from '../observability/aiUsage.js';
 import { withProcessImage } from '../mobile/admission.js';
 import { withParentPermit } from '../studentHost/parentPermit.js';
+import { FALLBACK_BLOCKED_MESSAGE, withFallbackBudget } from './fallbackBudget.js';
 
 export type ModelStage = Stage | 'crop_inventory' | 'crop_verify' | 'mobile_inventory' | 'mobile_transcribe' | 'mobile_verify' | 'mobile_ground' | 'material_extract' | 'material_verify' | 'material_answer' | 'material_grade';
 export interface StageRun { stage: ModelStage; model: string; durationMs: number; promptTokens: number | null; completionTokens: number | null; maxTokens: number; thinking: false; promptVersion: string }
@@ -28,7 +29,7 @@ export const MAX_INPUT_TOKEN_RESERVATION = 100_000;
 const MAX_RESPONSE_BYTES = 2_000_000;
 const TOKEN_PLAN_ENDPOINT = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
 /** Only transport/provider failures may use the backup, never local validation or budgets. */
-class FailoverError extends AiError {}
+class FailoverError extends AiError { httpStatus: number | null = null }
 
 async function readResponse(response: Response): Promise<{ raw: string; overflow: boolean }> {
   const reader = response.body?.getReader();
@@ -121,7 +122,13 @@ export class ChatClient {
       catch (error) {
         o.signal?.throwIfAborted();
         if (!(error instanceof FailoverError)) throw error;
-        return this.complete(stage, messages, o);
+        // 备用是按量付费：每日上限（跨进程计数）到了就停，并给出说清楚的提示；绝不降级为 Mock。
+        return withFallbackBudget({ operation: stage, primaryError: error.kind, primaryHttpStatus: error.httpStatus },
+          () => this.complete(stage, messages, o),
+          blocked => blocked.reason === 'config'
+            ? new AiError('unsupported', '备用 AI 通道的每日上限配置无效（SEL_AI_FALLBACK_DAILY_CALLS / SEL_AI_FALLBACK_DAILY_TOKENS 必须是非负整数）')
+            : new AiError('rate_limited', FALLBACK_BLOCKED_MESSAGE),
+          result => (result.run.promptTokens ?? 0) + (result.run.completionTokens ?? 0) || null);
       }
     };
     return vision ? withParentPermit('ai', run) : run();
@@ -172,6 +179,7 @@ export class ChatClient {
       return { value, run: { stage, model, durationMs: Date.now() - started, promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, maxTokens, thinking: false, promptVersion: PROMPT_VERSION } };
     } catch (e) {
       if (o.signal?.aborted) { reportedError = { kind: 'cancelled', message: '调用已取消' }; throw o.signal.reason; }
+      if (e instanceof FailoverError) e.httpStatus = httpStatus;
       if (e instanceof AiError) { reportedError = { kind: e.kind, message: e.message }; throw e; }
       // Provider exceptions may contain echoed user material/credentials. Never propagate them.
       const safe = new FailoverError(controller.signal.aborted ? 'timeout' : 'provider_error', controller.signal.aborted ? '模型调用超时' : '模型连接失败');
