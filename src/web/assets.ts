@@ -499,6 +499,9 @@ html:has(body.has-tabbar){scroll-padding-bottom:calc(6.625rem + env(safe-area-in
 .material-surface .group-pad{padding:16px 16px 4px}
 .material-surface .group-pad>h2{margin:0 0 8px;font-size:var(--fs-4)}
 .material-surface .group-pad .btn{margin:12px 0 8px}
+/* 待收录分组：隐藏字段不算一行；只在照片与照片之间画分隔线。 */
+.material-surface .inset-group.group-pad>*+*:not(.row-detail){background-image:none}
+.material-surface .group-pad>div+div{margin-top:4px;padding-top:12px;border-top:1px solid var(--line)}
 .material-surface .nav-title{margin:0;font-size:inherit;font-weight:inherit;line-height:inherit}
 .material-surface a.nav-row,.material-surface button.nav-row{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:12px 16px;border:0;background:transparent;color:var(--ink);font:inherit;font-weight:600;line-height:var(--lh-tight);text-align:left;text-decoration:none;cursor:pointer}
 .material-surface .nav-row .row-text{flex:1;min-width:0}
@@ -530,6 +533,23 @@ html:has(body.has-tabbar){scroll-padding-bottom:calc(6.625rem + env(safe-area-in
 @media (hover:hover){.material-surface a.nav-row:hover,.material-surface .asset-row:hover,.material-surface .disclosure>summary:hover{background-color:color-mix(in srgb,var(--ink) 4%,transparent)}}
 .material-surface a.nav-row:active,.material-surface .asset-row:active,.material-surface .disclosure>summary:active{background-color:color-mix(in srgb,var(--ink) 8%,transparent)}
 @media (forced-colors:active){.material-surface .inset-group{border:1px solid CanvasText}}
+/* 学习材料：内容在前（原图裁切 + 文字），工具收进默认折叠的分组；整理工具整组折叠。 */
+.material-surface .tools{margin:12px 0}
+.material-surface .tools>summary{background:var(--card);border-radius:var(--r-2)}
+.material-surface .tools[open]>summary{margin-bottom:4px}
+.material-surface .tools>summary .row-text{flex:1;min-width:0}
+.material-surface .summary-detail{display:block;margin-top:2px;font-weight:400;font-size:var(--fs-2);color:var(--muted)}
+.material-surface .material-block>h2{margin:0 0 8px;font-size:var(--fs-4)}
+.material-surface .material-block figure{margin:0}
+.material-surface .material-block .crop{height:auto;max-height:240px}
+.material-surface .material-block figure+figure{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.material-surface .material-block figcaption{margin:4px 0 0}
+.material-surface .material-block .hint{margin:4px 0 0}
+.material-surface .capture-count{font-weight:600;margin:16px 0 4px}
+.capture-thumbs{display:flex;gap:8px;list-style:none;margin:8px 0;padding:0;overflow-x:auto}
+.capture-thumbs img{display:block;width:56px;height:72px;object-fit:cover;border-radius:var(--r-1);background:var(--card)}
+.capture-page:not(.has-tabbar){padding-bottom:calc(11rem + env(safe-area-inset-bottom))}
+.capture-page:not(.has-tabbar) .capture-actions{bottom:0;padding-bottom:calc(12px + env(safe-area-inset-bottom))}
 .practice-adjust{display:flex;align-items:center;justify-content:space-between;min-height:52px;margin:8px 0 12px;padding:0 16px;background:var(--card);border-radius:var(--r-2);color:var(--accent);text-decoration:none;font-weight:600}
 .practice-cta{position:fixed;z-index:12;left:0;right:0;bottom:calc(6.625rem + env(safe-area-inset-bottom));width:min(536px,100%);margin:0 auto;padding:8px var(--page-inset) 4px}
 .practice-cta .btn{width:100%}

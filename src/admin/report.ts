@@ -158,6 +158,17 @@ function mergeMeasurable(parts: Measurable[]): { usage: UsageSummary; incomplete
   } };
 }
 
+/**
+ * 后台账号名（P1-5）：自助注册的账号显示登记姓名 + 手机尾号（只给管理员看）；
+ * 管理员 CLI 建的号没有登记资料，退回学生库里的昵称（缺省昵称「学生」时带上账号前 8 位以便区分）。
+ */
+export function accountLabel(student: Pick<StudentRecord, 'studentId' | 'registeredName' | 'phoneLast4' | 'disabledAt'>, nickname: string | null): string {
+  const suffix = student.disabledAt ? '（已停用）' : '';
+  if (student.registeredName) return `${student.registeredName.slice(0, 60)}${student.phoneLast4 ? ` · 尾号 ${student.phoneLast4}` : ''}${suffix}`;
+  if (nickname && nickname !== '学生') return nickname + suffix;
+  return `${nickname ?? '账号'} ${student.studentId.slice(0, 8)}${suffix}`;
+}
+
 const EMPTY_ACTIVITY: AccountActivity = { photos: null, items: null, packets: null, printed: null, reflections: null, returns: null };
 
 export async function readAdminReport(registry: StudentRegistry, filters: AdminFilters): Promise<AdminReport> {
@@ -233,7 +244,7 @@ export async function readAdminReport(registry: StudentRegistry, filters: AdminF
     for (const name of liveModels) models.add(name);
     for (const name of liveOperations) operations.add(name);
     for (const row of legacyRows) { models.add(row.model); operations.add(row.operation); }
-    const label = learning.label ?? `账号 ${student.studentId.slice(0, 8)}`;
+    const label = accountLabel(student, learning.label);
     const lastActiveAt = [student.lastActiveAt, learning.lastActiveAt, bounds.lastAt, ...legacyRows.map(row => row.startedAt)]
       .filter((value): value is string => !!value && Number.isFinite(Date.parse(value))).sort().at(-1) ?? null;
     accounts.push({ ...student, label, grade: learning.grade, lastActiveAt, activity: learning.activity, warnings,
