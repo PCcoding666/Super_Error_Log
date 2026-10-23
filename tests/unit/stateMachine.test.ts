@@ -6,7 +6,7 @@ describe('statusAfterAttempt', () => {
     const t = statusAfterAttempt('packet_generated', {
       completion: 'independent',
       correct: true,
-      daysSincePacket: 4,
+      delayDays: 4,
       isConfirmation: false,
     });
     expect(t.to).toBe('temporarily_mastered');
@@ -16,7 +16,7 @@ describe('statusAfterAttempt', () => {
     const t = statusAfterAttempt('packet_generated', {
       completion: 'independent',
       correct: true,
-      daysSincePacket: 1,
+      delayDays: 1,
       isConfirmation: false,
     });
     expect(t.to).toBe('attempted');
@@ -27,7 +27,7 @@ describe('statusAfterAttempt', () => {
     const t = statusAfterAttempt('temporarily_mastered', {
       completion: 'independent',
       correct: true,
-      daysSincePacket: 10,
+      delayDays: 10,
       isConfirmation: true,
     });
     expect(t.to).toBe('stably_mastered');
@@ -37,7 +37,7 @@ describe('statusAfterAttempt', () => {
     const t = statusAfterAttempt('packet_generated', {
       completion: 'hint_used',
       correct: true,
-      daysSincePacket: 5,
+      delayDays: 5,
       isConfirmation: false,
     });
     expect(t.to).toBe('needs_recheck');
@@ -47,7 +47,7 @@ describe('statusAfterAttempt', () => {
     const t = statusAfterAttempt('packet_generated', {
       completion: 'unsure',
       correct: true,
-      daysSincePacket: 5,
+      delayDays: 5,
       isConfirmation: false,
     });
     expect(t.to).toBe('needs_recheck');
@@ -57,7 +57,7 @@ describe('statusAfterAttempt', () => {
     const t = statusAfterAttempt('packet_generated', {
       completion: 'independent',
       correct: false,
-      daysSincePacket: 5,
+      delayDays: 5,
       isConfirmation: false,
     });
     expect(t.to).toBe('needs_recheck');
@@ -67,18 +67,40 @@ describe('statusAfterAttempt', () => {
     const t = statusAfterAttempt('packet_generated', {
       completion: 'unfinished',
       correct: false,
-      daysSincePacket: 5,
+      delayDays: 5,
       isConfirmation: false,
     });
     expect(t.to).toBe('needs_recheck');
     expect(t.reason).toContain('未完成');
   });
 
+  it('确认轮离上次作答不足 3 天做对：保持 temporarily_mastered，不降级（P0-3）', () => {
+    for (const delayDays of [0, 1, 2]) {
+      const t = statusAfterAttempt('temporarily_mastered', {
+        completion: 'independent',
+        correct: true,
+        delayDays,
+        isConfirmation: true,
+      });
+      expect(t.to).toBe('temporarily_mastered');
+    }
+  });
+
+  it('确认轮刚好隔 3 天独立做对 → stably_mastered', () => {
+    const t = statusAfterAttempt('temporarily_mastered', {
+      completion: 'independent',
+      correct: true,
+      delayDays: 3,
+      isConfirmation: true,
+    });
+    expect(t.to).toBe('stably_mastered');
+  });
+
   it('确认轮失败 → needs_recheck', () => {
     const t = statusAfterAttempt('temporarily_mastered', {
       completion: 'independent',
       correct: false,
-      daysSincePacket: 10,
+      delayDays: 10,
       isConfirmation: true,
     });
     expect(t.to).toBe('needs_recheck');
@@ -88,7 +110,7 @@ describe('statusAfterAttempt', () => {
     const t = statusAfterAttempt('eligible_for_review', {
       completion: 'independent',
       correct: true,
-      daysSincePacket: 5,
+      delayDays: 5,
       isConfirmation: false,
     });
     expect(t.to).toBe('eligible_for_review');

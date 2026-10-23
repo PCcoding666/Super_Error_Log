@@ -1,11 +1,12 @@
 import crypto from 'node:crypto';
 import type { ReactNode } from 'react';
-import type { PracticeDetail } from '../../v2/practiceService.js';
+import type { LearningPracticeDetail as PracticeDetail } from '../../learning/contracts.js';
 import type { SubmissionState } from '../../v2/practiceSubmission.js';
 import type { PracticeProgress } from '../../v2/practiceProgress.js';
-import type { ReturnSummary } from '../../v2/returnService.js';
+import type { LearningReturnSummary as ReturnSummary } from '../../v2/returnService.js';
 import { Page } from './layout.js';
 import { AnswerText } from './answerText.js';
+import { pendingRedoText, RedoDateCard } from './redoDate.js';
 
 function Photos({base,state}:{base:string;state:SubmissionState}):ReactNode {
   return <div className="submission-photos">{state.photos.map((photo,i)=><figure key={photo.id}><a href={`${base}/submission/${photo.id}/image`} target="_blank" rel="noopener"><img src={`${base}/submission/${photo.id}/image`} alt={`作答照片 ${i+1}`} loading="lazy"/></a><figcaption>照片 {i+1} · 已保存</figcaption></figure>)}</div>;
@@ -47,11 +48,12 @@ export function PracticeFeedbackPage(props:{practice:PracticeDetail;state:Submis
       <section className="card"><h2>{recorded?`已记录 ${recorded} 道结果`:state.photos.length?(state.status==='ready'?'作答反馈已准备好':state.status==='analyzing'?'正在核对作答':'作答照片已收到'):'等你交这次练习'}</h2>
         <p>{state.photos.length?`已收到 ${state.photos.length} 张作答照片。`:'还没有整份提交的作答照片。'}{recorded?`本次共 ${p.items.length} 道，还有 ${p.items.length-recorded} 道未记录。`:'还没有记录作答结果。'}</p>
         {recorded>0?<p>已确认做对 {Object.values(progress.answers).filter(a=>a.correct).length} 道，其中独立做对 {summary?.independentCorrect??0} 道。</p>:null}
-        {summary?.pending.length?<p>当天做对的 {summary.pending.length} 道会留待之后验证；这次做对不等于已经掌握。</p>:null}
+        {summary?.pending.length?<p>当天做对的 {summary.pending.length} 道还不算掌握：{pendingRedoText(summary.pendingRedoOn,summary.pendingRedoLastOn)}</p>:null}
         {summary?.again.length?<p>有 {summary.again.length} 道还需要再练，之后会安排重做。</p>:null}
         {summary?.masteredNow.length?<p>已有 {summary.masteredNow.length} 道达到当前掌握判定。</p>:null}
         {cancelled?<p>剩余练习已取消，已有结果保留。</p>:<div className="practice-task-actions"><a className="btn" href={`${base}/submit`}>{state.photos.length?'补拍作答':'拍照交练习'}</a><a className="more" href={base}>回到题目</a></div>}
       </section>
+      <RedoDateCard days={summary?.redoDays??[]}/>
       {!cancelled&&state.status==='analyzing'?<section className="card" role="status"><h2>照片已收到，正在核对</h2><p>可以先离开，下次从练习首页回来查看反馈。</p></section>:null}
       {!cancelled&&state.photos.length>0&&['pending','failed','interrupted'].includes(state.status)?<section className="card"><h2>{state.status==='pending'?'照片已保存，还没有核对反馈':'照片还在，这次没能完成核对'}</h2><p>可以重新核对，或对照参考答案自己记录结果。</p>{state.attempts<3?<form method="post" action={`${base}/review`}><button className="btn primary">{state.status==='pending'?'核对这些作答':'重新核对'}</button></form>:<p>这批照片已尝试 3 次，可以补拍更清晰的照片或自己核对。</p>}</section>:null}
       {state.photos.length>0?<details className="card"><summary>查看已保存的 {state.photos.length} 张照片</summary><Photos base={base} state={state}/></details>:null}

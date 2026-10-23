@@ -1,5 +1,6 @@
+import { RedoReminder, type RedoOverviewView } from './redoDate.js';
 import { itemContextUrl, itemNotebookReturn } from '../itemLearning.js';
-import { NOTEBOOK_STATUSES, notebookUrl, type NotebookFilters } from '../notebook.js';
+import { NOTEBOOK_STATUS_GROUPS, notebookStatusGroup, notebookUrl, type NotebookFilters, type NotebookStatusGroup } from '../notebook.js';
 import { stageChoices } from '../../classification/itemCategories.js';
 import { ALL_STAGES } from '../../classification/stages.js';
 import { JUNIOR_CATALOG } from '../../classification/juniorCatalog.js';
@@ -18,25 +19,20 @@ export function cardStatus(status: string): string | null {
   return null;
 }
 
-const PENDING_STATUSES = new Set(['captured', 'needs_review', 'ready_for_reflection', 'eligible_for_review', 'needs_recheck', 'attempted']);
-
-function statusClass(status: string): string {
-  if (status === 'ready_for_reflection' || status === 'needs_recheck' || status === 'needs_review') return 'tone-orange';
-  if (status === 'temporarily_mastered' || status === 'stably_mastered') return 'tone-green';
-  return 'muted';
-}
+const GROUP_TONE: Record<NotebookStatusGroup, string> = { todo: 'tone-orange', practicing: 'muted', mastered: 'tone-green', stable: 'tone-green' };
 
 export function ItemCard(props: { item: V2WeekItem; href?: string; open?: boolean; extra?: ReactNode }): ReactNode {
   const { item } = props;
   const title = item.questionExcerpt || '题目文字暂不可用，可查看原图。';
   const subtitle = [item.knowledgeTags[0] || item.chapter || '未分类', item.shortId].filter(Boolean).join(' · ');
+  const group = notebookStatusGroup(item.status) ?? 'todo';
   const body = <span className="notebook-line">
     <img className="notebook-thumb" src={`/s/img/item/${item.id}?s=thumb`} alt="" loading="lazy" />
     <span className="row-text">
       <span className="excerpt">{title}</span>
       <span className="meta-line muted">{subtitle}</span>
     </span>
-    <span className={`notebook-status ${statusClass(item.status)}`}>{NOTEBOOK_STATUSES[item.status] ?? '待练习'}</span>
+    <span className={`notebook-status ${GROUP_TONE[group]}`}>{NOTEBOOK_STATUS_GROUPS[group]}</span>
     {props.href || props.open ? <span className="chev" aria-hidden="true">›</span> : null}
     {props.extra}
   </span>;
@@ -57,14 +53,14 @@ function FilterLinks(props: { filters: NotebookFilters; stages: string[]; chapte
   const grade = props.stages.map(value => <a key={value} href={href({ grade: value })} data-filter="grade" data-value={value} aria-current={value === filters.grade ? 'true' : undefined}><FilterMark on={value === filters.grade} />{value}</a>);
   const status = [
     <a key="all" href={href({ status: '' })} data-filter="status" data-value="" aria-current={filters.status ? undefined : 'true'}><FilterMark on={!filters.status} />全部状态</a>,
-    ...Object.entries(NOTEBOOK_STATUSES).map(([value, label]) => <a key={value} href={href({ status: value })} data-filter="status" data-value={value} aria-current={filters.status === value ? 'true' : undefined}><FilterMark on={filters.status === value} />{label}</a>),
+    ...Object.entries(NOTEBOOK_STATUS_GROUPS).map(([value, label]) => <a key={value} href={href({ status: value })} data-filter="status" data-value={value} aria-current={filters.status === value ? 'true' : undefined}><FilterMark on={filters.status === value} />{label}</a>),
   ];
   const chapter = [
     <a key="all" href={href({ chapter: '' })} data-filter="chapter" data-value="" aria-current={filters.chapter ? undefined : 'true'}><FilterMark on={!filters.chapter} />全部章节</a>,
     ...props.chapters.map(value => <a key={value} href={href({ chapter: value })} data-filter="chapter" data-value={value} aria-current={filters.chapter === value ? 'true' : undefined}><FilterMark on={filters.chapter === value} />{value}</a>),
   ];
   return <div className="menu">
-    {which === 'all' || which === 'grade' ? <div className="menu-section"><p className="menu-label">学段</p>{grade}</div> : null}
+    {(which === 'all' && props.stages.length > 1) || which === 'grade' ? <div className="menu-section"><p className="menu-label">学段</p>{grade}</div> : null}
     {which === 'all' || which === 'status' ? <div className="menu-section"><p className="menu-label">状态</p>{status}</div> : null}
     {which === 'all' || which === 'chapter' ? <div className="menu-section"><p className="menu-label">章节</p>{chapter}</div> : null}
     {which === 'all' ? <div className="menu-section"><a href={notebookUrl({ grade: filters.grade, subject: filters.subject })}>清除筛选</a></div> : null}
@@ -78,6 +74,9 @@ export interface NotebookPageProps {
   filters?: NotebookFilters; chapters?: string[]; total?: number; selection?: boolean; selectedIds?: string[];
   eligibleIds?: string[]; recoveryItems?: V2WeekItem[]; removed?: string | null; undoReturnTo?: string;
   flash?: { ok?: string | null; err?: string | null };
+  /** 到了「再做」日子的题（P0-3 首页提醒）。 */
+  redo?: RedoOverviewView;
+  activePractice?: { id: string; left: number } | null;
 }
 export function ItemsPage(props: NotebookPageProps): ReactNode {
   const { grade, subject, subjects } = props.category;
@@ -109,7 +108,9 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
   const recovery = props.recoveryItems ?? [];
   const known = new Set([...all,...recovery].map(item=>item.id));
   const selectionBar: BarModel = {caption:`已选 ${selected.size} 道 / 最多 8 道`,captionStatusId:'notebook-selection-count',primary:{title:'加入练习',key:'notebook-create',form:'notebook-selection',describedBy:'notebook-selection-count notebook-selection-hint'},secondary:[]};
-  const pending = all.filter(item => PENDING_STATUSES.has(item.status)).length;
+  const pending = all.filter(item => notebookStatusGroup(item.status) === 'todo').length;
+  // 这个学科和学段一道题都没有时，「选题练习」无题可选，不显示。
+  const nothingStored = !all.length && !props.total;
   const totalNote = props.total !== undefined && props.total !== all.length ? `（共 ${props.total} 道）` : '';
   const groups = (rows: V2WeekItem[], title: string) => rows.length ? <section key={title}><h2 className="group-label">{title}</h2><ul className="inset-group notebook-list">{rows.map(card)}</ul></section> : null;
   const library = <>
@@ -118,8 +119,9 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
   </>;
   return <Page title="错题本" tab={props.selection ? undefined : 'items'} back={null} bodyClass={`notebook-page${props.selection ? ' notebook-selection-page' : ''}`} bar={props.selection ? selectionBar : props.bar} flash={props.flash} topTrailing={toolbar}
     barExtra={props.selection ? <p className="hint notebook-bar-hint" data-notebook-limit="" id="notebook-selection-hint">{selected.size > 8 ? '超过 8 道了，请取消几道后继续。' : selected.size === 0 ? '至少选 1 道题' : '可逐题取消'}</p> : undefined}>
-    <div className="notebook-title"><h1>{subjectSwitch}</h1>{props.selection ? <a className="link-btn" href={context}>取消选题</a> : <a className="btn primary practice-fab" href={selectionUrl}>选题练习</a>}</div>
+    <div className="notebook-title"><h1>{subjectSwitch}</h1>{props.selection ? <a className="link-btn" href={context}>取消选题</a> : nothingStored ? null : <a className="btn primary practice-fab" href={selectionUrl}>选题练习</a>}</div>
     <p className="page-subtitle" role="status">{grade} · {all.length} 道错题 · {pending} 道待练习{totalNote}</p>
+    {props.selection ? null : <RedoReminder overview={props.redo} active={props.activePractice} compact />}
     {props.selection ? <p className="hint">选 1–8 道题加入练习。更改筛选或学科会结束本次选题；已建练习不受影响。</p> : null}
     <form method="get" action="/s/items" className="notebook-filters" role="search" aria-label="搜索错题">
       <input type="hidden" name="subject" value={subject} />
@@ -134,9 +136,9 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
       <button className="visually-hidden" type="submit">搜索</button>
     </form>
     <div className="filter-chips">
-      <details className="filter-chip pop-menu"><summary>学段：{grade}<svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><FilterLinks filters={filters} stages={stages} chapters={chapters} which="grade" /></details>
+      {stages.length > 1 ? <details className="filter-chip pop-menu"><summary>学段：{grade}<svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><FilterLinks filters={filters} stages={stages} chapters={chapters} which="grade" /></details> : null}
       <details className={`filter-chip pop-menu${filters.chapter ? ' chip-on' : ''}`}><summary>{filters.chapter || '章节'}<svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><FilterLinks filters={filters} stages={stages} chapters={chapters} which="chapter" /></details>
-      <details className={`filter-chip pop-menu${filters.status ? ' chip-on' : ''}`}><summary>{filters.status ? NOTEBOOK_STATUSES[filters.status] : '状态'}<svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><FilterLinks filters={filters} stages={stages} chapters={chapters} which="status" /></details>
+      <details className={`filter-chip pop-menu${filters.status ? ' chip-on' : ''}`}><summary>{filters.status ? NOTEBOOK_STATUS_GROUPS[filters.status as NotebookStatusGroup] : '状态'}<svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><FilterLinks filters={filters} stages={stages} chapters={chapters} which="status" /></details>
     </div>
     {props.removed ? <div className="flash flash-row" role="status" data-testid="removed"><span>已移出这道题</span><form method="post" action={`/s/items/${props.removed}/restore`}><input type="hidden" name="returnTo" value={props.undoReturnTo ?? notebookUrl(filters,props.removed,props.selection ? [...selected] : undefined)} /><button className="link-btn" type="submit">撤销</button></form></div> : null}
     {props.selection ? <form method="post" action="/s/items/select" id="notebook-selection" data-notebook-selection="">
@@ -147,7 +149,7 @@ export function ItemsPage(props: NotebookPageProps): ReactNode {
       {recovery.length || [...selected].some(id=>!known.has(id)) ? <section aria-label="保留的选择"><h2>保留的选择</h2><p className="hint">这些题不在当前结果中或已不可用，请检查并取消后继续。</p><ul className="inset-group notebook-list">{recovery.map(card)}</ul>{[...selected].filter(id=>!known.has(id)).map(id=><label key={id} className="choice"><input type="checkbox" name="itemIds" value={id} defaultChecked /><span>不可用的题目：{id} · 取消后重试</span></label>)}</section> : null}
       <noscript><p className="hint">勾选后点“加入练习”提交；添加章节也会更新已选题数。超过 8 道时会保留选择，取消几道再提交。</p></noscript>
     </form> : library}
-    {!all.length ? <section className="card"><h2 className="card-title">{props.total ? '没有符合筛选的题目' : grade === ALL_STAGES ? `还没有${subject}错题` : `这个学段还没有${subject}错题`}</h2><p>以前收录和未分类的题目也会出现在这里。</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}<a className="more" href={notebookUrl({grade,subject})}>查看全部{subject}错题</a><a className="more" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '查看已上传照片' : '录入第一道错题'}</a>{props.materials ? <a className="more" href="/s/materials">查看学习材料</a> : null}</section> : null}
+    {!all.length ? <section className="card"><h2 className="card-title">{props.total ? '没有符合筛选的题目' : grade === ALL_STAGES ? `还没有${subject}错题` : `这个学段还没有${subject}错题`}</h2><p>以前收录和未分类的题目也会出现在这里。</p>{props.finding ? <p>AI 还在找题，稍后可以再来看看</p> : null}{props.total ? <a className="more" href={notebookUrl({grade,subject})}>清除筛选</a> : grade !== ALL_STAGES && stages.includes(ALL_STAGES) ? <a className="more" href={notebookUrl({grade:ALL_STAGES,subject})}>看看全部学段</a> : null}<a className="more" href={props.anyPhoto ? '/s/photos' : '/s/capture'}>{props.anyPhoto ? '查看已上传照片' : '录入第一道错题'}</a>{props.materials ? <a className="more" href="/s/materials">查看学习材料</a> : null}</section> : null}
   </Page>;
 }
 

@@ -194,6 +194,8 @@ describe('T4b 本周推荐与建练习', () => {
     setStatus(recheck.id, 'needs_recheck');
     setStatus(mastered.id, 'temporarily_mastered', new Date(Date.now() - 86400000).toISOString());
     setStatus(attempted.id, 'attempted');
+    // 当场做对已过 3 天冷却（P0-3）：录入拨到 3 天前、没有更晚的作答。
+    getDb().prepare('UPDATE error_item SET created_at = ? WHERE id = ?').run(new Date(Date.now() - 3 * 86400000).toISOString(), attempted.id);
     // fresh 保持 ready_for_reflection。
 
     const result = await recommend(base, auth);
@@ -202,9 +204,20 @@ describe('T4b 本周推荐与建练习', () => {
     expect(result.recommended.map(card => card.reason)).toEqual([
       '上次练习没独立做对',
       '上次做对了，到了再确认一次的时候',
-      '上次是当场做对，还要隔几天再验证',
+      '上次是当场做对，已经隔了几天，可以再验证了',
       '本周新错题',
     ]);
+  });
+
+  it('RED2b 当场做对的题 3 天冷却：不进推荐、仍可手动选，理由写明哪天起再做', async () => {
+    const { base, dataDir, auth } = await setupApp();
+    const [cooling, fresh] = await bridgeItems(base, auth, dataDir, [{ tags: ['知识点A'] }, { tags: ['知识点B'] }]) as [WeekItem, WeekItem];
+    setStatus(cooling.id, 'attempted');
+    const result = await recommend(base, auth);
+    expect(result.recommended.map(card => card.id)).toEqual([fresh.id]);
+    const until = new Date(Date.now() + 3 * 86400000);
+    expect(result.others.map(card => card.id)).toEqual([cooling.id]);
+    expect(result.others[0]!.reason).toBe(`上次是当场做对，${until.getMonth() + 1} 月 ${until.getDate()} 日起再做才算数`);
   });
 
   it('RED3 12 道候选推荐 8 道；同知识点最多 2 道', async () => {

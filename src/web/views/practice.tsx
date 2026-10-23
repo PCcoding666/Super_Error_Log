@@ -8,6 +8,8 @@ import type { ReflectionSuggestionView, ReflectionTurnView, ReflectionView } fro
 import { ACCOUNT_ROLE_LABELS, type AccountRole } from '../../studentHost/accountRole.js';
 import { weekRangeText } from '../format.js';
 import { ItemCard } from './items.js';
+import { monthDayText } from '../../domain/calendarDay.js';
+import { pendingRedoText, RedoDateCard } from './redoDate.js';
 import { Page, Phrased, Problem, VoiceBox, WaitLine, quoted, type BarButton, type BarModel } from './layout.js';
 
 // ---------- 选项的断行 ----------
@@ -102,16 +104,16 @@ export function ChoosePage(props: { recommend: RecommendResponse; practiceSlot: 
         <section className="card"><p>现在没有可以练的题。先录入错题，或者等 AI 找完题。</p></section>
       ) : (
         <form method="post" action="/s/choose" id="choose-form" data-pick-count="" data-max={String(recommend.limits.max)} data-min="1" data-wait="正在建练习…">
-          <p className="lead">{selected ? `已选中 ${n} 道，点一下可以去掉或加上。` : 'AI 先帮你选了这几道，点一下可以去掉或加上。'}</p>
+          <p className="lead">{selected ? `已选中 ${n} 道，点一下可以去掉或加上。` : recommend.recommended.length ? '先选好了今天到期的几道，点一下可以去掉或加上。' : '今天没有到期的题。想提前练，点一下选上；没到日期做对的，到期后还会再排一次。'}</p>
           <p className="page-subtitle">已选 {n} 道 · 建议 {recommend.limits.min}–{recommend.limits.max} 道</p>
           <p className={`tone-orange${n > recommend.limits.max ? '' : ' hidden'}`} data-max-warning="" role="status">最多 {recommend.limits.max} 道。想加这道，先去掉一道。</p>
-          <div className="inset-group choose-list">
+          {recommend.recommended.length ? <div className="inset-group choose-list">
             {recommend.recommended.map(card => <ChooseRow key={card.id} card={card} checked={selected ? selected.has(card.id) : true} />)}
-          </div>
+          </div> : null}
           {recommend.notes.length > 0 ? <div className="notes" data-testid="choose-notes">{recommend.notes.map(note => <p key={note}>{plainNote(note)}</p>)}</div> : null}
           {recommend.others.length > 0 ? (
-            <details open={selected ? recommend.others.some(card => selected.has(card.id)) : undefined}>
-              <summary data-key="choose-others">其他可以选的（{recommend.others.length}）</summary>
+            <details open={selected ? recommend.others.some(card => selected.has(card.id)) : recommend.recommended.length ? undefined : true}>
+              <summary data-key="choose-others">{recommend.recommended.length ? '其他可以选的' : '可以提前练的'}（{recommend.others.length}）</summary>
               <div className="inset-group choose-list">
                 {recommend.others.map(card => <ChooseRow key={card.id} card={card} checked={selected ? selected.has(card.id) : false} />)}
               </div>
@@ -616,7 +618,7 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
     ? `${summary.total} 道里，独立做对 ${summary.independentCorrect} 道`
     : `录了 ${summary.answered}/${summary.total} 道，独立做对 ${summary.independentCorrect} 道`;
   const nothing = summary.masteredNow.length + summary.again.length + summary.pending.length === 0 && !summary.calibration.text;
-  const confirm = summary.nextConfirmOn ? `${Number(summary.nextConfirmOn.slice(5, 7))}/${Number(summary.nextConfirmOn.slice(8, 10))}` : null;
+  const confirm = summary.nextConfirmOn ? monthDayText(summary.nextConfirmOn) : null;
   const bar: BarModel = { caption: '', primary: props.next, secondary: [] };
   return (
     <Page title="这次的结果" bar={bar}>
@@ -624,17 +626,18 @@ export function ResultsPage(props: { practice: PracticeDetail; summary: ReturnSu
       {/* 结果出来：头一句和下面几组依次浮上来（减少动态效果时直接显示） */}
       <div className="m-stagger">
       <p className="lead card-title" data-testid="results-head">{head}</p>
+      <RedoDateCard days={summary.redoDays} />
       {summary.masteredNow.length > 0 ? (
         <section className="card">
           <h2 className="card-title tone-green"><Phrased text={`真会了 ✓（${summary.masteredNow.length} 道）`} /></h2>
-          <p className="small muted">隔了几天还能独立做对。{confirm ? `${confirm} 前后会再考你一次，再对就算稳了。` : ''}</p>
+          <p className="small muted">隔了几天还能独立做对。{confirm ? `${confirm}前后会再考你一次，再对就算稳了。` : ''}</p>
           <ul className="list">{summary.masteredNow.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
       ) : null}
       {summary.pending.length > 0 ? (
         <section className="card">
           <h2 className="card-title"><Phrased text={`做对了，过几天再确认（${summary.pending.length} 道）`} /></h2>
-          <p className="small muted">做题那天离练习纸生成太近，过几天再做对才算数。</p>
+          <p className="small muted">当天做对还不算数：{pendingRedoText(summary.pendingRedoOn, summary.pendingRedoLastOn)}</p>
           <ul className="list">{summary.pending.map(item => <li key={item.id}><ItemCard item={item} /></li>)}</ul>
         </section>
       ) : null}

@@ -12,7 +12,7 @@ import type { LearningPracticeDetail } from '../learning/contracts.js';
 import { getLearningPractice } from '../learning/queries.js';
 import { getPrintStatus, requestPrint, type PrintSnapshot } from '../v2/printService.js';
 import { practiceProgress, revealPracticeHint, savePracticeCursor } from '../v2/practiceProgress.js';
-import { submitReturns } from '../v2/returnService.js';
+import { submitLearningReturns } from '../v2/returnService.js';
 import { sendHtml } from '../views/render.js';
 import { OnlinePracticePage } from './views/onlinePractice.js';
 import { localDayText } from './weekPlan.js';
@@ -41,7 +41,7 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; practic
     const view = selectedView ?? String(req.query.view ?? '');
     if (itemId && !p.items.some(item => item.id === itemId)) { res.status(404).send('题目不在此练习中'); return; }
     if (itemId && taskLifecycle(p.id)!=='cancelled') savePracticeCursor(p.id,itemId);
-    sendHtml(res, OnlinePracticePage({ practice: p, lifecycle:taskLifecycle(p.id), progress: practiceProgress(p.id), state: String(body.status), snapshot: body.status === 'ready' ? body.snapshot as PrintSnapshot : undefined, itemId, view, paper: req.query.mode === 'paper', today: localDayText(options.now(), options.timeZone), earliestDay: localDayText(new Date(p.generatedAt ?? p.createdAt), options.timeZone), works: Object.fromEntries(p.items.map(item => [item.id, latestWork(p.id, item.id)])), error }));
+    sendHtml(res, OnlinePracticePage({ practice: p, lifecycle:taskLifecycle(p.id), progress: practiceProgress(p.id), state: String(body.status), snapshot: body.status === 'ready' ? body.snapshot as PrintSnapshot : undefined, itemId, view, paper: req.query.mode === 'paper', today: localDayText(options.now(), options.timeZone), earliestDay: localDayText(new Date(p.generatedAt ?? p.createdAt), options.timeZone), works: Object.fromEntries(p.items.map(item => [item.id, latestWork(p.id, item.id)])), recorded: typeof req.query.recorded === 'string' ? req.query.recorded : undefined, error }));
   };
   router.get('/practice/:pid', (req, res) => show(req, res));
   router.post('/practice/:pid/prepare', (_req, res) => {
@@ -126,12 +126,13 @@ export function practiceRouter(options: { coachProvider?: CoachProvider; practic
     if (progress.answers[itemId]) { res.redirect(303, `/s/practice/${pid}${req.body?.mode === 'paper' ? '?mode=paper&view=check' : ''}`); return; }
     if (req.body?.correct !== 'yes' && req.body?.correct !== 'no') { res.status(400).send('请选择做对了或做错了'); return; }
     const hint = Math.max(progress.hints[itemId] ?? 0, req.body?.usedHint === 'yes' ? 1 : 0);
-    const result = submitReturns(pid, { results: [{ itemId, completion: hint === 2 ? 'hint2' : hint === 1 ? 'hint1' : 'independent', correct: req.body.correct === 'yes', performedOn: req.body.performedOn }] });
+    const result = submitLearningReturns(pid, { results: [{ itemId, completion: hint === 2 ? 'hint2' : hint === 1 ? 'hint1' : 'independent', correct: req.body.correct === 'yes', performedOn: req.body.performedOn }] }, 'all');
     const error = !result.ok ? result.message : result.results.find(entry => !entry.ok)?.error;
     if (error) { res.status(400); show(req, res, error, itemId, 'check'); return; }
     const next = res.locals.practice.items.find((item: {id: string}) => item.id !== itemId && !progress.answers[item.id]);
     if (next) savePracticeCursor(pid, next.id);
-    res.redirect(303, `/s/practice/${pid}${req.body?.mode === 'paper' ? '?mode=paper&view=check' : ''}`);
+    // 下一道直接接着做；上面一句话告诉学生刚才那道记成了什么。
+    res.redirect(303, `/s/practice/${pid}?${req.body?.mode === 'paper' ? 'mode=paper&view=check&' : ''}recorded=${itemId}`);
   });
   return router;
 }
