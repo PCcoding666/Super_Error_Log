@@ -21,7 +21,7 @@ import { readSourceBytes, readFragmentImage } from '../../src/materials/media.js
 import type { Fragment } from '../../src/materials/contracts.js';
 const cleanup: (()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
-async function fixture(layout:'direct'|'mobile'|'upload', identicalNormalization=false) {
+async function fixture(layout:'direct'|'mobile'|'upload', identicalNormalization=false, shape:(result:Record<string,unknown>)=>unknown=result=>result) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'material-action-source-')),db=new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');db.exec(SCHEMA_SQL);migrateMaterials(db);
   db.exec("INSERT INTO student_profile(id,nickname,created_at) VALUES ('alice','Synthetic A','2026-10-20'),('bob','Synthetic B','2026-10-20')");
@@ -68,7 +68,7 @@ async function fixture(layout:'direct'|'mobile'|'upload', identicalNormalization
     const body=JSON.parse(raw),content=body.messages[1].content,c=JSON.parse(content[0].text);calls++;
     images.push(content.filter((p:{type:string})=>p.type==='image_url').length);
     const result=c.operation==='answer'?{questionId:c.questionId,basisKey:c.basisKey,text:'x=2',fragmentIds:c.fragments.map((f:Fragment)=>f.fragmentId)}:{questionId:c.questionId,attemptId:c.attemptId,basisKey:c.basisKey,result:'incorrect',findings:[{fragmentIds:c.work.map((f:Fragment)=>f.fragmentId),text:'Check the diagram'}],score:null};
-    res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(result)}}]}));
+    res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(shape(result))}}]}));
   });
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));cleanup.push(async()=>{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));});
   const options={mode:'openai' as const,chat:{baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiKey:'synthetic',models:{material_extract:'e',material_verify:'v',material_answer:'a',material_grade:'g'},timeoutMs:2000,bailianOnly:false}};
@@ -130,4 +130,27 @@ it('keeps a genuine direct legacy original inside a generic media directory',asy
   f.db.prepare('UPDATE source_asset SET storage_path=? WHERE id=?').run(filename,f.assetId);
   expect(readSourceBytes(f.store,f.q.stem[0]!)).toEqual(f.bytes);
   expect((await f.answer()).text).toBe('x=2');expect((await f.grade()).result).toBe('incorrect');expect(f.calls()).toBe(2);
+});
+
+// Shapes observed from Bailian models: echoes left out and the object wrapped in the request's schema key.
+it('accepts answers and grades whose model leaves out the bound ids or wraps the object',async()=>{
+  const f=await fixture('upload',false,result=>{
+    const {questionId:_q,basisKey:_b,attemptId:_a,fragmentIds:_ids,...rest}=result;
+    if('findings' in rest)return {schema:{...rest,findings:(rest.findings as Record<string,unknown>[]).map(({fragmentIds:_f,...finding})=>finding)}};
+    return {schema:rest};
+  });
+  const answer=await f.answer();
+  expect(answer.text).toBe('x=2');expect(answer.fragmentIds).toEqual(f.q.stem.map(x=>x.fragmentId));expect(answer.run.promptVersion).toBe('material-answer-v1.1');
+  const grade=await f.grade();
+  expect(grade.result).toBe('incorrect');expect(grade.findings[0]!.fragmentIds).toEqual(f.q.attempts[0]!.fragments.map(x=>x.fragmentId));
+});
+it.each(['question','basis','attempt','fragments'] as const)('still rejects an answer or grade that echoes a different %s',async field=>{
+  const f=await fixture('upload',false,result=>{
+    if(field==='question')return {...result,questionId:'another-question'};
+    if(field==='basis')return {...result,basisKey:'another-basis'};
+    if(field==='attempt')return 'attemptId' in result?{...result,attemptId:'another-attempt'}:result;
+    return 'fragmentIds' in result?{...result,fragmentIds:(result.fragmentIds as string[]).slice(1)}:result;
+  });
+  if(field!=='attempt')await expect(f.answer()).rejects.toMatchObject({code:'invalid_output'});
+  if(field!=='fragments')await expect(f.grade()).rejects.toMatchObject({code:'invalid_output'});
 });
