@@ -128,6 +128,7 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   await expect(page.getByRole('heading', { name: '输入邀请码' })).toBeVisible();
   await page.getByLabel('12 位邀请码').fill(gateway.reloginCodes[0]!);
   await page.getByRole('button', { name: '进入我的错题本' }).click();
+  await page.goto(gateway.base + '/s/items');
   await expect(add).toBeVisible();
   await expect(page).toHaveTitle(/^错题本 · /);
   await page.goto(gateway.base + printPath);
