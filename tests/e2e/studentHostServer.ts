@@ -18,6 +18,15 @@ const codes = students.map(id => registry.issueInvitation(id).code);
 const reloginCodes = students.map(id => registry.issueInvitation(id).code);
 // Third code reauthenticates A without deleting A's pending browser namespace.
 codes.push(registry.issueInvitation(students[0]!).code);
+// 2026-10-22：公开注册要用注册码；另有一个邀请码 3 天后到期的合成学生，用来看设置页提醒。
+const registrationCode = registry.createRegistrationCode({ label: '合成浏览器班级', maxUses: 50 }).code;
+const expiringStudent = registry.createStudent().studentId;
+const expiringCode = registry.issueInvitation(expiringStudent).code;
+{
+  const db = new DatabaseSync(path.join(root, 'registry.db'));
+  db.prepare('UPDATE invitations SET expires_at = ? WHERE student_id = ?').run(new Date(Date.now() + 3 * 86_400_000 - 60_000).toISOString(), expiringStudent);
+  db.close();
+}
 const control = path.join(root, 'material-control.json');
 fs.writeFileSync(control, process.env.SEL_E2E_MATERIAL_CONFIG ?? '{}');
 const fixtureEnv = process.env.SEL_E2E_MATERIAL_JOURNEY === '1' ? { SEL_E2E_MATERIAL_FIXTURE: pathToFileURL(path.resolve('tests/e2e/materialFixture.ts')).href, SEL_E2E_MATERIAL_CONTROL: control } : {};
@@ -28,7 +37,7 @@ app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: req => req.sock
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-process.send?.({ base, codes, reloginCodes });
+process.send?.({ base, codes, reloginCodes, registrationCode, expiringCode });
 let stopping = false;
 async function stop() {
   if (stopping) return;
@@ -68,7 +77,7 @@ process.on('message', async (message: { id?: string; action?: string; student?: 
       result={jobId:id};
     }
     if (message.action === 'snapshot' || message.action === 'age') {
-      const db = new DatabaseSync(file);
+      const db = new DatabaseSync(file, { timeout: 5000 }); // wait for the worker's write lock instead of failing at once
       if (message.action === 'age') {
         db.exec("UPDATE review_packet SET generated_at=datetime('now','-7 days'); UPDATE error_item SET created_at=datetime('now','-7 days'); UPDATE material_asset SET created_at=datetime('now','-1 day'); UPDATE material_capture SET created_at=datetime('now','-1 day')");
       } else {

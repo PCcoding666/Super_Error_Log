@@ -30,6 +30,9 @@ function root(): string {
 }
 async function setup() {
   const registry = StudentRegistry.open(root());
+  // 2026-10-22 起公开注册需要注册码与同意；既有用例默认带上一个有效注册码和「已满 14 周岁 + 同意」，
+  // 注册码 / 同意本身的规则在 studentRegistrationGate.test.ts 里单独测。
+  const registrationCode = registry.createRegistrationCode({ label: '合成班级', maxUses: 500 }).code;
   const gateway = await createStudentHostGateway({ registry });
   gateways.push(gateway);
   const app = express();
@@ -39,9 +42,10 @@ async function setup() {
   await new Promise<void>(resolve => server.once('listening', resolve));
   const base = 'http://127.0.0.1:' + (server.address() as { port: number }).port;
   return {
-    registry, base,
+    registry, base, registrationCode,
     post: (route: string, fields: Record<string, string>, headers: Record<string, string> = {}) => fetch(base + route, {
-      method: 'POST', redirect: 'manual', headers: { origin: base, ...headers }, body: new URLSearchParams(fields),
+      method: 'POST', redirect: 'manual', headers: { origin: base, ...headers },
+      body: new URLSearchParams(route === '/s/register' ? { regcode: registrationCode, age: '14plus', consent: '1', ...fields } : fields),
     }),
   };
 }
@@ -164,8 +168,9 @@ it('rate limits registration independently of valid invitation login', async () 
   expect(registered.status).toBe(201);
   const code = codeFrom(await registered.text());
   let response: Response | undefined;
-  for (let i = 0; i < 11; i++) {
-    response = await env.post('/s/register', { name: '', phone: '' });
+  // 只有失败（这里是错误的注册码）才计数；同一个错码 20 次后被挡。
+  for (let i = 0; i < 21; i++) {
+    response = await env.post('/s/register', { name: '', phone: '', regcode: 'WRNG-0000' });
     await response.text();
   }
   expect(response!.status).toBe(429);

@@ -3,7 +3,7 @@
 ## 用户要求与行为
 
 - 学生入口仍为 /s/，保留邀请码登录，新增 /s/register。
-- 注册仅填写学生姓名与手机号；不要求密码、短信验证码或预先领取的邀请码。
+- 注册仅填写学生姓名与手机号；不要求密码、短信验证码或预先领取的邀请码。（**2026-10-22 起改为需要注册码，见文末。**）
 - 注册成功后展示绑定本学生的 12 位随机邀请码，60 天内可重复登录；会话仍独立保持 30 天。
 - 手机号是未验证的联系资料，仅供管理员核验找回；姓名手机号不能直接获取已有凭证。
 - 同姓名与规范化手机号不重复创建账号；不同学生可以共用家长手机号。
@@ -22,8 +22,10 @@
 
 先通过已有受信任渠道核实申请者，再在服务器管理环境运行：
 
-    node dist/studentHost/admin-cli.js lookup "学生姓名" "手机号"
-    node dist/studentHost/admin-cli.js reset-invitation <查到的学生ID>
+    sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-host node dist/studentHost/admin-cli.js lookup "学生姓名" "手机号"
+    sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-host node dist/studentHost/admin-cli.js reset-invitation <查到的学生ID>
+
+（2026-10-22 起 CLI 缺 `SEL_STUDENT_HOST_DIR` 或目录不存在时拒绝运行。）
 
 lookup 只显示账号 ID，不显示原码；reset-invitation 原子作废该账号旧码和会话，并生成只显示一次的新 60 天个人码。任何一步失败，原状态完整回滚。手机号本轮不发送短信，也没有公开自助找回接口。旧账号没有登记资料时沿用既有管理员补码流程。
 普通 invite 命令仍可增加另一张邀请码；账号找回使用上述 reset-invitation，以便旧凭证失效。本次没有操作真实学生资料或凭证。
@@ -34,3 +36,11 @@ lookup 只显示账号 ID，不显示原码；reset-invitation 原子作废该�
 实现验证在本 PR 后续 CI 记录；开发环境离线，因此不声称本地运行过 npm run verify。
 覆盖注册表事务、重复/并发注册、输入校验、归属与身份隔离、重复登录、60 天边界、迁移、会话保留、配置容量、跨站拦截、独立限流和无 JavaScript 手机浏览器流程。
 100 是账号登记上限，不代表已经完成 100 人同时使用的容量测试；现有每学生 worker 架构没有在本次改为共享进程。
+
+## 2026-10-22 更新：注册码、限速、续期、自助查看邀请码
+
+- 公开注册需要 8 位注册码（老师/管理员用 `admin-cli registration-code create [--uses N] [--days D] [备注]` 生成，缺省 60 人、14 天；`registration-code list|revoke <编号>`）。没有注册码的人不能注册；管理员 `create` 建号与已有账号、已有邀请码不受影响。
+- 注册必须勾选同意《个人信息处理规则》（`/s/privacy`，草稿）并选择年龄；未满 14 周岁需勾选监护人同意。
+- 限速改为按「码」（输入的前 4 位）计失败次数，成功不计数；同一 IP 只有 100 次失败/10 分钟的宽上限；全站失败预算 1000 次/10 分钟、注册成功预算 200 次/10 分钟。同一个 Wi-Fi 下 40 人注册、10 次别人的错码后正确的码，都能通过（`tests/integration/studentAccounts.test.ts`）。
+- 会话活跃时滑动续期 30 天。邀请码仍 60 天有效：设置页在 7 天内到期时提醒并一键换码；「设置 → 我的邀请码」可查看/复制本设备登录用的码（只有该设备的会话能解开），也可重新生成（旧码与其他设备会话作废）。
+- 姓名判重忽略空格（「测试 甲」=「测试甲」）。`lookup` 支持姓名片段、手机尾号 4 位；新增 `disable`、`delete <ID> --confirm`、`export <ID> <目录>`；`revoke-sessions` 只踢下线、不作废邀请码。细节见 `docs/privacy/PRIVACY_AND_MINOR_DATA.md`。

@@ -718,11 +718,26 @@ export function PracticesPage(props: { practices: PracticeRow[] }): ReactNode {
 
 // ---------- 设置（§4.12） ----------
 
-export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?: AccountRole | null; grade?: string; error?: string }): ReactNode {
+/** 设置页的邀请码到期提醒（网关只在 7 天内到期或已没有可用码时给出）。 */
+function InviteExpiryNotice(props: { inviteExpires: string | null | undefined }): ReactNode {
+  if (!props.inviteExpires) return null;
+  const expiry = props.inviteExpires === 'none' ? null : new Date(props.inviteExpires);
+  const days = expiry ? Math.ceil((expiry.getTime() - Date.now()) / 86_400_000) : 0;
+  return (
+    <div className="card tone-orange" role="alert" data-testid="invite-expiring">
+      <p><b>{days <= 0 ? '你的邀请码已经过期了。' : `你的邀请码 ${days} 天后（${expiry!.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' })}）到期。`}</b></p>
+      <p>这台手机还能继续用。换手机或换浏览器时要用邀请码登录，现在换一个新的吧。</p>
+      <form method="post" action="/s/account/regenerate"><button type="submit" className="btn" data-testid="regenerate-invitation" data-key="regenerate-invitation">一键换新邀请码</button></form>
+    </div>
+  );
+}
+
+export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?: AccountRole | null; grade?: string; error?: string; inviteExpires?: string | null }): ReactNode {
   return (
     <Page title="设置" showSettings={false} bodyClass="settings-page">
       <h1>设置</h1>
       {props.error ? <Problem title="设置没有保存" detail={props.error} /> : null}
+      {props.studentHostWorker ? <InviteExpiryNotice inviteExpires={props.inviteExpires} /> : null}
       <form method="post" action="/s/settings/grade" className="inset-group" data-submit-on-change="">
         <div className="popup-row">
           <label htmlFor="student-grade">我的学段</label>
@@ -747,7 +762,9 @@ export function SettingsPage(props: { studentHostWorker?: boolean; accountRole?:
           </dd>
         </div>
       </dl>
+      {props.studentHostWorker ? <a className="settings-link" href="/s/account" data-testid="settings-my-invite" data-key="settings-my-invite">我的邀请码<span className="chev" aria-hidden="true">›</span></a> : null}
       <a className="settings-link" href="/s/install" data-key="settings-install"><Phrased text="怎么放到主屏幕" /><span className="chev" aria-hidden="true">›</span></a>
+      {props.studentHostWorker ? <a className="settings-link" href="/s/privacy" data-key="settings-privacy">个人信息处理规则<span className="chev" aria-hidden="true">›</span></a> : null}
       </div>
       {props.studentHostWorker ? (
         <form method="post" action="/s/logout" className="settings-logout">
