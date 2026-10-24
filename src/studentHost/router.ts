@@ -24,7 +24,7 @@ import crypto from 'node:crypto';
 import express, { Router, type Request, type Response } from 'express';
 import { isAccountRole } from './accountRole.js';
 import { INVITATION_WARN_MS, RegistryError, StudentRegistry, resolveStudentHostDir } from './registry.js';
-import { AttemptGuard, codeKey, LOGIN_LIMITS, RECOVERY_LIMITS, REGISTRATION_LIMITS } from './attemptGuard.js';
+import { AttemptGuard, codeKey, LOGIN_LIMITS, RECOVERY_LIMITS, REGISTRATION_LIMITS, registrationKey } from './attemptGuard.js';
 import { isInAppBrowserAgent } from '../web/inAppBrowser.js';
 import { StudentWorkerPool, WorkerStartError } from './workers.js';
 import { registerStaticAssets } from '../web/staticAssets.js';
@@ -134,6 +134,11 @@ export interface StudentHostGatewayOptions {
   throttleNow?: () => number;
   /** 注册要不要班级注册码；缺省读 SEL_REGISTRATION_CODE_REQUIRED=1（默认不要）。 */
   requireRegistrationCode?: boolean;
+  /**
+   * 登录、注册的失败预算已用完时，「错的那一次」回应前等多久（毫秒，缺省 500）。正确的码不等。
+   * 只放慢错误尝试，不挡任何人（全站预算不能变成全站锁）。
+   */
+  failureDelayMs?: number;
 }
 
 /** 「复制邀请码」的小脚本：网关自己提供（script-src 'self'），没有脚本时码本身可以长按选择。 */
@@ -173,6 +178,8 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   const recoveryGuard = new AttemptGuard(RECOVERY_LIMITS, options.throttleNow);
   const requireCode = options.requireRegistrationCode ?? process.env.SEL_REGISTRATION_CODE_REQUIRED === '1';
   const now = options.now ?? ((): Date => new Date());
+  const failureDelayMs = Math.max(0, options.failureDelayMs ?? 500);
+  const slowDown = (): Promise<void> => failureDelayMs > 0 ? new Promise(resolve => setTimeout(resolve, failureDelayMs)) : Promise.resolve();
   let built: Router | null = null;
 
   // 不在启动时为每个已注册学生拉起进程。第一次打开再 fork；空闲后由进程池退出。
@@ -205,18 +212,19 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
 
     // ---------- 公开注册（姓名手机号 + 找回码；打开时另要注册码；不能指定账号身份或学生 ID） ----------
     r.get('/register', (request, response) => sendHtml(response, RegistrationPage({ inAppBrowser: inApp(request), requireCode })));
-    r.post('/register', form, (request, response) => {
+    r.post('/register', form, async (request, response) => {
       if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
       const ip = deps.ipOf(request);
       const field = (name: string): string => typeof request.body?.[name] === 'string' ? request.body[name] : '';
       const values = { name: field('name').slice(0, 60), phone: field('phone').slice(0, 40), regcode: field('regcode').slice(0, 20) };
       const page = (extra: Parameters<typeof RegistrationPage>[0]): void => sendHtml(response, RegistrationPage({ inAppBrowser: inApp(request), requireCode, values, ...extra }));
-      const key = codeKey(requireCode ? values.regcode : '', ip);
-      const blocked = registrationGuard.blocked(key, ip);
-      if (blocked) {
-        response.setHeader('retry-after', String(blocked.seconds));
+      const key = registrationKey(requireCode ? values.regcode : '', ip);
+      // 只有成功上限（全站总数、同一 IP 每小时）在注册前挡，防刷满名额；失败预算只影响错的那一次怎么回应。
+      const capped = registrationGuard.successCapped(ip);
+      if (capped) {
+        response.setHeader('retry-after', String(capped.seconds));
         response.status(429);
-        page({ blocked });
+        page({ blocked: capped });
         return;
       }
       try {
@@ -232,7 +240,19 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       } catch (error) {
         if (!(error instanceof RegistryError)) throw error;
         // 只有「码不对」和「重复登记」算失败（后者可被用来探测谁注册过）；填错格式不算。
-        if (error.code === 'invalid_registration_code' || error.code === 'duplicate_registration') registrationGuard.failure(key, ip);
+        // 先验过码才走到这里：失败预算超了只把这次错误回应改成 429（并放慢），不会挡住新同学正常注册。
+        if (error.code === 'invalid_registration_code' || error.code === 'duplicate_registration') {
+          const wasOver = registrationGuard.blocked(key, ip) !== null;
+          registrationGuard.failure(key, ip);
+          const over = registrationGuard.blocked(key, ip);
+          if (over) {
+            if (wasOver) await slowDown();
+            response.setHeader('retry-after', String(over.seconds));
+            response.status(429);
+            page({ blocked: over, values: error.code === 'invalid_registration_code' ? { ...values, regcode: '' } : values });
+            return;
+          }
+        }
         response.status(error.code === 'capacity_full' ? 503 : 400);
         page({ error: error.message, duplicate: error.code === 'duplicate_registration', values: error.code === 'invalid_registration_code' ? { ...values, regcode: '' } : values });
       }
@@ -246,6 +266,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       const field = (name: string): string => typeof request.body?.[name] === 'string' ? request.body[name] : '';
       const values = { name: field('name').slice(0, 60), phone: field('phone').slice(0, 40) };
       const key = `ip:${ip}`;
+      // 找回码只有 4 位：先看预算再比对（和登录、注册相反），超出预算的尝试一律不比对。
       const blocked = recoveryGuard.blocked(key, ip);
       if (blocked) {
         response.setHeader('retry-after', String(blocked.seconds));
@@ -267,18 +288,12 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     });
 
     // ---------- 登录（兑换邀请码） ----------
-    r.post('/login', form, (request, response) => {
+    r.post('/login', form, async (request, response) => {
       if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
       const ip = deps.ipOf(request);
       const raw = typeof request.body?.code === 'string' ? request.body.code : '';
       const key = codeKey(raw, ip);
-      const blocked = loginGuard.blocked(key, ip);
-      if (blocked) {
-        response.setHeader('retry-after', String(blocked.seconds));
-        response.status(429);
-        sendHtml(response, LoginPage({ blocked, inAppBrowser: inApp(request) }));
-        return;
-      }
+      // 先验码：正确的码任何时候都能登录，不受码键、IP、全站失败预算影响（预算只放慢错误尝试）。
       try {
         const session = registry.redeem(raw);
         loginGuard.success(key, ip);
@@ -293,9 +308,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         response.redirect(303, '/s/?login=1');
       } catch (error) {
         if (!(error instanceof RegistryError)) throw error;
+        const wasOver = loginGuard.blocked(key, ip) !== null;
         loginGuard.failure(key, ip);
         const retryAfter = loginGuard.blocked(key, ip);
         if (retryAfter) {
+          if (wasOver) await slowDown();
           response.setHeader('retry-after', String(retryAfter.seconds));
           response.status(429);
           sendHtml(response, LoginPage({ blocked: retryAfter, inAppBrowser: inApp(request) }));

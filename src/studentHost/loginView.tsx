@@ -17,7 +17,7 @@ function throttleText(block: NonNullable<AttemptBlock>, subject = '这个码'): 
   const minutes = Math.max(1, Math.ceil(block.seconds / 60));
   if (block.scope === 'global') return `现在同时试的人太多了，等 ${minutes} 分钟左右再试。`;
   if (block.scope === 'ip_success') return `你们这个网络里刚注册的人太多了，等 ${minutes} 分钟左右再试；也可以换手机流量试试。`;
-  if (block.scope === 'ip' || subject !== '这个码') return `你们这个网络里输错的次数太多了，等 ${minutes} 分钟左右再试；也可以换手机流量试试。`;
+  if (block.scope === 'ip' || subject !== '这个码') return `你们这个网络里输错的次数太多了，等 ${minutes} 分钟左右再试；也可以换手机流量试试。${subject === '这个码' ? '正确的码不受影响，先对照一下有没有输错。' : ''}`;
   return `这个码输错的次数太多了，等 ${minutes} 分钟左右再试。先对照一下有没有输错。`;
 }
 
