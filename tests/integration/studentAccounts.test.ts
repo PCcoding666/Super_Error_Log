@@ -359,10 +359,19 @@ describe('默认注册：姓名 + 手机号 + 自己设的 4 位找回码', () =
 
   it('找回码必须是 4 位数字且不能太好猜；只存加盐摘要，不存明文', async () => {
     const env = await setup();
-    for (const pin of ['', '12', '12345', 'abcd', '1234', '0000', '9876', '3456']) {
+    for (const pin of ['', '12', '12345', 'abcd', '1234', '0000', '9876', '3456', '4567']) {
       const response = await env.post('/s/register', { name: '测试学生甲', phone: '+6581234567', pin });
       expect(response.status).toBe(400);
-      expect(await response.text()).toContain('4 位数字');
+      const html = await response.text();
+      expect(html).toContain('4 位数字');
+      // 红字贴在找回码下面，姓名和手机号还在；这不是离线壳。
+      expect(html).toContain('data-testid="register-pin-error"');
+      expect(html).toContain('id="register-pin"');
+      expect(html).toMatch(/id="register-pin"[^>]*aria-invalid="true"/);
+      expect(html).toContain('value="测试学生甲"');
+      expect(html).toContain('value="+6581234567"');
+      expect(html).not.toContain('连不上服务器');
+      expect(html).toContain('请先设好 4 位找回码');
     }
     expect(env.registry.listStudents()).toHaveLength(0);
     expect((await env.post('/s/register', { name: '测试学生甲', phone: '+6581234567', pin: '1212' })).status).toBe(201);
@@ -371,6 +380,30 @@ describe('默认注册：姓名 + 手机号 + 自己设的 4 位找回码', () =
     db.close();
     expect(row.recovery_hash).toMatch(/^scrypt\$[\w-]+\$[\w-]+$/);
     expect(row.recovery_hash).not.toContain('1212');
+  });
+
+  it('姓名或手机号填错时，红字落在对应输入框上，仍然是注册页', async () => {
+    const env = await setup();
+    const phone = await env.post('/s/register', { name: 'pctest002', phone: '002', pin: '2580' });
+    expect(phone.status).toBe(400);
+    const phoneHtml = await phone.text();
+    expect(phoneHtml).toContain('请填写姓名和有效手机号');
+    expect(phoneHtml).toContain('data-testid="register-phone-error"');
+    expect(phoneHtml).toMatch(/id="register-phone"[^>]*aria-invalid="true"/);
+    expect(phoneHtml).toContain('value="pctest002"');
+    expect(phoneHtml).toContain('value="002"');
+    expect(phoneHtml).not.toMatch(/id="register-pin"[^>]*aria-invalid="true"/);
+    expect(phoneHtml).not.toContain('连不上服务器');
+    const name = await env.post('/s/register', { name: '   ', phone: '18924082429', pin: '2580' });
+    expect(name.status).toBe(400);
+    const nameHtml = await name.text();
+    expect(nameHtml).toMatch(/id="register-name"[^>]*aria-invalid="true"/);
+    expect(nameHtml).toContain('data-testid="register-name-error"');
+    const both = await env.post('/s/register', { name: '', phone: '002', pin: '2580' });
+    const bothHtml = await both.text();
+    expect(bothHtml).toMatch(/id="register-name"[^>]*aria-invalid="true"/);
+    expect(bothHtml).toMatch(/id="register-phone"[^>]*aria-invalid="true"/);
+    expect(bothHtml).toContain('请先填好姓名和手机号');
   });
 
   it('同一姓名手机号再注册：不建新账号，提示用找回码找回', async () => {

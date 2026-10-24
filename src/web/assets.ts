@@ -38,11 +38,11 @@ export const STYLES = `${ITEM_LEARNING_STYLES}
 --bar:rgba(36,36,39,.96);--bar-solid:#242427;--disabled-bg:#36363B;--disabled-ink:#AEAEB5;--focus:var(--accent);--surround:#2C2C2E;--photo-dim:brightness(.92);
 --surface-shadow:none;--bar-shadow:0 3px 20px rgba(0,0,0,.3)}}
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-padding-bottom:calc(var(--bar-h,200px) + var(--s-5))}
+html{-webkit-text-size-adjust:100%;scroll-padding-bottom:calc(var(--bar-h,200px) + var(--keyboard-inset,0px) + var(--s-5))}
 body{margin:0;background:var(--paper);color:var(--ink);line-break:strict;
 font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
 font-size:var(--fs-3);line-height:var(--lh-text);font-variant-numeric:tabular-nums;font-kerning:normal;
-padding:env(safe-area-inset-top) 0 calc(var(--bar-h,200px) + var(--s-5))}
+padding:env(safe-area-inset-top) 0 calc(var(--bar-h,200px) + var(--keyboard-inset,0px) + var(--s-5))}
 a{color:var(--teal);text-underline-offset:.18em}
 button,input,select,textarea{-webkit-tap-highlight-color:transparent}
 button,a,label,summary{touch-action:manipulation}
@@ -248,8 +248,10 @@ legend{font-weight:600;margin-bottom:var(--s-2);padding:0;line-height:var(--lh-t
 .field-label{display:block;font-weight:600;line-height:var(--lh-tight);margin:var(--s-4) 0 var(--s-2)}
 .hint{font-size:var(--fs-2);color:var(--muted);margin:var(--s-1) 0 var(--s-2)}
 .tag{display:inline-block;font-size:var(--fs-1);font-weight:600;line-height:var(--lh-tight);color:var(--teal);background:color-mix(in srgb,var(--teal) 12%,var(--card));border-radius:var(--r-pill);padding:1px var(--s-2);margin-left:var(--s-2);vertical-align:1px;white-space:nowrap}
-textarea,input[type=text],input[type=tel],input[type=date],select{width:100%;font:inherit;line-height:var(--lh-tight);color:var(--ink);background:var(--card);border:1px solid var(--field);border-radius:var(--r-1);padding:var(--s-3) var(--s-4);min-height:52px}
+textarea,input[type=text],input[type=tel],input[type=date],select{width:100%;font:inherit;line-height:var(--lh-tight);color:var(--ink);background:var(--card);border:1px solid var(--field);border-radius:var(--r-1);padding:var(--s-3) var(--s-4);min-height:52px;scroll-margin-top:12px;scroll-margin-bottom:calc(var(--bar-h,200px) + var(--keyboard-inset,0px) + 16px)}
 textarea:focus,input[type=text]:focus,input[type=tel]:focus,select:focus{border-color:var(--teal)}
+textarea[aria-invalid=true],input[aria-invalid=true],select[aria-invalid=true]{border-color:var(--red);box-shadow:inset 0 0 0 1px var(--red)}
+.field-error{color:var(--red);font-size:var(--fs-2);font-weight:600;line-height:var(--lh-tight);margin:var(--s-1) 0 var(--s-2)}
 textarea{min-height:120px;resize:vertical;line-height:var(--lh-text)}
 /* 一句话总结：跟着内容长高（AI 写的那句不被截断）；不支持 field-sizing 的浏览器由脚本按 scrollHeight 调高 */
 textarea.autogrow{min-height:52px;resize:none;field-sizing:content;overflow:hidden;word-break:keep-all;overflow-wrap:anywhere}
@@ -352,7 +354,7 @@ summary{cursor:pointer;font-weight:600;min-height:var(--tap);padding:10px 0;line
 .standalone .a2hs-row{display:none}
 .callout{border-left:4px solid var(--teal)}
 /* ---------- 底部下一步按钮（§4.0）：说明小字 → 次要操作一行文字按钮 → 主按钮（永远在最下面同一个位置） ---------- */
-.next-bar{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--bar-solid);
+.next-bar{position:fixed;left:0;right:0;bottom:var(--keyboard-inset,0px);z-index:10;background:var(--bar-solid);
 border-top:1px solid var(--line);box-shadow:var(--bar-shadow);padding:var(--s-3) var(--page-inset) calc(var(--s-3) + env(safe-area-inset-bottom))}
 @supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){.next-bar{background:var(--bar);-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}}
 .next-bar .inner{max-width:536px;margin:0 auto;display:flex;flex-direction:column;gap:var(--s-2)}
@@ -707,11 +709,15 @@ export const SERVICE_WORKER = `const CACHE='sel-shell-${ASSET_VERSION}';
 const SHELL=['/s/offline','${CSS_PATH}','${JS_PATH}','/s/assets/icon-192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
-// Only a real network failure shows the offline page. A 5xx with a body (e.g. "人有点多") is shown as is;
+// Only a real network failure of a GET navigation shows the offline page. A 5xx with a body (e.g. "人有点多") is shown as is;
 // an empty 5xx means the proxy reached no app (restart during a release): say so and retry by itself.
+// Form POST navigations (register, login, recover) are not intercepted. fetch() inside the worker
+// replays a one-shot body and, on some Android browsers, rejects even while the radio is up.
+// That catch used to replace the server's 400 validation page with the cached offline shell.
 const UPDATING='<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="${SW_UPDATING_RETRY_SECONDS}"><title>正在更新</title><style>body{font:17px/1.6 -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px;background:#f2f2f7;color:#1c1c1e}@media (prefers-color-scheme:dark){body{background:#000;color:#f2f2f7}}a{display:inline-block;margin-top:12px;padding:12px 20px;border-radius:12px;background:#0a84ff;color:#fff;text-decoration:none}</style></head><body><h1 data-testid="updating-title">服务器正在更新</h1><p>一般不到一分钟就好。这一页每 ${SW_UPDATING_RETRY_SECONDS} 秒会自己重试，不用一直点。</p><p>传上去的照片和错题都在服务器上；还没传完的照片先存在这台手机上，回到拍照页会接着传。</p><a href="__URL__">现在重试</a></body></html>';
 function updating(url,status){const safe=new URL(url).pathname.startsWith('/s')?new URL(url).pathname+new URL(url).search:'/s/';return new Response(UPDATING.replace('__URL__',safe.replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';')),{status:status,headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}})}
 self.addEventListener('fetch',e=>{const r=e.request;
+  if(r.mode==='navigate'&&r.method!=='GET')return;
   if(r.mode==='navigate'){e.respondWith(fetch(r).then(res=>res.status>=500?res.clone().text().then(t=>t.trim()?res:updating(r.url,res.status)).catch(()=>res):res).catch(()=>caches.match('/s/offline').then(o=>o||Response.error())));return}
   if(r.method==='GET'&&SHELL.some(p=>new URL(r.url).pathname+new URL(r.url).search===p)){e.respondWith(caches.match(r).then(c=>c||fetch(r)))}
 });

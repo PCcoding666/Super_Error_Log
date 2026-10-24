@@ -32,7 +32,7 @@ import { COOKIE, clearCookie, readCookies, setCookie } from '../web/session.js';
 import { TRAIL_COOKIE } from '../web/trail.js';
 import type { RateLimiter } from '../mobile/rateLimit.js';
 import { sendHtml } from '../views/render.js';
-import { AccountPage, HostErrorPage, LoginPage, RecoveryPage, RegistrationPage, RegistrationCompletePage } from './loginView.js';
+import { AccountPage, HostErrorPage, LoginPage, RecoveryPage, RegistrationPage, RegistrationCompletePage, registrationFieldErrors } from './loginView.js';
 import { CAPACITY_RETRY_SECONDS, CapacityWaitlist, capacityLines, capacityPageHtml } from './busyView.js';
 
 /** 「我的邀请码」换码成功的一次性提示（网关自用，不转发给 worker，也不在业务 cookie 白名单里）。 */
@@ -254,7 +254,8 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
           }
         }
         response.status(error.code === 'capacity_full' ? 503 : 400);
-        page({ error: error.message, duplicate: error.code === 'duplicate_registration', values: error.code === 'invalid_registration_code' ? { ...values, regcode: '' } : values });
+        const kept = error.code === 'invalid_registration_code' ? { ...values, regcode: '' } : values;
+        page({ error: error.message, duplicate: error.code === 'duplicate_registration', fieldErrors: registrationFieldErrors(error.code, kept), values: kept });
       }
     });
 
