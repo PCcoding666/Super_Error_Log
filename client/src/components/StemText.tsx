@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { stemBlocks } from '../lib/stemBlocks';
+import { stemBlocks } from '../../../src/text/stemBlocks';
 
 /** 题干：普通文字保留换行，GFM 表格画成真表格（窄屏可横向滑动）。 */
 export function StemText(props: { text: string }): ReactNode {

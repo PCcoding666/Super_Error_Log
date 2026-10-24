@@ -4,7 +4,7 @@ import type { BatchAction, CaptureHints, Fragment, MaterialRole, QuestionBundle,
 import { Page, type BarButton } from './layout.js';
 import { CaptureExamples } from './photos.js';
 import { UNSUPPORTED_SUBJECT_MESSAGE, unsupportedSubject } from '../../materials/subjects.js';
-import { withoutTableRows } from '../stemText.js';
+import { withoutTableRows } from '../../text/stemBlocks.js';
 
 export interface MaterialAssetView {
   id: string;
