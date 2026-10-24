@@ -290,6 +290,35 @@ describe('health check and alert push', () => {
     expect(daily.lines.join('\n')).toMatch(/AI 调用 2 次，失败 0/);
     expect(daily.lines.join('\n')).toContain('bailian-token-plan 1 次');
   });
+
+  it('reads the gateway live status: pushes when students are turned away or AI piles up, flags a stale file, adds a live line', async () => {
+    const { check, report, config, collectStats } = await load('sel-healthcheck.mjs');
+    const now = new Date('2026-10-22T12:00:00.000Z');
+    studentDb().close();
+    process.env.SEL_OPS_SKIP = 'systemd,journal,cert,backup';
+    const liveFile = path.join(data, 'student-host/live-status.json');
+    const peaks = { peakLive: 3, peakActive: 7, peakAiInUse: 1, peakAiWaiting: 12, capacityRejections: 5, rejectedStudents: 2 };
+    fs.writeFileSync(liveFile, JSON.stringify({ at: new Date(now.getTime() - 20_000).toISOString(), activeStudents: 6, live: 3, maxLive: 3, aiLimit: 1, aiInUse: 1, aiWaiting: 4, aiAverageMs: 21_000, waitingOutside: 2,
+      last5m: peaks, today: { ...peaks, day: '2026-10-22', since: '2026-10-22T00:00:00.000Z' } }));
+    const cfg = config();
+    const stats = collectStats(cfg.hostDir, now);
+    expect(stats.live).toMatchObject({ activeStudents: 6, live: 3 });
+    const sent: Any[] = [];
+    const sender = async (_t: string, payload: Any) => { sent.push(payload); };
+    const first = await check({ ...cfg, barkKey: 'fake-bark-key' }, { now, sender, statsProvider: () => stats });
+    expect(first.fresh.map((a: Any) => a.id).sort()).toEqual(['ai-waiting', 'capacity']);
+    expect(sent[0].body).toContain('最近 5 分钟有 2 位同学因为错题本名额满（3/3）进不去');
+    expect(sent[0].body).toContain('现在：在用 6 人，错题本 3/3，AI 在做 1/1、排队 4，平均 21 s，门外等 2 人');
+    expect(sent[0].body).not.toContain('备份');
+
+    const daily = await report({ ...cfg, barkKey: 'fake' }, { now, dryRun: true, sender, statsProvider: () => stats });
+    expect(daily.lines.join('\n')).toContain('今天高峰：在用 7 人，错题本 3/3，AI 同时 1/1、排队最多 12；名额满被挡 2 人（5 次）');
+    expect(daily.lines.join('\n')).not.toContain('每日备份');
+
+    const later = new Date(now.getTime() + 10 * 60_000);
+    const stale = await check({ ...cfg, barkKey: 'fake-bark-key' }, { now: later, sender, statsProvider: () => collectStats(cfg.hostDir, later) });
+    expect(stale.alerts.map((a: Any) => a.id)).toEqual(['live-stale']);
+  });
 });
 
 describe('install script and syntax', () => {

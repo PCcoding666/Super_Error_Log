@@ -89,7 +89,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
       ? deps => studentHost.router({ limiter: deps.limiter, ipOf: deps.ipOf, originScheme: 'https:' })
       : deps => createWebClientRouter({ ...deps, mobileDataDir: configuration.dataDir, transcriber, studentHostWorker: process.env.SEL_STUDENT_WORKER === '1' }),
     adminWeb: studentHost && adminAuth
-      ? ({ ipOf }) => createAdminRouter({ registry: studentHost.registry, auth: adminAuth, ipOf, originScheme: 'https:' })
+      ? ({ ipOf }) => createAdminRouter({ registry: studentHost.registry, auth: adminAuth, ipOf, originScheme: 'https:', live: () => studentHost.live.status() })
       : undefined,
   });
   // 详情页解答在后台排队：这个学生不忙（没有在识别、整理材料、准备打印）时一道一道做。网关进程不服务学生页面，不开。

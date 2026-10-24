@@ -15,9 +15,14 @@
   --sel-line: #e5e5ea;
   --sel-black: #111111;
 }
-/* 深色：Ionic 的 iOS 深色调色板写在 :root.ios 上（卡片底色纯黑，和页面底色分不开），这里同样写在 :root.ios 上、并且后加载，按这组值来。 */
+/* Ionic 的 dark.system.css 在 :root.ios 上再设一遍底色和卡片色（--ion-item-background: #000），优先级比 :root 高，
+   所以这里也要写 :root.ios，否则卡片、分组列表在深色下是黑底黑卡。弹层同理：:root.ios ion-modal 把底色改成 #1a1a1a，
+   这里按 iOS 抬升层的配色改成 #1c1c1e 底、#2c2c2e 卡片，修改分类等弹层里的分组列表才看得出来。
+   右上角菜单也用 #2c2c2e：和卡片同色的话，盖在错题本列表上分不出边。 */
 @media (prefers-color-scheme: dark) {
   :root, :root.ios { --ion-background-color: #000000; --ion-background-color-rgb: 0, 0, 0; --ion-item-background: #1c1c1e; --ion-text-color: #f5f5f7; --sel-muted: #aeaeb5; --sel-line: #38383d; --sel-black: #f5f5f7; }
+  :root.ios ion-modal { --ion-background-color: #1c1c1e; --ion-background-color-rgb: 28, 28, 30; --ion-item-background: #2c2c2e; }
+  :root.ios ion-popover { --ion-background-color: #2c2c2e; --ion-background-color-rgb: 44, 44, 46; --ion-item-background: #2c2c2e; }
 }
 /* 铺满按钮的文件框。不要裁成 1px：小米 WebView 会忽略对那种框的激活，相册不出现。 */
 .file-hit { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; font-size: 16px; z-index: 2; }

@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from 'express';
 import type { StudentRegistry } from '../studentHost/registry.js';
+import type { LiveStatus } from '../studentHost/liveStats.js';
 import { readCookies } from '../web/session.js';
 import { sendHtml } from '../views/render.js';
 import { AdminAuth, ADMIN_SESSION_TTL_MS } from './auth.js';
@@ -10,9 +11,11 @@ import { ADMIN_STYLES } from './styles.js';
 export const ADMIN_COOKIE = 'sel_admin_session';
 export interface AdminRouterOptions {
   registry: StudentRegistry; auth: AdminAuth; ipOf: (request: Request) => string; originScheme: 'http:' | 'https:';
+  /** 网关的实时人数与 AI 并发；没有网关（本机测试）时不显示。 */
+  live?: () => LiveStatus;
 }
 
-export function createAdminRouter({ registry, auth, ipOf, originScheme }: AdminRouterOptions): express.Router {
+export function createAdminRouter({ registry, auth, ipOf, originScheme, live }: AdminRouterOptions): express.Router {
   const router = express.Router();
   const attempts = new Map<string, { count: number; until: number }>();
   let global = { count: 0, until: 0 };
@@ -63,7 +66,7 @@ export function createAdminRouter({ registry, auth, ipOf, originScheme }: AdminR
     cookie(response, '', 0); response.redirect(303, '/admin/login');
   });
   router.get('/', async (request, response) => {
-    try { sendHtml(response, AdminDashboard(await readAdminReport(registry, parseAdminFilters(request.query)))); }
+    try { sendHtml(response, AdminDashboard(await readAdminReport(registry, parseAdminFilters(request.query)), live?.())); }
     catch (error) {
       if (error instanceof FilterError) { response.status(400); sendHtml(response, AdminProblem({ message: error.message })); return; }
       throw error;

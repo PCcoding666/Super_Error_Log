@@ -41,6 +41,7 @@ import type { RateLimiter } from '../mobile/rateLimit.js';
 import { sendHtml } from '../views/render.js';
 import { AccountPage, HostErrorPage, LoginPage, RecoveryPage, RegistrationPage, RegistrationCompletePage, registrationFieldErrors } from './loginView.js';
 import { CAPACITY_RETRY_SECONDS, CapacityWaitlist, capacityLines, capacityPageHtml } from './busyView.js';
+import { LiveStats } from './liveStats.js';
 
 /** 「我的邀请码」换码成功的一次性提示（网关自用，不转发给 worker，也不在业务 cookie 白名单里）。 */
 const ACCOUNT_FLASH_COOKIE = 'sel_account_flash';
@@ -205,6 +206,8 @@ const COPY_SCRIPT = `(() => {
 export interface StudentHostGateway {
   readonly registry: StudentRegistry;
   readonly pool: StudentWorkerPool;
+  /** 实时人数与 AI 并发（管理后台、巡检用）。 */
+  readonly live: LiveStats;
   router(deps: StudentHostGatewayDeps): Router;
   close(): Promise<void>;
 }
@@ -220,6 +223,10 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   const failureDelayMs = Math.max(0, options.failureDelayMs ?? 500);
   const slowDown = (): Promise<void> => failureDelayMs > 0 ? new Promise(resolve => setTimeout(resolve, failureDelayMs)) : Promise.resolve();
   let built: Router | null = null;
+  /** Students turned away by the worker cap and still retrying (counts only, memory only). */
+  const capacityWaitlist = new CapacityWaitlist();
+  const live = new LiveStats({ snapshot: () => pool.capacitySnapshot(), waitingOutside: () => capacityWaitlist.waiting() });
+  live.start(registry.hostDir);
 
   // 不在启动时为每个已注册学生拉起进程。第一次打开再 fork；空闲后由进程池退出。
   // 未完成的识别和打印留在该学生自己的目录里，下次启动时的恢复扫描会续做。
@@ -575,8 +582,6 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     return r;
   };
 
-  /** Students turned away by the worker cap and still retrying (counts only, memory only). */
-  const capacityWaitlist = new CapacityWaitlist();
   /**
    * 转发到该学生的 worker。网页：/s 前缀 + 业务 cookie + 内部 sel_device cookie；
    * 原生（native）：relUrl 已是 worker 的 /v1 /v2 路径，用内部设备令牌作 Bearer，不带任何 cookie，错误一律 JSON。
@@ -608,12 +613,14 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       drainRequest();
       const capacity = error instanceof WorkerStartError && error.reason === 'capacity';
       if (native && !response.headersSent) {
+        if (capacity) live.rejected(studentId);
         response.setHeader('retry-after', String(capacity ? CAPACITY_RETRY_SECONDS : 30));
         response.status(503).json({ error: { code: capacity ? 'capacity' : 'unavailable', message: capacity ? '现在人有点多，请过一会儿再试。' : '你的学习空间正在准备中，等半分钟再试。' } });
         return;
       }
       if (capacity && !response.headersSent) {
         // P0-7: say what the host actually knows (slots, AI queue, others waiting) and retry by itself.
+        live.rejected(studentId);
         const facts = { snapshot: pool.capacitySnapshot(), othersWaiting: capacityWaitlist.rejected(studentId) };
         response.setHeader('retry-after', String(CAPACITY_RETRY_SECONDS));
         response.status(503);
@@ -627,6 +634,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         sendHtml(response, HostErrorPage({ title: '暂时进不去', detail }));
       } else response.destroy();
     };
+    live.seen(studentId);
     let endpoint;
     try {
       pool.retain(studentId);
@@ -729,6 +737,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   return {
     registry,
     pool,
+    live,
     router: deps => {
       built ??= buildRouter(deps);
       return built;
@@ -736,6 +745,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     close: async () => {
       if (closed) return;
       closed = true;
+      live.stop();
       await pool.stopAll();
       registry.close();
     },
