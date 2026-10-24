@@ -18,7 +18,7 @@ async function enter(page: Page, g: MaterialGateway, stage: '初中' | '高中' 
   await expect(page.getByRole('heading', { name: '你现在读初中还是高中？' })).toHaveCount(0);
 }
 async function photo(page: Page, text: string) {
-  await page.goto(page.url().replace(/\/s\/.*$/, '/s/capture'));
+  await page.goto(page.url().replace(/\/s\/.*$/, '/s/capture?legacy=1'));
   const svg = `<svg width="780" height="1000"><rect width="100%" height="100%" fill="white"/><text x="50" y="100" font-size="24">${text}</text></svg>`;
   await page.locator('#library-input').setInputFiles({ name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp(Buffer.from(svg)).jpeg().toBuffer() });
   await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();

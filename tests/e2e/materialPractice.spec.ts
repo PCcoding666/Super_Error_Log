@@ -22,7 +22,7 @@ test('material questions: capture -> include -> practice -> per-item result -> p
     await page.getByRole('button', { name: '进入我的错题本' }).click();
     // A new account picks its stage once (WP3 gate) before it can capture.
     await page.getByRole('button', { name: '初中', exact: true }).click();
-    await page.goto(g.base + '/s/capture');
+    await page.goto(g.base + '/s/capture?legacy=1');
     await page.locator('#library-input').setInputFiles({ name: 'paper.jpg', mimeType: 'image/jpeg', buffer: await jpeg('SYNTHETIC 1/2/3') });
     await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible({ timeout: 30000 });
     await settled(g);
