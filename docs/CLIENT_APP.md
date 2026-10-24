@@ -19,6 +19,7 @@
 | `client/src/lib/uploader.ts` | 拍照上传队列：浏览器端转 JPEG（最长边 4096、超 15 MB 降质量）、每张一个幂等 key、单并发、可重试；本批照片 id 存 sessionStorage |
 | `client/src/components/StemText.tsx`、`src/text/stemBlocks.ts` | 题干渲染：只把 GFM 管道表格画成真表格（窄屏可横滑），其余文字原样保留换行，不做完整 Markdown（题号「10.」、负号、`x_1`、绝对值 `|x-1|` 会被误解析）。表头 + 分隔行才算表格，表体行格数须与表头一致，不符的行留作文字。识别提示词（`src/mobile/vision.ts`）要求模型把题干表格写成管道表格；写入 `text_excerpt` 时先去掉表格再截 80 字（`questionExcerpt`）。已识别的旧题目文字是压平的，需重新识别才有表格 |
 | `client/src/components/CaptureInput.tsx` | 拍照和相册两个文件框，铺在按钮上由手指直接点开（不靠脚本 `click()`）。相册不带 `capture`、可多选；拍照带 `capture="environment"`。选好就进录入态 |
+| `client/src/lib/chooserWatch.ts` · `components/ChooserBlockedToast.tsx` | 安卓「添加到桌面」的壳（小米浏览器等）不实现文件选择器：文件框有焦点、相册相机都不弹。点文件框后两秒内页面没被盖住也没 change，就提示换手机浏览器打开。服务端另对安卓的 manifest 发 `display: browser`（`src/web/staticAssets.ts`），以后桌面图标在浏览器标签里打开 |
 | `src/web/apiTypes.ts` | 客户端与服务器共用的类型 |
 | `src/web/api.ts` | JSON 接口，挂在 `/s/api`，和旧页面同一套鉴权、限流、学段门槛 |
 | `src/web/clientApp.ts` | 找到 `dist/client`，下发页面壳与指纹资源 |

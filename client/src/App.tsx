@@ -1,6 +1,7 @@
 import { IonApp, IonRouterOutlet } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
 import { Route } from 'react-router-dom';
+import { ChooserBlockedToast } from './components/ChooserBlockedToast';
 import { HomePage } from './pages/HomePage';
 import { IntakePage } from './pages/IntakePage';
 import { ItemPage } from './pages/ItemPage';
@@ -21,6 +22,7 @@ export function App() {
           <Route path="/me" element={<SettingsPage />} />
         </IonRouterOutlet>
       </IonReactRouter>
+      <ChooserBlockedToast />
     </IonApp>
   );
 }

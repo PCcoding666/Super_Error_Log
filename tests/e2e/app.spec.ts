@@ -229,3 +229,22 @@ test('深色模式：卡片、分组列表、菜单和弹层里的列表都比�
   await expect(page.getByTestId('chapter-picker')).toBeVisible();
   expect(await colors({ modal: 'ion-modal.show-modal ion-content >> #background-content', row: 'ion-modal.show-modal ion-item >> .item-native' })).toEqual({ modal: 'rgb(28, 28, 30)', row: 'rgb(44, 44, 46)' });
 });
+
+// ---------- 安卓：「添加到桌面」的壳没有文件选择器 ----------
+const ANDROID_SHELL = 'Mozilla/5.0 (Linux; U; Android 14; zh-cn; 23013RK75C Build/UKQ1.230804.001) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/118.0.0.0 Mobile Safari/537.36 XiaoMi/MiuiBrowser/18.4.30';
+test.describe('安卓桌面图标壳', () => {
+  test.use({ userAgent: ANDROID_SHELL });
+  test('点相册两秒内页面没被盖住也没选到文件，就提示换手机浏览器打开；manifest 给安卓的是 browser', async ({ page }) => {
+    await pair(page);
+    // Playwright 拦下文件选择器、页面不会被盖住——正好就是小米「添加到桌面」壳的样子。
+    await page.locator('#library-input').click();
+    const hint = page.locator('ion-toast.chooser-blocked');
+    await expect(hint).toBeVisible({ timeout: 5000 });
+    await expect(hint).toContainText('打不开相册');
+    await expect(hint).toContainText('127.0.0.1:3196/s/');
+    await hint.getByRole('button', { name: '知道了' }).click();
+    await expect(hint).toBeHidden();
+    const manifest = await (await page.request.get(`${WEB}/s/manifest.webmanifest`)).json() as { display: string };
+    expect(manifest.display).toBe('browser');
+  });
+});

@@ -9,3 +9,8 @@ export function isInAppBrowserAgent(userAgent: string | undefined): boolean {
 export function isWeChatAgent(userAgent: string | undefined): boolean {
   return /MicroMessenger/i.test(userAgent ?? '');
 }
+
+/** 安卓（含各家国产浏览器）。manifest 对它改发 display: browser——「添加到桌面」出来的壳没有文件选择器。 */
+export function isAndroidAgent(userAgent: string | undefined): boolean {
+  return /Android/i.test(userAgent ?? '');
+}
