@@ -92,6 +92,7 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .item-stem { margin: 0 20px; padding: 18px 20px; background: var(--ion-item-background); border-radius: 16px; font-size: 20px; line-height: 1.5; white-space: pre-wrap; }
 .item-hint { margin: 8px 20px 0; font-size: 14px; }
 .item-rows { margin-top: 14px; }
+.item-rows ion-label.item-tags { max-width: 60%; text-align: right; font-size: 15px; }
 .item-remove { margin: 24px 20px; }
 .note-sheet { padding: 20px; }
 .note-sheet h2 { margin: 0 0 12px; font-size: 20px; }
