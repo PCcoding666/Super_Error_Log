@@ -299,7 +299,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
     app.use('/s', options.webClient({ service, materials: materialSubsystem, pairing: options.pairing!, limiter, admission, ipOf }));
   }
   if (options.adminWeb && mode === 'cloud') app.use('/admin', options.adminWeb({ ipOf }));
-  // 公开说明页只认 Host: help.pccoding666.com 的 GET /。其它主机名与 /s、/v1、/v2、/admin 仍走原路由。
+  // 公开说明页是 GET /help/（GET /help 301 到 /help/）。不看 Host，不占用 /s、/v1、/v2、/admin。
   registerHelpPortal(app);
   app.use((_request, response) => response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }));
   const errors: ErrorRequestHandler = (error, request, response, _next) => {

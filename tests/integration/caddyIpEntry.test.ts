@@ -44,6 +44,12 @@ describe('Caddyfile IP 直连入口（静态）', () => {
     expect(ipUpstream).toEqual(upstream(siteBlock(DOMAIN)));
   });
 
+  it('说明页走现有 study 反代：不新增 help 主机名，也不改写 Host', () => {
+    expect(caddyfile).not.toMatch(/^help\.pccoding666\.com \{/m);
+    expect(caddyfile).not.toContain('header_up Host');
+    expect(caddyfile.match(/reverse_proxy 127\.0\.0\.1:3101 \{/g)).toHaveLength(2);
+  });
+
   it('Caddyfile、服务端二维码地址与 App 白名单里的 IP 和域名一致', () => {
     expect(CLOUD_URLS).toEqual([`https://${IP}`, `https://${DOMAIN}`]);
     const swift = fs.readFileSync('iOS/StudentApp/Domain/CloudPairing.swift', 'utf8');

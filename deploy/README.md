@@ -577,54 +577,35 @@ sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-
 
 `admin.db` 在 host 目录保存 scrypt 密码派生值和会话哈希；管理 cookie 与学生 cookie 独立。学习库以只读连接查询，不启动/恢复学生 worker。无需新环境变量或运行时依赖。回滚旧代码时这些新增统计文件会被忽略，额外注册表列不改变旧邀请码兑换规则。
 
-## 产品说明站（help.pccoding666.com）
+## 产品说明页（https://study.pccoding666.com/help/）
 
-公开说明页和学生学习页是同一个进程（`dist/main.js`，127.0.0.1:3101），没有新端口、新服务。应用看 `Host` 头：
+公开说明页和学生学习页是同一个进程（`dist/main.js`，127.0.0.1:3101），没有新端口、新服务、新域名、新证书。说明页按路径提供，不看 `Host`。沿用 `study.pccoding666.com` 现有证书和 Caddy 站点。
 
-| Host | `GET /` | `/s/`、`/v1`、`/v2`、`/admin/` |
-| --- | --- | --- |
-| `help.pccoding666.com` | 产品说明页（中文，静态 HTML） | 与现在相同 |
-| `study.pccoding666.com`、IP 直连、其它主机名 | 404 JSON（旧看板仍然不挂） | 与现在相同 |
+| 请求 | 响应 |
+| --- | --- |
+| `GET /help/` | 产品说明页（中文，静态 HTML）。打到本进程的主机名都一样，包括 `study.pccoding666.com` |
+| `GET /help` | 301 到 `/help/`，查询串保留 |
+| `GET /` | 404 JSON（旧看板仍然不挂） |
+| `/s/`、`/v1`、`/v2`、`/admin/` | 与原来相同 |
 
-自动发布只换应用、不重启 Caddy。说明页要在公网用干净的根路径，需要管理员在 **DNS A 记录已经指向本机** 之后，把下面的站点追加到正在使用的 Caddyfile 末尾，再校验并重启 Caddy。不要改 `study.pccoding666.com` 和 IP 两段。不要加 `header_up Host`：浏览器带来的 Host 必须原样交给上游，否则说明页不会出现，`/` 仍是 404。
+`help.pccoding666.com` 子域名暂不使用。DNS 仍是 NXDOMAIN。不要为它加 A 记录、ACME 主机名或 Caddy 站点。早先「只认这个 Host 的 `GET /`」已经放弃：那条路要单独签发证书，而且会碰到 study 的根路径。
 
-证书沿用现有 ACME（TLS-ALPN-01，不占 80）。记录还没生效时不要把这段写进 Caddyfile、也不要重启：Caddy 启动时如果拿不到新证书，现有的 `study.pccoding666.com` 会一起起不来。
+Caddy 不用改站点结构，也不用为这次重启。`study.pccoding666.com` 现有的 `reverse_proxy` 已经把所有路径（含 `/help`、`/help/` 和 `/s/`）转到同一上游 `127.0.0.1:3101`，并且不改写 `Host`。学生网关要留着浏览器带来的 `Host` 做同源校验；不要加 `header_up Host`。自动发布只换应用。合并到 `main` 并通过发布后，说明页就在现有 study 证书下生效。
 
-```
-help.pccoding666.com {
-	tls {
-		issuer acme {
-			disable_http_challenge
-		}
-	}
+不要在 Caddyfile 里为 `/help` 再写一块重复的 `handle`。域名站点和 IP 直连站点的上游配置必须逐行一致（`tests/integration/caddyIpEntry.test.ts`）。多一块 handle 不会改变转发结果，写错了才会把 `/s/` 拆出去或改掉 `Host`。
 
-	request_body {
-		max_size 15000000
-	}
-
-	reverse_proxy 127.0.0.1:3101 {
-		header_up X-Real-IP {remote_host}
-		transport http {
-			read_timeout 180s
-		}
-	}
-}
-```
+本机确认（不依赖 help 子域名）：
 
 ```bash
-caddy validate --config /opt/super-error-log/current/deploy/caddy/Caddyfile
-systemctl restart super-error-log-caddy
-```
-
-仓库里的 `deploy/caddy/Caddyfile` 故意不含这个站点。以后若把上面这段收进仓库，`tests/integration/caddyIpEntry.test.ts` 里 `localCaddyfile` 的命中次数要改：ACME `tls` 块从 1 次改为 2 次，`reverse_proxy 127.0.0.1:3101 {` 从 2 次改为 3 次。
-
-本机可先不经过 Caddy 确认应用（期望说明页 200、学习站根路径仍 404、学生入口仍在）：
-
-```bash
-curl -sI -H 'Host: help.pccoding666.com' http://127.0.0.1:3101/
+curl -sI http://127.0.0.1:3101/help/
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: study.pccoding666.com' http://127.0.0.1:3101/help/
+curl -s -D - -o /dev/null -H 'Host: study.pccoding666.com' http://127.0.0.1:3101/help
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: study.pccoding666.com' http://127.0.0.1:3101/
 curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/s/
-curl -sI https://help.pccoding666.com/
+curl -sI https://study.pccoding666.com/help/
+curl -sI https://study.pccoding666.com/help
 ```
+
+期望：`/help/` 是 200，正文是说明页 HTML；`/help` 是 301，`Location` 指向 `/help/`；`/` 仍是 404；`/s/` 仍是 200。不需要请求 `help.pccoding666.com`。
 
 联系方式（邮箱、微信）在页面上是「待补充」，填上之前改 `src/portal/helpPortal.ts` 再发一版。说明页没有学生数据。

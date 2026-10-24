@@ -66,7 +66,7 @@
 | 位置 | 职责 |
 | --- | --- |
 | `src/main.ts` | 生产入口，`dist/main.js`；真实配置缺失拒绝启动 |
-| `src/portal/helpPortal.ts` | `help.pccoding666.com` 的公开说明页；仅该 Host 的 `GET /`。`study.pccoding666.com` 不变。Caddy 映射见 `deploy/README.md`「产品说明站」 |
+| `src/portal/helpPortal.ts` | 公开说明页 `https://study.pccoding666.com/help/`（`/help` 301 到 `/help/`）。不看 Host。`GET /` 仍是 404。子域名 `help.pccoding666.com` 暂不使用。见 `deploy/README.md`「产品说明页」 |
 | `src/studentHost/` | 邀请码注册表、会话、同源网关、每学生独立子进程、管理员CLI |
 | `src/mobile/` | 图片识别、先找题后精读、队列/容量/重试、旧原生App API |
 | `src/bridge/recognitionToItems.ts` | 已选/自动识别的题桥接为学习记录，避免重复 |
