@@ -6,7 +6,7 @@
 
 ## 0. 2026-10-23：学生端换成 Ionic React 单页应用
 
-产品决定这一轮做减法：只保留错题本和录入，练习「即将推出」，没有底部标签栏，界面照 iOS Siri 对话列表的一屏结构。为此学生端界面改成 `client/` 里的 Ionic React 单页应用，由同一个服务器在 `/s/` 下发，数据走 `/s/api`（`src/web/api.ts`）。结构、接口、迁移状态和未搬完的部分见 [学生端单页应用](CLIENT_APP.md)。旧的服务端渲染页面保留在原路径上，没有入口，等练习模块的去留定了再清理。
+产品决定这一轮做减法：只保留错题本和录入，练习「即将推出」，没有底部标签栏，界面照 iOS Siri 对话列表的一屏结构。为此学生端界面改成 `client/` 里的 Ionic React 单页应用，由同一个服务器在 `/s/` 下发，数据走 `/s/native`（`src/web/api.ts`）。结构、接口、迁移状态和未搬完的部分见 [学生端单页应用](CLIENT_APP.md)。旧的服务端渲染页面保留在原路径上，没有入口，等练习模块的去留定了再清理。
 
 2026-10-24：详情页改成五块（你写的、批改痕迹、章节与知识点、正确答案、错因备注），AI 解答（qwen3.8-max、看图、交互图）在后台排队生成，识别结果可改、可拍照录入答案、备注可语音输入。新增三张表，需人工发布；取舍、证据和给服务器 agent 的发布提示词见 [详情页解答验收](quality/2026-10-24-item-detail-insight.md)。
 
@@ -79,7 +79,7 @@
 | `src/ai/asr.ts` | Qwen ASR；密钥留在服务端，转写结果可编辑再提交 |
 | `src/domain/stateMachine.ts` | 延迟重做/掌握规则 |
 | `src/server.ts` / `src/app.ts` | 旧本地Web演示入口；`npm start`仍指向它，不是生产入口 |
-| `iOS/` | 保留的原生客户端，本轮主交付不要求修改它 |
+| `iOS/` | 原生客户端，长期在 `ios/main` 分支维护；2026-10-23 起用邀请码登录（网关 `/s/native`，见 `ios-native-invitation-login.md`） |
 
 学生空间通过独立进程隔离现有全局db/config/provider；不要改成共享进程后仅在少数查询加studentId过滤。`SEL_STUDENT_HOST_ENABLED=1`才启用网关。注册人数和同时存活的进程是两件事：`SEL_MAX_STUDENTS` 缺省 100（注册表打开时读取，见注册说明），同时只留有限个 worker，空闲就退出。视觉调用和重图片处理由父进程排队。其他开关见`.env.example`和`deploy/README.md`。容量改动碰了 `src/studentHost/registry.ts` 和 `src/db/`，自动发布会因迁移保护拒绝，不能绕过；当前生产还是常驻 worker，直到按 [容量说明](quality/2026-10-20-fifty-students.md) 人工发布。
 
