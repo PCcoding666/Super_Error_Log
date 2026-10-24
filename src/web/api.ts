@@ -31,6 +31,7 @@ import { COOKIE, readCookies, readPhotoMarks, setCookie, clearCookie, writePhoto
 import { matchesNotebook, NOTEBOOK_STATUS_GROUPS, notebookStatusFilter, notebookStatusGroup, resolveNotebookStage, stagesInScope } from './notebook.js';
 import { loadPhotos, type PhotoView, type WebContext } from './state.js';
 import { stemFirstSentence } from './views/materials.js';
+import { withoutTableRows } from './stemText.js';
 import type {
   DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemDetailResponse, ItemImage, ItemNote,
   NotebookGroup, NotebookItem, NotebookResponse, SettingsResponse, UploadModeResponse,
@@ -95,7 +96,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const group = notebookStatusGroup(item.status) ?? 'todo';
     return {
       id: item.id, shortId: item.shortId, subject: item.subject || '未分类', grade: item.grade ?? null, chapter: item.chapter || '未分类',
-      knowledgeTags: item.knowledgeTags, excerpt: item.questionExcerpt ?? '', status: group, statusLabel: NOTEBOOK_STATUS_GROUPS[group],
+      knowledgeTags: item.knowledgeTags, excerpt: withoutTableRows(item.questionExcerpt ?? ''), status: group, statusLabel: NOTEBOOK_STATUS_GROUPS[group],
       thumb: `/s/img/item/${item.id}?s=thumb`, intakeDay: intakeDay(item.id),
     };
   };
@@ -243,7 +244,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       byJob.set(item.source.jobId, [...(byJob.get(item.source.jobId) ?? []), item]);
     }
     const toPhoto = (photo: PhotoView): IntakePhoto => {
-      const questions: IntakeQuestion[] = (byJob.get(photo.jobId) ?? []).map(item => ({ id: item.id, excerpt: item.questionExcerpt ?? '', chapter: item.chapter || '未分类', thumb: `/s/img/item/${item.id}?s=thumb` }));
+      const questions: IntakeQuestion[] = (byJob.get(photo.jobId) ?? []).map(item => ({ id: item.id, excerpt: withoutTableRows(item.questionExcerpt ?? ''), chapter: item.chapter || '未分类', thumb: `/s/img/item/${item.id}?s=thumb` }));
       const candidates: IntakeCandidate[] = photo.state === 'needsPick' || (photo.job && !photo.pickDone)
         ? (photo.job?.questions ?? []).filter(q => q.status === 'unselected').map(q => ({ id: q.id, label: `第 ${q.number} 题`, excerpt: '', crop: `/s/img/cand/${photo.jobId}/${q.id}?s=list` }))
         : [];

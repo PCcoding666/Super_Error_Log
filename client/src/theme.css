@@ -91,7 +91,12 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .item-subtitle { margin: 0 20px 14px; color: var(--sel-muted); font-size: 15px; }
 .item-photo { display: block; margin: 0 20px 14px; border-radius: 16px; overflow: hidden; background: var(--ion-item-background); }
 .item-photo img { display: block; width: 100%; height: auto; }
-.item-stem { margin: 0 20px; padding: 18px 20px; background: var(--ion-item-background); border-radius: 16px; font-size: 20px; line-height: 1.5; white-space: pre-wrap; }
+.item-stem { margin: 0 20px; padding: 18px 20px; background: var(--ion-item-background); border-radius: 16px; font-size: 20px; line-height: 1.5; }
+.stem-text { white-space: pre-wrap; }
+.stem-table-wrap { margin: 10px -8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.stem-table { border-collapse: collapse; min-width: 100%; font-size: 15px; line-height: 1.3; text-align: center; font-variant-numeric: tabular-nums; }
+.stem-table th, .stem-table td { padding: 5px 6px; border: 1px solid var(--sel-line); white-space: nowrap; }
+.stem-table th { font-weight: 600; background: rgba(120, 120, 128, 0.12); }
 .item-hint { margin: 8px 20px 0; font-size: 14px; }
 .item-rows { margin-top: 14px; }
 .item-remove { margin: 24px 20px; }

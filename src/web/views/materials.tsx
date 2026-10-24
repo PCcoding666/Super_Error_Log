@@ -4,6 +4,7 @@ import type { BatchAction, CaptureHints, Fragment, MaterialRole, QuestionBundle,
 import { Page, type BarButton } from './layout.js';
 import { CaptureExamples } from './photos.js';
 import { UNSUPPORTED_SUBJECT_MESSAGE, unsupportedSubject } from '../../materials/subjects.js';
+import { withoutTableRows } from '../stemText.js';
 
 export interface MaterialAssetView {
   id: string;
@@ -126,7 +127,7 @@ function fragmentLine(fragments: Fragment[]): string {
 
 /** First sentence of the stem, short enough for one list line. */
 export function stemFirstSentence(q: QuestionBundle, max = 28): string {
-  const text = q.stem.filter(f => f.role === 'question').map(f => f.text).join(' ').replace(/\s+/g, ' ').trim()
+  const text = q.stem.filter(f => f.role === 'question').map(f => withoutTableRows(f.text)).join(' ').replace(/\s+/g, ' ').trim()
     .replace(/^(?:第\s*)?[0-9０-９]+\s*(?:题|[.．、)）])\s*/u, '');
   if (!text) return '';
   const first = /^.+?[。？！?!；;]/u.exec(text)?.[0] ?? text;

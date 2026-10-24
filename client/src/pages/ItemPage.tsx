@@ -6,6 +6,7 @@ import { ellipsisHorizontal } from 'ionicons/icons';
 import { useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Problem } from '../components/Problem';
+import { StemText } from '../components/StemText';
 import { api } from '../lib/api';
 import { useLoad } from '../lib/hooks';
 
@@ -51,7 +52,7 @@ export function ItemPage(): ReactNode {
         <h1 className="item-title">{item.chapter}</h1>
         <p className="item-subtitle" data-testid="item-category">{[item.shortId, item.grade, item.subject].filter(Boolean).join(' · ')}{item.statusLabel ? ` · ${item.statusLabel}` : ''}</p>
         {data.images.map(image => <a key={image.url} className="item-photo" href={image.fullUrl} target="_blank" rel="noreferrer" aria-label={`${image.title}，打开原图`}><img src={image.url} alt={image.title} /></a>)}
-        <div className="item-stem" data-testid="question-text">{data.questionText || '还没有可读的识别文字，请打开上方原图查看。'}</div>
+        <div className="item-stem" data-testid="question-text"><StemText text={data.questionText || '还没有可读的识别文字，请打开上方原图查看。'} /></div>
         {data.badge === 'low' ? <p className="item-hint tone-orange">字可能认错了，以照片为准。</p> : null}
         <IonList inset lines="full" className="item-rows">
           {data.notes.map(note => <IonItem key={note.kind} button detail onClick={() => setOpenNote(note.kind)}><IonLabel>{note.title}</IonLabel></IonItem>)}

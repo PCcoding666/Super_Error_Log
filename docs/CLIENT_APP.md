@@ -17,6 +17,7 @@
 | `client/src/pages/*` | 四屏 |
 | `client/src/lib/api.ts` | `/s/api` 的调用封装；非 JSON 响应（登录过期回登录页）时整页跳回 `/s/` |
 | `client/src/lib/uploader.ts` | 拍照上传队列：浏览器端转 JPEG（最长边 4096、超 15 MB 降质量）、每张一个幂等 key、单并发、可重试；本批照片 id 存 sessionStorage |
+| `client/src/components/StemText.tsx`、`lib/stemBlocks.ts` | 题干渲染：只把 GFM 管道表格画成真表格（窄屏可横滑），其余文字原样保留换行，不做完整 Markdown（题号「10.」、负号、`x_1` 会被误解析）。识别提示词（`src/mobile/vision.ts`）要求模型把题干表格写成管道表格；列表摘要用 `src/web/stemText.ts` 去掉表格行。已识别的旧题目文字是压平的，需重新识别才有表格 |
 | `client/src/components/CaptureInput.tsx` | 唯一的文件输入框（不带 `capture`，iOS 弹系统「拍照 / 照片图库」菜单），选好就进录入态 |
 | `src/web/apiTypes.ts` | 客户端与服务器共用的类型 |
 | `src/web/api.ts` | JSON 接口，挂在 `/s/api`，和旧页面同一套鉴权、限流、学段门槛 |
