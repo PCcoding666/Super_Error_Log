@@ -24,7 +24,7 @@ const WORK_HINT = '只能把认错的字改回纸上实际写的，不能改成�
 const TEXT_HINT = '对照照片，把认错的地方改过来。改完 AI 会按新的内容重新解。';
 
 /**
- * 题目详情：照片（点开是应用内大图，左上角返回）、题干（识别错了可以改），下面五块：
+ * 题目详情：整张上传照片（点开是应用内大图，左上角返回）、题干（识别错了可以改），下面五块：
  * 你写的、批改痕迹（点开看转写、逐段改）；章节与知识点（点按修改分类）；
  * 正确答案（AI 在后台解好的答案、Markdown 解题过程、交互图；也可以拍照录入答案）；错因（AI 推测 + 学生自己的备注，可以语音输入）。
  * 右上角「…」里是修改分类、材料来源、移除。
@@ -200,6 +200,7 @@ export function ItemPage(): ReactNode {
         <h1 className="item-title">{item.chapter}</h1>
         <p className="item-subtitle" data-testid="item-category">{[item.shortId, item.grade, item.subject].filter(Boolean).join(' · ')}</p>
         {data.images.map(image => <button key={image.url} type="button" className="item-photo" onClick={() => view(image)} aria-label={`${image.title}，查看大图`} data-testid="item-photo"><img src={image.url} alt={image.title} /></button>)}
+        {data.images.some(image => image.title === '原图') ? <p className="item-photo-note" data-testid="item-photo-note">这是你拍的整张照片，点开可以放大。</p> : null}
         <div className="item-stem" data-testid="question-text">
           <StemText text={data.questionText || '还没有可读的识别文字，请打开上方原图查看。'} />
           {data.editable ? <div className="item-stem-actions"><IonButton size="small" fill="clear" onClick={() => editRecognized('题目文字', 'question', data.questionText, TEXT_HINT)} data-testid="stem-edit">识别错了？改</IonButton></div> : null}

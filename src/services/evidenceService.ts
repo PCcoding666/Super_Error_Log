@@ -7,7 +7,7 @@ import type { StageResult, StageRun } from '../ai/chatClient.js';
 import type { ExtractInput } from '../ai/provider.js';
 import { StagedProvider } from '../ai/stagedProvider.js';
 import { getAiProvider } from '../ai/index.js';
-import { cropPhoto } from '../media/images.js';
+import { cropPhoto, uprightJpeg } from '../media/images.js';
 import { audit } from './eventLog.js';
 import { assertCropAudit, CropAuditor, evidenceFingerprint, sha256, cropCheckHash, type CropAuditReport } from '../ai/cropAuditor.js';
 import { humanResolution } from '../ai/cropResolution.js';
@@ -39,6 +39,12 @@ export async function getEvidenceCrop(itemId: string, regionId: string): Promise
 export async function getQuestionCrop(itemId: string): Promise<Buffer> {
   const record = getEvidence(itemId); if (!record) throw new Error('题目不存在');
   return cropPhoto(fs.readFileSync(evidenceSource(itemId).storagePath), record.content.questionRegion);
+}
+
+/** 未裁切的来源页，方向与题目裁图相同。 */
+export async function getItemPage(itemId: string): Promise<Buffer> {
+  if (!getEvidence(itemId)) throw new Error('题目不存在');
+  return uprightJpeg(fs.readFileSync(evidenceSource(itemId).storagePath));
 }
 
 export function assertEvidenceReady(itemId: string, record = getEvidence(itemId)): void {

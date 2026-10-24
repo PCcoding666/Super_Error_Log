@@ -9,7 +9,7 @@
 
 普通 PR 不使用生产密钥。`main` 是唯一默认、开发汇总与发布分支；旧集成分支已退役。合并后删除任务分支，历史仍保留在 PR 和 Git 提交中。详见 [分支说明](../../docs/BRANCHES.md)。
 
-产品说明页 `https://help.pccoding666.com/` 在同一次发布的同一进程里。自动发布不改 Caddy，也不动 `study.pccoding666.com`。DNS 指向本机之后，按 [部署手册](../README.md) 的「产品说明站」追加站点并重启 Caddy，根路径才会打开说明页。
+产品说明页是 `https://study.pccoding666.com/help/`，和学生学习页同一个进程、同一次发布。自动发布不改 Caddy。study 站点已经把这个路径反代到应用，不需要新 DNS。`help.pccoding666.com` 子域名暂不使用。见 [部署手册](../README.md)「产品说明页」。
 
 ## 仓库配置
 

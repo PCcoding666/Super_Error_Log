@@ -29,6 +29,8 @@ study.pccoding666.com {
 		max_size 15000000
 	}
 
+	# /help/ 说明页和 /s/ 学生页都走这一条反代，路径原样交给应用。
+	# 不要按路径再拆 handle，不要改写 Host，不要另开 help 子域名。
 	reverse_proxy 127.0.0.1:3101 {
 		# 覆盖客户端可能伪造的 X-Real-IP，仅信任 Caddy 观测到的远端地址。
 		# 服务端仅在 peer 为 127.0.0.1 且 cloud 模式时才读取该头（src/mobile/rateLimit.ts clientIp）。
@@ -58,6 +60,5 @@ https://8.163.96.197 {
 	}
 }
 
-# 产品说明站 help.pccoding666.com 不写在本文件里。
-# DNS 的 A 记录指向本机之后，按 deploy/README.md「产品说明站」追加站点并重启本服务。
-# A 记录未生效时不要写入、不要为此重启，避免新主机名证书失败连带 study.pccoding666.com 起不来。
+# 产品说明页是 https://study.pccoding666.com/help/ ，由上面的 study 站点整站反代到应用。
+# 子域名 help.pccoding666.com 暂不使用（DNS 仍是 NXDOMAIN）。不要加这个主机名，也不要为它申请证书。

@@ -153,6 +153,12 @@ export function createMaterialsRouter(options: {
         const context: CaptureHints = {};
         const questionId = text(req.query.questionId);
         const attemptId = text(req.query.attemptId);
+        // The Ionic app at /s/new is the single plain-capture surface now. A bare /s/capture — an old
+        // bookmark, or a stale link — must not open a second uploader that races the app for the one
+        // per-student upload slot; that collision is what turned uploads into 502「网络没连上」. Targeted
+        // supplement links carry ?questionId= (补拍/补充), and the no-script fallback uses ?legacy=1;
+        // both still render the SSR page. Everything else goes to the app.
+        if (!questionId && !attemptId && text(req.query.legacy) !== '1') { res.redirect(303, '/s/new'); return; }
         if (questionId) {
             const q = store.getQuestion(questionId);
             if (!q || attemptId && !q.attempts.some(a => a.id === attemptId))
