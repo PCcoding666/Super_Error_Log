@@ -43,10 +43,8 @@ ion-list-header.group-label { --background: transparent; margin-left: 4px; }
 .notebook-list ion-item.notebook-row { --background: transparent; --padding-start: 16px; --inner-padding-end: 12px; --min-height: 64px; --border-color: var(--sel-line); }
 .notebook-row h2 { font-size: 20px; font-weight: 600; line-height: 1.3; margin: 10px 0 4px; }
 .notebook-row .row-excerpt { display: -webkit-box !important; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden !important; max-height: calc(2 * 1.45em); font-size: 16px; line-height: 1.45; color: var(--sel-muted); margin: 0 0 10px; white-space: normal; text-overflow: ellipsis; }
-.notebook-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 0 20px; }
-.notebook-grid > :nth-child(2n) { margin-top: 28px; }
-.notebook-grid > :nth-child(2n + 3) { margin-top: -14px; }
-.notebook-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; padding: 16px; min-height: 170px; border: 0; border-radius: 22px; background: var(--ion-item-background); color: var(--ion-text-color); text-align: left; font: inherit; position: relative; cursor: pointer; }
+.notebook-grid { columns: 2; column-gap: 14px; padding: 0 20px; }
+.notebook-card { break-inside: avoid; margin-bottom: 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; padding: 16px; min-height: 170px; border: 0; border-radius: 22px; background: var(--ion-item-background); color: var(--ion-text-color); text-align: left; font: inherit; position: relative; cursor: pointer; }
 .notebook-card:active { filter: brightness(.96); }
 .notebook-card .card-date { color: var(--sel-muted); font-size: 13px; }
 .notebook-card .card-crop { width: 100%; height: 72px; object-fit: cover; border-radius: 10px; background: #e5e5ea; }
