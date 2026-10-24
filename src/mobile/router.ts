@@ -9,6 +9,7 @@ import { AdmissionController } from './admission.js';
 import type { MaterialStore } from '../materials/store.js';
 import { MaterialJobs } from '../materials/jobs.js';
 import { MaterialUploads } from '../materials/uploads.js';
+import { registerHelpPortal } from '../portal/helpPortal.js';
 
 export interface CreateMobileAppOptions {
   dataDir: string;
@@ -298,6 +299,8 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
     app.use('/s', options.webClient({ service, materials: materialSubsystem, pairing: options.pairing!, limiter, admission, ipOf }));
   }
   if (options.adminWeb && mode === 'cloud') app.use('/admin', options.adminWeb({ ipOf }));
+  // 公开说明页只认 Host: help.pccoding666.com 的 GET /。其它主机名与 /s、/v1、/v2、/admin 仍走原路由。
+  registerHelpPortal(app);
   app.use((_request, response) => response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }));
   const errors: ErrorRequestHandler = (error, request, response, _next) => {
     if (response.headersSent) return;
