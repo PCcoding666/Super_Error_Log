@@ -1,5 +1,5 @@
 /**
- * 学生端单页应用在邀请码网关 + 材料流程上的主流程：登录 → 先选学段 → 拍照 → 录入态勾选收录 → 错题本 → 详情（材料裁图）→ 设置退出。
+ * 学生端单页应用在邀请码网关 + 材料流程上的主流程：登录 → 先选学段 → 拍照 → 录入态勾选收录 → 错题本 → 详情（整页原图）→ 设置退出。
  */
 import { fork } from 'node:child_process';
 import path from 'node:path';
@@ -38,7 +38,7 @@ async function jpeg(): Promise<{ name: string; mimeType: string; buffer: Buffer 
 }
 const url = (page: Page): string => new URL(page.url()).pathname;
 
-test('邀请码登录后先选学段，拍照收录材料里的题，详情显示材料裁图，可以退出', async ({ page, gateway }) => {
+test('邀请码登录后先选学段，拍照收录材料里的题，详情显示整页原图，可以退出', async ({ page, gateway }) => {
   await page.goto(gateway.base + '/s/');
   await page.getByLabel('12 位邀请码').fill(gateway.codes[0]!);
   await page.getByRole('button', { name: '进入我的错题本' }).click();
@@ -65,7 +65,11 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await expect(page.getByTestId('item-card')).toHaveCount(1);
   await page.getByTestId('item-card').first().click();
   await expect(page.getByTestId('question-text')).toContainText('1 + 1');
-  await expect(page.locator('.item-photo img').first()).toHaveAttribute('src', /\/s\/materials\/fragments\//);
+  const detailPhoto = page.locator('.item-photo img').first();
+  await expect(detailPhoto).toHaveAttribute('src', /\/s\/materials\/assets\/[^/]+\/image$/);
+  await expect(page.getByTestId('item-photo-note')).toContainText('整张照片');
+  // 合成原图高 320。题目裁框只占页高的三分之一，整页才到得了 300。
+  await expect.poll(() => detailPhoto.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight >= 300)).toBe(true);
   await page.getByTestId('back-link').click();
   await page.getByTestId('settings-link').click();
   await expect(page.getByTestId('settings-my-invite')).toHaveAttribute('href', '/s/account');

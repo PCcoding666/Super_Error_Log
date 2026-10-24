@@ -24,11 +24,12 @@
   :root.ios ion-modal { --ion-background-color: #1c1c1e; --ion-background-color-rgb: 28, 28, 30; --ion-item-background: #2c2c2e; }
   :root.ios ion-popover { --ion-background-color: #2c2c2e; --ion-background-color-rgb: 44, 44, 46; --ion-item-background: #2c2c2e; }
 }
-.visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* 铺满按钮的文件框。不要裁成 1px：小米 WebView 会忽略对那种框的激活，相册不出现。 */
+.file-hit { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; font-size: 16px; z-index: 2; }
 .muted { color: var(--sel-muted); }
 .tone-red { color: #d7282f; }
 .tone-orange { color: #974b06; }
-.bottom-space { height: 120px; }
+.bottom-space { height: 200px; }
 .intake-space { height: 190px; }
 .problem { margin: 16px 20px; padding: 14px 16px; background: var(--ion-item-background); border-radius: 16px; }
 
@@ -63,9 +64,26 @@ ion-list-header.group-label { --background: transparent; margin-left: 4px; }
 .empty ion-icon { font-size: 56px; color: #c7c7cc; }
 .empty b { display: block; color: var(--ion-text-color); font-size: 20px; margin: 12px 0 4px; }
 .empty ion-button { margin-top: 18px; }
+.empty-actions { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 18px; }
+.empty .pick-button ion-icon { font-size: 20px; color: inherit; }
+.pick-button { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 20px; border-radius: 999px; font-size: 17px; font-weight: 600; line-height: 1; overflow: hidden; }
+.pick-button ion-icon { font-size: 20px; pointer-events: none; }
+.pick-solid { background: var(--ion-color-primary); color: #fff; }
+.pick-plain { background: #fff; color: var(--ion-color-primary); box-shadow: 0 1px 4px rgba(0, 0, 0, .12); }
+.pick-text { flex: 1; background: transparent; color: var(--ion-color-primary); }
+.pick-button:focus-within, .fab-circle:focus-within { outline: 3px solid var(--ion-color-primary); outline-offset: 3px; }
+/* 和左下角小圆钮同一外沿：ion-fab 底边 10px，small 按钮再缩进 8px。 */
+.capture-corner { position: absolute; z-index: 10; top: auto; left: auto; right: calc(18px + var(--ion-safe-area-right, 0px)); bottom: 18px; display: flex; flex-direction: column; align-items: center; gap: 12px; width: max-content; height: max-content; }
+.fab-circle { position: relative; display: flex; align-items: center; justify-content: center; border-radius: 50%; box-shadow: 0 4px 16px rgba(0, 0, 0, .14); overflow: hidden; }
+.fab-album { width: 60px; height: 60px; background: var(--sel-black); color: #fff; }
+.fab-camera { width: 52px; height: 52px; background: #fff; color: #111; }
+.fab-circle ion-icon { font-size: 26px; pointer-events: none; }
+@media (prefers-color-scheme: dark) {
+  .pick-plain { background: #3a3a3c; color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .35); }
+  .fab-camera { background: #3a3a3c; color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .35), 0 4px 16px rgba(0, 0, 0, .35); }
+  .fab-album { color: #000; }
+}
 ion-fab-button.corner { --box-shadow: 0 4px 16px rgba(0, 0, 0, .14); width: 60px; height: 60px; }
-ion-fab-button.corner-capture { --background: var(--sel-black); --background-activated: #333; --color: #fff; }
-@media (prefers-color-scheme: dark) { ion-fab-button.corner-capture { --color: #000; } }
 ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-text-color); }
 .filter-popover { --width: 240px; }
 .filter-popover ion-item.menu-divider { border-top: 1px solid var(--sel-line); }
@@ -88,13 +106,15 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .intake-earlier summary { padding: 8px 0; cursor: pointer; }
 .intake-bottom { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 20px calc(16px + env(safe-area-inset-bottom)); background: linear-gradient(to bottom, rgba(242, 242, 247, 0), var(--ion-background-color) 35%); }
 .intake-bottom ion-button[size="large"] { --border-radius: 999px; height: 54px; }
+.intake-picks { display: flex; gap: 8px; margin-top: 4px; }
 
 /* ---------- 题目详情 ---------- */
 .plain-header ion-toolbar { --background: var(--ion-background-color); --border-width: 0; }
 .item-title { font-size: 28px; font-weight: 700; margin: 8px 20px 2px; }
 .item-subtitle { margin: 0 20px 14px; color: var(--sel-muted); font-size: 15px; }
-.item-photo { display: block; width: calc(100% - 40px); margin: 0 20px 14px; padding: 0; border: 0; border-radius: 16px; overflow: hidden; background: var(--ion-item-background); cursor: pointer; }
+.item-photo { display: block; width: calc(100% - 40px); margin: 0 20px 8px; padding: 0; border: 0; border-radius: 16px; overflow: hidden; background: var(--ion-item-background); cursor: pointer; }
 .item-photo img { display: block; width: 100%; height: auto; }
+.item-photo-note { margin: 0 20px 14px; color: var(--sel-muted); font-size: 13px; }
 .item-stem { margin: 0 20px; padding: 18px 20px; background: var(--ion-item-background); border-radius: 16px; font-size: 20px; line-height: 1.5; }
 .stem-text { white-space: pre-wrap; }
 .stem-table-wrap { margin: 10px -8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }

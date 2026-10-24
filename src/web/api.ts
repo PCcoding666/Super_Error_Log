@@ -30,9 +30,10 @@ import { dayOrdinal, localDayText } from '../domain/calendarDay.js';
 import { COOKIE, readCookies, readPhotoMarks, setCookie, clearCookie, writePhotoMarks } from './session.js';
 import { matchesNotebook, NOTEBOOK_STATUS_GROUPS, notebookStatusFilter, notebookStatusGroup, resolveNotebookStage, stagesInScope } from './notebook.js';
 import { loadPhotos, type PhotoView, type WebContext } from './state.js';
+import { detailPhotos } from './detailPhotos.js';
 import { stemFirstSentence } from './views/materials.js';
 import type {
-  DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemDetailResponse, ItemImage, ItemNote,
+  DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemDetailResponse, ItemNote,
   NotebookGroup, NotebookItem, NotebookResponse, SettingsResponse, UploadModeResponse,
 } from './apiTypes.js';
 
@@ -41,7 +42,6 @@ const VERSION: string = (require('../../package.json') as { version: string }).v
 const ITEM_ID = /^itm_[0-9a-f]{16}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
-const FRAGMENT_TITLE: Record<string, string> = { question: '题目', diagram: '题目图形', student_work: '你写的', correction: '订正', teacher_mark: '老师批注', reference_answer: '参考答案', unknown: '其他材料' };
 
 class ApiFailure extends Error { constructor(public status: number, public code: string, message: string) { super(message); } }
 const fail = (status: number, code: string, message: string): never => { throw new ApiFailure(status, code, message); };
@@ -151,12 +151,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
   r.get('/items/:id', handler((request) => {
     const item = findItem(String(request.params.id));
     const evidence = getEvidenceView(item.id);
-    const fragments = learningImageFragments(item.id);
-    const stem = fragments.filter(f => f.role === 'question' || f.role === 'diagram');
-    const shown = stem.length ? stem : fragments.slice(0, 1);
-    const images: ItemImage[] = shown.length
-      ? shown.map(f => ({ url: `/s/materials/fragments/${f.fragmentId}/crop?revision=${f.revision}`, fullUrl: `/s/materials/assets/${f.assetId}/image`, title: FRAGMENT_TITLE[f.role] ?? '其他材料' }))
-      : [{ url: `/s/img/item/${item.id}?scope=full&s=big`, fullUrl: `/s/img/item/${item.id}?scope=full`, title: '整题照片' }];
+    const images = detailPhotos(item.id, item.source.kind, learningImageFragments(item.id));
     const notes: ItemNote[] = (evidence?.observations ?? []).map(note => ({ kind: note.kind, title: KIND_TITLE[note.kind] ?? '其他笔迹', text: note.text }));
     const category = categoryForItem(item.id);
     const profile = requireProfile();

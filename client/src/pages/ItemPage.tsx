@@ -11,7 +11,7 @@ import { StemText } from '../components/StemText';
 import { api } from '../lib/api';
 import { useLoad } from '../lib/hooks';
 
-/** 题目详情：照片（点开是应用内大图，左上角返回）、题干、你写的、章节；右上角「…」里是修改分类、材料来源、移除。 */
+/** 题目详情：整张上传照片（点开是应用内大图，左上角返回）、题干、你写的、章节；右上角「…」里是修改分类、材料来源、移除。 */
 export function ItemPage(): ReactNode {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -62,6 +62,7 @@ export function ItemPage(): ReactNode {
         <h1 className="item-title">{item.chapter}</h1>
         <p className="item-subtitle" data-testid="item-category">{[item.shortId, item.grade, item.subject].filter(Boolean).join(' · ')}</p>
         {data.images.map(image => <button key={image.url} type="button" className="item-photo" onClick={() => { setViewing(image); setViewerOpen(true); }} aria-label={`${image.title}，查看大图`} data-testid="item-photo"><img src={image.url} alt={image.title} /></button>)}
+        {data.images.some(image => image.title === '原图') ? <p className="item-photo-note" data-testid="item-photo-note">这是你拍的整张照片，点开可以放大。</p> : null}
         <div className="item-stem" data-testid="question-text"><StemText text={data.questionText || '还没有可读的识别文字，请打开上方原图查看。'} /></div>
         {data.badge === 'low' ? <p className="item-hint tone-orange">字可能认错了，以照片为准。</p> : null}
         <IonList inset lines="full" className="item-rows">

@@ -30,7 +30,7 @@ import { sendHtml } from '../views/render.js';
 import { getDb } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
 import { isHeif } from '../media/images.js';
-import { getQuestionCrop } from '../services/evidenceService.js';
+import { getItemPage, getQuestionCrop } from '../services/evidenceService.js';
 import { ATTEMPT_STATES, CAUSES } from '../domain/types.js';
 import { registerV2Photo } from '../bridge/recognitionToItems.js';
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
@@ -1179,6 +1179,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const itemId = requireMatch(String(request.params.id), ITEM_ID);
     const source = getLearningSource(itemId);
     if (!source) throw new NotFound();
+    if (source.kind === 'legacy' && request.query.scope === 'page') {
+      // 详情页看的是整张来源页。scope=full 仍是题目框并集，框偏了会切掉题干。
+      response.type('image/jpeg').send(await displayImage(await getItemPage(itemId), displaySize(request.query.s)));
+      return;
+    }
     if (source.kind === 'material') {
       const question = materialStoreForItem(itemId)!.getQuestion(source.questionId)!;
       const fragment = question.stem.find(entry => entry.role === 'question');

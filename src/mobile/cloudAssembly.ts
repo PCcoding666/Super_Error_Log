@@ -52,7 +52,7 @@ export interface CloudAssembly {
  * 云端模式主进程装配：设备令牌鉴权接管公网入口 + 同进程内嵌管理入口。
  * v2.0 T2 起为单进程装配：同一端口同时服务 /v1 识别（语义不变）与 /v2 手机接口（设备令牌鉴权）。
  * 云端公网入口不挂旧的 Web 看板：/、/parent、/items、/trends 等在 study 主机上走 404（F1，隐私要求）。
- * help.pccoding666.com 的 GET / 是公开说明页，不含学生数据（src/portal/helpPortal.ts）。
+ * /help/ 是公开说明页，不含学生数据（src/portal/helpPortal.ts）。不按主机名切换。
  * 2026-10-09 起挂学生网页版 /s/（设备令牌 cookie 鉴权，只有学生自己的页面，没有家长 / 管理页面）。
  * /v2 使用 node:sqlite 库 SEL_DATA_DIR/app.db；启动时若无学生档案则创建匿名档案（幂等）。
  * 回环模式仍走 server.ts / main.ts 的直装配，不经由此文件。
