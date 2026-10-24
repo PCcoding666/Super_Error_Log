@@ -54,17 +54,17 @@ body:not(:has(:target)) .nav a[href="#start"],
 body:has(#start:target) .nav a[href="#start"],
 body:has(#guide:target) .nav a[href="#guide"],
 body:has(#contact:target) .nav a[href="#contact"]{color:var(--ink);font-weight:600}
-main{max-width:680px;padding:72px 56px 96px}
+main{max-width:680px;min-width:0;padding:48px 56px 96px}
 h1{margin:0 0 16px;font-size:40px;line-height:1.15;font-weight:600;letter-spacing:-.04em}
 .lede{margin:0;max-width:38em;color:var(--muted);font-size:18px;line-height:1.65}
 h2{margin:80px 0 12px;font-size:24px;line-height:1.3;font-weight:600;letter-spacing:-.03em;scroll-margin-top:24px}
-h2:first-of-type{margin-top:56px}
+h2:first-of-type{margin-top:40px}
 h3{margin:0 0 8px;font-size:16px;line-height:24px;font-weight:600;letter-spacing:-.02em}
 p{margin:0 0 12px}
 .quiet{color:var(--muted)}
 .prep{margin:20px 0 0;padding:0 0 0 1.15em}
 .prep li{margin:4px 0}
-ol.steps{list-style:none;margin:36px 0 0;padding:0;counter-reset:step}
+ol.steps{list-style:none;margin:28px 0 0;padding:0;counter-reset:step}
 ol.steps li{position:relative;padding:0 0 32px 44px}
 ol.steps li:last-child{padding-bottom:0}
 ol.steps li::before{content:counter(step);counter-increment:step;position:absolute;left:0;top:0;width:24px;height:24px;border-radius:999px;background:#000;color:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:24px;text-align:center}
@@ -72,10 +72,10 @@ ol.steps li::after{content:"";position:absolute;left:11px;top:32px;bottom:4px;wi
 ol.steps li:last-child::after{display:none}
 ol.steps h3{min-height:24px}
 ol.steps p:last-child{margin-bottom:0}
-.code{margin:12px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--code);color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13.5px;line-height:1.5;overflow-wrap:anywhere}
+.code{margin:12px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--code);color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13.5px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word;max-width:100%}
 .code a{color:inherit;text-decoration:none}
 .code a:hover{text-decoration:underline}
-.actions{margin:32px 0 0}
+.actions{margin:16px 0 0}
 .cta{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 16px;border-radius:6px;background:#000;color:#fff;font-size:14px;font-weight:500;letter-spacing:-.01em;text-decoration:none}
 .cta:hover{background:#333;color:#fff;text-decoration:none}
 .guide{margin-top:8px}
@@ -85,7 +85,7 @@ dl.contact{margin:8px 0 0}
 dl.contact > div{padding:20px 0;border-top:1px solid var(--line)}
 dl.contact dt{margin:0 0 6px;color:var(--muted);font-size:14px}
 dl.contact dd{margin:0}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px;overflow-wrap:anywhere;word-break:break-word}
 .qr-slot{display:grid;place-items:center;width:168px;height:168px;margin-top:4px;padding:12px;border:1px dashed #cfcfcf;border-radius:8px;background:var(--code);color:var(--faint);font-size:13px;line-height:1.4;text-align:center}
 footer{margin-top:96px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
 footer p{margin:0 0 6px}
@@ -97,7 +97,8 @@ footer a{color:var(--ink)}
   body:has(#contact:target) .nav a[href="#contact"]{box-shadow:inset 2px 0 0 #000}
 }
 @media (max-width:800px){
-  .shell{grid-template-columns:1fr}
+  .shell{grid-template-columns:minmax(0,1fr)}
+  main{min-width:0}
   .side{position:sticky;top:0;z-index:2;height:auto;padding:14px 20px 10px;border-right:0;border-bottom:1px solid var(--line);background:rgba(255,255,255,.94);backdrop-filter:saturate(180%) blur(8px)}
   .brand-path{display:none}
   .side-label{margin:10px 0 0}
@@ -139,6 +140,7 @@ footer a{color:var(--ink)}
         <h3>打开学习页</h3>
         <p>用浏览器打开：</p>
         <p class="code"><a href="${STUDY_URL}">${STUDY_URL}</a></p>
+        <p class="actions"><a class="cta" href="${STUDY_URL}">打开学习页</a></p>
       </li>
       <li>
         <h3>注册或登录</h3>
@@ -146,7 +148,6 @@ footer a{color:var(--ink)}
         <p>第一次使用：点「首次使用，注册账号」。填写姓名和手机号，设一个 4 位找回码。注册完成后，保存页面给出的邀请码。</p>
       </li>
     </ol>
-    <p class="actions"><a class="cta" href="${STUDY_URL}">打开学习页</a></p>
 
     <h2 id="guide">使用指南</h2>
     <p class="quiet">注册、邀请码、登录和设置的位置。</p>
