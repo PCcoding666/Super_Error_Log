@@ -723,11 +723,17 @@ self.addEventListener('fetch',e=>{const r=e.request;
 });
 `;
 
-export function manifest(): Record<string, unknown> {
+export type ManifestDisplay = 'standalone' | 'browser';
+/**
+ * display 按平台给：iOS 用 standalone（主屏幕图标全屏打开）；安卓给 browser。
+ * 小米浏览器这类「添加到桌面」出来的壳没有实现文件选择器——文件框能拿到焦点，相册和相机却都弹不出来
+ * （2026-10-25 红米实录）。发 browser 以后，桌面图标会在浏览器标签里打开，选择器才正常。
+ */
+export function manifest(display: ManifestDisplay = 'standalone'): Record<string, unknown> {
   return {
     name: APP_NAME, short_name: APP_SHORT_NAME, lang: 'zh-CN', dir: 'ltr',
     description: '纸错题延迟重做：周末拍卷子、选题打印，周中在纸上做，下个周末录结果。',
-    start_url: '/s/', scope: '/s/', id: '/s/', display: 'standalone', orientation: 'portrait',
+    start_url: '/s/', scope: '/s/', id: '/s/', display, orientation: 'portrait',
     background_color: BACKGROUND_COLOR, theme_color: THEME_COLOR,
     icons: [
       { src: '/s/assets/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },

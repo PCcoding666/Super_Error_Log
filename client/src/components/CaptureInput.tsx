@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import type { ChangeEvent, ReactNode } from 'react';
+import { watchChooser } from '../lib/chooserWatch';
 import { uploader } from '../lib/uploader';
 
 /**
@@ -49,6 +50,7 @@ export function PickLabel(props: {
       multiple={album}
       capture={album ? undefined : 'environment'}
       aria-label={album ? '从相册选择' : '拍照'}
+      onClick={event => watchChooser(event.currentTarget)}
       onChange={onChange}
     />
   </label>;

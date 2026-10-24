@@ -257,6 +257,21 @@ describe('学生注册表', () => {
 // ---------- 网关：登录、退出、静态壳 ----------
 
 describe('学生网关登录与退出', () => {
+  it('manifest 的 display 按平台：安卓给 browser（桌面图标壳没有文件选择器），iPhone 仍是 standalone', async () => {
+    const env = await setupHost();
+    const fetchManifest = async (userAgent: string): Promise<{ display: string; start_url: string }> => {
+      const response = await fetch(`${env.base}/s/manifest.webmanifest`, { headers: { 'user-agent': userAgent } });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('vary')).toMatch(/user-agent/i);
+      return await response.json() as { display: string; start_url: string };
+    };
+    const android = await fetchManifest('Mozilla/5.0 (Linux; U; Android 14; zh-cn; 23013RK75C Build/UKQ1.230804.001) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/118.0.0.0 Mobile Safari/537.36 XiaoMi/MiuiBrowser/18.4.30');
+    expect(android.display).toBe('browser');
+    expect(android.start_url).toBe('/s/');
+    const iphone = await fetchManifest('Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) Safari/604.1');
+    expect(iphone.display).toBe('standalone');
+  });
+
   it('匿名只能看到登录页与公开静态壳；登录页不含任何学生数据', async () => {
     const env = await setupHost();
     const browser = new Browser(env.base);
