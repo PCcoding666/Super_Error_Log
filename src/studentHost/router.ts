@@ -376,22 +376,30 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         response.setHeader('retry-after', String(blocked.seconds));
         response.status(429).json({ error: { code: 'rate_limited', message: `试的次数太多了，请 ${blocked.seconds} 秒后再试。` } });
       };
-      const blocked = loginGuard.blocked(key, ip);
-      if (blocked) { rateLimited(blocked); return; }
+      // 与网页登录同一顺序——先验码：正确的码任何时候都能登录，码键 / IP / 全站失败预算只放慢错误尝试，
+      // 否则同一校园网络或全站累计输错就会把正确的码一起挡住（可被错误尝试触发的拒绝服务）。
       let session;
       try {
         session = registry.redeem(raw);
       } catch (error) {
         if (!(error instanceof RegistryError)) throw error;
+        const wasOver = loginGuard.blocked(key, ip) !== null;
         loginGuard.failure(key, ip);
         const retryAfter = loginGuard.blocked(key, ip);
-        if (retryAfter) { rateLimited(retryAfter); return; }
+        if (retryAfter) {
+          if (wasOver) await slowDown();
+          rateLimited(retryAfter);
+          return;
+        }
         response.status(400).json({ error: { code: 'invalid_code', message: error.message } });
         return;
       }
       loginGuard.success(key, ip);
       // 学生空间的 serviceId 来自它自己的 worker（每个学生目录一份、重启不变）：App 之后每次 health 都核对它。
+      // 与 proxyToWorker 一样先 retain：容量腾挪与空闲退出都按 inflight 计数排除正在服务的 worker，
+      // 否则别的学生并发启动可能把正在做登录检查的这个 worker 当空闲进程停掉。
       let serviceId: string;
+      pool.retain(session.studentId);
       try {
         const endpoint = await pool.ensure(session.studentId);
         const health = await fetch(`http://127.0.0.1:${endpoint.port}/v1/health`, {
@@ -401,6 +409,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         if (!health.ok || typeof snapshot.serviceId !== 'string') throw new Error('worker health 没有 serviceId');
         serviceId = snapshot.serviceId;
       } catch (error) {
+        pool.release(session.studentId);
         // 空间没起来就不发令牌：已建的会话立即撤销，App 下次重试会重新兑换（新码可重复登录）。
         registry.revokeSession(session.sessionToken);
         const capacity = error instanceof WorkerStartError && error.reason === 'capacity';
@@ -408,6 +417,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         response.status(503).json({ error: { code: capacity ? 'capacity' : 'unavailable', message: capacity ? '现在人有点多，请过一会儿再登录。' : '你的学习空间正在准备中，等半分钟再试。' } });
         return;
       }
+      pool.release(session.studentId);
       response.setHeader('referrer-policy', 'no-referrer');
       response.json({ token: session.sessionToken, serviceId, expiresAt: session.expiresAt.toISOString(), protocolVersion: NATIVE_PROTOCOL_VERSION });
     });

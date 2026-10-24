@@ -104,9 +104,12 @@ describe('原生 App 经网关登录与转发', () => {
     expect(last.status).toBe(429);
     expect(last.headers.get('retry-after')).toMatch(/^\d+$/);
     expect(await last.json()).toMatchObject({ error: { code: 'rate_limited' } });
-    // 同一网络里别的同学的正确码不受影响
+    // 先验码：同一网络里别的同学的正确码不受影响；连开头四位和被挡的错码相同的正确码也照常登录
     const { studentId: other } = env.registry.createStudent();
     const { code } = env.registry.issueInvitation(other);
+    expect((await native(env.base).login(code)).status).toBe(200);
+    for (let i = 0; i < 12; i += 1) await native(env.base).login(`${code.slice(0, 4)}-ZZZZ-ZZZZ`);
+    expect((await native(env.base).login(`${code.slice(0, 4)}-ZZZZ-ZZZZ`)).status).toBe(429);
     expect((await native(env.base).login(code)).status).toBe(200);
   }, 90_000);
 
