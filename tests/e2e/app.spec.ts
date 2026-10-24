@@ -123,6 +123,12 @@ test('详情页：照片、题干、你写的、章节可改；移除后回到�
   await expect.poll(() => url(page)).toMatch(/^\/s\/q\/itm_/);
   await expect(page.getByTestId('question-text')).toContainText('解方程');
   await expect(page.locator('.item-photo img')).toHaveCount(1);
+  // 大图在应用内打开，左上角有返回；返回后仍在详情页。
+  await page.getByTestId('item-photo').click();
+  await expect(page.locator('ion-modal.photo-viewer img')).toBeVisible();
+  await page.getByTestId('photo-back').click();
+  await expect(page.locator('ion-modal.photo-viewer')).toBeHidden();
+  expect(url(page)).toMatch(/^\/s\/q\/itm_/);
   await expect(page.getByTestId('item-chapter')).toContainText('一元一次方程');
   await expect(page.getByTestId('item-tags')).toContainText('一元一次方程');
   await page.getByTestId('item-chapter').click();

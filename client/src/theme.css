@@ -87,7 +87,7 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .plain-header ion-toolbar { --background: var(--ion-background-color); --border-width: 0; }
 .item-title { font-size: 28px; font-weight: 700; margin: 8px 20px 2px; }
 .item-subtitle { margin: 0 20px 14px; color: var(--sel-muted); font-size: 15px; }
-.item-photo { display: block; margin: 0 20px 14px; border-radius: 16px; overflow: hidden; background: var(--ion-item-background); }
+.item-photo { display: block; width: calc(100% - 40px); margin: 0 20px 14px; padding: 0; border: 0; border-radius: 16px; overflow: hidden; background: var(--ion-item-background); cursor: pointer; }
 .item-photo img { display: block; width: 100%; height: auto; }
 .item-stem { margin: 0 20px; padding: 18px 20px; background: var(--ion-item-background); border-radius: 16px; font-size: 20px; line-height: 1.5; }
 .stem-text { white-space: pre-wrap; }
@@ -95,6 +95,12 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .stem-table { border-collapse: collapse; min-width: 100%; font-size: 15px; line-height: 1.3; text-align: center; font-variant-numeric: tabular-nums; }
 .stem-table th, .stem-table td { padding: 5px 6px; border: 1px solid var(--sel-line); white-space: nowrap; }
 .stem-table th { font-weight: 600; background: rgba(120, 120, 128, 0.12); }
+.photo-viewer { --background: #000; }
+.photo-viewer ion-toolbar { --background: #000; --color: #fff; --border-width: 0; }
+.photo-viewer ion-button { --color: #fff; }
+.photo-viewer ion-content { --background: #000; }
+.photo-viewer-body { min-height: 100%; display: flex; align-items: center; justify-content: center; touch-action: pan-x pan-y pinch-zoom; }
+.photo-viewer-body img { display: block; width: 100%; height: auto; }
 .item-hint { margin: 8px 20px 0; font-size: 14px; }
 .item-rows { margin-top: 14px; }
 .item-rows ion-label.item-tags { max-width: 60%; text-align: right; font-size: 15px; }
