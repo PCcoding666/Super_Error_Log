@@ -48,10 +48,10 @@ function openRegistry(dir = root(), now?: () => Date): StudentRegistry {
 }
 
 /** 网关 + 合成 IP（x-test-ip 只在测试夹具里被 ipOf 采信）。 */
-async function setup(options: { now?: () => Date; requireRegistrationCode?: boolean } = {}) {
+async function setup(options: { now?: () => Date; requireRegistrationCode?: boolean; failureDelayMs?: number } = {}) {
   const dir = root();
   const registry = StudentRegistry.open(dir, options.now ? { now: options.now } : undefined);
-  const gateway = await createStudentHostGateway({ registry, now: options.now, requireRegistrationCode: options.requireRegistrationCode ?? false });
+  const gateway = await createStudentHostGateway({ registry, now: options.now, requireRegistrationCode: options.requireRegistrationCode ?? false, failureDelayMs: options.failureDelayMs });
   gateways.push(gateway);
   const app = express();
   app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: request => String(request.headers['x-test-ip'] ?? '192.0.2.10') }));
@@ -163,6 +163,117 @@ describe('同一个 Wi-Fi 下全班注册和登录（P0-6）', () => {
     const elsewhere = await env.post('/s/register', { name: '测试学生61', phone: '+6580000261', ...pinField }, { 'x-test-ip': '198.51.100.20' });
     expect(elsewhere.status).toBe(201);
   }, 60_000);
+
+  it('全站失败预算被几个 IP 刷满时，任何人的正确码照样能登录；只有错码回 429 并被放慢（集成评审 P1）', async () => {
+    const env = await setup({ failureDelayMs: 200 });
+    const { code } = env.registry.issueInvitation(env.registry.createStudent().studentId);
+    // 10 个 IP × 100 个不同开头的错码 = 1000 次失败：全站失败预算和这 10 个 IP 的预算都用完。
+    for (let ip = 0; ip < 10; ip++) {
+      for (let i = 0; i < 100; i++) {
+        const wrong = `${String.fromCharCode(65 + ip)}${String(i).padStart(3, '0')}-ZZZZ-ZZZZ`;
+        const response = await env.post('/s/login', { code: wrong }, { 'x-test-ip': `198.51.100.${ip + 1}` });
+        await response.text();
+      }
+    }
+    const probe = await env.post('/s/login', { code: 'QQQQ-QQQQ-QQQQ' }, { 'x-test-ip': '203.0.113.50' });
+    expect(probe.status).toBe(429);
+    expect(await probe.text()).toContain('现在同时试的人太多了');
+    // 正确的码：从一个新 IP、从刷过预算的 IP，都直接登录。
+    expect((await env.post('/s/login', { code }, { 'x-test-ip': '203.0.113.51' })).status).toBe(303);
+    expect((await env.post('/s/login', { code }, { 'x-test-ip': '198.51.100.1' })).status).toBe(303);
+    // 预算用完后，错的那一次被放慢（只放慢，不挡人）。
+    const started = Date.now();
+    const slowed = await env.post('/s/login', { code: 'QQQQ-QQQQ-QQQR' }, { 'x-test-ip': '203.0.113.52' });
+    await slowed.text();
+    expect(slowed.status).toBe(429);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+  }, 60_000);
+
+  it('打开注册码时，同一 IP 注册失败预算用完后，正确的班级注册码仍能注册（先验码）', async () => {
+    const env = await setup({ requireRegistrationCode: true, failureDelayMs: 0 });
+    const { code: classCode } = env.registry.createRegistrationCode({ label: '合成班', maxUses: 5 });
+    for (let i = 0; i < 100; i++) {
+      const response = await env.post('/s/register', { regcode: `W${String(i).padStart(3, '0')}-ZZZZ`, name: '测试学生乙', phone: '+6580000999', ...pinField }, { 'x-test-ip': '203.0.113.9' });
+      await response.text();
+    }
+    const refused = await env.post('/s/register', { regcode: 'WXYZ-ZZZZ', name: '测试学生乙', phone: '+6580000999', ...pinField }, { 'x-test-ip': '203.0.113.9' });
+    await refused.text();
+    expect(refused.status).toBe(429);
+    const registered = await env.post('/s/register', { regcode: classCode, name: '测试学生甲', phone: '+6580000001', ...pinField }, { 'x-test-ip': '203.0.113.9' });
+    expect(registered.status).toBe(201);
+    codeFrom(await registered.text());
+  }, 60_000);
+
+  it('全班 40 人同一 IP 共用一个注册码，中间夹着 20 次打错后几位和重复提交，正确的提交全部成功（集成评审 P1）', async () => {
+    const env = await setup({ requireRegistrationCode: true, failureDelayMs: 0 });
+    const { code: classCode } = env.registry.createRegistrationCode({ label: '合成高三二班', maxUses: 45 });
+    const prefix = classCode.slice(0, 4);
+    const typos: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      // 同一个前 4 位（旧的限速键）下的不同错码：打错后几位。前几次故意重复同一个错码。
+      let typo = `${prefix}-${String(i < 5 ? 0 : i).padStart(4, '0')}`;
+      if (typo === classCode) typo = `${prefix}-ZZZZ`;
+      typos.push(typo);
+    }
+    const ip = { 'x-test-ip': '203.0.113.77' };
+    const created: number[] = [];
+    const refusedTypos: number[] = [];
+    const register = async (i: number) => {
+      const response = await env.post('/s/register', { regcode: classCode, name: `测试学生${i}`, phone: `+65800001${String(i).padStart(2, '0')}`, ...pinField }, ip);
+      created.push(response.status);
+      if (response.status === 201) codeFrom(await response.text()); else await response.text();
+    };
+    const typo = async (n: number) => {
+      const response = await env.post('/s/register', { regcode: typos[n]!, name: `测试学生错${n}`, phone: `+65800002${String(n).padStart(2, '0')}`, ...pinField }, ip);
+      refusedTypos.push(response.status); await response.text();
+    };
+    for (let i = 1; i <= 15; i++) await register(i);
+    // 课堂上一阵子连着有人打错后几位（18 次），中间还有两人把「注册」多点了一次：
+    // 旧规则（按注册码前 4 位计、先看预算再验码）在这里凑满 20 次，全班的正确码会被挡 10 分钟。
+    for (let n = 0; n < 18; n++) {
+      await typo(n);
+      if (n === 5 || n === 11) {
+        const again = await env.post('/s/register', { regcode: classCode, name: `测试学生${n}`, phone: `+65800001${String(n).padStart(2, '0')}`, ...pinField }, ip);
+        expect(again.status).toBe(400); await again.text();
+      }
+    }
+    for (let i = 16; i <= 40; i++) {
+      await register(i);
+      if (i % 6 === 0 && refusedTypos.length < 20) await typo(refusedTypos.length);
+    }
+    expect(created).toEqual(Array(40).fill(201));
+    expect(refusedTypos).toHaveLength(20);
+    expect(refusedTypos.every(status => status === 400 || status === 429)).toBe(true);
+    expect(env.registry.listStudents()).toHaveLength(40);
+    expect(env.registry.listRegistrationCodes()[0]).toMatchObject({ usedCount: 40 });
+  }, 60_000);
+
+  it('不要注册码时，同一网络重复登记太多次只让重复登记回 429，新同学照样能注册（先验码）', async () => {
+    const env = await setup({ failureDelayMs: 0 });
+    const ip = { 'x-test-ip': '203.0.113.88' };
+    expect((await env.post('/s/register', { name: '测试学生甲', phone: '13800000001', ...pinField }, ip)).status).toBe(201);
+    let last: Response | undefined;
+    for (let i = 0; i < 20; i++) { last = await env.post('/s/register', { name: '测试学生甲', phone: '13800000001', ...pinField }, ip); await last.clone().text(); }
+    expect(last!.status).toBe(429);
+    expect(await last!.text()).toContain('你们这个网络里输错的次数太多了');
+    const fresh = await env.post('/s/register', { name: '测试学生乙', phone: '13800000002', ...pinField }, ip);
+    expect(fresh.status).toBe(201);
+    codeFrom(await fresh.text());
+    expect(env.registry.listStudents()).toHaveLength(2);
+  });
+
+  it('找回仍然先看预算再比对：同一 IP 输错太多后，连对的找回码也要等（4 位数字不能放开比对）', async () => {
+    const env = await setup({ failureDelayMs: 0 });
+    expect((await env.post('/s/register', { name: '测试学生甲', phone: '13800000001', ...pinField })).status).toBe(201);
+    // 30 次（RECOVERY_LIMITS.perIp）都用不同的假账号，不触发任何一个账号的 5 次锁定。
+    for (let i = 0; i < 30; i++) await (await env.post('/s/recover', { name: `没有这个人${i}`, phone: `139000000${String(i).padStart(2, '0')}`, pin: '7410' })).text();
+    const blocked = await env.post('/s/recover', { name: '测试学生甲', phone: '13800000001', ...pinField });
+    expect(blocked.status).toBe(429);
+    expect(await blocked.text()).not.toContain('registered-invite-code');
+    const elsewhere = await env.post('/s/recover', { name: '测试学生甲', phone: '13800000001', ...pinField }, { 'x-test-ip': '198.51.100.70' });
+    expect(elsewhere.status).toBe(200);
+    codeFrom(await elsewhere.text());
+  });
 
   it('限速时页面说清楚是谁太频繁', async () => {
     const env = await setup();
@@ -560,6 +671,17 @@ describe('管理 CLI（P1-5、P1-6）', () => {
     } finally { process.chdir(previous); }
   });
 
+  it('目录在但里面没有 registry.db 时拒绝运行，不新建空库（集成评审 P2）', () => {
+    const dir = root();
+    vi.stubEnv('SEL_STUDENT_HOST_DIR', dir);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(runAdminCli(['create'], () => undefined)).toBe(2);
+    expect(runAdminCli(['list'], () => undefined)).toBe(2);
+    expect(errors.mock.calls.flat().join('\n')).toContain('没有注册库 registry.db');
+    errors.mockRestore();
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
   it('lookup 支持姓名片段和手机尾号；list 显示姓名和尾号', () => {
     const dir = root();
     const registry = openRegistry(dir);
@@ -642,6 +764,28 @@ describe('管理 CLI（P1-5、P1-6）', () => {
     expect(fs.readFileSync(path.join(dir, 'deletions.log'), 'utf8')).not.toContain('测试学生甲');
     expect(registry.redeem(other.code).studentId).toBe(other.studentId);
     expect(registry.registerStudent('测试学生甲', '+6581234567').studentId).not.toBe(registered.studentId);
+  });
+
+  it('delete 时学生目录删不掉：整笔回滚，账号还在，修好后可以再删（集成评审 P2）', () => {
+    const dir = root();
+    const registry = openRegistry(dir);
+    const registered = registry.registerStudent('测试学生甲', '+6581234567');
+    const studentDir = registry.studentDir(registered.studentId);
+    fs.writeFileSync(path.join(studentDir, 'synthetic.txt'), 'x');
+    registry.disableStudent(registered.studentId);
+    const realRm = fs.rmSync;
+    const rm = vi.spyOn(fs, 'rmSync').mockImplementation(((target: fs.PathLike, options?: fs.RmOptions) => {
+      if (String(target) === studentDir) throw Object.assign(new Error('EACCES: synthetic permission denied'), { code: 'EACCES' });
+      return realRm(target, options);
+    }) as typeof fs.rmSync);
+    expect(() => registry.deleteStudent(registered.studentId)).toThrow('EACCES');
+    expect(registry.listStudents().map(student => student.studentId)).toEqual([registered.studentId]);
+    expect(fs.existsSync(path.join(studentDir, 'synthetic.txt'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'deletions.log'))).toBe(false);
+    rm.mockRestore();
+    expect(registry.deleteStudent(registered.studentId)).toEqual({ removedDirectory: true });
+    expect(registry.listStudents()).toEqual([]);
+    expect(fs.existsSync(studentDir)).toBe(false);
   });
 
   it('delete 在该学生 worker 仍存活时拒绝（不靠空闲时间推断）；进程退出后的过期标记不挡删除', async () => {
