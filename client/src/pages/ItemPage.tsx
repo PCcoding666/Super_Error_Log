@@ -2,15 +2,16 @@ import {
   IonActionSheet, IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonModal, IonPage, IonPopover, IonSelect, IonSelectOption,
   IonTitle, IonToast, IonToolbar,
 } from '@ionic/react';
-import { ellipsisHorizontal } from 'ionicons/icons';
+import { chevronBack, ellipsisHorizontal } from 'ionicons/icons';
 import { useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Problem } from '../components/Problem';
+import type { ItemImage } from '../../../src/web/apiTypes';
 import { StemText } from '../components/StemText';
 import { api } from '../lib/api';
 import { useLoad } from '../lib/hooks';
 
-/** 题目详情：照片、题干、你写的、章节；右上角「…」里是修改分类、材料来源、移除。 */
+/** 题目详情：照片（点开是应用内大图，左上角返回）、题干、你写的、章节；右上角「…」里是修改分类、材料来源、移除。 */
 export function ItemPage(): ReactNode {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -27,6 +28,9 @@ export function ItemPage(): ReactNode {
   };
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [menuEvent, setMenuEvent] = useState<Event | null>(null);
+  // 大图：关闭时只收起弹层、保留 viewing，收起动画里图片不会先消失。
+  const [viewing, setViewing] = useState<ItemImage | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   const remove = async (): Promise<void> => {
     try { await api.discard([id]); navigate(-1); }
@@ -57,7 +61,7 @@ export function ItemPage(): ReactNode {
       {data && item ? <>
         <h1 className="item-title">{item.chapter}</h1>
         <p className="item-subtitle" data-testid="item-category">{[item.shortId, item.grade, item.subject].filter(Boolean).join(' · ')}</p>
-        {data.images.map(image => <a key={image.url} className="item-photo" href={image.fullUrl} target="_blank" rel="noreferrer" aria-label={`${image.title}，打开原图`}><img src={image.url} alt={image.title} /></a>)}
+        {data.images.map(image => <button key={image.url} type="button" className="item-photo" onClick={() => { setViewing(image); setViewerOpen(true); }} aria-label={`${image.title}，查看大图`} data-testid="item-photo"><img src={image.url} alt={image.title} /></button>)}
         <div className="item-stem" data-testid="question-text"><StemText text={data.questionText || '还没有可读的识别文字，请打开上方原图查看。'} /></div>
         {data.badge === 'low' ? <p className="item-hint tone-orange">字可能认错了，以照片为准。</p> : null}
         <IonList inset lines="full" className="item-rows">
@@ -71,6 +75,15 @@ export function ItemPage(): ReactNode {
         </IonList>
         {data.canDiscard ? <IonButton fill="clear" color="danger" expand="block" className="item-remove" onClick={() => setSheet('confirm')} data-testid="discard">不是错题，移除</IonButton> : null}
       </> : null}
+      <IonModal isOpen={viewerOpen} onDidDismiss={() => setViewerOpen(false)} className="photo-viewer" data-testid="photo-viewer">
+        <IonHeader className="ion-no-border"><IonToolbar>
+          <IonButtons slot="start"><IonButton aria-label="返回" data-testid="photo-back" onClick={() => setViewerOpen(false)}><IonIcon icon={chevronBack} slot="icon-only" /></IonButton></IonButtons>
+          <IonTitle>{viewing?.title}</IonTitle>
+        </IonToolbar></IonHeader>
+        <IonContent>
+          {viewing ? <div className="photo-viewer-body"><img src={viewing.fullUrl} alt={viewing.title} /></div> : null}
+        </IonContent>
+      </IonModal>
       <IonModal isOpen={openNote !== null} onDidDismiss={() => setOpenNote(null)} initialBreakpoint={0.6} breakpoints={[0, 0.6, 1]}>
         <div className="note-sheet">
           <h2>{data?.notes.find(note => note.kind === openNote)?.title}</h2>
