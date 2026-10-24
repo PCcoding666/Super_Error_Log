@@ -588,7 +588,7 @@ sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-
 | `GET /` | 404 JSON（旧看板仍然不挂） |
 | `/s/`、`/v1`、`/v2`、`/admin/` | 与原来相同 |
 
-`help.pccoding666.com` 子域名暂不使用。DNS 仍是 NXDOMAIN。不要为它加 A 记录、ACME 主机名或 Caddy 站点。早先「只认这个 Host 的 `GET /`」已经放弃：那条路要单独签发证书，而且会碰到 study 的根路径。
+`help.pccoding666.com` 不再作为公开地址。DNS 仍是 NXDOMAIN。不要为它加 A 记录、ACME 主机名或 Caddy 站点。说明页只认路径 `/help/`，不认 Host。早先「只认这个 Host 的 `GET /`」已经放弃：那条路要单独签发证书，而且会碰到 study 的根路径。
 
 Caddy 不用改站点结构，也不用为这次重启。`study.pccoding666.com` 现有的 `reverse_proxy` 已经把所有路径（含 `/help`、`/help/` 和 `/s/`）转到同一上游 `127.0.0.1:3101`，并且不改写 `Host`。学生网关要留着浏览器带来的 `Host` 做同源校验；不要加 `header_up Host`。自动发布只换应用。合并到 `main` 并通过发布后，说明页就在现有 study 证书下生效。
 
@@ -608,4 +608,4 @@ curl -sI https://study.pccoding666.com/help
 
 期望：`/help/` 是 200，正文是说明页 HTML；`/help` 是 301，`Location` 指向 `/help/`；`/` 仍是 404；`/s/` 仍是 200。不需要请求 `help.pccoding666.com`。
 
-联系方式（邮箱、微信）在页面上是「待补充」，填上之前改 `src/portal/helpPortal.ts` 再发一版。说明页没有学生数据。
+页面从「开始使用」写起：邀请码、学习页 `https://study.pccoding666.com/s/`、注册或登录，主按钮是「打开学习页」。不写适用人群，也不写一周使用步骤。联系方式：邮箱是「待补充」；微信是「二维码待补充」的空位，图片到了再改 `src/portal/helpPortal.ts`。换成 `<img>` 时，页面的 CSP 要加 `img-src`。说明页没有学生数据。
