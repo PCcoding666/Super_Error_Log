@@ -161,6 +161,14 @@ export async function normalizePhoto(buffer: Buffer): Promise<Buffer> {
   }
 }
 
+/** Same orientation as cropPhoto, without cutting a region. An already-upright JPEG is returned unchanged. */
+export async function uprightJpeg(buffer: Buffer): Promise<Buffer> {
+  assertInputSize(buffer);
+  const meta = await sharp(buffer, { failOn: 'error', limitInputPixels: MAX_DECODED_PIXELS }).metadata();
+  if (meta.format === 'jpeg' && (!meta.orientation || meta.orientation === 1)) return buffer;
+  return normalizePhoto(buffer);
+}
+
 export async function cropPhoto(buffer: Buffer, boxValue: Box): Promise<Buffer> {
   const box = validateBox(boxValue);
   const normalized = await normalizePhoto(buffer);

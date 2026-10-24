@@ -123,9 +123,17 @@ test('详情页：照片、题干、你写的、章节可改；移除后回到�
   await expect.poll(() => url(page)).toMatch(/^\/s\/q\/itm_/);
   await expect(page.getByTestId('question-text')).toContainText('解方程');
   await expect(page.locator('.item-photo img')).toHaveCount(1);
+  // 详情显示整张上传页，不是题目框裁出来的横条。合成页是竖图，题目框是横条。
+  const photo = page.locator('.item-photo img');
+  await expect(photo).toHaveAttribute('src', /\/s\/img\/item\/itm_[0-9a-f]+?\?scope=page&s=big$/);
+  await expect(page.getByTestId('item-photo-note')).toContainText('整张照片');
+  await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight > img.naturalWidth && img.naturalWidth > 0)).toBe(true);
   // 大图在应用内打开，左上角有返回；返回后仍在详情页。
   await page.getByTestId('item-photo').click();
-  await expect(page.locator('ion-modal.photo-viewer img')).toBeVisible();
+  const viewer = page.locator('ion-modal.photo-viewer img');
+  await expect(viewer).toBeVisible();
+  await expect(viewer).toHaveAttribute('src', /\/s\/img\/item\/itm_[0-9a-f]+?\?scope=page$/);
+  await expect.poll(() => viewer.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight > img.naturalWidth && img.naturalWidth > 0)).toBe(true);
   await page.getByTestId('photo-back').click();
   await expect(page.locator('ion-modal.photo-viewer')).toBeHidden();
   expect(url(page)).toMatch(/^\/s\/q\/itm_/);

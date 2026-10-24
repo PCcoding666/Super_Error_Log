@@ -32,7 +32,7 @@
 | 方法 路径 | 说明 |
 | --- | --- |
 | GET `/notebook?subject&grade&chapter&tag&q` | 错题本：学科 / 学段 / 章节（一级标题）/ 知识点（二级标题）列表，按「今天 / 本周 / 更早」分组的题；`status` 仍可传但界面不再暴露练习状态 |
-| GET `/items/:id` | 题目详情：题干、图片（旧流程整题图或材料裁图）、你写的等笔迹、分类 |
+| GET `/items/:id` | 题目详情：题干、图片（上传的整页原图；点开同一张大图）、你写的等笔迹、分类 |
 | POST `/items/discard` `{ids}` | 批量「不是错题」；逐条返回成功 / 失败 |
 | POST `/items/:id/restore` | 撤销移除 |
 | POST `/items/:id/category` `{grade,subject,chapter}` | 改分类 |
