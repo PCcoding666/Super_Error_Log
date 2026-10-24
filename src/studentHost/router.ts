@@ -589,8 +589,23 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       retained = false;
       pool.release(studentId);
     };
+    // The client (a phone over Caddy, which forwards to this process as HTTP/1.1) keeps streaming the
+    // multipart upload body even after we answer early, or after the worker connection drops. If that
+    // body is left unread, the socket stalls and Caddy turns the clean 4xx/5xx the worker already sent
+    // into a 502 "connection reset by peer" — the app shows it as「网络没连上」. Pull the rest off the
+    // wire and discard it so the request completes and Caddy relays the real status.
+    let drained = false;
+    const drainRequest = (): void => {
+      if (drained || request.readableEnded || request.destroyed) return;
+      drained = true;
+      try { request.unpipe(); } catch { /* was never piped */ }
+      request.on('error', () => { /* client vanished mid-drain; nothing to recover */ });
+      request.resume();
+    };
     const failClosed = (error: unknown): void => {
       releaseWorker();
+      // Early reject happens before we pipe the body to a worker: drain what the client is still sending.
+      drainRequest();
       const capacity = error instanceof WorkerStartError && error.reason === 'capacity';
       if (native && !response.headersSent) {
         response.setHeader('retry-after', String(capacity ? CAPACITY_RETRY_SECONDS : 30));
@@ -692,9 +707,13 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         upstreamResponse.pipe(response);
       },
     );
-    upstream.on('close', releaseWorker);
+    // The worker may answer early (429/503/…) and close its side before this proxy finished sending the
+    // body. On a normal, fully-proxied request the body has already ended, so draining is a no-op; when
+    // the upstream drops early it rescues the still-arriving client body from stalling into a 502.
+    upstream.on('close', () => { drainRequest(); releaseWorker(); });
     upstream.on('timeout', () => upstream.destroy(new Error('学生空间响应超时')));
     upstream.on('error', () => {
+      drainRequest();
       releaseWorker();
       if (!response.headersSent && native) { response.status(502).json({ error: { code: 'bad_gateway', message: '你的学习空间刚断了一下，稍等再试。' } }); return; }
       if (!response.headersSent) { response.status(502); sendHtml(response, HostErrorPage({ title: '暂时连不上', detail: '你的学习空间刚断了一下，稍等再试。' })); return; }

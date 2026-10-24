@@ -53,7 +53,7 @@ async function enter(page: Page, gateway: {
     await page.getByLabel('12 位邀请码').fill(gateway.codes[index]!);
     await page.getByRole('button', { name: '进入我的错题本' }).click();
     await page.getByRole('button', { name: '初中', exact: true }).click();
-    await page.goto(gateway.base + '/s/capture');
+    await page.goto(gateway.base + '/s/capture?legacy=1');
     await expect(page.locator('[data-material-capture]')).toBeVisible();
     await expect(page.getByTestId('capture-examples')).toBeVisible();
     await expect(page.getByText('阿里云')).toHaveCount(0);
@@ -82,7 +82,7 @@ test('never calls a local draft saved and recovers after response loss and reope
     await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible();
     await page.close();
     const reopened = await context.newPage();
-    await reopened.goto(gateway.base + '/s/capture');
+    await reopened.goto(gateway.base + '/s/capture?legacy=1');
     await expect(reopened.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
     await expect(reopened.getByTestId('photo-count')).toHaveText('已拍 1 张');
 });
@@ -92,7 +92,7 @@ test('does not accept a queued student A request after switching to B', async ({
     await page.request.post(gateway.base + '/s/login', { form: { code: gateway.codes[1]! } }); await page.request.post(gateway.base + '/s/stage', { form: { grade: '初中' } });
     const response = await page.request.post(gateway.base + '/s/materials/captures', { headers: { accept: 'application/json', 'x-draft-namespace': ns! }, data: { requestId: crypto.randomUUID() } });
     expect(response.status()).toBe(409);
-    await page.goto(gateway.base + '/s/capture');
+    await page.goto(gateway.base + '/s/capture?legacy=1');
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 0 张');
 });
 test('new queue normalizes a 48MP image to a real bounded JPEG and tags remain optional', async ({ page, gateway }) => {
@@ -523,7 +523,7 @@ test('P1-3: photos chosen at the moment the login expired stay on the phone and 
     await page.getByLabel('12 位邀请码').fill(gateway.codes[2]!);
     await page.getByRole('button', { name: '进入我的错题本' }).click();
     // 登录后回到的根地址是学生端单页应用（还没有本机草稿提示）；旧拍照页仍会接着传。
-    await page.goto(gateway.base + '/s/capture');
+    await page.goto(gateway.base + '/s/capture?legacy=1');
     await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 2 张');
     expect(await pendingDrafts(page)).toBe(0);
@@ -538,7 +538,7 @@ test('P1-3: another account logging in on this phone does not inherit the pendin
     await page.getByRole('button', { name: '进入我的错题本' }).click();
     // A new account picks its stage once when the first-run stage gate exists (no-op otherwise).
     await page.request.post(gateway.base + '/s/stage', { form: { grade: '初中' } });
-    await page.goto(gateway.base + '/s/capture');
+    await page.goto(gateway.base + '/s/capture?legacy=1');
     await expect(page.getByTestId('photo-count')).toHaveText('已拍 0 张');
     await expect(page.locator('[data-upload-queue] li')).toHaveCount(0);
     await expect.poll(() => pendingDrafts(page)).toBe(0);
