@@ -68,4 +68,10 @@ it('a full host answers with honest facts, Retry-After and a self-retrying page'
   expect(json.status).toBe(503);
   expect(json.headers.get('retry-after')).toBe('30');
   expect(await json.json()).toMatchObject({ error: { code: 'capacity', message: expect.stringContaining('1 个都在用') } });
+
+  // 实时状态（管理后台、巡检读的那份）：被挡的两个人在用、在门外等，AI 1/1。
+  const live = gateway.live.status();
+  expect(live).toMatchObject({ activeStudents: 2, live: 1, maxLive: 1, aiInUse: 1, aiLimit: 1, waitingOutside: 2 });
+  expect(live.last5m).toMatchObject({ capacityRejections: 3, rejectedStudents: 2, peakLive: 1, peakAiInUse: 1 });
+  expect(JSON.parse(fs.readFileSync(path.join(hostDir, 'live-status.json'), 'utf8'))).toMatchObject({ maxLive: 1 });
 }, 60_000);

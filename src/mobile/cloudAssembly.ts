@@ -88,7 +88,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
       ? deps => studentHost.router({ limiter: deps.limiter, ipOf: deps.ipOf, originScheme: 'https:' })
       : deps => createWebClientRouter({ ...deps, mobileDataDir: configuration.dataDir, transcriber, studentHostWorker: process.env.SEL_STUDENT_WORKER === '1' }),
     adminWeb: studentHost && adminAuth
-      ? ({ ipOf }) => createAdminRouter({ registry: studentHost.registry, auth: adminAuth, ipOf, originScheme: 'https:' })
+      ? ({ ipOf }) => createAdminRouter({ registry: studentHost.registry, auth: adminAuth, ipOf, originScheme: 'https:', live: () => studentHost.live.status() })
       : undefined,
   });
   let server: Awaited<ReturnType<typeof app.listen>> | null = null;
