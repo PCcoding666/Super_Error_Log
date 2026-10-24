@@ -94,7 +94,7 @@ v2.0 T2 起入口为 `dist/main.js`：同一端口（3101）同时服务 `/v1` �
 旧的 `dist/mobile/server.js` 仅保留给开发调试，不再作为线上入口。
 
 `/v2` 使用 Web 的 AI 配置（`SEL_AI_BASE_URL`、`SEL_AI_API_KEY`、`SEL_AI_MODEL*`），与上面的 `SEL_MOBILE_AI_*` 配置为同值；
-启动守卫见 `src/v2/aiConfigGuard.ts`。需要按阶段指定模型时可加 `SEL_AI_MODEL_FOLLOWUP`、`SEL_AI_MODEL_CORRECT`、`SEL_AI_MODEL_COACH`。
+启动守卫见 `src/v2/aiConfigGuard.ts`。需要按阶段指定模型时可加 `SEL_AI_MODEL_FOLLOWUP`、`SEL_AI_MODEL_CORRECT`、`SEL_AI_MODEL_COACH`、`SEL_AI_MODEL_EXPLAIN`（学生端详情页的正确答案与推测错因）。
 
 ## 3. 发布新版本
 

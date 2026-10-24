@@ -7,7 +7,7 @@ import { withProcessImage } from '../mobile/admission.js';
 import { withParentPermit } from '../studentHost/parentPermit.js';
 import { FALLBACK_BLOCKED_MESSAGE, withFallbackBudget } from './fallbackBudget.js';
 
-export type ModelStage = Stage | 'crop_inventory' | 'crop_verify' | 'mobile_inventory' | 'mobile_transcribe' | 'mobile_verify' | 'mobile_ground' | 'material_extract' | 'material_verify' | 'material_answer' | 'material_grade';
+export type ModelStage = Stage | 'crop_inventory' | 'crop_verify' | 'mobile_inventory' | 'mobile_transcribe' | 'mobile_verify' | 'mobile_ground' | 'material_extract' | 'material_verify' | 'material_answer' | 'material_grade' | 'explain';
 export interface StageRun { stage: ModelStage; model: string; durationMs: number; promptTokens: number | null; completionTokens: number | null; maxTokens: number; thinking: false; promptVersion: string }
 export interface StageResult<T> { value: T; run: StageRun }
 export interface ChatTrace {

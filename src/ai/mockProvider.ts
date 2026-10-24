@@ -11,12 +11,14 @@ import type {
   FollowupProvider,
   FollowupTurn,
   CorrectionProvider,
+  InsightProvider,
   MatchInput,
   MatchResult,
   SuggestInput,
 } from './provider.js';
-import { FOLLOWUP_FALLBACK_QUESTION, validateEvidence, validateLearningContext, type Coaching, type Diagnosis, type Evidence, type FollowupAsk, type FollowupSummarize, type CorrectionProposalResult } from './evidence.js';
+import { FOLLOWUP_FALLBACK_QUESTION, validateEvidence, validateInsight, validateLearningContext, type Coaching, type Insight, type Diagnosis, type Evidence, type FollowupAsk, type FollowupSummarize, type CorrectionProposalResult } from './evidence.js';
 import { ATTEMPT_STATES, CAUSES, type Subject } from '../domain/types.js';
+import type { StageResult } from './chatClient.js';
 
 export interface FixtureManifestItem {
   filename: string;
@@ -58,7 +60,7 @@ const TYPE_POOL = ['计算题', '选择题', '填空题', '证明题', '实验�
  * Deterministic mock：优先命中 fixture 清单（文件名精确匹配），
  * 否则由内容哈希派生稳定结果；支持 SEL_MOCK_FAULT 注入故障（测试用）。
  */
-export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionProvider, CoachProvider {
+export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionProvider, CoachProvider, InsightProvider {
   readonly name = 'mock';
   private manifest: Map<string, FixtureManifestItem> | null = null;
   private fault: string;
@@ -202,6 +204,32 @@ export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionP
       answer: `【mock】第 ${e.questionNumber} 题参考答案`,
       source: 'ai_generated',
     };
+  }
+
+  /** 确定性详情页解答：解题过程覆盖 Markdown 列表、加粗、表格和 LaTeX 公式；有学生原作才推测错因。 */
+  async explainItem(context: LearningContext): Promise<StageResult<Insight>> {
+    const e = validateLearningContext(context);
+    const work = e.observations.find(o => o.kind === 'student_work');
+    const value = validateInsight({
+      answer: `【mock】第 ${e.questionNumber} 题参考答案`,
+      solution: [
+        `**思路**：这题考的是「${e.knowledgeTags[0] ?? '相关知识点'}」。`,
+        '',
+        '1. 把已知条件列出来。',
+        '2. 列式：$\\frac{x}{2} + 1 = 3$。',
+        '3. 两边同乘 2：',
+        '',
+        '$$x + 2 = 6 \\Rightarrow x = 4$$',
+        '',
+        '| 步骤 | 依据 |',
+        '| --- | --- |',
+        '| 去分母 | 等式的性质 |',
+      ].join('\n'),
+      mistake: work ? `【mock】你写的「${work.text.slice(0, 20)}」这一步和题目条件对不上，回头看看移项。` : null,
+      cause: work ? '推理步骤' : null,
+      uncertain: null,
+    });
+    return { value, run: { stage: 'explain', model: 'mock', durationMs: 0, promptTokens: null, completionTokens: null, maxTokens: 0, thinking: false, promptVersion: 'mock' } };
   }
 
   async proposeCorrection(evidence: LearningContext, instruction: string): Promise<CorrectionProposalResult> {

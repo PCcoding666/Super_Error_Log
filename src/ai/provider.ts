@@ -1,7 +1,7 @@
 import type { LearningContext } from '../learning/contracts.js';
 import type { AttemptState, Cause, ReviewValue, Subject } from '../domain/types.js';
-import type { Coaching, Diagnosis, Evidence, FollowupAsk, FollowupSummarize, QuestionRegion, CorrectionProposalResult } from './evidence.js';
-import type { StageRun } from './chatClient.js';
+import type { Coaching, Diagnosis, Evidence, FollowupAsk, FollowupSummarize, Insight, QuestionRegion, CorrectionProposalResult } from './evidence.js';
+import type { StageResult, StageRun } from './chatClient.js';
 import type { CropAuditReport } from './cropAuditor.js';
 
 export interface ExtractInput {
@@ -106,4 +106,14 @@ export interface CorrectionProvider {
  */
 export interface CoachProvider {
   coachForPrint(evidence: LearningContext, diagnosis: Diagnosis): Promise<Coaching>;
+}
+
+// ---------- 学生端详情页：答案、解题过程与推测错因 ----------
+
+/**
+ * 详情页的 AI 参考解答与推测错因（explain 阶段）。StagedProvider 与 MockAiProvider 实现。
+ * 只读题目识别结果，不改证据、不写反思；结果由 insightService 按题目内容缓存。
+ */
+export interface InsightProvider {
+  explainItem(context: LearningContext): Promise<StageResult<Insight>>;
 }

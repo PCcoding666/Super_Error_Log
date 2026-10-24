@@ -272,6 +272,25 @@ CREATE TABLE IF NOT EXISTS correction_proposal (
 );
 CREATE INDEX IF NOT EXISTS idx_correction_proposal_item ON correction_proposal(item_id, created_at);
 
+-- 学生端详情页：AI 参考答案、解题过程与推测错因。每次模型调用记一行（成功写 content_json，失败写 error，都计入限流）；
+-- basis_hash 是生成时题目识别结果的指纹，内容改了旧行自然不再用。只给学生本人看，不进日志、不进家长聚合。
+CREATE TABLE IF NOT EXISTS item_insight (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL REFERENCES error_item(id) ON DELETE CASCADE,
+  basis_hash TEXT NOT NULL,
+  content_json TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_item_insight_item ON item_insight(item_id, created_at);
+
+-- 学生端详情页：学生自己记的备注（错在哪、下次注意什么），一题一条。只给学生本人看，不进日志、不进家长聚合。
+CREATE TABLE IF NOT EXISTS item_note (
+  item_id TEXT PRIMARY KEY REFERENCES error_item(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- v2.0 T5：打印快照（D17：服务器冻结结构化内容+图片，PDF 由手机生成）。
 -- 每个 v2 练习包最多一份快照；preparing 时 snapshot_json 存部分进度（供重启续做），ready 后为终态。
 CREATE TABLE IF NOT EXISTS v2_print_snapshot (

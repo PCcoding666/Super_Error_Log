@@ -107,6 +107,50 @@ export function validateCoaching(data: unknown): Coaching {
   return { hints, solution: str(c.solution, 'solution'), answer: str(c.answer, 'answer'), source: 'ai_generated' };
 }
 
+// ---------- 学生端详情页：答案、解题过程与推测错因（explain 阶段） ----------
+
+/**
+ * AI 参考，未经老师核验。answer 是各小问的最终答案；solution 是 Markdown 解题过程（公式用 $…$ LaTeX）；
+ * mistake / cause 只依据学生原作推测，没有原作时为 null；uncertain 是要学生对照原题核实的地方。
+ */
+export interface Insight { answer: string; solution: string; mistake: string | null; cause: Cause | null; uncertain: string | null }
+export const INSIGHT_MISTAKE_MAX_CHARS = 120;
+const INSIGHT_UNCERTAIN_MAX_CHARS = 200;
+const NEWLINE_COMMANDS = /\n(?=(?:eq|eg|e|abla|otin|ot|u|i|leq|geq|mid|exists)(?![A-Za-z]))/g;
+
+/**
+ * 模型把 LaTeX 命令写进 JSON 字符串时少写一个反斜杠，JSON.parse 会把它吃成控制字符（\frac → 换页符 + rac，\times → 制表符 + imes）。
+ * 只改回明显是这种情况的：换页、退格无条件；制表、回车后紧跟字母时；换行只在公式里（$ 或 $$ 没闭合）且后面是常见命令名时。
+ */
+export function repairLatexEscapes(text: string): string {
+  const fixed = text.replace(/\f/g, '\\f').replace(/\x08/g, '\\b').replace(/\t(?=[A-Za-z])/g, '\\t').replace(/\r(?=[A-Za-z])/g, '\\r');
+  return fixed.replace(NEWLINE_COMMANDS, (match, offset: number) => {
+    const before = fixed.slice(0, offset);
+    const display = (before.match(/\$\$/g) ?? []).length % 2 === 1;
+    const line = before.slice(before.lastIndexOf('\n') + 1).replace(/\$\$/g, '');
+    return display || (line.match(/\$/g) ?? []).length % 2 === 1 ? '\\n' : match;
+  });
+}
+
+function optionalText(x: unknown, field: string, max: number): string | null {
+  if (x === null || x === undefined) return null;
+  const value = repairLatexEscapes(str(x, field, true)).trim();
+  if (!value) return null;
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+export function validateInsight(data: unknown): Insight {
+  const d = obj(data, 'insight');
+  const answer = repairLatexEscapes(str(d.answer, 'answer')).trim();
+  const solution = repairLatexEscapes(str(d.solution, 'solution')).trim();
+  if (!answer || answer.length > 2000) bad('answer');
+  if (!solution || solution.length > 20000) bad('solution');
+  const mistake = optionalText(d.mistake, 'mistake', INSIGHT_MISTAKE_MAX_CHARS);
+  // 类别只是辅助标签，不合法就不显示，不为它作废整次解答。
+  const cause = mistake && CAUSES.includes(d.cause as Cause) ? d.cause as Cause : null;
+  return { answer, solution, mistake, cause, uncertain: optionalText(d.uncertain, 'uncertain', INSIGHT_UNCERTAIN_MAX_CHARS) };
+}
+
 // ---------- v2.0 T4c：AI 追问与复盘（followup 阶段） ----------
 
 /** 证据里没有学生作答/订正时的固定开放句（不调模型）。 */

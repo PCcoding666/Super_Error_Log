@@ -103,11 +103,41 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .photo-viewer-body img { display: block; width: 100%; height: auto; }
 .item-hint { margin: 8px 20px 0; font-size: 14px; }
 .item-rows { margin-top: 14px; }
-.item-rows ion-label.item-tags { max-width: 60%; text-align: right; font-size: 15px; }
+/* Ionic 的 iOS 深色调色板（:root.ios）把卡片底色改成纯黑，详情页的分块就看不出来了；这里按上面的深色值放回去。 */
+@media (prefers-color-scheme: dark) {
+  ion-content.item { --ion-item-background: #1c1c1e; }
+}
+.item-section-title { margin: 22px 36px 6px; font-size: 13px; font-weight: 400; color: var(--sel-muted); }
+.item-section { margin-top: 0; }
+.item-chapter-name { font-size: 17px; font-weight: 600; color: var(--ion-text-color); }
+.item-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.item-tag { padding: 3px 10px; border-radius: 999px; background: rgba(120, 120, 128, 0.12); font-size: 14px; color: var(--ion-text-color); }
+.item-field-label { margin: 0 0 4px; font-size: 13px; }
+.item-working { display: inline-flex; align-items: center; gap: 6px; color: var(--sel-muted); }
+.item-working ion-spinner { width: 20px; height: 20px; }
+.item-remark-status { margin: 4px 36px 0; min-height: 18px; font-size: 13px; }
 .item-remove { margin: 24px 20px; }
-.note-sheet { padding: 20px; }
+.note-sheet, .solution { padding: 20px; }
 .note-sheet h2 { margin: 0 0 12px; font-size: 20px; }
-.note-sheet pre { white-space: pre-wrap; font: inherit; line-height: 1.6; }
+.note-sheet h3, .solution h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--sel-muted); }
+.note-sheet section, .solution section { margin-bottom: 18px; }
+.note-sheet pre, .solution pre { margin: 0; white-space: pre-wrap; font: inherit; line-height: 1.6; }
+.solution-badge { display: inline-block; margin: 0 0 12px; padding: 3px 10px; border-radius: 999px; background: rgba(120, 120, 128, 0.12); font-size: 13px; color: var(--sel-muted); }
+.solution .item-hint { margin: 0 0 12px; }
+
+/* AI 解答的 Markdown */
+.md { font-size: 17px; line-height: 1.65; overflow-wrap: anywhere; }
+.md p { margin: 0 0 10px; }
+.md ol, .md ul { margin: 0 0 10px; padding-left: 22px; }
+.md li { margin: 4px 0; }
+.md h1, .md h2, .md h3, .md h4 { margin: 14px 0 6px; font-size: 17px; font-weight: 600; color: var(--ion-text-color); }
+.md code { font-family: ui-monospace, Menlo, monospace; font-size: 15px; }
+.md pre { white-space: pre-wrap; }
+.md .stem-table-wrap { margin: 10px 0; }
+.md-inline, .md-inline p { margin: 0; font-size: inherit; line-height: 1.5; }
+.md-fallback { white-space: pre-wrap; }
+.md-math-block { margin: 8px 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.md-math math { font-size: 1.05em; }
 
 /* ---------- 设置 ---------- */
 .page-title { font-size: 34px; font-weight: 700; margin: 8px 20px 16px; }

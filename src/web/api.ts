@@ -19,6 +19,7 @@ import type { LearningCard } from '../learning/contracts.js';
 import { getLearningSource, learningCard, learningImageFragments, materialStoreForItem } from '../learning/sources.js';
 import { intakeDay } from '../learning/redoSchedule.js';
 import { getEvidenceView } from '../v2/correctionService.js';
+import { getItemNote, insightState, NOTE_MAX_CHARS, requestInsight, saveItemNote, type InsightState } from '../v2/insightService.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
 import { canRecover } from '../mobile/contracts.js';
@@ -32,7 +33,7 @@ import { matchesNotebook, NOTEBOOK_STATUS_GROUPS, notebookStatusFilter, notebook
 import { loadPhotos, type PhotoView, type WebContext } from './state.js';
 import { stemFirstSentence } from './views/materials.js';
 import type {
-  DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemDetailResponse, ItemImage, ItemNote,
+  DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemDetailResponse, ItemImage, ItemInsight, ItemTrace,
   NotebookGroup, NotebookItem, NotebookResponse, SettingsResponse, UploadModeResponse,
 } from './apiTypes.js';
 
@@ -40,8 +41,45 @@ const require = createRequire(import.meta.url);
 const VERSION: string = (require('../../package.json') as { version: string }).version;
 const ITEM_ID = /^itm_[0-9a-f]{16}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
 const FRAGMENT_TITLE: Record<string, string> = { question: '题目', diagram: '题目图形', student_work: '你写的', correction: '订正', teacher_mark: '老师批注', reference_answer: '参考答案', unknown: '其他材料' };
+
+/**
+ * 详情页的笔迹分三处放：你写的（原作，订正和看不出是谁写的另外标出）、批改痕迹、资料上的参考答案。
+ * 同一类的几段笔迹合在一处，不再一段一行（以前两段原作会出现两行「你写的」）。
+ */
+export function groupTraces(observations: Array<{ kind: string; text: string }>): { work: ItemTrace[]; marking: ItemTrace[]; sourceAnswers: string[] } {
+  const work: Array<ItemTrace & { rank: number }> = [], marking: ItemTrace[] = [], sourceAnswers: string[] = [];
+  for (const observation of observations) {
+    const text = observation.text.trim();
+    if (!text) continue;
+    if (observation.kind === 'student_work') work.push({ label: null, text, rank: 0 });
+    else if (observation.kind === 'correction') work.push({ label: '订正', text, rank: 1 });
+    else if (observation.kind === 'teacher_note') marking.push({ label: null, text });
+    else if (observation.kind === 'reference_answer') sourceAnswers.push(text);
+    else work.push({ label: '看不出是谁写的', text, rank: 2 });
+  }
+  return { work: work.sort((a, b) => a.rank - b.rank).map(({ label, text }) => ({ label, text })), marking, sourceAnswers };
+}
+
+/** 服务里的解答状态 → 学生看到的文字；low：题目文字可能认错了。 */
+export function toItemInsight(state: InsightState, low: boolean): ItemInsight {
+  switch (state.state) {
+    case 'unavailable': return { state: 'unavailable', message: '题目文字还没识别完整，AI 暂时解不了这道题，先对照照片核对。' };
+    case 'failed': return state.rateLimited
+      ? { state: 'failed', message: '这道题问得太频繁了，一小时后再试。', retryable: false }
+      : { state: 'failed', message: 'AI 这次没解出来，过一会儿再试。', retryable: true };
+    case 'ready': {
+      const { insight } = state;
+      const warnings = [
+        ...(low ? ['题目文字可能认错了，解答是按识别出的文字做的，以照片为准。'] : []),
+        ...(state.requiresDiagram ? ['这题有图，AI 只看了文字，没看图。'] : []),
+        ...(insight.uncertain ? [insight.uncertain] : []),
+      ];
+      return { state: 'ready', answer: insight.answer, solution: insight.solution, mistake: insight.mistake, cause: insight.cause, warnings };
+    }
+    default: return state;
+  }
+}
 
 class ApiFailure extends Error { constructor(public status: number, public code: string, message: string) { super(message); } }
 const fail = (status: number, code: string, message: string): never => { throw new ApiFailure(status, code, message); };
@@ -157,7 +195,8 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const images: ItemImage[] = shown.length
       ? shown.map(f => ({ url: `/s/materials/fragments/${f.fragmentId}/crop?revision=${f.revision}`, fullUrl: `/s/materials/assets/${f.assetId}/image`, title: FRAGMENT_TITLE[f.role] ?? '其他材料' }))
       : [{ url: `/s/img/item/${item.id}?scope=full&s=big`, fullUrl: `/s/img/item/${item.id}?scope=full`, title: '整题照片' }];
-    const notes: ItemNote[] = (evidence?.observations ?? []).map(note => ({ kind: note.kind, title: KIND_TITLE[note.kind] ?? '其他笔迹', text: note.text }));
+    const traces = groupTraces(evidence?.observations ?? []);
+    const badge = evidence?.badge ?? item.badge;
     const category = categoryForItem(item.id);
     const profile = requireProfile();
     const catalog = readCatalog(getDb(), profile.id);
@@ -174,13 +213,33 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       return { grade, subject, chapters: [...new Set([...current, ...fromCatalog, ...used].filter(Boolean))] };
     }));
     const body: ItemDetailResponse = {
-      item: toNotebookItem(item), questionText: evidence?.questionText || item.questionExcerpt || '', badge: evidence?.badge ?? item.badge, revision: evidence?.revision ?? null,
-      images, notes,
+      item: toNotebookItem(item), questionText: evidence?.questionText || item.questionExcerpt || '', badge, revision: evidence?.revision ?? null,
+      images, ...traces, insight: toItemInsight(insightState(item.id), badge === 'low'), remark: getItemNote(item.id),
       canDiscard: item.source.kind === 'material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
       category: { grade: category.grade, subject: category.subject, chapter: category.chapter, stages, subjects, chapterOptions },
       materialUrl: item.source.kind === 'material' && item.source.questionId ? `/s/materials/questions/${item.source.questionId}` : null,
     };
     return body;
+  }));
+
+  // 详情页的 AI 解答：打开详情页时请求一次（已有就不再调用模型），生成中客户端轮询 GET。只查这一题，不算整本错题本。
+  const learningItem = (itemId: string): LearningCard => {
+    const card = ITEM_ID.test(itemId) ? learningCard(itemId) : null;
+    return card ?? fail(404, 'not_found', '题目不存在。');
+  };
+  r.get('/items/:id/insight', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    return toItemInsight(insightState(card.id), card.badge === 'low');
+  }));
+  r.post('/items/:id/insight', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    return toItemInsight(requestInsight(card.id), card.badge === 'low');
+  }));
+  r.post('/items/:id/remark', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    const remark = saveItemNote(card.id, request.body?.text);
+    if (!remark) fail(400, 'invalid_request', `备注最多 ${NOTE_MAX_CHARS} 字。`);
+    return { remark };
   }));
 
   const discardOne = (itemId: string): string | null => {

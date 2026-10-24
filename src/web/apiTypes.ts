@@ -53,7 +53,35 @@ export interface NotebookResponse {
 }
 
 export interface ItemImage { url: string; fullUrl: string; title: string }
-export interface ItemNote { kind: string; title: string; text: string }
+/** 一段识别出的笔迹。label 为 null 是这一类的本体（你写的原作、老师批改），订正、看不出是谁写的另外标出。 */
+export interface ItemTrace { label: string | null; text: string }
+
+/**
+ * 详情页的 AI 参考答案与推测错因（未经老师核验）。
+ * none：还没生成，客户端打开详情页时请求一次；generating：后台生成中，客户端轮询；
+ * unavailable：题目文字不完整等，没法生成；failed：这次没生成出来，retryable 为 false 时是问得太频繁。
+ */
+export type ItemInsight =
+  | { state: 'none' }
+  | { state: 'generating' }
+  | { state: 'unavailable'; message: string }
+  | { state: 'failed'; message: string; retryable: boolean }
+  | {
+    state: 'ready';
+    /** 各小问的最终答案（可含 $…$ 公式）。 */
+    answer: string;
+    /** Markdown 解题过程，公式用 $…$ / $$…$$。 */
+    solution: string;
+    /** 根据学生原作推测的错因；没有原作时为 null。 */
+    mistake: string | null;
+    /** 错因类别（知识概念、计算……）；没有时为 null。 */
+    cause: string | null;
+    /** 提醒：题目可能认错、AI 没看图、要对照原题核实的地方。 */
+    warnings: string[];
+  };
+
+/** 学生自己记的备注；没记过时 text 为空串、updatedAt 为 null。 */
+export interface ItemRemark { text: string; updatedAt: string | null }
 
 export interface ChapterOptions { grade: string; subject: string; chapters: string[] }
 
@@ -63,7 +91,14 @@ export interface ItemDetailResponse {
   badge: 'ok' | 'low';
   revision: number | null;
   images: ItemImage[];
-  notes: ItemNote[];
+  /** 你写的：原作、订正、看不出是谁写的笔迹。 */
+  work: ItemTrace[];
+  /** 批改痕迹：老师的勾叉、批注。 */
+  marking: ItemTrace[];
+  /** 照片里资料自带的参考答案（转写）。 */
+  sourceAnswers: string[];
+  insight: ItemInsight;
+  remark: ItemRemark;
   canDiscard: boolean;
   /** chapterOptions：每个「学段 × 学科」可选的章节（一级标题）：学科目录里的章节加上同学段同学科已有题目用过的章节。 */
   category: { grade: string; subject: string; chapter: string; stages: string[]; subjects: string[]; chapterOptions: ChapterOptions[] };

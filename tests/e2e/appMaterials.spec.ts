@@ -66,6 +66,14 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await page.getByTestId('item-card').first().click();
   await expect(page.getByTestId('question-text')).toContainText('1 + 1');
   await expect(page.locator('.item-photo img').first()).toHaveAttribute('src', /\/s\/materials\/fragments\//);
+  // 材料流程的题：你写的来自作答片段；照片里的参考答案和 AI 解答放在「正确答案」里。
+  await expect(page.getByTestId('item-work')).toHaveCount(1);
+  await expect(page.getByTestId('item-answer')).toContainText('查看答案和解题过程');
+  await page.getByTestId('item-answer').click();
+  await expect(page.getByTestId('solution-sheet')).toContainText('Synthetic reference answer: 2');
+  await expect(page.getByTestId('solution-answer')).toContainText('【mock】');
+  await page.getByTestId('solution-close').click();
+  await expect(page.getByTestId('solution-sheet')).toHaveClass(/overlay-hidden/);
   await page.getByTestId('back-link').click();
   await page.getByTestId('settings-link').click();
   await expect(page.getByTestId('settings-my-invite')).toHaveAttribute('href', '/s/account');

@@ -117,7 +117,7 @@ test('网格与列表切换、选择移除并撤销、搜索与章节筛选', as
   await expect(page.getByTestId('item-card')).toHaveCount(4);
 });
 
-test('详情页：照片、题干、你写的、章节可改；移除后回到错题本', async ({ page }) => {
+test('详情页：照片、题干、你写的、批改痕迹、章节与知识点、正确答案、错因备注；章节可改；移除后回到错题本', async ({ page }) => {
   await pair(page);
   await page.getByTestId('item-card').first().click();
   await expect.poll(() => url(page)).toMatch(/^\/s\/q\/itm_/);
@@ -129,6 +129,33 @@ test('详情页：照片、题干、你写的、章节可改；移除后回到�
   await page.getByTestId('photo-back').click();
   await expect(page.locator('ion-modal.photo-viewer')).toBeHidden();
   expect(url(page)).toMatch(/^\/s\/q\/itm_/);
+  // 你写的只有一行（几段原作合在一起）；没有老师批改就写「没识别到」。
+  await expect(page.getByTestId('item-work')).toHaveCount(1);
+  await expect(page.getByTestId('item-marking')).toContainText('没识别到');
+  await page.getByTestId('item-work').click();
+  await expect(page.getByTestId('trace-sheet')).toContainText('x = ');
+  // 点上方空白处收起（ion-modal 宿主元素一直「可见」，以 overlay-hidden 为准）。
+  await page.locator('ion-modal[data-testid="trace-sheet"] ion-backdrop').click({ position: { x: 20, y: 20 } });
+  await expect(page.getByTestId('trace-sheet')).toHaveClass(/overlay-hidden/);
+  // 打开详情页就请求 AI 解答（mock 模式立即生成）：错因块里是 AI 推测，正确答案点开是 Markdown 渲染的解题过程。
+  await expect(page.getByTestId('item-mistake')).toContainText('AI 推测 · 推理步骤');
+  await expect(page.getByTestId('item-mistake')).toContainText('【mock】你写的「x = ');
+  await page.getByTestId('item-answer').click();
+  const steps = page.getByTestId('solution-steps');
+  await expect(page.getByTestId('solution-answer')).toContainText('【mock】');
+  await expect(page.getByTestId('solution-sheet')).toContainText('AI 参考，未经老师核验');
+  await expect(steps.locator('strong')).toHaveText('思路');
+  await expect(steps.locator('ol > li')).toHaveCount(3);
+  await expect(steps.locator('math')).toHaveCount(2);
+  await expect(steps.locator('table')).toContainText('等式的性质');
+  await expect(steps).not.toContainText('$');
+  await page.getByTestId('solution-close').click();
+  await expect(page.getByTestId('solution-sheet')).toHaveClass(/overlay-hidden/);
+  // 备注：停笔自动保存，刷新后还在。
+  await page.getByTestId('item-remark').locator('textarea').fill('两轮是平方，不是乘 2');
+  await expect(page.getByTestId('remark-status')).toHaveText('已保存');
+  await page.reload();
+  await expect(page.getByTestId('item-remark').locator('textarea')).toHaveValue('两轮是平方，不是乘 2');
   await expect(page.getByTestId('item-chapter')).toContainText('一元一次方程');
   await expect(page.getByTestId('item-tags')).toContainText('一元一次方程');
   await page.getByTestId('item-chapter').click();

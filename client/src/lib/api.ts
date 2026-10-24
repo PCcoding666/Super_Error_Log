@@ -1,4 +1,4 @@
-import type { ApiError, DiscardResponse, IntakeResponse, ItemDetailResponse, NotebookResponse, SettingsResponse, UploadModeResponse } from '../../../src/web/apiTypes';
+import type { ApiError, DiscardResponse, IntakeResponse, ItemDetailResponse, ItemInsight, ItemRemark, NotebookResponse, SettingsResponse, UploadModeResponse } from '../../../src/web/apiTypes';
 
 export class RequestError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
@@ -30,6 +30,9 @@ export const api = {
   item: (id: string) => call<ItemDetailResponse>(`/s/api/items/${encodeURIComponent(id)}`),
   discard: (ids: string[]) => call<DiscardResponse>('/s/api/items/discard', { method: 'POST', body: JSON.stringify({ ids }) }),
   restore: (id: string) => call<{ ok: true }>(`/s/api/items/${encodeURIComponent(id)}/restore`, { method: 'POST', body: '{}' }),
+  insight: (id: string) => call<ItemInsight>(`/s/api/items/${encodeURIComponent(id)}/insight`),
+  requestInsight: (id: string) => call<ItemInsight>(`/s/api/items/${encodeURIComponent(id)}/insight`, { method: 'POST', body: '{}' }),
+  remark: (id: string, text: string) => call<{ remark: ItemRemark }>(`/s/api/items/${encodeURIComponent(id)}/remark`, { method: 'POST', body: JSON.stringify({ text }) }),
   category: (id: string, values: { grade: string; subject: string; chapter: string }) => call<{ ok: true }>(`/s/api/items/${encodeURIComponent(id)}/category`, { method: 'POST', body: JSON.stringify(values) }),
   settings: () => call<SettingsResponse>('/s/api/settings'),
   grade: (grade: string) => call<{ ok: true }>('/s/api/settings/grade', { method: 'POST', body: JSON.stringify({ grade }) }),
