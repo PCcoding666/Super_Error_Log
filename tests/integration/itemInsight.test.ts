@@ -113,6 +113,36 @@ describe('详情页 AI 解答在后台排队生成', () => {
     expect(insightState(item)).toMatchObject({ state: 'ready' });
   });
 
+  it('范围外的题打开后第一次失败，也会自动再试；进程重启过，再打开一次就接着排', async () => {
+    const backdate = (item: string) => getDb().prepare("UPDATE item_insight SET created_at = '2020-01-01T00:00:00.000Z' WHERE item_id = ?").run(item);
+    const old = seed(evidence([WORK]));
+    getDb().prepare('UPDATE error_item SET created_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', old);
+    stub.explainError = new AiError('provider_error', '模型服务暂时不可用');
+    expect(requestInsight(old)).toEqual({ state: 'queued' });
+    await drainInsightQueue();
+    expect(insightState(old)).toEqual({ state: 'queued' });
+    stub.explainError = null;
+    backdate(old);
+    await drainInsightQueue();
+    expect(stub.explains).toHaveLength(2);
+    expect(insightState(old)).toMatchObject({ state: 'ready' });
+
+    const other = seed(evidence([{ ...WORK, text: 'x = 12' }]));
+    getDb().prepare('UPDATE error_item SET created_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', other);
+    stub.explainError = new AiError('provider_error', '模型服务暂时不可用');
+    requestInsight(other);
+    await drainInsightQueue();
+    stub.explainError = null;
+    backdate(other);
+    resetInsightQueueForTest();
+    await drainInsightQueue();
+    expect(stub.explains).toHaveLength(3);
+    expect(requestInsight(other)).toEqual({ state: 'queued' });
+    await drainInsightQueue();
+    expect(stub.explains).toHaveLength(4);
+    expect(insightState(other)).toMatchObject({ state: 'ready' });
+  });
+
   it('移出错题本的题不做', async () => {
     const item = seed(evidence([WORK]));
     getDb().prepare("UPDATE error_item SET status = 'archived_not_worth_review', archived_reason = 'not_a_mistake' WHERE id = ?").run(item);

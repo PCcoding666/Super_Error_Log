@@ -74,6 +74,8 @@ export interface InsightQueueOptions {
 
 const running = new Map<string, string>();
 const priority: Array<{ itemId: string; manual: boolean }> = [];
+/** 学生要过的题（打开过、改过、录过答案）：不管录入多久，都一直留着，直到解出来或自动次数用完。 */
+const requested = new Set<string>();
 const unavailableUntil = new Map<string, number>();
 let queue: { options: InsightQueueOptions; timer: NodeJS.Timeout | null } | null = null;
 let draining: Promise<void> | null = null;
@@ -114,6 +116,7 @@ function stateFor(itemId: string, basis: Basis): InsightState {
     return { state: 'ready', insight: { ...insight, figure: insight.figure ?? null }, requiresDiagram: basis.context.requiresDiagram, images };
   }
   if (priority.some(entry => entry.itemId === itemId && (entry.manual || record.failures < AUTO_ATTEMPTS))) return { state: 'queued' };
+  if (requested.has(itemId) && record.failures < AUTO_ATTEMPTS) return { state: 'queued' };
   const limited = rateLimited(itemId);
   if (record.failures >= AUTO_ATTEMPTS || (record.failures > 0 && limited)) return { state: 'failed', rateLimited: limited };
   return { state: record.failures > 0 ? 'queued' : 'none' };
@@ -220,6 +223,13 @@ function nextJob(options: InsightQueueOptions): { label: string; run: (provider:
     const basis = getLearningSource(entry.itemId) ? basisOf(entry.itemId) : null;
     if (basis && wantsWork(entry.itemId, basis, entry.manual)) return { label: `insight:${entry.itemId}`, run: provider => runInsight(entry.itemId, basis, provider) };
   }
+  // 学生要过的题：失败后的自动再试不受录入时间范围限制；解出来、自动次数用完或题目没了就不再留着。
+  for (const itemId of [...requested]) {
+    const basis = getLearningSource(itemId) ? basisOf(itemId) : null;
+    const record = basis && recordFor(itemId, basis.hash);
+    if (!basis || !record || record.content || record.failures >= AUTO_ATTEMPTS) { requested.delete(itemId); continue; }
+    if (wantsWork(itemId, basis, false)) return { label: `insight:${itemId}`, run: provider => runInsight(itemId, basis, provider) };
+  }
   for (const itemId of eligibleItems(options, true)) {
     const basis = autoCandidate(itemId);
     if (basis) return { label: `insight:${itemId}`, run: provider => runInsight(itemId, basis, provider) };
@@ -268,6 +278,7 @@ export function prioritizeInsight(itemId: string, manual = false): void {
   const entry = { itemId, manual: manual || (index >= 0 && priority[index]!.manual) };
   if (index >= 0) priority.splice(index, 1);
   priority.unshift(entry);
+  requested.add(itemId);
   unavailableUntil.delete(itemId);
   if (queue?.timer) setImmediate(() => { void drainInsightQueue(); });
 }
@@ -283,7 +294,9 @@ export function requestInsight(itemId: string, options: { retry?: boolean } = {}
   const basis = basisOf(itemId);
   if (!basis) return { state: 'unavailable' };
   const current = stateFor(itemId, basis);
-  if (current.state === 'ready' || current.state === 'generating' || current.state === 'queued') return current;
+  if (current.state === 'ready' || current.state === 'generating') return current;
+  // 排着（含失败后等自动再试）：记下来，录入再早的题也会再试（进程重启后靠这次打开补回来）。
+  if (current.state === 'queued') { requested.add(itemId); return current; }
   if (current.state === 'failed' && (!options.retry || current.rateLimited)) return current;
   if (rateLimited(itemId)) return { state: 'failed', rateLimited: true };
   prioritizeInsight(itemId, options.retry === true);
@@ -293,6 +306,7 @@ export function requestInsight(itemId: string, options: { retry?: boolean } = {}
 /** 测试用：清掉进程内的排队状态（同一测试文件里的用例共用这个模块）。 */
 export function resetInsightQueueForTest(): void {
   priority.length = 0;
+  requested.clear();
   unavailableUntil.clear();
   scanCursor = 0;
   scanPausedUntil = 0;

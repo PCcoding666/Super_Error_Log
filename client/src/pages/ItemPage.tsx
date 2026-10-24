@@ -60,7 +60,8 @@ export function ItemPage(): ReactNode {
   const polls = useRef(0);
   useEffect(() => { if (data) setInsight(data.insight); }, [data]);
   useEffect(() => {
-    if (insight?.state !== 'none' || requestedFor.current === id) return;
+    // 没轮到或排着（含失败后等自动再试）都告诉服务器一声：服务器重启过也能接着排。
+    if ((insight?.state !== 'none' && insight?.state !== 'queued') || requestedFor.current === id) return;
     requestedFor.current = id;
     api.requestInsight(id).then(setInsight, () => undefined);
   }, [insight, id]);
@@ -71,7 +72,7 @@ export function ItemPage(): ReactNode {
     const timer = setTimeout(() => {
       polls.current += 1;
       // 拍的答案还在识别就整页刷新（识别完会影响解答）；否则只问解答。网络抖一下就下一轮再问。
-      if (readingPhotos) void reload();
+      if (readingPhotos) void reload().finally(() => setTick(value => value + 1));
       else api.insight(id).then(setInsight, () => setTick(value => value + 1));
     }, POLL_MS);
     return () => clearTimeout(timer);
