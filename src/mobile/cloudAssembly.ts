@@ -15,7 +15,8 @@ import { getDb } from '../db/connection.js';
 import { ensureStudentProfile } from '../services/studentService.js';
 import { bridgePending } from '../bridge/recognitionToItems.js';
 import { createV2Router } from '../v2/router.js';
-import { resumePendingSnapshots } from '../v2/printService.js';
+import { printWorkPending, resumePendingSnapshots } from '../v2/printService.js';
+import { startInsightQueue } from '../v2/insightService.js';
 import { createWebClientRouter } from '../web/router.js';
 import { getTranscriber, type SpeechTranscriber } from '../ai/asr.js';
 import type { MobileVisionBoundary } from './vision.js';
@@ -91,6 +92,13 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
       ? ({ ipOf }) => createAdminRouter({ registry: studentHost.registry, auth: adminAuth, ipOf, originScheme: 'https:' })
       : undefined,
   });
+  // 详情页解答在后台排队：这个学生不忙（没有在识别、整理材料、准备打印）时一道一道做。网关进程不服务学生页面，不开。
+  const recognition = app.locals.mobileRecognitionService as MobileRecognitionService;
+  const materialJobs = (app.locals.materials as { jobs?: MaterialJobs } | undefined)?.jobs;
+  const stopInsights = studentHost ? null : startInsightQueue({
+    busy: () => recognition.hasPendingRecognition() || (materialJobs?.busy() ?? false) || printWorkPending(),
+    intervalMs: config.insightQueueIntervalMs, backfillDays: config.insightBackfillDays,
+  });
   let server: Awaited<ReturnType<typeof app.listen>> | null = null;
   const listen = (): Promise<void> => new Promise((resolve, reject) => {
     if (server) { reject(new Error('云端服务已在监听，不能重复 listen')); return; }
@@ -109,6 +117,7 @@ export async function assembleCloudService(configuration: MobileConfiguration, o
     };
     // 先停学生 worker（不再接新请求后再杀子进程，避免半截 multipart 写入）。
     // Each resource still gets its cleanup attempt if an earlier shutdown write fails.
+    stopInsights?.();
     if (studentHost) await cleanup(() => studentHost.close());
     await cleanup(() => app.locals.mobileRecognitionService.stop());
     if (admin) await cleanup(() => admin.close());

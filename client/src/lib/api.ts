@@ -1,4 +1,4 @@
-import type { ApiError, DiscardResponse, IntakeResponse, ItemDetailResponse, ItemInsight, ItemRemark, NotebookResponse, SettingsResponse, UploadModeResponse } from '../../../src/web/apiTypes';
+import type { ApiError, DiscardResponse, IntakeResponse, ItemAnswerPhoto, ItemDetailResponse, ItemInsight, ItemRemark, NotebookResponse, SettingsResponse, UploadModeResponse } from '../../../src/web/apiTypes';
 
 export class RequestError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
@@ -31,7 +31,13 @@ export const api = {
   discard: (ids: string[]) => call<DiscardResponse>('/s/api/items/discard', { method: 'POST', body: JSON.stringify({ ids }) }),
   restore: (id: string) => call<{ ok: true }>(`/s/api/items/${encodeURIComponent(id)}/restore`, { method: 'POST', body: '{}' }),
   insight: (id: string) => call<ItemInsight>(`/s/api/items/${encodeURIComponent(id)}/insight`),
-  requestInsight: (id: string) => call<ItemInsight>(`/s/api/items/${encodeURIComponent(id)}/insight`, { method: 'POST', body: '{}' }),
+  requestInsight: (id: string, retry = false) => call<ItemInsight>(`/s/api/items/${encodeURIComponent(id)}/insight`, { method: 'POST', body: JSON.stringify({ retry }) }),
+  /** 改识别出的文字：target 是 'question'（题干）或观察 ID。 */
+  editText: (id: string, revision: number, target: string, text: string) => call<{ revision: number }>(`/s/api/items/${encodeURIComponent(id)}/text`, { method: 'POST', body: JSON.stringify({ revision, target, text }) }),
+  addAnswerPhoto: (id: string, jpeg: Blob) => call<{ photo: ItemAnswerPhoto }>(`/s/api/items/${encodeURIComponent(id)}/answer-photos`, { method: 'POST', body: jpeg, headers: { 'content-type': 'image/jpeg' } }),
+  editAnswerPhoto: (id: string, photoId: string, text: string) => call<{ photo: ItemAnswerPhoto }>(`/s/api/items/${encodeURIComponent(id)}/answer-photos/${encodeURIComponent(photoId)}`, { method: 'POST', body: JSON.stringify({ text }) }),
+  retryAnswerPhoto: (id: string, photoId: string) => call<{ ok: true }>(`/s/api/items/${encodeURIComponent(id)}/answer-photos/${encodeURIComponent(photoId)}/retry`, { method: 'POST', body: '{}' }),
+  deleteAnswerPhoto: (id: string, photoId: string) => call<{ ok: true }>(`/s/api/items/${encodeURIComponent(id)}/answer-photos/${encodeURIComponent(photoId)}/delete`, { method: 'POST', body: '{}' }),
   remark: (id: string, text: string) => call<{ remark: ItemRemark }>(`/s/api/items/${encodeURIComponent(id)}/remark`, { method: 'POST', body: JSON.stringify({ text }) }),
   category: (id: string, values: { grade: string; subject: string; chapter: string }) => call<{ ok: true }>(`/s/api/items/${encodeURIComponent(id)}/category`, { method: 'POST', body: JSON.stringify(values) }),
   settings: () => call<SettingsResponse>('/s/api/settings'),

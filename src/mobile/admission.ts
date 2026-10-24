@@ -43,9 +43,9 @@ export async function acquireProcessImage(): Promise<Release> {
   };
 }
 
-export async function withProcessImage<T>(section: () => Promise<T>): Promise<T> {
+export async function withProcessImage<T>(section: () => Promise<T>, options: { background?: boolean } = {}): Promise<T> {
   const release = await acquireProcessImage();
-  try { return await withParentPermit('image', section); }
+  try { return await withParentPermit('image', section, options); }
   finally { release(); }
 }
 

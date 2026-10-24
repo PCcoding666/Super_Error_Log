@@ -4,10 +4,10 @@ import sharp from 'sharp';
 import crypto from 'node:crypto';
 import { recordAiUsage, tokenCount } from '../observability/aiUsage.js';
 import { withProcessImage } from '../mobile/admission.js';
-import { withParentPermit } from '../studentHost/parentPermit.js';
+import { PreemptedError, withParentPermit } from '../studentHost/parentPermit.js';
 import { FALLBACK_BLOCKED_MESSAGE, withFallbackBudget } from './fallbackBudget.js';
 
-export type ModelStage = Stage | 'crop_inventory' | 'crop_verify' | 'mobile_inventory' | 'mobile_transcribe' | 'mobile_verify' | 'mobile_ground' | 'material_extract' | 'material_verify' | 'material_answer' | 'material_grade' | 'explain';
+export type ModelStage = Stage | 'crop_inventory' | 'crop_verify' | 'mobile_inventory' | 'mobile_transcribe' | 'mobile_verify' | 'mobile_ground' | 'material_extract' | 'material_verify' | 'material_answer' | 'material_grade' | 'explain' | 'answer_read';
 export interface StageRun { stage: ModelStage; model: string; durationMs: number; promptTokens: number | null; completionTokens: number | null; maxTokens: number; thinking: false; promptVersion: string }
 export interface StageResult<T> { value: T; run: StageRun }
 export interface ChatTrace {
@@ -22,7 +22,8 @@ export interface ChatTrace {
   usage: { prompt_tokens: number | null; completion_tokens: number | null };
   error: { kind: string; message: string } | null;
 }
-export interface ChatOptions { baseUrl: string; apiKey: string; models: Record<string, string>; timeoutMs: number; bailianOnly: boolean; maxTokens?: number; trace?: (trace: ChatTrace) => void | Promise<void>; signal?: AbortSignal; beforeRequest?: () => Promise<void> }
+/** background：后台任务（详情页解答的预生成），向父进程借名额时排在前台请求之后。 */
+export interface ChatOptions { baseUrl: string; apiKey: string; models: Record<string, string>; timeoutMs: number; bailianOnly: boolean; maxTokens?: number; trace?: (trace: ChatTrace) => void | Promise<void>; signal?: AbortSignal; beforeRequest?: () => Promise<void>; background?: boolean }
 export interface Message { role: 'system' | 'user'; content: unknown }
 export const PROMPT_VERSION = 'evidence-v1-20260907';
 export const MAX_INPUT_TOKEN_RESERVATION = 100_000;
@@ -103,13 +104,16 @@ function containsImage(messages: Message[]): boolean {
 export class ChatClient {
   constructor(readonly options: ChatOptions) {}
   async call(stage: ModelStage, messages: Message[], beforeRequest?: () => Promise<void>): Promise<StageResult<unknown>> {
-    const o = beforeRequest ? { ...this.options, beforeRequest: async () => { await beforeRequest(); await this.options.beforeRequest?.(); } } : this.options;
+    const base = beforeRequest ? { ...this.options, beforeRequest: async () => { await beforeRequest(); await this.options.beforeRequest?.(); } } : this.options;
+    // 后台任务的模型名额可以被前台请求要走：父进程一说就中止这次调用（抛 PreemptedError），由调用方稍后重排。
+    const preempt = base.background ? new AbortController() : null;
+    const o: ChatOptions = preempt ? { ...base, signal: base.signal ? AbortSignal.any([base.signal, preempt.signal]) : preempt.signal } : base;
     const model = o.models[stage];
     if (!o.apiKey.trim() || !model?.trim()) throw new AiError('unsupported', '真实 AI 配置缺失，请在本机配置密钥和阶段模型；不会降级为 Mock');
     assertEndpoint(o.baseUrl, o.bailianOnly);
     const vision = containsImage(messages);
     // 带图的调用才占全局名额：先串行解码校验，再占视觉名额发请求。纯文本追问不排队。
-    if (vision) await withProcessImage(() => checkInput(messages));
+    if (vision) await withProcessImage(() => checkInput(messages), { background: o.background });
     else await checkInput(messages);
     const run = async (): Promise<StageResult<unknown>> => {
       const key = process.env.SEL_TOKEN_PLAN_API_KEY?.trim();
@@ -131,7 +135,7 @@ export class ChatClient {
           result => (result.run.promptTokens ?? 0) + (result.run.completionTokens ?? 0) || null);
       }
     };
-    return vision ? withParentPermit('ai', run) : run();
+    return vision ? withParentPermit('ai', run, { background: o.background, onPreempt: preempt ? () => preempt.abort(new PreemptedError()) : undefined }) : run();
   }
 
   private async complete(stage: ModelStage, messages: Message[], o: ChatOptions): Promise<StageResult<unknown>> {

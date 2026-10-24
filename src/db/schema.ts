@@ -284,6 +284,21 @@ CREATE TABLE IF NOT EXISTS item_insight (
 );
 CREATE INDEX IF NOT EXISTS idx_item_insight_item ON item_insight(item_id, created_at);
 
+-- 学生端详情页：学生拍照录入的答案。照片缩到长边 2048 的 JPEG 存库；后台找出这道题的答案转写
+-- （reading → done / not_found / failed，attempts 计模型调用次数），转写文字学生可以改。只给学生本人看。
+CREATE TABLE IF NOT EXISTS item_answer_photo (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL REFERENCES error_item(id) ON DELETE CASCADE,
+  image BLOB NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('reading','done','not_found','failed')),
+  text TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_item_answer_photo_item ON item_answer_photo(item_id, created_at);
+
 -- 学生端详情页：学生自己记的备注（错在哪、下次注意什么），一题一条。只给学生本人看，不进日志、不进家长聚合。
 CREATE TABLE IF NOT EXISTS item_note (
   item_id TEXT PRIMARY KEY REFERENCES error_item(id) ON DELETE CASCADE,

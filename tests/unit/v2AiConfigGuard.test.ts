@@ -5,7 +5,7 @@ const complete = {
   aiMode: 'bailian',
   aiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   aiApiKey: 'sk-test',
-  aiModels: { followup: 'm', correct: 'm', coach: 'm', material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm', explain: 'm' },
+  aiModels: { followup: 'm', correct: 'm', coach: 'm', material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm', explain: 'm', answer_read: 'm' },
 };
 
 describe('v2 启动守卫：/v2 的追问、修改、打印辅导用到的 AI 配置缺一项就拒绝启动', () => {
@@ -25,7 +25,7 @@ describe('v2 启动守卫：/v2 的追问、修改、打印辅导用到的 AI �
     expect(() => assertV2AiConfigured({ ...complete, aiApiKey: '' })).toThrow(/SEL_AI_API_KEY/);
   });
 
-  it.each(['followup', 'correct', 'coach', 'material_extract', 'material_verify', 'material_answer', 'material_grade', 'explain'])('缺 %s 阶段模型拒绝', stage => {
+  it.each(['followup', 'correct', 'coach', 'material_extract', 'material_verify', 'material_answer', 'material_grade', 'explain', 'answer_read'])('缺 %s 阶段模型拒绝', stage => {
     expect(() => assertV2AiConfigured({ ...complete, aiModels: { ...complete.aiModels, [stage]: '' } }))
       .toThrow(new RegExp(`SEL_AI_MODEL_${stage.toUpperCase()}`));
   });

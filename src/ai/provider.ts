@@ -1,6 +1,6 @@
 import type { LearningContext } from '../learning/contracts.js';
 import type { AttemptState, Cause, ReviewValue, Subject } from '../domain/types.js';
-import type { Coaching, Diagnosis, Evidence, FollowupAsk, FollowupSummarize, Insight, QuestionRegion, CorrectionProposalResult } from './evidence.js';
+import type { Coaching, Diagnosis, Evidence, FollowupAsk, FollowupSummarize, Insight, AnswerReading, QuestionRegion, CorrectionProposalResult } from './evidence.js';
 import type { StageResult, StageRun } from './chatClient.js';
 import type { CropAuditReport } from './cropAuditor.js';
 
@@ -111,9 +111,14 @@ export interface CoachProvider {
 // ---------- 学生端详情页：答案、解题过程与推测错因 ----------
 
 /**
- * 详情页的 AI 参考解答与推测错因（explain 阶段）。StagedProvider 与 MockAiProvider 实现。
- * 只读题目识别结果，不改证据、不写反思；结果由 insightService 按题目内容缓存。
+ * 详情页的 AI 参考解答与推测错因（explain 阶段）、拍照答案转写（answer_read 阶段）。StagedProvider 与 MockAiProvider 实现。
+ * 只读题目识别结果和照片，不改证据、不写反思；结果由 insightService 在后台生成、按题目内容缓存。
  */
 export interface InsightProvider {
-  explainItem(context: LearningContext): Promise<StageResult<Insight>>;
+  explainItem(request: InsightRequest): Promise<StageResult<Insight>>;
+  readAnswerPhoto(request: AnswerPhotoRequest): Promise<StageResult<AnswerReading>>;
 }
+
+/** images：题目照片（旧流程整题图或材料裁图，JPEG）；providedAnswers：学生拍照录入的答案转写；background：后台任务，排在前台请求之后。 */
+export interface InsightRequest { context: LearningContext; images: Buffer[]; providedAnswers: string[]; background: boolean }
+export interface AnswerPhotoRequest { context: LearningContext; photo: Buffer; background: boolean }

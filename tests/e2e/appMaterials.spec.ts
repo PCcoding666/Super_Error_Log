@@ -68,10 +68,12 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await expect(page.locator('.item-photo img').first()).toHaveAttribute('src', /\/s\/materials\/fragments\//);
   // 材料流程的题：你写的来自作答片段；照片里的参考答案和 AI 解答放在「正确答案」里。
   await expect(page.getByTestId('item-work')).toHaveCount(1);
-  await expect(page.getByTestId('item-answer')).toContainText('查看答案和解题过程');
+  await expect(page.getByTestId('item-answer')).toContainText('AI 解答，仅供参考', { timeout: 20_000 });
   await page.getByTestId('item-answer').click();
   await expect(page.getByTestId('solution-sheet')).toContainText('Synthetic reference answer: 2');
-  await expect(page.getByTestId('solution-answer')).toContainText('【mock】');
+  await expect(page.getByTestId('solution-answer')).toContainText('【mock】', { timeout: 20_000 });
+  // 经过邀请码网关：交互图那一页用的是 worker 给的 CSP（网关不覆盖），脚本能跑；材料流程的裁图也发给了模型。
+  await expect(page.frameLocator('[data-testid="solution-figure"]').locator('#t')).toContainText(/mock 交互图已运行（看到 [1-9]/);
   await page.getByTestId('solution-close').click();
   await expect(page.getByTestId('solution-sheet')).toHaveClass(/overlay-hidden/);
   await page.getByTestId('back-link').click();

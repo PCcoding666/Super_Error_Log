@@ -110,12 +110,56 @@ export function validateCoaching(data: unknown): Coaching {
 // ---------- 学生端详情页：答案、解题过程与推测错因（explain 阶段） ----------
 
 /**
- * AI 参考，未经老师核验。answer 是各小问的最终答案；solution 是 Markdown 解题过程（公式用 $…$ LaTeX）；
- * mistake / cause 只依据学生原作推测，没有原作时为 null；uncertain 是要学生对照原题核实的地方。
+ * 交互图。solid：立体几何只给点的坐标、棱、要强调的线和面，程序自己画成能用手指旋转的 3D 线框图（实测模型自己写的「3D 图」多半是一张静态图）；
+ * html：函数图像、坐标、物理等，模型写的自包含 HTML。两种都在无网络的沙箱页里显示。
  */
-export interface Insight { answer: string; solution: string; mistake: string | null; cause: Cause | null; uncertain: string | null }
+export interface SolidFigure {
+  kind: 'solid';
+  points: Record<string, [number, number, number]>;
+  edges: Array<[string, string]>;
+  highlights: Array<{ from: string; to: string; label: string | null }>;
+  faces: string[][];
+  caption: string | null;
+}
+export type Figure = SolidFigure | { kind: 'html'; html: string };
+
+/**
+ * AI 参考，未经老师核验。answer 是各小问的最终答案；solution 是 Markdown 解题过程（公式用 $…$ LaTeX）；
+ * mistake / cause 只依据学生原作推测，没有原作时为 null；uncertain 是要学生对照原题核实的地方；figure 见上，其他题为 null。
+ */
+export interface Insight { answer: string; solution: string; mistake: string | null; cause: Cause | null; uncertain: string | null; figure: Figure | null }
 export const INSIGHT_MISTAKE_MAX_CHARS = 120;
 const INSIGHT_UNCERTAIN_MAX_CHARS = 200;
+export const INSIGHT_FIGURE_MAX_CHARS = 30000;
+const POINT_NAME = /^[A-Za-z][A-Za-z0-9₀-₉'′]{0,5}$/u;
+
+/** 交互图是锦上添花：结构不对、太大就不要它，不作废整次解答。HTML 里脚本的制表符是真的，不做 LaTeX 修复。 */
+export function validateFigure(value: unknown): Figure | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const f = value as Record<string, unknown>;
+  if (f.kind === 'html') {
+    const html = typeof f.html === 'string' ? f.html.trim() : '';
+    return html.length <= INSIGHT_FIGURE_MAX_CHARS && /<(svg|canvas|div|html|body)\b/i.test(html) ? { kind: 'html', html } : null;
+  }
+  if (f.kind !== 'solid' || !f.points || typeof f.points !== 'object' || Array.isArray(f.points)) return null;
+  const points: SolidFigure['points'] = {};
+  for (const [name, xyz] of Object.entries(f.points as Record<string, unknown>)) {
+    if (!POINT_NAME.test(name) || !Array.isArray(xyz) || xyz.length !== 3 || !xyz.every(n => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= 1000)) return null;
+    points[name] = xyz as [number, number, number];
+  }
+  const names = Object.keys(points);
+  const pair = (raw: unknown): [string, string] | null => Array.isArray(raw) && raw.length === 2 && raw.every(n => typeof n === 'string' && n in points) && raw[0] !== raw[1] ? [raw[0], raw[1]] : null;
+  const edges = Array.isArray(f.edges) ? f.edges.map(pair) : [];
+  if (names.length < 2 || names.length > 40 || !edges.length || edges.length > 80 || edges.some(edge => !edge)) return null;
+  const highlights = (Array.isArray(f.highlights) ? f.highlights : []).slice(0, 8).flatMap(raw => {
+    const h = raw as Record<string, unknown> | null;
+    const ends = h && pair([h.from, h.to]);
+    return ends ? [{ from: ends[0], to: ends[1], label: typeof h!.label === 'string' && h!.label.trim() ? h!.label.trim().slice(0, 20) : null }] : [];
+  });
+  const faces = (Array.isArray(f.faces) ? f.faces : []).slice(0, 6).filter((face): face is string[] => Array.isArray(face) && face.length >= 3 && face.length <= 12 && face.every(n => typeof n === 'string' && n in points));
+  const caption = typeof f.caption === 'string' && f.caption.trim() ? f.caption.trim().slice(0, 200) : null;
+  return { kind: 'solid', points, edges: edges as Array<[string, string]>, highlights, faces, caption };
+}
 const NEWLINE_COMMANDS = /\n(?=(?:eq|eg|e|abla|otin|ot|u|i|leq|geq|mid|exists)(?![A-Za-z]))/g;
 
 /**
@@ -141,14 +185,28 @@ function optionalText(x: unknown, field: string, max: number): string | null {
 
 export function validateInsight(data: unknown): Insight {
   const d = obj(data, 'insight');
-  const answer = repairLatexEscapes(str(d.answer, 'answer')).trim();
+  const raw = repairLatexEscapes(str(d.answer, 'answer')).trim();
+  // 答案里只写了 LaTeX 命令、没用 $ 包起来（实测 qwen3.8-max 会这样）：整句当公式，免得显示出反斜杠。
+  const answer = /\\[A-Za-z]+/.test(raw) && !raw.includes('$') ? `$${raw}$` : raw;
   const solution = repairLatexEscapes(str(d.solution, 'solution')).trim();
-  if (!answer || answer.length > 2000) bad('answer');
+  if (!raw || answer.length > 2000) bad('answer');
   if (!solution || solution.length > 20000) bad('solution');
   const mistake = optionalText(d.mistake, 'mistake', INSIGHT_MISTAKE_MAX_CHARS);
   // 类别只是辅助标签，不合法就不显示，不为它作废整次解答。
   const cause = mistake && CAUSES.includes(d.cause as Cause) ? d.cause as Cause : null;
-  return { answer, solution, mistake, cause, uncertain: optionalText(d.uncertain, 'uncertain', INSIGHT_UNCERTAIN_MAX_CHARS) };
+  return { answer, solution, mistake, cause, uncertain: optionalText(d.uncertain, 'uncertain', INSIGHT_UNCERTAIN_MAX_CHARS), figure: validateFigure(d.figure) };
+}
+
+/** 学生拍的答案页里这道题的答案：found 为 false 时 text 为 null。 */
+export interface AnswerReading { found: boolean; text: string | null }
+
+export function validateAnswerReading(data: unknown): AnswerReading {
+  const d = obj(data, 'answerReading');
+  if (typeof d.found !== 'boolean') bad('found');
+  if (!d.found) return { found: false, text: null };
+  const text = repairLatexEscapes(str(d.text, 'text')).trim();
+  if (!text || text.length > 8000) bad('text');
+  return { found: true, text };
 }
 
 // ---------- v2.0 T4c：AI 追问与复盘（followup 阶段） ----------

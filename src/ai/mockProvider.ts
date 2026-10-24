@@ -12,11 +12,13 @@ import type {
   FollowupTurn,
   CorrectionProvider,
   InsightProvider,
+  InsightRequest,
+  AnswerPhotoRequest,
   MatchInput,
   MatchResult,
   SuggestInput,
 } from './provider.js';
-import { FOLLOWUP_FALLBACK_QUESTION, validateEvidence, validateInsight, validateLearningContext, type Coaching, type Insight, type Diagnosis, type Evidence, type FollowupAsk, type FollowupSummarize, type CorrectionProposalResult } from './evidence.js';
+import { FOLLOWUP_FALLBACK_QUESTION, validateAnswerReading, validateEvidence, validateInsight, validateLearningContext, type AnswerReading, type Coaching, type Insight, type Diagnosis, type Evidence, type FollowupAsk, type FollowupSummarize, type CorrectionProposalResult } from './evidence.js';
 import { ATTEMPT_STATES, CAUSES, type Subject } from '../domain/types.js';
 import type { StageResult } from './chatClient.js';
 
@@ -206,9 +208,9 @@ export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionP
     };
   }
 
-  /** 确定性详情页解答：解题过程覆盖 Markdown 列表、加粗、表格和 LaTeX 公式；有学生原作才推测错因。 */
-  async explainItem(context: LearningContext): Promise<StageResult<Insight>> {
-    const e = validateLearningContext(context);
+  /** 确定性详情页解答：解题过程覆盖 Markdown 列表、加粗、表格和 LaTeX 公式，附一张会运行脚本的交互图；有学生原作才推测错因。 */
+  async explainItem(request: InsightRequest): Promise<StageResult<Insight>> {
+    const e = validateLearningContext(request.context);
     const work = e.observations.find(o => o.kind === 'student_work');
     const value = validateInsight({
       answer: `【mock】第 ${e.questionNumber} 题参考答案`,
@@ -224,12 +226,23 @@ export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionP
         '| 步骤 | 依据 |',
         '| --- | --- |',
         '| 去分母 | 等式的性质 |',
+        ...(request.providedAnswers.length ? ['', `对照你拍的答案：${request.providedAnswers[0]!.slice(0, 40)}`] : []),
       ].join('\n'),
       mistake: work ? `【mock】你写的「${work.text.slice(0, 20)}」这一步和题目条件对不上，回头看看移项。` : null,
       cause: work ? '推理步骤' : null,
       uncertain: null,
+      // 有三角形的题给立体图数据（程序画、能拖动旋转），其他给一段会运行脚本的 HTML：两条路都有确定的样子可测。
+      figure: /△|三角形/.test(e.questionText)
+        ? { kind: 'solid', points: { A: [0, 0, 0], B: [2, 0, 0], C: [0, 2, 0], D: [0, 0, 2] }, edges: [['A', 'B'], ['B', 'C'], ['C', 'A'], ['A', 'D'], ['B', 'D'], ['C', 'D']], highlights: [{ from: 'B', to: 'D', label: 'BD' }], faces: [['A', 'B', 'C']], caption: '【mock】红线是 BD' }
+        : { kind: 'html', html: '<div style="font:14px system-ui"><svg viewBox="0 0 200 80" width="100%" height="120"><line x1="10" y1="60" x2="190" y2="60" stroke="currentColor"/><circle cx="100" cy="40" r="8" fill="#0a84ff"/></svg><p id="t">mock</p><script>document.getElementById("t").textContent = "mock 交互图已运行（看到 ' + String(request.images.length) + ' 张照片）";</script></div>' },
     });
     return { value, run: { stage: 'explain', model: 'mock', durationMs: 0, promptTokens: null, completionTokens: null, maxTokens: 0, thinking: false, promptVersion: 'mock' } };
+  }
+
+  async readAnswerPhoto(request: AnswerPhotoRequest): Promise<StageResult<AnswerReading>> {
+    const e = validateLearningContext(request.context);
+    const value = validateAnswerReading({ found: true, text: `【mock】第 ${e.questionNumber} 题答案：$x = 4$` });
+    return { value, run: { stage: 'answer_read', model: 'mock', durationMs: 0, promptTokens: null, completionTokens: null, maxTokens: 0, thinking: false, promptVersion: 'mock' } };
   }
 
   async proposeCorrection(evidence: LearningContext, instruction: string): Promise<CorrectionProposalResult> {

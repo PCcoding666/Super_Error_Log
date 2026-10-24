@@ -338,10 +338,11 @@ export class StudentWorkerPool {
       if ((kind !== 'ai' && kind !== 'image') || typeof id !== 'string' || !id) return;
       const pool = kind === 'ai' ? this.aiPermits : this.imagePermits;
       if (type === 'release') { pool.release(studentId, id); return; }
+      const background = (message as { background?: unknown }).background === true;
       pool.acquire(studentId, id, () => {
         if (!child.connected) { pool.release(studentId, id); return; }
         child.send({ type: 'permit', id }, error => { if (error) pool.release(studentId, id); });
-      });
+      }, background, background ? () => { if (child.connected) child.send({ type: 'preempt', id }, () => undefined); } : undefined);
     });
     if (this.refreshIntervalMs > 0) {
       entry.refreshTimer = setInterval(() => {
