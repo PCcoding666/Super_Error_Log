@@ -162,16 +162,22 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const profile = requireProfile();
     const catalog = readCatalog(getDb(), profile.id);
     const subjects = [...new Set([...JUNIOR_CATALOG.map(subject => subject.name), ...catalog.subjects.map(subject => subject.name), category.subject].filter(Boolean))];
-    // 可选章节：目录里这个学科的章节（细知识点归到所属章节），加上同学科已有题目用过的章节；当前章节一定在列表里。
+    // 可选章节按「学段 × 学科」各给一份：目录里这个学科的章节（细知识点归到所属章节，只有初中有目录），
+    // 加上同学段同学科已有题目用过的章节；当前分类的那份一定含当前章节。修改分类时学段、学科改了，候选也要跟着换。
     const week = getLearningWeek(ctx.mobileDataDir, 'all', true);
-    const used = [...week.items, ...week.backlog].filter(card => (card.subject || '未分类') === category.subject).map(card => card.chapter || '').filter(Boolean);
-    const fromCatalog = category.grade === '初中' ? (catalog.subjects.find(subject => subject.name === category.subject)?.topics ?? []).map(topic => chapterOf(category.subject, topic.name, [], category.grade)) : [];
-    const chapters = [...new Set([category.chapter, ...fromCatalog, ...used].filter(Boolean))];
+    const cards = [...week.items, ...week.backlog];
+    const stages = stageChoices(category.grade);
+    const chapterOptions = stages.flatMap(grade => subjects.map(subject => {
+      const used = cards.filter(card => (card.subject || '未分类') === subject && (card.grade || '') === grade).map(card => card.chapter || '').filter(Boolean);
+      const fromCatalog = grade === '初中' ? (catalog.subjects.find(entry => entry.name === subject)?.topics ?? []).map(topic => chapterOf(subject, topic.name, [], grade)) : [];
+      const current = grade === category.grade && subject === category.subject ? [category.chapter] : [];
+      return { grade, subject, chapters: [...new Set([...current, ...fromCatalog, ...used].filter(Boolean))] };
+    }));
     const body: ItemDetailResponse = {
       item: toNotebookItem(item), questionText: evidence?.questionText || item.questionExcerpt || '', badge: evidence?.badge ?? item.badge, revision: evidence?.revision ?? null,
       images, notes,
       canDiscard: item.source.kind === 'material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
-      category: { grade: category.grade, subject: category.subject, chapter: category.chapter, stages: stageChoices(category.grade), subjects, chapters },
+      category: { grade: category.grade, subject: category.subject, chapter: category.chapter, stages, subjects, chapterOptions },
       materialUrl: item.source.kind === 'material' && item.source.questionId ? `/s/materials/questions/${item.source.questionId}` : null,
     };
     return body;

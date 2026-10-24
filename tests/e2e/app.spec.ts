@@ -131,6 +131,18 @@ test('详情页：照片、题干、你写的、章节可改；移除后回到�
   await page.getByTestId('chapter-picker').click();
   await page.getByRole('radio', { name: '相似三角形' }).click();
   await expect(page.locator('ion-modal.show-modal ion-input input').last()).toHaveValue('相似三角形');
+  // 换成物理：章节候选跟着换，原来填的数学章节清掉，不会被当成物理章节存下来。（ion-select 的 action sheet 把选项渲染成 radio）
+  await page.locator('ion-modal.show-modal ion-select').filter({ hasText: '学科' }).click();
+  await page.locator('ion-action-sheet.select-action-sheet').getByRole('radio', { name: '物理' }).click();
+  await expect(page.locator('ion-modal.show-modal ion-input input').last()).toHaveValue('');
+  await page.getByTestId('chapter-picker').click();
+  await expect(page.getByRole('radio', { name: '相似三角形' })).toHaveCount(0);
+  await page.getByRole('radio', { name: '声现象' }).click();
+  await expect(page.locator('ion-modal.show-modal ion-input input').last()).toHaveValue('声现象');
+  await page.locator('ion-modal.show-modal ion-select').filter({ hasText: '学科' }).click();
+  await page.locator('ion-action-sheet.select-action-sheet').getByRole('radio', { name: '数学' }).click();
+  await page.getByTestId('chapter-picker').click();
+  await page.getByRole('radio', { name: '相似三角形' }).click();
   await page.locator('ion-modal.show-modal ion-input input').last().fill('方程与不等式');
   await page.getByRole('button', { name: '保存' }).click();
   await expect(page.getByTestId('item-chapter')).toContainText('方程与不等式');

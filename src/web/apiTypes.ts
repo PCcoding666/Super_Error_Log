@@ -55,6 +55,8 @@ export interface NotebookResponse {
 export interface ItemImage { url: string; fullUrl: string; title: string }
 export interface ItemNote { kind: string; title: string; text: string }
 
+export interface ChapterOptions { grade: string; subject: string; chapters: string[] }
+
 export interface ItemDetailResponse {
   item: NotebookItem;
   questionText: string;
@@ -63,8 +65,8 @@ export interface ItemDetailResponse {
   images: ItemImage[];
   notes: ItemNote[];
   canDiscard: boolean;
-  /** chapters：可选的章节（一级标题）：学科目录里的章节加上这个学科已有题目用过的章节。 */
-  category: { grade: string; subject: string; chapter: string; stages: string[]; subjects: string[]; chapters: string[] };
+  /** chapterOptions：每个「学段 × 学科」可选的章节（一级标题）：学科目录里的章节加上同学段同学科已有题目用过的章节。 */
+  category: { grade: string; subject: string; chapter: string; stages: string[]; subjects: string[]; chapterOptions: ChapterOptions[] };
   /** 材料流程的题：可以看整页材料与批改来源（旧页面）。 */
   materialUrl: string | null;
 }

@@ -18,6 +18,12 @@ export function ItemPage(): ReactNode {
   const [editing, setEditing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [values, setValues] = useState<{ grade: string; subject: string; chapter: string } | null>(null);
+  // 正在编辑的学段 × 学科对应的章节候选；换了学段或学科，原来填的章节若不在新候选里就清空，免得把数学章节存成物理的。
+  const chapters = values ? data?.category.chapterOptions.find(option => option.grade === values.grade && option.subject === values.subject)?.chapters ?? [] : [];
+  const retarget = (next: { grade: string; subject: string; chapter: string }): void => {
+    const options = data?.category.chapterOptions.find(option => option.grade === next.grade && option.subject === next.subject)?.chapters ?? [];
+    setValues(options.includes(next.chapter) ? next : { ...next, chapter: '' });
+  };
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [menuEvent, setMenuEvent] = useState<Event | null>(null);
 
@@ -78,12 +84,12 @@ export function ItemPage(): ReactNode {
         </IonToolbar></IonHeader>
         <IonContent>
           {values ? <IonList inset>
-            <IonItem><IonSelect label="学段" value={values.grade} interface="action-sheet" onIonChange={event => setValues({ ...values, grade: String(event.detail.value) })}>{data?.category.stages.map(stage => <IonSelectOption key={stage} value={stage}>{stage}</IonSelectOption>)}</IonSelect></IonItem>
-            <IonItem><IonSelect label="学科" value={values.subject} interface="action-sheet" cancelText="取消" onIonChange={event => setValues({ ...values, subject: String(event.detail.value) })}>{(data?.category.subjects ?? []).map(name => <IonSelectOption key={name} value={name}>{name}</IonSelectOption>)}</IonSelect></IonItem>
-            {/* 章节：从现有章节里选（列表很长，用 modal 界面；action-sheet 超过 6 项会退化成 alert），或者自己填；选了就填进下面的输入框，保存时以输入框为准。 */}
-            <IonItem><IonSelect label="从现有章节选" placeholder="选一个" value={data?.category.chapters.includes(values.chapter) ? values.chapter : undefined} interface="modal" interfaceOptions={{ header: '章节' }} cancelText="取消" data-testid="chapter-picker"
+            <IonItem><IonSelect label="学段" value={values.grade} interface="action-sheet" onIonChange={event => retarget({ ...values, grade: String(event.detail.value) })}>{data?.category.stages.map(stage => <IonSelectOption key={stage} value={stage}>{stage}</IonSelectOption>)}</IonSelect></IonItem>
+            <IonItem><IonSelect label="学科" value={values.subject} interface="action-sheet" cancelText="取消" onIonChange={event => retarget({ ...values, subject: String(event.detail.value) })}>{(data?.category.subjects ?? []).map(name => <IonSelectOption key={name} value={name}>{name}</IonSelectOption>)}</IonSelect></IonItem>
+            {/* 章节：从现有章节里选（候选随上面的学段、学科变；列表很长，用 modal 界面，action-sheet 超过 6 项会退化成 alert），或者自己填；选了就填进下面的输入框，保存时以输入框为准。 */}
+            <IonItem><IonSelect label="从现有章节选" placeholder={chapters.length ? '选一个' : '这个学科还没有章节'} disabled={!chapters.length} value={chapters.includes(values.chapter) ? values.chapter : undefined} interface="modal" interfaceOptions={{ header: '章节' }} cancelText="取消" data-testid="chapter-picker"
               onIonChange={event => { const next = String(event.detail.value ?? ''); if (next) setValues({ ...values, chapter: next }); }}>
-              {(data?.category.chapters ?? []).map(name => <IonSelectOption key={name} value={name}>{name}</IonSelectOption>)}
+              {chapters.map(name => <IonSelectOption key={name} value={name}>{name}</IonSelectOption>)}
             </IonSelect></IonItem>
             <IonItem><IonInput label="章节" labelPlacement="fixed" value={values.chapter} maxlength={100} placeholder="也可以自己填" onIonInput={event => setValues({ ...values, chapter: String(event.detail.value ?? '') })} /></IonItem>
           </IonList> : null}
