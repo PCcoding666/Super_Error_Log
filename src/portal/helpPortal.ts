@@ -1,21 +1,18 @@
 /**
- * 公开产品说明页（help.pccoding666.com）。
- * 与学生应用同一进程、同一端口：只有 Host 为该主机名时，GET / 返回本页。
- * study.pccoding666.com 的 / 仍是 404；/s、/v1、/v2、/admin 不在这里处理。
+ * 公开产品说明页，地址 https://study.pccoding666.com/help/ 。
+ * 与学生应用同一进程、同一端口，按路径区分，不看 Host：
+ * GET /help/ 返回本页，GET /help 301 到 /help/（查询串保留）。
+ * study.pccoding666.com 的 GET / 仍是 404；/s、/v1、/v2、/admin 不在这里处理。
+ * help.pccoding666.com 子域名暂不使用（DNS 仍是 NXDOMAIN）。不要再按主机名把 GET / 换成这一页。
  * 页面是静态文案，不含学生数据、邀请码或密钥。发布包只带 dist/，所以 HTML 随 tsc 编译进去。
  */
 import type { Express, Request, Response, NextFunction } from 'express';
 
-export const HELP_PORTAL_HOSTNAME = 'help.pccoding666.com';
-
-const HOST = /^help\.pccoding666\.com(?::\d{1,5})?$/i;
-
-export function isHelpPortalHost(hostHeader: string | undefined): boolean {
-  if (!hostHeader) return false;
-  return HOST.test(hostHeader.trim());
-}
+/** 规范路径。不带斜杠的 /help 会 301 到这里。 */
+export const HELP_PORTAL_PATH = '/help/';
 
 const STUDY_URL = 'https://study.pccoding666.com/s/';
+const PORTAL_URL = 'https://study.pccoding666.com/help/';
 const GITHUB_URL = 'https://github.com/PCcoding666/Super_Error_Log';
 
 export function helpPortalHtml(): string {
@@ -25,6 +22,7 @@ export function helpPortalHtml(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="超级错题本：周末拍下做错的题，工作日在纸上再做一遍，下周末把结果记回来。">
+<link rel="canonical" href="${PORTAL_URL}">
 <title>超级错题本</title>
 <style>
 :root{--ink:#171717;--muted:#4d4d4d;--faint:#666;--line:#eaeaea;--link:#0070f3;--bg:#fff;--sidebar:240px}
@@ -83,7 +81,7 @@ footer p{margin:0 0 6px}
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="/">超级错题本</a>
+  <a class="brand" href="/help/">超级错题本</a>
   <span class="brand-mark">说明</span>
 </header>
 <div class="layout">
@@ -137,20 +135,42 @@ footer p{margin:0 0 6px}
 `;
 }
 
-/** 挂在 404 之前。Host 不匹配时交给后面的路由。 */
+function pathnameOf(originalUrl: string): string {
+  const queryAt = originalUrl.indexOf('?');
+  return queryAt >= 0 ? originalUrl.slice(0, queryAt) : originalUrl;
+}
+
+function sendHelpPortal(response: Response): void {
+  response.status(200);
+  response.setHeader('content-type', 'text/html; charset=utf-8');
+  response.setHeader('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  response.setHeader('x-content-type-options', 'nosniff');
+  response.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
+  response.setHeader('cache-control', 'public, max-age=300');
+  response.removeHeader('pragma');
+  response.send(helpPortalHtml());
+}
+
+/**
+ * 挂在 404 之前。只认路径 /help 与 /help/，不认 Host。
+ * 其它路径（含 /、/s、/v1、/v2、/admin）交给后面的路由。
+ * strict routing 关闭时，注册 /help 就会同时吃进 /help/；两条都挂上，以后若打开 strict 也不会漏掉带斜杠的地址。
+ */
 export function registerHelpPortal(app: Express): void {
-  app.get('/', (request: Request, response: Response, next: NextFunction) => {
-    if (!isHelpPortalHost(request.headers.host)) {
-      next();
+  const serve = (request: Request, response: Response, next: NextFunction): void => {
+    const pathOnly = pathnameOf(request.originalUrl);
+    if (pathOnly === '/help') {
+      const queryAt = request.originalUrl.indexOf('?');
+      const query = queryAt >= 0 ? request.originalUrl.slice(queryAt) : '';
+      response.redirect(301, `/help/${query}`);
       return;
     }
-    response.status(200);
-    response.setHeader('content-type', 'text/html; charset=utf-8');
-    response.setHeader('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
-    response.setHeader('x-content-type-options', 'nosniff');
-    response.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
-    response.setHeader('cache-control', 'public, max-age=300');
-    response.removeHeader('pragma');
-    response.send(helpPortalHtml());
-  });
+    if (pathOnly === '/help/') {
+      sendHelpPortal(response);
+      return;
+    }
+    next();
+  };
+  app.get('/help', serve);
+  app.get('/help/', serve);
 }
