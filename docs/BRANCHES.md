@@ -11,6 +11,16 @@
 
 不用再保留一套长期 `develop` / `release` 分支。版本留存用标签，未完成工作用独立任务分支。
 
+## `ios/main`：原生 iPhone 学生端的长期分支（2026-10-23）
+
+用户决定原生 Swift 学生端在 **`ios/main`** 上长期维护，不并回 `main`；`main` 仍是网页版与自动发布的唯一来源。
+
+- `ios/main` 从当时的 `main` 分出，`iOS/` 目录的改动只在这条分支上做；**服务器端改动仍先合入 `main`**
+  （本次 `/s/native` 原生接口与 `tests/integration/studentHostNative.test.ts` 先进 `main`，再合到 `ios/main`）。
+- 定期 `git merge origin/main` 把服务器与接口变动同步进 `ios/main`；冲突以 `main` 的服务器实现为准。
+- 分发：免费 Apple ID 7 天签名，自己的手机自己装（`iOS/scripts/install-iphone.sh`）；没有 TestFlight / App Store。
+- 推送 `ios/main` 不触发任何部署（CI 只在 `main` push 时发布）。
+
 ## 已审查整合的 R2 工作
 
 原 `feat/web-quality-r2`（`04113f5`，27 条提交）通过 [PR #13](https://github.com/PCcoding666/Super_Error_Log/pull/13) 与最新 `main` 对齐。逐条取舍、修复和验收见 [PR #13 审查记录](quality/2026-10-15-pr13-review.md)。不要再从该旧分支开新任务；合并前以 PR 状态为准，合并后当前实现随 `main`。
