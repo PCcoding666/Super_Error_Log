@@ -172,3 +172,27 @@ test('设置页：学段、练习即将推出、添加到主屏幕；刷新深�
   await page.goto(`${WEB}/s/new`);
   await expect(page.getByTestId('intake-done')).toBeVisible();
 });
+
+test('深色模式：卡片、分组列表、菜单和弹层里的列表都比底色亮一档，不是黑底黑卡', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await pair(page);
+  // Ionic 的 item / content / popover 底色画在 shadow DOM 里。
+  const colors = (selectors: Record<string, string>) => page.evaluate(entries => Object.fromEntries(Object.entries(entries).map(([key, selector]) => {
+    const [host, part] = selector.split(' >> ');
+    const element = [...document.querySelectorAll(host!)].pop();
+    const target = part ? element?.shadowRoot?.querySelector(part) : element;
+    return [key, target ? getComputedStyle(target).backgroundColor : 'missing'];
+  })), selectors);
+  const current = 'ion-router-outlet .ion-page:not(.ion-page-hidden)';
+  await openMenu(page);
+  expect(await colors({ menu: 'ion-popover.filter-popover ion-item >> .item-native', content: `${current} ion-content >> #background-content` })).toEqual({ menu: 'rgb(44, 44, 46)', content: 'rgb(0, 0, 0)' });
+  await page.locator('ion-popover.filter-popover').getByText('网格', { exact: true }).click();
+  await expect(page.locator('.notebook-grid [data-testid="item-card"]').first()).toBeVisible();
+  expect(await colors({ card: '.notebook-card', capsule: '.capsule' })).toEqual({ card: 'rgb(28, 28, 30)', capsule: 'rgb(28, 28, 30)' });
+  await page.getByTestId('item-card').first().click();
+  await expect(page.getByTestId('question-text')).toBeVisible();
+  expect(await colors({ stem: '.item-stem', row: `${current} ion-list.item-rows ion-item >> .item-native` })).toEqual({ stem: 'rgb(28, 28, 30)', row: 'rgb(28, 28, 30)' });
+  await page.getByTestId('item-chapter').click();
+  await expect(page.getByTestId('chapter-picker')).toBeVisible();
+  expect(await colors({ modal: 'ion-modal.show-modal ion-content >> #background-content', row: 'ion-modal.show-modal ion-item >> .item-native' })).toEqual({ modal: 'rgb(28, 28, 30)', row: 'rgb(44, 44, 46)' });
+});
