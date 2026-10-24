@@ -78,6 +78,21 @@ $$('[data-testid=next-step-caption],[data-caption-flow]').forEach(function(cap){
 window.addEventListener('afterprint',function(){if($('[data-print]'))afterPrint()});
 document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&e.target.closest('[data-print]');if(!b)return;e.preventDefault();try{window.print()}catch(x){}setTimeout(afterPrint,600)});
 
+/* 键盘盖住输入框时：Android 上把固定底栏抬到键盘上方，并把焦点滚进可视区域。
+   桌面和 iOS 不抬底栏（iOS 的 fixed 已经跟着可视视口走，再抬会飘得太高），只负责滚动。 */
+var revealing=false;
+function keyboardOverlap(){var vv=window.visualViewport;if(!vv)return 0;var overlap=window.innerHeight-vv.offsetTop-vv.height;return overlap>80?Math.round(overlap):0}
+function revealControl(el){if(!el||!el.getBoundingClientRect||revealing)return;var vv=window.visualViewport;var top=vv?vv.offsetTop:0;var height=vv?vv.height:window.innerHeight;var bar=$('.next-bar');var barH=0;if(bar&&window.getComputedStyle(bar).position==='fixed')barH=bar.offsetHeight;var rect=el.getBoundingClientRect();var bottom=rect.bottom;var error=el.id?document.getElementById(el.id+'-error'):null;if(error&&!error.hidden){var er=error.getBoundingClientRect();if(er.height)bottom=Math.max(bottom,er.bottom)}var margin=12;var limit=top+height-barH-margin;var delta=0;if(bottom>limit)delta=bottom-limit;else if(rect.top<top+margin)delta=rect.top-(top+margin);if(Math.abs(delta)<2)return;revealing=true;window.scrollBy(0,delta);setTimeout(function(){revealing=false},80)}
+function applyKeyboardInset(){var input=document.activeElement;var typing=!!(input&&input.matches&&input.matches('input,textarea,select')&&input.type!=='hidden'&&!input.readOnly&&!input.disabled);var lift=typing&&/Android/i.test(navigator.userAgent||'')?keyboardOverlap():0;root.style.setProperty('--keyboard-inset',lift+'px');if(typing)revealControl(input)}
+function pinRejected(value){var pin=String(value==null?'':value).normalize('NFKC').replace(/\s+/g,'');if(!/^[0-9]{4}$/.test(pin))return true;var steps={};for(var i=1;i<4;i++)steps[Number(pin.charAt(i))-Number(pin.charAt(i-1))]=1;var keys=Object.keys(steps);return keys.length===1&&(keys[0]==='0'||keys[0]==='1'||keys[0]==='-1')}
+function phoneOk(value){var phone=String(value==null?'':value).normalize('NFKC').trim().replace(/[\s()-]/g,'');return /^\+?[0-9]{7,15}$/.test(phone)}
+function gateForm(form){return !!(form&&form.hasAttribute&&form.hasAttribute('data-field-gate')&&!form.hasAttribute('novalidate'))}
+function fieldMessage(input){if(!input||input.disabled||input.type==='hidden')return '';if(input.name==='name'&&input.form&&(input.form.id==='register-form'||input.form.id==='recover-form')&&!String(input.value||'').trim())return input.getAttribute('data-invalid-message')||'请填写学生姓名。';if(input.validity&&!input.validity.valid)return input.getAttribute('data-invalid-message')||input.validationMessage||'请先填好这一项。';if(input.name==='pin'&&input.form&&input.form.getAttribute('data-pin-guard')==='set'&&pinRejected(input.value))return input.getAttribute('data-invalid-message')||'请设一个 4 位数字的找回码。';if(input.name==='phone'&&input.form&&input.form.id==='register-form'&&!phoneOk(input.value))return input.getAttribute('data-invalid-message')||'请填写有效手机号。';return ''}
+function showFieldError(input,message,keepCaption){var slot=input.id?document.getElementById(input.id+'-error'):null;input.setAttribute('aria-invalid','true');if(slot){slot.textContent=message;slot.hidden=false;var described=input.getAttribute('aria-describedby')||'';if(described.indexOf(slot.id)<0)input.setAttribute('aria-describedby',(slot.id+' '+described).trim())}var form=input.form;if(!keepCaption&&form&&(form.id==='register-form'||form.id==='recover-form')){$$('[data-testid=next-step-caption],[data-caption-flow]').forEach(function(caption){if(!caption.getAttribute('data-caption-rest'))caption.setAttribute('data-caption-rest',caption.textContent||'');caption.textContent=input.getAttribute('data-caption')||'请先看上面标红的一项';caption.classList.add('tone-orange')})}var btn=null;if(form&&form.id)btn=document.querySelector('button[form="'+form.id+'"]');if(!btn&&form)btn=$('button[type=submit]',form);if(btn)play(btn,'m-press')}
+function clearFieldError(input){input.removeAttribute('aria-invalid');var slot=input.id?document.getElementById(input.id+'-error'):null;if(slot){slot.textContent='';slot.hidden=true}var form=input.form;if(!form||form.querySelector('[aria-invalid=true]'))return;if(form.id!=='register-form'&&form.id!=='recover-form')return;$$('[data-testid=next-step-caption],[data-caption-flow]').forEach(function(caption){if(!caption.hasAttribute('data-caption-rest'))return;caption.textContent=caption.getAttribute('data-caption-rest');caption.classList.remove('tone-orange')})}
+function showFormProblems(form){var first=null;$$('input,textarea,select',form).forEach(function(input){var message=fieldMessage(input);if(!message){if(input.getAttribute('aria-invalid')==='true')clearFieldError(input);return}showFieldError(input,message,!!first);if(!first)first=input});return first}
+function focusProblem(input){if(!input)return;try{input.focus({preventScroll:true})}catch(err){try{input.focus()}catch(e){}}revealControl(input);setTimeout(function(){revealControl(input)},320)}
+
 /* ---------- 每块内容的小功能 ---------- */
 function enhance(scope){
 /* Sheet 与内容一起局部更新；节点自身标记确保不重复绑定。 */
@@ -129,6 +144,21 @@ if(line){line.textContent=miss.length?'还差：'+miss.join('、'):'';}if(btn){b
 within(scope,'textarea[data-single-line]').forEach(function(t){if(!once(t,'single'))return;t.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.isComposing)e.preventDefault()});if(window.CSS&&CSS.supports&&CSS.supports('field-sizing','content'))return;function fit(){t.style.height='auto';t.style.height=(t.scrollHeight+3)+'px'}t.addEventListener('input',fit);fit()});
 /* 字数 */
 within(scope,'textarea[data-count]').forEach(function(t){if(!once(t,'count'))return;var out=$(t.getAttribute('data-count'));function upd(){if(out)out.textContent='还能写 '+Math.max(0,Number(t.getAttribute('maxlength'))-t.value.length)+' 字'}t.addEventListener('input',upd);upd()});
+/* 注册 / 找回：空的、太好猜的找回码和填错的手机号，点按钮立刻在格子下面写红字并滚过去。
+   浏览器自带的校验气泡在 Android 上经常被键盘挡住，按钮就像没反应。novalidate 留给「确认服务端也拦」的检查。 */
+if(once(root,'fieldgate')){
+  document.addEventListener('invalid',function(e){var input=e.target;if(!input||!gateForm(input.form))return;e.preventDefault();focusProblem(showFormProblems(input.form)||input)},true);
+  document.addEventListener('click',function(e){var t=e.target;if(!t||!t.closest)return;var btn=t.closest('button[type=submit],input[type=submit]');if(!btn||btn.disabled)return;var form=btn.form;if(!form&&btn.getAttribute('form'))form=document.getElementById(btn.getAttribute('form'));if(!gateForm(form))return;var first=showFormProblems(form);if(!first)return;e.preventDefault();focusProblem(first)},true);
+  if(window.visualViewport){visualViewport.addEventListener('resize',applyKeyboardInset);visualViewport.addEventListener('scroll',applyKeyboardInset)}
+  window.addEventListener('resize',applyKeyboardInset);
+  document.addEventListener('focusin',function(e){var el=e.target;if(!el||!el.matches||!el.matches('input,textarea,select'))return;applyKeyboardInset();setTimeout(applyKeyboardInset,60);setTimeout(applyKeyboardInset,320)});
+  document.addEventListener('focusout',function(){setTimeout(function(){var el=document.activeElement;if(!el||!el.matches||!el.matches('input,textarea,select'))root.style.setProperty('--keyboard-inset','0px')},40)});
+  var preset=$('input[aria-invalid=true],textarea[aria-invalid=true],select[aria-invalid=true]');if(preset)setTimeout(function(){revealControl(preset)},0);
+}
+within(scope,'form[data-field-gate]').forEach(function(form){if(!once(form,'fieldgate'))return;
+  form.addEventListener('submit',function(e){if(!gateForm(form))return;var first=showFormProblems(form);if(!first)return;e.preventDefault();focusProblem(first)});
+  $$('input,textarea,select',form).forEach(function(input){input.addEventListener('input',function(){if(input.getAttribute('aria-invalid')==='true')clearFieldError(input)})});
+});
 /* 等待提示：提交后按钮换字，防止连点 */
 within(scope,'form[data-wait]').forEach(function(f){if(!once(f,'wait'))return;var busy=false;
 f.addEventListener('submit',function(e){if(busy){e.preventDefault();return}if(e.defaultPrevented)return;

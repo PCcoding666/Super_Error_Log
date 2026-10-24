@@ -17,6 +17,8 @@ export interface BarModel {
   captionAfterPrint?: string;
   /** Opt-in live count feedback; other page captions retain their existing behavior. */
   captionStatusId?: string;
+  /** 校验没通过时，底栏说明改成醒目的短句，避免主按钮看起来没反应。 */
+  captionAlert?: boolean;
   primary: BarButton | null;
   secondary: BarButton[];
 }
@@ -62,7 +64,7 @@ export function NextBar(props: { model: BarModel; extra?: ReactNode; inline?: bo
     <nav className={`next-bar${props.inline ? ' next-bar-inline' : ''}`} data-testid="next-step-bar" aria-label="下一步" data-live={props.inline ? undefined : "bar"}>
       <div className="inner">
         {model.caption || model.captionAfterPrint ? (
-          <p className="caption bar-caption" id={model.captionStatusId} role={model.captionStatusId ? 'status' : undefined} aria-live={model.captionStatusId ? 'polite' : undefined} aria-atomic={model.captionStatusId ? true : undefined} data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
+          <p className={`caption bar-caption${model.captionAlert ? ' tone-orange' : ''}`} id={model.captionStatusId} role={model.captionStatusId ? 'status' : undefined} aria-live={model.captionStatusId ? 'polite' : undefined} aria-atomic={model.captionStatusId ? true : undefined} data-testid="next-step-caption" data-after={model.captionAfterPrint}>{model.caption}</p>
         ) : null}
         {hasPrimary && model.secondary.length > 0 ? (
           <div className="bar-alt">{model.secondary.map(button => <ButtonView key={button.key} button={button} primary={false} look="alt" />)}</div>
@@ -111,7 +113,8 @@ export function Page(props: PageProps): ReactNode {
     <html lang="zh-CN">
       <head>
         <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        {/* interactive-widget：Android Chrome 弹出键盘时缩小布局视口，固定底栏留在键盘上方。 */}
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
         <title>{`${props.title} · ${APP_NAME}`}</title>
         {/* Same-origin forms need a non-null Origin for the invitation gateway's CSRF check.
             Cross-origin destinations still receive no Referer under this policy. */}
@@ -143,7 +146,7 @@ export function Page(props: PageProps): ReactNode {
           {props.flash?.err ? <div className="flash err" role="alert" data-testid="flash-err">{props.flash.err}</div> : null}
           {props.children}
           {props.tab && props.bar ? <NextBar model={props.bar} extra={props.barExtra} inline /> : null}
-          {!props.tab && props.bar ? <p className="caption-flow small muted" data-caption-flow="" data-live="caption" data-after={props.bar.captionAfterPrint}>{props.bar.caption}</p> : null}
+          {!props.tab && props.bar ? <p className={`caption-flow small muted${props.bar.captionAlert ? ' tone-orange' : ''}`} data-caption-flow="" data-live="caption" data-after={props.bar.captionAfterPrint}>{props.bar.caption}</p> : null}
           {props.pollSeconds ? <p className="visually-hidden" aria-live="polite" data-announcer="" /> : null}
         </main>
         {!props.tab && props.bar ? <NextBar model={props.bar} extra={props.barExtra} /> : props.after ?? null}
