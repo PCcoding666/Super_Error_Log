@@ -99,12 +99,64 @@ export function HostErrorPage(props: { title: string; detail: string }): ReactNo
 
 export interface RegistrationFormValues { name?: string; phone?: string; regcode?: string }
 
+export type RegistrationField = 'regcode' | 'name' | 'phone' | 'pin';
+
+/** 和服务器拒绝时的那句一样，客户端提前拦住空的、不够 4 位的、太好猜的找回码。 */
+export const RECOVERY_PIN_SET_MESSAGE = '请设一个 4 位数字的找回码（不要用 1234、0000 这种），忘了邀请码时要用它。';
+const RECOVERY_PIN_SAVE_MESSAGE = '找回码要 4 位数字，不要用 1234、0000 这种好猜的。';
+const RECOVERY_PIN_ENTER_MESSAGE = '请填写 4 位找回码。';
+const NAME_MESSAGE = '请填写学生姓名（可以写化名）。';
+const PHONE_MESSAGE = '请填写有效手机号。不会发短信，7 到 15 位数字即可。';
+const REGCODE_MESSAGE = '注册码不正确或已经失效。请向老师要班级注册码。';
+
+/**
+ * 注册失败时，把格式问题落到具体输入框。重复注册、名额已满仍只在页面上方说明，
+ * 因为那不是某一格填错。找回对不上时不指出是哪一项（不暴露账号是否存在）。
+ */
+export function registrationFieldErrors(code: string, values: { name: string; phone: string }): Partial<Record<RegistrationField, string>> | undefined {
+  if (code === 'invalid_recovery_pin') return { pin: RECOVERY_PIN_SET_MESSAGE };
+  if (code === 'invalid_registration_code') return { regcode: REGCODE_MESSAGE };
+  if (code !== 'invalid_registration') return undefined;
+  const name = values.name.normalize('NFKC').trim().replace(/\s+/gu, ' ');
+  const phone = values.phone.normalize('NFKC').trim().replace(/[\s()-]/gu, '');
+  const nameBad = !name || name.length > 60 || /[\p{Cc}\p{Cf}]/u.test(name);
+  const phoneBad = !/^\+?[0-9]{7,15}$/.test(phone);
+  const errors: Partial<Record<RegistrationField, string>> = {};
+  if (nameBad) errors.name = NAME_MESSAGE;
+  if (phoneBad) errors.phone = PHONE_MESSAGE;
+  if (!nameBad && !phoneBad) errors.name = '请填写姓名和有效手机号。';
+  return errors;
+}
+
+function firstField(errors?: Partial<Record<RegistrationField, string>>): RegistrationField | null {
+  if (!errors) return null;
+  for (const field of ['regcode', 'name', 'phone', 'pin'] as const) if (errors[field]) return field;
+  return null;
+}
+
+/** 底栏短句：人盯着按钮时也能看见为什么没注册上。 */
+function registerBar(errors?: Partial<Record<RegistrationField, string>>): { caption: string; captionAlert?: boolean } {
+  if (errors?.pin) return { caption: '请先设好 4 位找回码', captionAlert: true };
+  if (errors?.name && errors?.phone) return { caption: '请先填好姓名和手机号', captionAlert: true };
+  if (errors?.phone) return { caption: '请先填对手机号', captionAlert: true };
+  if (errors?.name) return { caption: '请先填写姓名', captionAlert: true };
+  if (errors?.regcode) return { caption: '请先填对注册码', captionAlert: true };
+  return { caption: '注册后请保存你的专属邀请码' };
+}
+
+/** 输入框正下方的红字。没有错误时也留着空位，脚本填上后不用再造节点。 */
+function FieldAlert(props: { id: string; message?: string }): ReactNode {
+  return <p className="field-error" id={`${props.id}-error`} role="alert" data-testid={`${props.id}-error`} hidden={!props.message}>{props.message ?? ''}</p>;
+}
+
 /** 4 位找回码输入框（注册、找回、我的邀请码共用）。 */
-function PinInput(props: { id: string; label: string; hint: string }): ReactNode {
+function PinInput(props: { id: string; label: string; hint: string; error?: string; autoFocus?: boolean; message: string; caption: string }): ReactNode {
   return <>
     <label htmlFor={props.id} className="field-label">{props.label}</label>
-    <input id={props.id} name="pin" type="text" inputMode="numeric" autoComplete="off" pattern="[0-9]{4}" minLength={4} maxLength={4} required
-      placeholder="4 位数字" aria-describedby={`${props.id}-hint`} data-testid={`${props.id}-input`} />
+    <input id={props.id} name="pin" type="text" inputMode="numeric" autoComplete="off" enterKeyHint="done" pattern="[0-9]{4}" minLength={4} maxLength={4} required
+      placeholder="4 位数字" aria-describedby={props.error ? `${props.id}-error ${props.id}-hint` : `${props.id}-hint`} aria-invalid={props.error ? true : undefined}
+      autoFocus={props.autoFocus} data-invalid-message={props.message} data-caption={props.caption} data-testid={`${props.id}-input`} />
+    <FieldAlert id={props.id} message={props.error} />
     <p className="hint" id={`${props.id}-hint`}>{props.hint}</p>
   </>;
 }
@@ -113,11 +165,14 @@ function PinInput(props: { id: string; label: string; hint: string }): ReactNode
  * 注册：填姓名（可写化名）、手机号，自己设一个 4 位找回码；网关打开班级注册码时另要注册码。
  * 手机号不发短信、不验证归属，只和找回码一起用来自助找回。
  */
-export function RegistrationPage(props: { error?: string; duplicate?: boolean; blocked?: AttemptBlock; inAppBrowser?: boolean; values?: RegistrationFormValues; requireCode?: boolean }): ReactNode {
+export function RegistrationPage(props: { error?: string; duplicate?: boolean; blocked?: AttemptBlock; inAppBrowser?: boolean; values?: RegistrationFormValues; requireCode?: boolean; fieldErrors?: Partial<Record<RegistrationField, string>> }): ReactNode {
   const values = props.values ?? {};
+  const errors = props.fieldErrors;
+  const focus = firstField(errors);
+  const bar = registerBar(errors);
   return (
     <Page title="注册账号" back={{ href: '/s/', label: '邀请码登录' }} showSettings={false}
-      bar={{ caption: '注册后请保存你的专属邀请码', primary: { title: '注册并生成邀请码', key: 'register', form: 'register-form' }, secondary: [] }}>
+      bar={{ ...bar, primary: { title: '注册并生成邀请码', key: 'register', form: 'register-form' }, secondary: [] }}>
       <h1>注册账号</h1>
       <p className="lead">填姓名和手机号，设一个找回码，就能有自己的错题本。以后输入邀请码登录。</p>
       <InAppBrowserNotice show={props.inAppBrowser === true} where="register" />
@@ -126,19 +181,29 @@ export function RegistrationPage(props: { error?: string; duplicate?: boolean; b
         : props.error ? <Problem title="暂时没能注册" detail={props.error} /> : null}
       {props.duplicate ? <p><a className="btn" href="/s/recover">用找回码找回邀请码</a></p> : null}
       <section className="card">
-        <form method="post" action="/s/register" id="register-form">
+        <form method="post" action="/s/register" id="register-form" data-field-gate="" data-pin-guard="set" data-wait="正在注册…">
           {props.requireCode ? <>
             <label htmlFor="register-code" className="field-label">注册码（8 位，老师发的）</label>
             <input id="register-code" name="regcode" type="text" autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
-              maxLength={20} placeholder="XXXX-XXXX" required defaultValue={values.regcode ?? ''} data-testid="registration-code-input" />
+              maxLength={20} placeholder="XXXX-XXXX" required defaultValue={values.regcode ?? ''} data-testid="registration-code-input"
+              aria-invalid={errors?.regcode ? true : undefined} aria-describedby={errors?.regcode ? 'register-code-error' : undefined}
+              autoFocus={focus === 'regcode'} data-invalid-message="请填写老师发的注册码。" data-caption="请先填对注册码" />
+            <FieldAlert id="register-code" message={errors?.regcode} />
           </> : null}
           <label htmlFor="register-name" className="field-label">学生姓名（可以写化名）</label>
-          <input id="register-name" name="name" type="text" autoComplete="name" maxLength={60} required defaultValue={values.name ?? ''} />
+          <input id="register-name" name="name" type="text" autoComplete="name" maxLength={60} required defaultValue={values.name ?? ''}
+            aria-invalid={errors?.name ? true : undefined} aria-describedby={errors?.name ? 'register-name-error' : undefined}
+            autoFocus={focus === 'name'} data-invalid-message={NAME_MESSAGE} data-caption="请先填写姓名" />
+          <FieldAlert id="register-name" message={errors?.name} />
           <label htmlFor="register-phone" className="field-label">手机号</label>
           <input id="register-phone" name="phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={40} required defaultValue={values.phone ?? ''}
-            placeholder="填写常用手机号，可含国家区号" aria-describedby="registration-phone-hint" />
+            placeholder="填写常用手机号，可含国家区号" aria-invalid={errors?.phone ? true : undefined}
+            aria-describedby={errors?.phone ? 'register-phone-error registration-phone-hint' : 'registration-phone-hint'}
+            autoFocus={focus === 'phone'} data-invalid-message={PHONE_MESSAGE} data-caption="请先填对手机号" />
+          <FieldAlert id="register-phone" message={errors?.phone} />
           <p className="hint" id="registration-phone-hint">不会发短信。可以填家长的手机号，不同学生可共用同一号码。</p>
-          <PinInput id="register-pin" label="设一个找回码（4 位数字）" hint="忘了邀请码时，用姓名、手机号和这 4 位数字找回。不要用 1234、0000 这种好猜的，也别告诉别人。" />
+          <PinInput id="register-pin" label="设一个找回码（4 位数字）" hint="忘了邀请码时，用姓名、手机号和这 4 位数字找回。不要用 1234、0000 这种好猜的，也别告诉别人。"
+            error={errors?.pin} autoFocus={focus === 'pin'} message={RECOVERY_PIN_SET_MESSAGE} caption="请先设好 4 位找回码" />
         </form>
       </section>
       <p><a href="/s/">已有邀请码，直接登录</a></p>
@@ -159,12 +224,16 @@ export function RecoveryPage(props: { error?: string; blocked?: AttemptBlock; in
         ? <Problem title="试得太频繁了" detail={throttleText(props.blocked, '这个网络')} />
         : props.error ? <Problem title="没能找回" detail={props.error} /> : null}
       <section className="card">
-        <form method="post" action="/s/recover" id="recover-form">
+        <form method="post" action="/s/recover" id="recover-form" data-field-gate="" data-wait="正在找回…">
           <label htmlFor="recover-name" className="field-label">学生姓名（和注册时一样）</label>
-          <input id="recover-name" name="name" type="text" autoComplete="name" maxLength={60} required defaultValue={values.name ?? ''} />
+          <input id="recover-name" name="name" type="text" autoComplete="name" maxLength={60} required defaultValue={values.name ?? ''}
+            data-invalid-message="请填写学生姓名。" data-caption="请先填写姓名" />
+          <FieldAlert id="recover-name" />
           <label htmlFor="recover-phone" className="field-label">手机号</label>
-          <input id="recover-phone" name="phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={40} required defaultValue={values.phone ?? ''} />
-          <PinInput id="recover-pin" label="找回码（4 位数字）" hint="连续输错 5 次，要等 24 小时才能再试。" />
+          <input id="recover-phone" name="phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={40} required defaultValue={values.phone ?? ''}
+            data-invalid-message="请填写手机号。" data-caption="请先填写手机号" />
+          <FieldAlert id="recover-phone" />
+          <PinInput id="recover-pin" label="找回码（4 位数字）" hint="连续输错 5 次，要等 24 小时才能再试。" message={RECOVERY_PIN_ENTER_MESSAGE} caption="请先填写 4 位找回码" />
         </form>
       </section>
       <p className="hint">没设过找回码的老账号，请老师或管理员帮你找回。</p>
@@ -252,8 +321,9 @@ export function AccountPage(props: { code: string | null; expiresAt: Date | null
           <p>{props.recovery
             ? '已经设好了。忘了邀请码时，用姓名、手机号和找回码就能换一个新的。想改可以在下面重新设。'
             : <b className="tone-orange">还没设找回码。设一个，以后忘了邀请码可以自己找回。</b>}</p>
-          <form method="post" action="/s/account/recovery">
-            <PinInput id="account-pin" label={props.recovery ? '新的找回码（4 位数字）' : '设一个找回码（4 位数字）'} hint="不要用 1234、0000 这种好猜的，也别告诉别人。" />
+          <form method="post" action="/s/account/recovery" data-field-gate="" data-pin-guard="set">
+            <PinInput id="account-pin" label={props.recovery ? '新的找回码（4 位数字）' : '设一个找回码（4 位数字）'} hint="不要用 1234、0000 这种好猜的，也别告诉别人。"
+              error={props.pinError} autoFocus={Boolean(props.pinError)} message={RECOVERY_PIN_SAVE_MESSAGE} caption="请先设好 4 位找回码" />
             <button className="btn" type="submit">保存找回码</button>
           </form>
         </section>
