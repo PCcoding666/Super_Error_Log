@@ -94,9 +94,23 @@ describe('pipe rows without a delimiter row (what the model wrote on a real phot
       '年入流量X | 40 | 80 | 120',
       '年入流量X | 40 | 80\n没有第二行',
       '行一 | 1 | 2\n行二 | 3',
+      '(1) 求 | x | + | y | 的最小值。\n(2) 求 | x | - | y | 的最大值。',
+      '求 | x - 1 | 的最小值。\n求 | y + 1 | 的最大值。',
+      '① 若 | a | = | b |\n② 若 | c | = | d |',
     ]) {
       expect(stemBlocks(text), text).toEqual([{ kind: 'text', text }]);
     }
+  });
+
+  it('keeps spaced absolute-value sub-questions, and their excerpt, intact', () => {
+    const text = '(1) 求 | x | + | y | 的最小值。\n(2) 求 | x | - | y | 的最大值。';
+    expect(withoutTableRows(text)).toBe(text);
+    expect(questionExcerpt(text)).toBe(text);
+  });
+
+  it('still draws a data row whose first cell is a decimal or starts with a digit', () => {
+    const [table] = stemBlocks('x | 1 | 2.5 | 3\n3.5 | 4 | 5 | 6');
+    expect(table).toMatchObject({ kind: 'table', rows: [['3.5', '4', '5', '6']] });
   });
 
   it('keeps the table out of list excerpts', () => {

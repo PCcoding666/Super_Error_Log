@@ -8,7 +8,8 @@
  *
  * 模型有时漏写分隔行，只写「年入流量X | 40<X<80 | X>120」这样的几行（线上实测）。这种宽松写法也认，但更严：
  * 连续两行以上，每行用「空格|空格」隔成同样多的格，且至少 3 格（2 格太容易和「a | b」这类整除写法混淆）；
- * 第一行当表头。绝对值「|x-1|」竖线紧贴文字，不会被当成分隔。
+ * 第一行当表头。绝对值「|x-1|」竖线紧贴文字，不会被当成分隔；带空格的「求 | x | + | y | 的最小值。」靠排除小题行（(1)、①、1.）、
+ * 以句号等结尾的行、只剩运算符的格来避开。
  */
 export type Align = 'left' | 'center' | 'right' | null;
 
@@ -50,14 +51,19 @@ function delimiterAlign(line: string): Align[] | null {
   });
 }
 
+// 带空格的绝对值「求 | x | + | y | 的最小值。」拆开也是 5 格，所以宽松写法再排除小题行和只剩运算符的格。
+const SUBQUESTION_START = /^(?:[(（][0-9一二三四五六七八九十ⅠⅡⅢⅣⅤ]+[)）]|[0-9]{1,2}[.、．](?!\d)|[①-⑳])/u;
+const SENTENCE_END = /[。？！；?!;]$/u;
+const OPERATOR_CELL = /^[+\-−–×÷*/=<>≤≥≠±·,，.。;；:：]+$/u;
+
 /** 没有分隔行的竖线分隔行：「空格|空格」隔开、至少 3 个非空格；外侧的 | 可有可无。 */
 function looseCells(line: string): string[] | null {
   let body = line.trim();
   if (body.startsWith('| ')) body = body.slice(2);
   if (body.endsWith(' |')) body = body.slice(0, -2);
-  if (!/\s\|\s/.test(body)) return null;
+  if (!/\s\|\s/.test(body) || SUBQUESTION_START.test(body) || SENTENCE_END.test(body)) return null;
   const cells = body.split(/\s+\|\s+/).map(cell => cell.trim());
-  return cells.length >= 3 && cells.every(Boolean) ? cells : null;
+  return cells.length >= 3 && cells.every(cell => cell && !OPERATOR_CELL.test(cell)) ? cells : null;
 }
 
 export function stemBlocks(text: string): StemBlock[] {
