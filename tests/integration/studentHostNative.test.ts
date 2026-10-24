@@ -197,3 +197,66 @@ describe('原生 App 经网关登录与转发', () => {
     expect(await response.json()).toMatchObject({ error: { code: 'unavailable' } });
   }, 90_000);
 });
+
+describe('原生 App 经 /s/native/web 读写网页版同一套接口', () => {
+  it('Bearer 令牌访问 /s/api 与上传；cookie 会话和假令牌进不来；网页自有路径、穿越和 sel_device 都到不了', async () => {
+    const env = await setupHost();
+    const { token, code } = await loginNative(env);
+    const app = native(env.base, token);
+
+    const settings = await app.get('/s/native/web/api/settings');
+    expect(settings.status).toBe(200);
+    expect(settings.headers.get('cache-control')).toContain('no-store');
+    expect(await settings.json()).toMatchObject({ invitation: true, stages: expect.any(Array), version: expect.any(String) });
+    // 新账号先选学段：选之前所有接口回 409 stage_required（和网页一样）
+    const gated = await app.get('/s/native/web/api/notebook');
+    expect(gated.status).toBe(409);
+    expect(await gated.json()).toMatchObject({ error: { code: 'stage_required' } });
+    expect((await app.post('/s/native/web/api/settings/grade', JSON.stringify({ grade: '初中' }), { 'content-type': 'application/json' })).status).toBe(200);
+    const notebook = await app.get('/s/native/web/api/notebook?subject=' + encodeURIComponent('数学'));
+    expect(notebook.status).toBe(200);
+    expect(await notebook.json()).toMatchObject({ groups: expect.any(Array), total: 0 });
+    const mode = await app.get('/s/native/web/api/upload');
+    expect(mode.status).toBe(200);
+    expect(await mode.json()).toMatchObject({ mode: expect.stringMatching(/^(legacy|materials)$/) });
+    expect((await app.get('/s/native/web/api/intake')).status).toBe(200);
+    // 写操作：没有 Origin，不算跨站；错误也是 JSON 信封
+    const bad = await app.post('/s/native/web/api/items/discard', JSON.stringify({ ids: ['nope'] }), { 'content-type': 'application/json' });
+    expect(bad.headers.get('content-type')).toContain('application/json');
+    // 旧流程上传：原生走 /s/native/web/capture，传完能在 intake 里看到（业务 cookie 由客户端带回来）
+    const bytes = await sharp({ create: { width: 600, height: 780, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+    const form = new FormData();
+    form.append('key', crypto.randomUUID());
+    form.append('photo', new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' }), 'photo.jpg');
+    const uploaded = await app.post('/s/native/web/capture', form);
+    expect([200, 202]).toContain(uploaded.status);
+    const outcome = await uploaded.json() as { ok?: boolean; jobId?: string };
+    expect(outcome.ok).toBe(true);
+    expect(outcome.jobId).toMatch(/^[0-9a-f-]{36}$/);
+    // 内部设备 cookie 和会话 cookie 不外发
+    expect(uploaded.headers.getSetCookie().some(line => /^(sel_device|sel_student)=/.test(line))).toBe(false);
+
+    // 凭据边界
+    expect((await native(env.base).get('/s/native/web/api/settings')).status).toBe(401);
+    expect((await native(env.base, 'forged').get('/s/native/web/api/settings')).status).toBe(401);
+    const web = await fetch(`${env.base}/s/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: env.base }, body: new URLSearchParams({ code }), redirect: 'manual' });
+    const cookie = web.headers.getSetCookie().find(line => line.startsWith(`${SESSION_COOKIE}=`))!.split(';')[0]!;
+    const viaCookie = await fetch(`${env.base}/s/native/web/api/settings`, { headers: { cookie, accept: 'application/json' }, redirect: 'manual' });
+    expect(viaCookie.status).toBe(401);
+    // 令牌进不了网页的 /s/api
+    const viaBearer = await fetch(`${env.base}/s/api/settings`, { headers: { authorization: `Bearer ${token}`, accept: 'application/json' }, redirect: 'manual' });
+    expect(viaBearer.headers.get('content-type')).not.toContain('application/json');
+    expect(await viaBearer.text()).toContain('邀请码');
+
+    // 白名单之外一概 404：账号、登录、语音、网页老页面、配对、穿越、编码
+    for (const blocked of ['account', 'login', 'logout', 'register', 'recover', 'voice', 'items', 'photos', 'pair', 'capture/extra', 'materials/session', 'materials/assets/x/other', 'api/../account', 'api/%2e%2e/account', '']) {
+      const response = await app.get(`/s/native/web/${blocked}`);
+      expect(response.status, blocked).toBe(404);
+    }
+    expect((await app.get('/s/native/web')).status).toBe(404);
+    // 用 sel_device 伪造头也进不了别人的空间：网关重建 cookie，只认令牌所属学生
+    const spoof = await fetch(`${env.base}/s/native/web/api/settings`, { headers: { authorization: `Bearer ${token}`, cookie: 'sel_device=forged', accept: 'application/json' }, redirect: 'manual' });
+    expect(spoof.status).toBe(200);
+  }, 90_000);
+});
+

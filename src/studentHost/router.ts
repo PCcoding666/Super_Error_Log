@@ -24,6 +24,8 @@
  *     和该学生 worker 的 serviceId；限速与网页登录共用同一套按码计数。
  *   - /s/native/v1/* 与 /s/native/v2/* 要求 Authorization: Bearer <会话令牌>，鉴权后改写成 worker 的
  *     /v1 /v2（带只有父进程知道的内部设备令牌），只放行 health / recognitions / v2，绝不放行 pairing。
+ *   - /s/native/web/* 同样要求 Bearer 令牌，转发到网页单页应用用的 worker 路径 /s/api、/s/img、上传端点（见 NATIVE_WEB_UPSTREAM），
+ *     让原生 App 和网页版读写同一套错题本；网关替它带内部设备 cookie 和业务 cookie，只放行白名单里的路径。
  *   - POST /s/native/logout 立即撤销该令牌。cookie 会话永远进不了 /s/native；令牌也永远进不了网页路由。
  */
 import http from 'node:http';
@@ -54,6 +56,13 @@ export const NATIVE_API_PREFIX = '/native';
 export const NATIVE_PROTOCOL_VERSION = 1;
 /** 原生 App 能经网关到达的 worker 路径：只有上传/识别进度与 /v2 闭环；/v1/pairing 永远不在其中。 */
 const NATIVE_UPSTREAM = /^\/(?:v1\/(?:health|recognitions)(?:\/|$)|v2(?:\/|$))/;
+/**
+ * /s/native/web/<rest> → worker 的 /s/<rest>：原生 App 用来读写网页版同一套 JSON 接口、图片和上传。
+ * 只放行单页应用真正用到的路径：api、img、旧流程上传 capture、材料流程的 captures / uploads / assets / fragments。
+ * 账号、登录、找回、配对、语音等网页路径一概不在其中。
+ */
+export const NATIVE_WEB_PREFIX = '/web';
+const NATIVE_WEB_UPSTREAM = /^\/(?:api(?:\/|$)|img\/|capture\/?$|materials\/(?:captures\/?|uploads\/?|assets\/[^/]+\/image|fragments\/[^/]+\/crop)$)/;
 /** 网关为原生 App 转发时保留的请求头（白名单之外一律丢弃；cookie 与 authorization 由网关重建）。 */
 const NATIVE_FORWARD_HEADERS = ['idempotency-key', 'x-photo-name'] as const;
 
@@ -138,12 +147,16 @@ function safeRelativeUrl(rawUrl: string): string | null {
  * 原生 App 路径 → worker 路径：/native/v1/health → /v1/health。不在白名单内（含 /v1/pairing、/s 网页）返回 null。
  * 先过 safeRelativeUrl 的编码/穿越检查，再按 worker 侧的真实前缀放行。
  */
-function nativeUpstreamUrl(rawUrl: string): string | null {
+function nativeUpstreamUrl(rawUrl: string): { url: string; web: boolean } | null {
   const safe = safeRelativeUrl(rawUrl);
   if (safe === null || !safe.startsWith(`${NATIVE_API_PREFIX}/`)) return null;
   const upstream = safe.slice(NATIVE_API_PREFIX.length);
   const pathname = upstream.split('?')[0]!;
-  return NATIVE_UPSTREAM.test(pathname) ? upstream : null;
+  if (upstream.startsWith(`${NATIVE_WEB_PREFIX}/`)) {
+    const rest = upstream.slice(NATIVE_WEB_PREFIX.length);
+    return NATIVE_WEB_UPSTREAM.test(rest.split('?')[0]!) ? { url: rest, web: true } : null;
+  }
+  return NATIVE_UPSTREAM.test(pathname) ? { url: upstream, web: false } : null;
 }
 
 function isNativePath(pathname: string): boolean {
@@ -555,7 +568,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       if (response.locals.native === true) {
         const upstream = nativeUpstreamUrl(request.url);
         if (upstream === null) { response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }); return; }
-        void proxyToWorker(request, response, studentId, upstream, deps, { native: true }).catch(() => {
+        void proxyToWorker(request, response, studentId, upstream.url, deps, { native: true, web: upstream.web }).catch(() => {
           if (!response.headersSent) response.status(503).json({ error: { code: 'unavailable', message: '暂时进不去，请稍后再试。' } });
         });
         return;
@@ -585,9 +598,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   /**
    * 转发到该学生的 worker。网页：/s 前缀 + 业务 cookie + 内部 sel_device cookie；
    * 原生（native）：relUrl 已是 worker 的 /v1 /v2 路径，用内部设备令牌作 Bearer，不带任何 cookie，错误一律 JSON。
+   * 原生访问网页接口（native + web）：relUrl 是 /s 之后的网页路径，和网页一样带内部设备 cookie 与业务 cookie、不带 Bearer，错误仍是 JSON。
    */
-  const proxyToWorker = async (request: Request, response: Response, studentId: string, relUrl: string, deps: StudentHostGatewayDeps, mode: { native: boolean } = { native: false }): Promise<void> => {
+  const proxyToWorker = async (request: Request, response: Response, studentId: string, relUrl: string, deps: StudentHostGatewayDeps, mode: { native: boolean; web?: boolean } = { native: false }): Promise<void> => {
     const native = mode.native;
+    const nativeWeb = native && mode.web === true;
     let retained = false;
     const releaseWorker = (): void => {
       if (!retained) return;
@@ -668,7 +683,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         const value = request.headers[name];
         if (typeof value === 'string' && value.length <= 1024) headers[name] = value;
       }
-      headers.authorization = `Bearer ${endpoint.token}`;
+      if (!nativeWeb) headers.authorization = `Bearer ${endpoint.token}`;
     }
     // Never forward a client-supplied internal context; only the authenticated gateway creates it.
     // Form POSTs can render a page again after validation errors, including its VoiceBox.
@@ -679,7 +694,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     const accountRole = response.locals.accountRole;
     if (isAccountRole(accountRole)) headers['x-sel-internal-account-role'] = accountRole;
     // 邀请码快到期提醒（只给设置页展示用）：7 天内到期给出到期时间，已没有可用码给 none；其余不带。
-    if (!native && request.method === 'GET') {
+    if ((!native || nativeWeb) && request.method === 'GET') {
       const expiry = registry.invitationExpiry(studentId);
       if (!expiry) headers['x-sel-internal-invite-expires'] = 'none';
       else if (expiry.getTime() - Date.now() <= INVITATION_WARN_MS) headers['x-sel-internal-invite-expires'] = expiry.toISOString();
@@ -689,10 +704,10 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       .filter(name => clientCookies[name] !== undefined)
       .map(name => `${name}=${encodeURIComponent(clientCookies[name]!)}`);
     cookieParts.push(`${COOKIE.device}=${endpoint.token}`);
-    if (!native) headers.cookie = cookieParts.join('; ');
+    if (!native || nativeWeb) headers.cookie = cookieParts.join('; ');
 
     const upstream = http.request(
-      { host: '127.0.0.1', port: endpoint.port, method: request.method, path: native ? relUrl : `/s${relUrl}`, headers, timeout: PROXY_TIMEOUT_MS },
+      { host: '127.0.0.1', port: endpoint.port, method: request.method, path: native && !nativeWeb ? relUrl : `/s${relUrl}`, headers, timeout: PROXY_TIMEOUT_MS },
       upstreamResponse => {
         response.status(upstreamResponse.statusCode ?? 502);
         for (const [name, value] of Object.entries(upstreamResponse.headers)) {

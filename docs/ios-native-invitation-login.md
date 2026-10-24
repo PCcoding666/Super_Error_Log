@@ -41,6 +41,19 @@
 保留转发的请求头：`accept`、`content-type`、`content-length`、`idempotency-key`、`x-photo-name`、`x-sel-poll`、`user-agent`、`accept-language`。
 接口语义见 `docs/mobile-recognition-api.md`（/v1）与 `docs/mobile-v2-api.md`（/v2）。
 
+### `/s/native/web/*` — 原生 App 读写网页版同一套错题本（2026-10-25）
+
+原生学生端要和线上网页版一致（错题本 / 拍照录入 / 详情 / 设置），就必须读写网页单页应用（`client/`）用的同一套接口。
+网关把 `Authorization: Bearer <token>` 的 `/s/native/web/<rest>` 转给该学生 worker 的 `/s/<rest>`，网关替它带内部设备 cookie 与业务 cookie
+（`sel_photos` 等；App 用 cookie 罐把 `Set-Cookie` 的业务 cookie 带回来，`sel_device` / `sel_student` 永远不外发）。
+
+放行（`NATIVE_WEB_UPSTREAM`）：`/api/**`（字段形状见 `src/web/apiTypes.ts`）、`/img/**`（缩略图 / 裁图 / 整页）、
+`/capture`（旧流程上传）、`/materials/captures`、`/materials/uploads`、`/materials/assets/:id/image`、`/materials/fragments/:id/crop`。
+其余网页路径（账号、登录、找回、语音、老页面）一律 404；编码字符与 `..` 同样先于转发检查拒绝。
+
+注意：新账号没选学段时，所有 `/api/*` 回 `409 stage_required`，App 要先让学生选「初中 / 高中」再 `POST /api/settings/grade`。
+测试：`tests/integration/studentHostNative.test.ts` 的「原生 App 经 /s/native/web …」。
+
 ## 边界
 
 - cookie 会话进不了 `/s/native`（401）；令牌进不了网页路由（只看到登录页）。两套凭据在同一张 sessions 表，但入口互斥。
