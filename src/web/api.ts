@@ -12,7 +12,7 @@ import { requireProfile } from '../services/studentService.js';
 import { readCatalog } from '../classification/catalog.js';
 import { JUNIOR_CATALOG } from '../classification/juniorCatalog.js';
 import { ALL_STAGES } from '../classification/stages.js';
-import { categoryForItem, chooseStudentStage, editItemCategory, stageChoices, STAGE_REQUIRED_MESSAGE } from '../classification/itemCategories.js';
+import { categoryForItem, chapterOf, chooseStudentStage, editItemCategory, stageChoices, STAGE_REQUIRED_MESSAGE } from '../classification/itemCategories.js';
 import { ACCOUNT_ROLE_LABELS, isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
 import { getLearningWeek, listLearningPractices, getLearningPractice } from '../learning/queries.js';
 import type { LearningCard } from '../learning/contracts.js';
@@ -123,9 +123,12 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const chapter = str(request.query.chapter).trim().slice(0, 100);
     if (chapter && !chapters.includes(chapter)) chapters.push(chapter);
     const status = notebookStatusFilter(str(request.query.status));
+    const tag = str(request.query.tag).trim().slice(0, 100);
+    const tags = [...new Set(scope.flatMap(item => item.knowledgeTags.map(value => value.trim()).filter(Boolean)))].sort((a, b) => a.localeCompare(b, 'zh'));
+    if (tag && !tags.includes(tag)) tags.push(tag);
     const q = str(request.query.q).trim().slice(0, 200);
     const filters = { grade: resolved.grade, subject, chapter, status, q };
-    const shown = scope.filter(item => matchesNotebook(item, filters, q ? getEvidenceView(item.id)?.questionText : ''));
+    const shown = scope.filter(item => matchesNotebook(item, filters, q ? getEvidenceView(item.id)?.questionText : '') && (!tag || item.knowledgeTags.includes(tag)));
     const today = todayText(), todayOrdinal = dayOrdinal(today) ?? 0;
     const groups: Record<NotebookGroup['key'], NotebookItem[]> = { today: [], week: [], earlier: [] };
     for (const item of shown.map(toNotebookItem)) {
@@ -136,7 +139,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const order = (items: NotebookItem[]) => [...items].sort((a, b) => (b.intakeDay ?? '').localeCompare(a.intakeDay ?? ''));
     const photos = getRegisteredPhotos(ctx.mobileDataDir, true);
     const body: NotebookResponse = {
-      subject, subjects, grade: resolved.grade, stages: resolved.stages, chapter, chapters, status, q,
+      subject, subjects, grade: resolved.grade, stages: resolved.stages, chapter, chapters, status, tag, tags, q,
       total: scope.length, shown: shown.length, todo: shown.filter(item => notebookStatusGroup(item.status) === 'todo').length,
       groups: ([['today', '今天'], ['week', '本周'], ['earlier', '更早']] as const).filter(([key]) => groups[key].length).map(([key, title]) => ({ key, title, items: order(groups[key]) })),
       finding: photos.filter(photo => photo.recognition === 'processing').length,
@@ -157,12 +160,18 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const notes: ItemNote[] = (evidence?.observations ?? []).map(note => ({ kind: note.kind, title: KIND_TITLE[note.kind] ?? '其他笔迹', text: note.text }));
     const category = categoryForItem(item.id);
     const profile = requireProfile();
-    const subjects = [...new Set([...JUNIOR_CATALOG.map(subject => subject.name), ...readCatalog(getDb(), profile.id).subjects.map(subject => subject.name), category.subject].filter(Boolean))];
+    const catalog = readCatalog(getDb(), profile.id);
+    const subjects = [...new Set([...JUNIOR_CATALOG.map(subject => subject.name), ...catalog.subjects.map(subject => subject.name), category.subject].filter(Boolean))];
+    // 可选章节：目录里这个学科的章节（细知识点归到所属章节），加上同学科已有题目用过的章节；当前章节一定在列表里。
+    const week = getLearningWeek(ctx.mobileDataDir, 'all', true);
+    const used = [...week.items, ...week.backlog].filter(card => (card.subject || '未分类') === category.subject).map(card => card.chapter || '').filter(Boolean);
+    const fromCatalog = category.grade === '初中' ? (catalog.subjects.find(subject => subject.name === category.subject)?.topics ?? []).map(topic => chapterOf(category.subject, topic.name, [], category.grade)) : [];
+    const chapters = [...new Set([category.chapter, ...fromCatalog, ...used].filter(Boolean))];
     const body: ItemDetailResponse = {
       item: toNotebookItem(item), questionText: evidence?.questionText || item.questionExcerpt || '', badge: evidence?.badge ?? item.badge, revision: evidence?.revision ?? null,
       images, notes,
       canDiscard: item.source.kind === 'material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
-      category: { grade: category.grade, subject: category.subject, chapter: category.chapter, stages: stageChoices(category.grade), subjects },
+      category: { grade: category.grade, subject: category.subject, chapter: category.chapter, stages: stageChoices(category.grade), subjects, chapters },
       materialUrl: item.source.kind === 'material' && item.source.questionId ? `/s/materials/questions/${item.source.questionId}` : null,
     };
     return body;

@@ -49,7 +49,7 @@ export function ItemPage(): ReactNode {
       {error ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
       {data && item ? <>
         <h1 className="item-title">{item.chapter}</h1>
-        <p className="item-subtitle" data-testid="item-category">{[item.shortId, item.grade, item.subject].filter(Boolean).join(' · ')}{item.statusLabel ? ` · ${item.statusLabel}` : ''}</p>
+        <p className="item-subtitle" data-testid="item-category">{[item.shortId, item.grade, item.subject].filter(Boolean).join(' · ')}</p>
         {data.images.map(image => <a key={image.url} className="item-photo" href={image.fullUrl} target="_blank" rel="noreferrer" aria-label={`${image.title}，打开原图`}><img src={image.url} alt={image.title} /></a>)}
         <div className="item-stem" data-testid="question-text">{data.questionText || '还没有可读的识别文字，请打开上方原图查看。'}</div>
         {data.badge === 'low' ? <p className="item-hint tone-orange">字可能认错了，以照片为准。</p> : null}
@@ -57,6 +57,9 @@ export function ItemPage(): ReactNode {
           {data.notes.map(note => <IonItem key={note.kind} button detail onClick={() => setOpenNote(note.kind)}><IonLabel>{note.title}</IonLabel></IonItem>)}
           <IonItem button detail onClick={() => { setValues({ grade: data.category.grade, subject: data.category.subject, chapter: data.category.chapter }); setEditing(true); }} data-testid="item-chapter">
             <IonLabel>章节</IonLabel><IonLabel slot="end" className="muted">{data.category.chapter}</IonLabel>
+          </IonItem>
+          <IonItem data-testid="item-tags">
+            <IonLabel>知识点</IonLabel><IonLabel slot="end" className="muted ion-text-wrap item-tags">{item.knowledgeTags.length ? item.knowledgeTags.join('、') : '—'}</IonLabel>
           </IonItem>
         </IonList>
         {data.canDiscard ? <IonButton fill="clear" color="danger" expand="block" className="item-remove" onClick={() => setSheet('confirm')} data-testid="discard">不是错题，移除</IonButton> : null}
@@ -77,8 +80,14 @@ export function ItemPage(): ReactNode {
           {values ? <IonList inset>
             <IonItem><IonSelect label="学段" value={values.grade} interface="action-sheet" onIonChange={event => setValues({ ...values, grade: String(event.detail.value) })}>{data?.category.stages.map(stage => <IonSelectOption key={stage} value={stage}>{stage}</IonSelectOption>)}</IonSelect></IonItem>
             <IonItem><IonSelect label="学科" value={values.subject} interface="action-sheet" cancelText="取消" onIonChange={event => setValues({ ...values, subject: String(event.detail.value) })}>{(data?.category.subjects ?? []).map(name => <IonSelectOption key={name} value={name}>{name}</IonSelectOption>)}</IonSelect></IonItem>
-            <IonItem><IonInput label="章节" value={values.chapter} maxlength={100} placeholder="例如：一元二次方程" onIonInput={event => setValues({ ...values, chapter: String(event.detail.value ?? '') })} /></IonItem>
+            {/* 章节：从现有章节里选（列表很长，用 modal 界面；action-sheet 超过 6 项会退化成 alert），或者自己填；选了就填进下面的输入框，保存时以输入框为准。 */}
+            <IonItem><IonSelect label="从现有章节选" placeholder="选一个" value={data?.category.chapters.includes(values.chapter) ? values.chapter : undefined} interface="modal" interfaceOptions={{ header: '章节' }} cancelText="取消" data-testid="chapter-picker"
+              onIonChange={event => { const next = String(event.detail.value ?? ''); if (next) setValues({ ...values, chapter: next }); }}>
+              {(data?.category.chapters ?? []).map(name => <IonSelectOption key={name} value={name}>{name}</IonSelectOption>)}
+            </IonSelect></IonItem>
+            <IonItem><IonInput label="章节" labelPlacement="fixed" value={values.chapter} maxlength={100} placeholder="也可以自己填" onIonInput={event => setValues({ ...values, chapter: String(event.detail.value ?? '') })} /></IonItem>
           </IonList> : null}
+          {data?.item.knowledgeTags.length ? <p className="item-hint muted">知识点（AI 识别）：{data.item.knowledgeTags.join('、')}</p> : null}
         </IonContent>
       </IonModal>
       <IonActionSheet isOpen={sheet === 'confirm'} onDidDismiss={() => setSheet(null)} header="把这道题移出错题本？" subHeader="原图保留，移出后可以在错题本撤销。"

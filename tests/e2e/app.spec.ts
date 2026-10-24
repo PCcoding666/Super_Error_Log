@@ -26,6 +26,8 @@ async function pair(page: Page): Promise<void> {
 }
 
 const url = (page: Page): string => new URL(page.url()).pathname;
+/** 在最上面那张 action sheet 里点一项：上一张可能还在收起动画里，不能让两张同时匹配。 */
+const pickFromSheet = (page: Page, name: string) => page.locator('ion-action-sheet:not(.overlay-hidden)').last().getByRole('button', { name, exact: true }).click();
 /** 打开右上角的视图 / 筛选菜单：等上一次的菜单真的收起，再点。 */
 async function openMenu(page: Page): Promise<void> {
   await expect(page.locator('ion-popover.filter-popover')).toBeHidden();
@@ -91,12 +93,28 @@ test('网格与列表切换、选择移除并撤销、搜索与章节筛选', as
   await expect(page).toHaveURL(/q=%E4%BA%8C%E6%AC%A1/);
   await page.locator('ion-searchbar').getByRole('button', { name: '取消' }).click();
   await expect(page.getByTestId('item-card')).toHaveCount(4);
-  // 章节筛选走菜单。
+  // 章节筛选走菜单；菜单里只有一级标题（章节）和二级标题（知识点），没有练习状态。
   await openMenu(page);
+  await expect(page.locator('ion-popover.filter-popover')).not.toContainText('状态');
+  await expect(page.getByTestId('tag-filter')).toBeVisible();
   await page.locator('ion-popover.filter-popover').getByText('章节', { exact: true }).click();
-  await page.getByRole('button', { name: '相似三角形' }).click();
+  await pickFromSheet(page, '相似三角形');
   await expect(page.getByTestId('item-card')).toHaveCount(1);
   await expect(page.locator('.home-subtitle')).toContainText('显示 1 道');
+  // 回到全部章节，再按知识点（二级标题）筛选。
+  await openMenu(page);
+  await page.locator('ion-popover.filter-popover').getByText('章节', { exact: true }).click();
+  await pickFromSheet(page, '全部章节');
+  await expect(page.getByTestId('item-card')).toHaveCount(4);
+  await openMenu(page);
+  await page.getByTestId('tag-filter').click();
+  await pickFromSheet(page, '二次函数');
+  await expect(page.getByTestId('item-card')).toHaveCount(1);
+  await expect(page).toHaveURL(/tag=/);
+  await openMenu(page);
+  await page.getByTestId('tag-filter').click();
+  await pickFromSheet(page, '全部知识点');
+  await expect(page.getByTestId('item-card')).toHaveCount(4);
 });
 
 test('详情页：照片、题干、你写的、章节可改；移除后回到错题本', async ({ page }) => {
@@ -106,8 +124,14 @@ test('详情页：照片、题干、你写的、章节可改；移除后回到�
   await expect(page.getByTestId('question-text')).toContainText('解方程');
   await expect(page.locator('.item-photo img')).toHaveCount(1);
   await expect(page.getByTestId('item-chapter')).toContainText('一元一次方程');
+  await expect(page.getByTestId('item-tags')).toContainText('一元一次方程');
   await page.getByTestId('item-chapter').click();
-  await page.locator('ion-modal ion-input input').last().fill('方程与不等式');
+  // 修改分类：先从现有章节里选，再手填覆盖。
+  await expect(page.locator('ion-modal.show-modal')).not.toContainText('练习状态');
+  await page.getByTestId('chapter-picker').click();
+  await page.getByRole('radio', { name: '相似三角形' }).click();
+  await expect(page.locator('ion-modal.show-modal ion-input input').last()).toHaveValue('相似三角形');
+  await page.locator('ion-modal.show-modal ion-input input').last().fill('方程与不等式');
   await page.getByRole('button', { name: '保存' }).click();
   await expect(page.getByTestId('item-chapter')).toContainText('方程与不等式');
   await expect(page.locator('.item-title')).toHaveText('方程与不等式');

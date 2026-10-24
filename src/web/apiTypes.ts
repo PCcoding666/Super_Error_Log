@@ -35,6 +35,10 @@ export interface NotebookResponse {
   chapter: string;
   chapters: string[];
   status: NotebookStatusGroup | '';
+  /** 二级标题（知识点）筛选；空串为全部。 */
+  tag: string;
+  /** 这个学科和学段下出现过的知识点。 */
+  tags: string[];
   q: string;
   /** 这个学科和学段下的总数（不受章节 / 状态 / 搜索影响）。 */
   total: number;
@@ -59,7 +63,8 @@ export interface ItemDetailResponse {
   images: ItemImage[];
   notes: ItemNote[];
   canDiscard: boolean;
-  category: { grade: string; subject: string; chapter: string; stages: string[]; subjects: string[] };
+  /** chapters：可选的章节（一级标题）：学科目录里的章节加上这个学科已有题目用过的章节。 */
+  category: { grade: string; subject: string; chapter: string; stages: string[]; subjects: string[]; chapters: string[] };
   /** 材料流程的题：可以看整页材料与批改来源（旧页面）。 */
   materialUrl: string | null;
 }
