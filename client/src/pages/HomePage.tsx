@@ -66,9 +66,10 @@ export function HomePage(): ReactNode {
   const openCamera = (): void => { document.getElementById(CAPTURE_INPUT_ID)?.click(); };
   const subtitle = data ? `${data.grade} · ${data.total} 道错题${data.shown !== data.total ? ` · 显示 ${data.shown} 道` : ''}${data.todo ? ` · ${data.todo} 道待练习` : ''}` : '';
   const renderRow = (item: NotebookItem): ReactNode => {
+    // 摘要不用 <p>：iOS 模式下 ion-label 自带的 p 样式会盖掉两行截断，露出第三行的半截。
     const body = <IonLabel className="ion-text-wrap">
       <h2>{item.chapter}</h2>
-      <p>{item.excerpt || '题目文字暂不可用，可查看原图。'}</p>
+      <span className="row-excerpt">{item.excerpt || '题目文字暂不可用，可查看原图。'}</span>
     </IonLabel>;
     if (selecting) {
       return <IonItem key={item.id} className="notebook-row" button detail={false} onClick={() => toggle(item.id)} data-testid="item-card">
