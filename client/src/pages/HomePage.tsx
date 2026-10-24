@@ -2,11 +2,11 @@ import {
   IonActionSheet, IonButton, IonButtons, IonCheckbox, IonContent, IonFab, IonFabButton, IonHeader, IonIcon, IonItem, IonItemOption, IonItemOptions, IonItemSliding,
   IonLabel, IonList, IonPage, IonPopover, IonSearchbar, IonTitle, IonToast, IonToolbar, useIonViewWillEnter,
 } from '@ionic/react';
-import { cameraOutline, checkmark, checkmarkCircleOutline, chevronDown, gridOutline, listOutline, optionsOutline, searchOutline, settingsOutline, trashOutline } from 'ionicons/icons';
+import { albumsOutline, cameraOutline, checkmark, checkmarkCircleOutline, chevronDown, gridOutline, listOutline, optionsOutline, searchOutline, settingsOutline, trashOutline } from 'ionicons/icons';
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { NotebookItem, NotebookResponse } from '../../../src/web/apiTypes';
-import { CAPTURE_INPUT_ID, CaptureInput } from '../components/CaptureInput';
+import { PickLabel } from '../components/CaptureInput';
 import { Problem } from '../components/Problem';
 import { StageGate } from '../components/StageGate';
 import { api } from '../lib/api';
@@ -68,7 +68,6 @@ export function HomePage(): ReactNode {
 
   if (error?.code === 'stage_required') return <StageGate onChosen={() => void reload()} />;
 
-  const openCamera = (): void => { document.getElementById(CAPTURE_INPUT_ID)?.click(); };
   const subtitle = data ? `${data.grade} · ${data.total} 道错题${data.shown !== data.total ? ` · 显示 ${data.shown} 道` : ''}` : '';
   const renderRow = (item: NotebookItem): ReactNode => {
     // 摘要不用 <p>：iOS 模式下 ion-label 自带的 p 样式会盖掉两行截断，露出第三行的半截。
@@ -111,7 +110,6 @@ export function HomePage(): ReactNode {
       </IonToolbar>
     </IonHeader> : null}
     <IonContent fullscreen className="home" scrollEvents={false}>
-      <CaptureInput />
       {!selecting ? <div className="home-top">
         <div className="capsule">
           <IonButton fill="clear" aria-label="视图与筛选" data-testid="notebook-filters" onClick={event => setMenuEvent(event.nativeEvent)}><IonIcon icon={optionsOutline} slot="icon-only" /></IonButton>
@@ -143,8 +141,11 @@ export function HomePage(): ReactNode {
       {data && !items.length && !loading ? <div className="empty" data-testid="empty-notebook">
         <IonIcon icon={cameraOutline} />
         <b>{data.total ? '没有符合筛选的题' : '拍一张批改过的卷子'}</b>
-        <p>{data.total ? '换个章节或状态试试。' : 'AI 会找出错题，放进这里。'}</p>
-        {data.total ? <IonButton fill="clear" onClick={() => patch({ chapter: '', tag: '', q: '' })}>清除筛选</IonButton> : <IonButton shape="round" onClick={openCamera}><IonIcon icon={cameraOutline} slot="start" />去拍照</IonButton>}
+        <p>{data.total ? '换个章节或状态试试。' : 'AI 会找出错题，放进这里。相册可以一次选多张。'}</p>
+        {data.total ? <IonButton fill="clear" onClick={() => patch({ chapter: '', tag: '', q: '' })}>清除筛选</IonButton> : <div className="empty-actions">
+          <PickLabel kind="camera" className="pick-button pick-solid" testId="capture-camera"><IonIcon icon={cameraOutline} aria-hidden="true" />去拍照</PickLabel>
+          <PickLabel kind="album" className="pick-button pick-plain" testId="capture-album"><IonIcon icon={albumsOutline} aria-hidden="true" />从相册选择</PickLabel>
+        </div>}
       </div> : null}
       {data?.groups.map(group => <section key={group.key} className="group">
         <h2 className="group-label">{group.title}</h2>
@@ -155,7 +156,10 @@ export function HomePage(): ReactNode {
       <div className="bottom-space" />
       {!selecting ? <>
         <IonFab vertical="bottom" horizontal="start" slot="fixed"><IonFabButton color="light" size="small" className="corner corner-search" aria-label="搜索" data-testid="corner-search" onClick={() => setSearchOpen(open => !open)}><IonIcon icon={searchOutline} /></IonFabButton></IonFab>
-        <IonFab vertical="bottom" horizontal="end" slot="fixed"><IonFabButton className="corner corner-capture" aria-label="拍照录入" data-testid="next-step-primary" onClick={openCamera}><IonIcon icon={cameraOutline} /></IonFabButton></IonFab>
+        <div className="capture-corner" slot="fixed">
+          <PickLabel kind="camera" className="fab-circle fab-camera" inputId="camera-input"><IonIcon icon={cameraOutline} aria-hidden="true" /></PickLabel>
+          <PickLabel kind="album" className="fab-circle fab-album" inputId="library-input" testId="next-step-primary"><IonIcon icon={albumsOutline} aria-hidden="true" /></PickLabel>
+        </div>
       </> : <IonFab vertical="bottom" horizontal="end" slot="fixed"><IonFabButton color="danger" className="corner" aria-label="移除所选" data-testid="discard-selected" disabled={!selected.size} onClick={() => setConfirming(true)}><IonIcon icon={trashOutline} /></IonFabButton></IonFab>}
       <IonActionSheet isOpen={confirming} onDidDismiss={() => setConfirming(false)} header={`把这 ${selected.size} 道移出错题本？`} subHeader="原图保留，移出后可以撤销。"
         buttons={[{ text: '移除', role: 'destructive', handler: () => { void discard([...selected]); } }, { text: '取消', role: 'cancel' }]} />

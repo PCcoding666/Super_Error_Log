@@ -1,9 +1,9 @@
 import { IonButton, IonCheckbox, IonContent, IonIcon, IonItem, IonItemOption, IonItemOptions, IonItemSliding, IonLabel, IonList, IonPage, IonSpinner, IonToast } from '@ionic/react';
-import { checkmark } from 'ionicons/icons';
+import { albumsOutline, cameraOutline, checkmark } from 'ionicons/icons';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { IntakePhoto } from '../../../src/web/apiTypes';
-import { CAPTURE_INPUT_ID, CaptureInput } from '../components/CaptureInput';
+import { PickLabel } from '../components/CaptureInput';
 import { Problem } from '../components/Problem';
 import { api } from '../lib/api';
 import { useLoad, useUploads } from '../lib/hooks';
@@ -89,7 +89,6 @@ export function IntakePage(): ReactNode {
 
   return <IonPage>
     <IonContent fullscreen className="intake">
-      <CaptureInput />
       <div className="intake-top">
         <h1>录入</h1>
         <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : busy ? 'AI 正在找题' : found ? `找到 ${found} 道，已加入错题本 · 不相关的左滑删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
@@ -108,7 +107,10 @@ export function IntakePage(): ReactNode {
       <div className="bottom-space intake-space" />
       <div className="intake-bottom">
         <IonButton expand="block" shape="round" size="large" onClick={() => { uploader.finishBatch(); navigate('/', { replace: true }); }} data-testid="intake-done"><IonIcon icon={checkmark} slot="start" />完成</IonButton>
-        <IonButton expand="block" fill="clear" onClick={() => document.getElementById(CAPTURE_INPUT_ID)?.click()} data-testid="intake-more">再拍一张</IonButton>
+        <div className="intake-picks">
+          <PickLabel kind="camera" className="pick-button pick-text" testId="intake-camera"><IonIcon icon={cameraOutline} aria-hidden="true" />拍照</PickLabel>
+          <PickLabel kind="album" className="pick-button pick-text" testId="intake-album"><IonIcon icon={albumsOutline} aria-hidden="true" />从相册选择</PickLabel>
+        </div>
       </div>
       <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
     </IonContent>
