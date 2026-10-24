@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { USAGE_DETAIL_CAP, type AdminFilters, type AdminReport, type UsageSummary } from './report.js';
 import { providerLabel } from '../observability/aiUsage.js';
+import type { LiveStatus } from '../studentHost/liveStats.js';
 
 const number = (value: number | null): string => value === null ? '未采集' : value.toLocaleString('zh-CN');
 const percent = (value: number | null): string => value === null ? '未采集' : `${(value * 100).toFixed(1)}%`;
@@ -61,12 +62,28 @@ function FallbackStatus({ fallback }: { fallback: AdminReport['fallback'] }): Re
   </p>;
 }
 
-export function AdminDashboard(report: AdminReport): ReactNode {
+function LiveNow({ live }: { live: LiveStatus }): ReactNode {
+  const full = live.maxLive > 0 && live.live >= live.maxLive;
+  const blocked = live.last5m.capacityRejections > 0;
+  const seconds = live.aiAverageMs === null ? '—' : `${(live.aiAverageMs / 1000).toFixed(1)} s`;
+  return <section className="panel" id="live" data-testid="live-now"><div className="section-heading"><div><h2>现在</h2>
+    <p className="subtle small">实时数字，刷新页面更新 · 「今天」按北京时间，从 {time(live.today.since)} 服务启动或零点起算</p></div></div>
+    <div className="metrics">
+      <article className="metric accent"><span>在用的人</span><strong data-testid="live-active">{live.activeStudents}</strong><small>最近 5 分钟打开过页面 · 今天最多 {live.today.peakActive}</small></article>
+      <article className={`metric ${full ? 'warning' : ''}`}><span>打开的错题本</span><strong data-testid="live-workers">{live.live} / {live.maxLive}</strong><small>满了新进来的人要等 · 今天最多 {live.today.peakLive}</small></article>
+      <article className="metric"><span>AI 正在做</span><strong data-testid="live-ai">{live.aiInUse} / {live.aiLimit}</strong><small>最近平均每件 {seconds} · 今天最多同时 {live.today.peakAiInUse}</small></article>
+      <article className="metric"><span>AI 排队</span><strong data-testid="live-ai-waiting">{live.aiWaiting}</strong><small>最近 5 分钟最多 {live.last5m.peakAiWaiting} · 今天最多 {live.today.peakAiWaiting}</small></article>
+      <article className={`metric ${blocked ? 'warning' : ''}`}><span>在门外等</span><strong data-testid="live-waiting">{live.waitingOutside}</strong><small>名额满被挡：最近 5 分钟 {live.last5m.rejectedStudents} 人，今天 {live.today.rejectedStudents} 人</small></article>
+    </div></section>;
+}
+
+export function AdminDashboard(report: AdminReport, live?: LiveStatus): ReactNode {
   const { filters, summary } = report;
   const warnings = report.accounts.flatMap(account => account.warnings.map(message => `${account.label}：${message}`));
   return <Shell title="用量与性能" signedIn>
     <div className="page-heading"><div><p className="eyebrow">USAGE & PERFORMANCE</p><h1>用量与性能</h1><p className="subtle">从邀请码账号，查看每一次 AI 调用。</p></div>
       <div className="refresh"><span className="small subtle">更新于 {time(new Date().toISOString())}</span><a className="button secondary" href={adminLink(filters)}>刷新数据</a></div></div>
+    {live && <LiveNow live={live} />}
     {warnings.length > 0 && <div className="notice warning" role="status"><strong>部分统计不完整</strong><ul>{warnings.map((message, i) => <li key={i}>{message}</li>)}</ul></div>}
     <form method="get" action="/admin/" className="filters" aria-label="统计筛选">
       <label>账号<select aria-label="账号" name="studentId" defaultValue={filters.studentId}><option value="">全部账号</option>{report.accountOptions.map(account => <option key={account.studentId} value={account.studentId}>{account.label} · {account.studentId.slice(0, 8)}</option>)}</select></label>
