@@ -4,6 +4,10 @@
 
 `codex/material-linking` 在当前 main 上追加自由拍摄、跨页关联和按需批改，尚未发布。行为与验收见 [材料关联质量记录](quality/2026-10-20-material-linking.md)。
 
+## 0. 2026-10-23：学生端换成 Ionic React 单页应用
+
+产品决定这一轮做减法：只保留错题本和录入，练习「即将推出」，没有底部标签栏，界面照 iOS Siri 对话列表的一屏结构。为此学生端界面改成 `client/` 里的 Ionic React 单页应用，由同一个服务器在 `/s/` 下发，数据走 `/s/api`（`src/web/api.ts`）。结构、接口、迁移状态和未搬完的部分见 [学生端单页应用](CLIENT_APP.md)。旧的服务端渲染页面保留在原路径上，没有入口，等练习模块的去留定了再清理。
+
 ## 1. 从哪个版本继续
 
 - 仓库：`PCcoding666/Super_Error_Log`（私有）。
@@ -62,6 +66,7 @@
 | 位置 | 职责 |
 | --- | --- |
 | `src/main.ts` | 生产入口，`dist/main.js`；真实配置缺失拒绝启动 |
+| `src/portal/helpPortal.ts` | 公开说明页 `https://study.pccoding666.com/help/`（`/help` 301 到 `/help/`）。不看 Host。`GET /` 仍是 404。子域名 `help.pccoding666.com` 暂不使用。见 `deploy/README.md`「产品说明页」 |
 | `src/studentHost/` | 邀请码注册表、会话、同源网关、每学生独立子进程、管理员CLI |
 | `src/mobile/` | 图片识别、先找题后精读、队列/容量/重试、旧原生App API |
 | `src/bridge/recognitionToItems.ts` | 已选/自动识别的题桥接为学习记录，避免重复 |

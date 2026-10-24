@@ -17,6 +17,7 @@ import type { Subject } from '../domain/types.js';
 import { audit } from '../services/eventLog.js';
 import { getEvidence } from '../services/evidenceService.js';
 import { getItem } from '../services/itemService.js';
+import { questionExcerpt } from '../text/stemBlocks.js';
 
 /** 每题每小时最多 6 次"生成修改建议"（规则 4）。 */
 export const PROPOSE_RATE_LIMIT = 6;
@@ -190,7 +191,7 @@ function applyCorrections(itemId: string, expectedRevision: number, changes: Cor
     const mapped=materialStoreForItem(itemId);if(mapped)syncLegacyTranscripts(mapped,itemId,next);
     }
     db.prepare('UPDATE error_item SET text_excerpt = ?, subject = ?, knowledge_tags = ?, updated_at = ? WHERE id = ?')
-      .run(next.questionText.slice(0, 80), next.subject, JSON.stringify(next.knowledgeTags), now(), itemId);
+      .run(questionExcerpt(next.questionText), next.subject, JSON.stringify(next.knowledgeTags), now(), itemId);
     for (const change of check.changes) {
       const field = change.field === 'observation'
         ? record.content.observations.find(o => o.id === change.observationId)!.kind

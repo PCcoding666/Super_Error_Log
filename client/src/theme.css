@@ -1,0 +1,120 @@
+/* 和旧页面同一组色值：浅灰分组底、白卡片、蓝色交互。iOS 外观。 */
+:root {
+  --ion-color-primary: #0066d6;
+  --ion-color-primary-rgb: 0, 102, 214;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-contrast-rgb: 255, 255, 255;
+  --ion-color-primary-shade: #005abc;
+  --ion-color-primary-tint: #1a75da;
+  --ion-font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --ion-background-color: #f2f2f7;
+  --ion-background-color-rgb: 242, 242, 247;
+  --ion-item-background: #ffffff;
+  --ion-text-color: #1c1c1e;
+  --sel-muted: #6e6e73;
+  --sel-line: #e5e5ea;
+  --sel-black: #111111;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --ion-background-color: #000000; --ion-background-color-rgb: 0, 0, 0; --ion-item-background: #1c1c1e; --ion-text-color: #f5f5f7; --sel-muted: #aeaeb5; --sel-line: #38383d; --sel-black: #f5f5f7; }
+}
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.muted { color: var(--sel-muted); }
+.tone-red { color: #d7282f; }
+.tone-orange { color: #974b06; }
+.bottom-space { height: 120px; }
+.intake-space { height: 190px; }
+.problem { margin: 16px 20px; padding: 14px 16px; background: var(--ion-item-background); border-radius: 16px; }
+
+/* ---------- 错题本（根） ---------- */
+.home-top { display: flex; justify-content: flex-end; padding: max(12px, env(safe-area-inset-top)) 20px 0; }
+.capsule { display: flex; background: var(--ion-item-background); border-radius: 999px; box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
+.capsule ion-button { --padding-start: 10px; --padding-end: 10px; margin: 0; height: 44px; --color: var(--ion-text-color); }
+.capsule ion-icon { font-size: 22px; }
+.home-title { display: inline-flex; align-items: center; gap: 2px; margin: 26px 20px 2px; padding: 0; border: 0; background: none; font: inherit; font-size: 40px; font-weight: 700; letter-spacing: -.6px; color: var(--ion-text-color); }
+.home-title ion-icon { font-size: 18px; color: var(--sel-muted); margin-top: 8px; }
+.home-subtitle { margin: 0 20px 6px; color: var(--sel-muted); font-size: 15px; }
+.home-search { --background: #e3e3e8; padding: 8px 12px 0; }
+@media (prefers-color-scheme: dark) { .home-search { --background: #1c1c1e; } }
+.intake-hint { margin-top: 12px; }
+.group-label { margin: 24px 20px 6px; font-size: 14px; font-weight: 600; color: #aeaeb2; padding: 0; min-height: 0; }
+ion-list-header.group-label { --background: transparent; margin-left: 4px; }
+.notebook-list { background: transparent; padding: 0 4px; }
+.notebook-list ion-item.notebook-row { --background: transparent; --padding-start: 16px; --inner-padding-end: 12px; --min-height: 64px; --border-color: var(--sel-line); }
+.notebook-row h2 { font-size: 20px; font-weight: 600; line-height: 1.3; margin: 10px 0 4px; }
+.notebook-row .row-excerpt { display: -webkit-box !important; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden !important; max-height: calc(2 * 1.45em); font-size: 16px; line-height: 1.45; color: var(--sel-muted); margin: 0 0 10px; white-space: normal; text-overflow: ellipsis; }
+.notebook-grid { columns: 2; column-gap: 14px; padding: 0 20px; }
+.notebook-card { break-inside: avoid; margin-bottom: 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; padding: 16px; min-height: 170px; border: 0; border-radius: 22px; background: var(--ion-item-background); color: var(--ion-text-color); text-align: left; font: inherit; position: relative; cursor: pointer; }
+.notebook-card:active { filter: brightness(.96); }
+.notebook-card .card-date { color: var(--sel-muted); font-size: 13px; }
+.notebook-card .card-crop { width: 100%; height: 72px; object-fit: cover; border-radius: 10px; background: #e5e5ea; }
+.notebook-card b { font-size: 19px; font-weight: 700; line-height: 1.25; }
+.notebook-card .card-excerpt { color: var(--sel-muted); font-size: 14px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.notebook-card.picked { outline: 2px solid var(--ion-color-primary); }
+.pick-mark { position: absolute; top: 10px; right: 10px; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid #c7c7cc; display: flex; align-items: center; justify-content: center; color: #fff; }
+.pick-mark.on { background: var(--ion-color-primary); border-color: var(--ion-color-primary); }
+.empty { text-align: center; padding: 70px 24px 0; color: var(--sel-muted); }
+.empty ion-icon { font-size: 56px; color: #c7c7cc; }
+.empty b { display: block; color: var(--ion-text-color); font-size: 20px; margin: 12px 0 4px; }
+.empty ion-button { margin-top: 18px; }
+ion-fab-button.corner { --box-shadow: 0 4px 16px rgba(0, 0, 0, .14); width: 60px; height: 60px; }
+ion-fab-button.corner-capture { --background: var(--sel-black); --background-activated: #333; --color: #fff; }
+@media (prefers-color-scheme: dark) { ion-fab-button.corner-capture { --color: #000; } }
+ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-text-color); }
+.filter-popover { --width: 240px; }
+.filter-popover ion-item.menu-divider { border-top: 1px solid var(--sel-line); }
+.select-header ion-toolbar { --background: transparent; }
+.select-done { --background: var(--ion-color-primary); --color: #fff; --border-radius: 50%; width: 40px; height: 40px; --padding-start: 0; --padding-end: 0; }
+
+/* ---------- 录入态 ---------- */
+.intake-top { padding: max(16px, env(safe-area-inset-top)) 20px 0; }
+.intake-top h1 { font-size: 34px; font-weight: 700; margin: 24px 0 2px; }
+.intake-top p { margin: 0 0 12px; font-size: 15px; }
+.intake-thumb { display: block; width: 40px; height: 52px; border-radius: 6px; overflow: hidden; background: #e5e5ea; }
+.intake-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.intake-head h2 { font-size: 15px; font-weight: 600; }
+.intake-head p { font-size: 13px; }
+.row-thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #e5e5ea; margin-right: 12px; }
+.intake-row h3 { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.intake-row p { font-size: 14px; }
+.intake-note p { font-size: 14px; color: var(--sel-muted); }
+.intake-earlier { margin: 8px 20px; color: var(--sel-muted); }
+.intake-earlier summary { padding: 8px 0; cursor: pointer; }
+.intake-bottom { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 20px calc(16px + env(safe-area-inset-bottom)); background: linear-gradient(to bottom, rgba(242, 242, 247, 0), var(--ion-background-color) 35%); }
+.intake-bottom ion-button[size="large"] { --border-radius: 999px; height: 54px; }
+
+/* ---------- 题目详情 ---------- */
+.plain-header ion-toolbar { --background: var(--ion-background-color); --border-width: 0; }
+.item-title { font-size: 28px; font-weight: 700; margin: 8px 20px 2px; }
+.item-subtitle { margin: 0 20px 14px; color: var(--sel-muted); font-size: 15px; }
+.item-photo { display: block; width: calc(100% - 40px); margin: 0 20px 8px; padding: 0; border: 0; border-radius: 16px; overflow: hidden; background: var(--ion-item-background); cursor: pointer; }
+.item-photo img { display: block; width: 100%; height: auto; }
+.item-photo-note { margin: 0 20px 14px; color: var(--sel-muted); font-size: 13px; }
+.item-stem { margin: 0 20px; padding: 18px 20px; background: var(--ion-item-background); border-radius: 16px; font-size: 20px; line-height: 1.5; }
+.stem-text { white-space: pre-wrap; }
+.stem-table-wrap { margin: 10px -8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.stem-table { border-collapse: collapse; min-width: 100%; font-size: 15px; line-height: 1.3; text-align: center; font-variant-numeric: tabular-nums; }
+.stem-table th, .stem-table td { padding: 5px 6px; border: 1px solid var(--sel-line); white-space: nowrap; }
+.stem-table th { font-weight: 600; background: rgba(120, 120, 128, 0.12); }
+.photo-viewer { --background: #000; }
+.photo-viewer ion-toolbar { --background: #000; --color: #fff; --border-width: 0; }
+.photo-viewer ion-button { --color: #fff; }
+.photo-viewer ion-content { --background: #000; }
+.photo-viewer-body { min-height: 100%; display: flex; align-items: center; justify-content: center; touch-action: pan-x pan-y pinch-zoom; }
+.photo-viewer-body img { display: block; width: 100%; height: auto; }
+.item-hint { margin: 8px 20px 0; font-size: 14px; }
+.item-rows { margin-top: 14px; }
+.item-rows ion-label.item-tags { max-width: 60%; text-align: right; font-size: 15px; }
+.item-remove { margin: 24px 20px; }
+.note-sheet { padding: 20px; }
+.note-sheet h2 { margin: 0 0 12px; font-size: 20px; }
+.note-sheet pre { white-space: pre-wrap; font: inherit; line-height: 1.6; }
+
+/* ---------- 设置 ---------- */
+.page-title { font-size: 34px; font-weight: 700; margin: 8px 20px 16px; }
+.version { text-align: center; color: var(--sel-muted); font-size: 13px; margin: 28px 0; }
+
+/* ---------- 学段 ---------- */
+.stage-gate-body { padding: 120px 28px 0; text-align: center; }
+.stage-gate-body h1 { font-size: 28px; }
+.stage-gate-buttons { display: flex; flex-direction: column; gap: 12px; margin-top: 28px; }

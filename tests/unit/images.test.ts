@@ -8,6 +8,7 @@ import {
   cropPhoto,
   isHeif,
   normalizePhoto,
+  uprightJpeg,
   validateBox,
 } from '../../src/media/images.js';
 
@@ -253,6 +254,24 @@ describe('normalizePhoto', () => {
   it('never invokes sips for a non-HEIF Sharp failure', async () => {
     await expect(normalizePhoto(Buffer.from('not an image'))).rejects.toThrow();
     expect(dependencyControl.sipsCalls).toHaveLength(0);
+  });
+});
+
+describe('uprightJpeg', () => {
+  it('returns an upright jpeg unchanged and rotates EXIF orientation 6 to the same pixels cropPhoto uses', async () => {
+    const pixels = await sharp({ create: { width: 30, height: 10, channels: 3, background: { r: 10, g: 20, b: 30 } } }).jpeg().toBuffer();
+    const turned = await sharp(pixels).withMetadata({ orientation: 6 }).toBuffer();
+    expect((await sharp(turned).metadata()).orientation).toBe(6);
+    const page = await uprightJpeg(turned);
+    const whole = await cropPhoto(turned, { x: 0, y: 0, width: 1, height: 1 });
+    const pageMeta = await sharp(page).metadata();
+    const wholeMeta = await sharp(whole).metadata();
+    expect(pageMeta.width).toBe(wholeMeta.width);
+    expect(pageMeta.height).toBe(wholeMeta.height);
+    expect(pageMeta.width).toBe(10);
+    expect(pageMeta.height).toBe(30);
+    expect(pageMeta.orientation ?? 1).toBe(1);
+    expect(await uprightJpeg(pixels)).toBe(pixels);
   });
 });
 

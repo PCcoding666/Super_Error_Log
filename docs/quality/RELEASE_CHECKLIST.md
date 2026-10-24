@@ -19,8 +19,9 @@
 ## 合并后
 
 - [ ] Actions 里 `production / release` 成功；摘要里的提交与刚合并的一致。失败时看失败任务；启动检查失败会自动切回旧版本（Actions 仍显示失败）。
-- [ ] 手机打开 `https://study.pccoding666.com/s/` 能看到登录页；`/admin/` 能登录，「按调用线路」有数据。
-- [ ] 如果 PR 改了 `deploy/ci/sel-ci-deploy.py` 或 `deploy/ops/`：服务器不会自动用上新版本，按 RUNBOOK 第 7 / 10 步由管理员重新安装。
+- [ ] 手机打开 `https://study.pccoding666.com/s/` 能看到登录页；`/admin/` 能登录，「按调用线路」有数据。`https://study.pccoding666.com/` 仍是 404。
+- [ ] `https://study.pccoding666.com/help/` 打开产品说明页（200 HTML）；`/help` 跳到 `/help/`。`help.pccoding666.com` 子域名暂不使用，发布不依赖它，也不要为它改 DNS 或 Caddy。
+- [ ] 如果 PR 改了 `deploy/ci/sel-ci-deploy.py` 或 `deploy/ops/`：服务器不会自动用上新版本，按 RUNBOOK 第 13 / 6 步由管理员重新安装（第 13 步之前必须先做完第 9、10 步的第一次备份和恢复演练）。
 
 ## 给真实学生用之前（一次性）
 

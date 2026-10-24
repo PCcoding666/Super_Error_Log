@@ -93,6 +93,7 @@ async function stubPrint(page: Page): Promise<void> {
 test('三栏：手机看题、跳过、直接核对、恢复进度与可选打印', async ({browser}) => {
   const page = await pairedPage(browser);
   const errors = collectErrors(page);
+  await page.goto(`${WEB}/s/items`);
   await expect(page).toHaveTitle(/^错题本 · /);
   await expect(page.getByTestId('root-tabs')).toContainText('错题录入');
   await upload(page,'#efb7b2');
@@ -157,6 +158,7 @@ test('手写拍照为可选步骤，上传后可回看照片和识别文字', as
 
 test('无脚本：三栏入口、选题、逐题核对和打印选项仍然可用', async ({browser}) => {
   const page = await pairedPage(browser,{javaScriptEnabled:false});
+  await page.goto(`${WEB}/s/items`);
   await page.getByTestId('tab-capture').click();
   await page.locator('#camera-input').setInputFiles({name:'plain.jpg',mimeType:'image/jpeg',buffer:await synthetic('#f5acaf',920)});
   await page.getByRole('button',{name:'上传这张'}).click();
@@ -416,7 +418,8 @@ test('减少动态效果：样式里的动效、过渡全关，页间保持原�
     await page.addInitScript(() => {
       addEventListener('pagereveal', event => { (window as unknown as { __vt: boolean }).__vt = Boolean((event as Event & { viewTransition?: unknown }).viewTransition); });
     });
-    await page.goto(`${WEB}/s/`);
+    // 从保留的服务端拍照页出发：根地址已是单页应用，没有三栏导航。
+    await page.goto(`${WEB}/s/capture`);
     const styles = await page.evaluate(() => {
       const main = document.querySelector('main')!;
       const make = (html: string): HTMLElement => { const box = document.createElement('div'); box.innerHTML = html; main.appendChild(box); return box.firstElementChild as HTMLElement; };
@@ -585,7 +588,8 @@ test('页面缩放 200%（195×422 CSS px）：没有单字孤行或标点落行
   const hrefs = await page.getByTestId('practice-row').evaluateAll(rows => rows.map(row => row.getAttribute('href') ?? ''));
   const printed = hrefs.map(href => /\/s\/(?:record|results|practice)\/(pkt_[0-9a-f]+)/.exec(href)?.[1]).find(Boolean);
   expect(printed).toBeTruthy();
-  for (const path of ['/s/', '/s/settings', '/s/choose', `/s/print/${printed}`, `/s/print/${printed}/sheet`, '/s/practices']) {
+  // 根地址已是单页应用（Ionic），这里只看保留的服务端页面。
+  for (const path of ['/s/items', '/s/settings', '/s/choose', `/s/print/${printed}`, `/s/print/${printed}/sheet`, '/s/practices']) {
     await page.goto(`${WEB}${path}`);
     const inlinePrimary = page.locator('.next-bar-inline [data-testid=next-step-primary]');
     if (await inlinePrimary.count()) await inlinePrimary.scrollIntoViewIfNeeded();

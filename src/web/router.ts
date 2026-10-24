@@ -30,7 +30,7 @@ import { sendHtml } from '../views/render.js';
 import { getDb } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
 import { isHeif } from '../media/images.js';
-import { getQuestionCrop } from '../services/evidenceService.js';
+import { getItemPage, getQuestionCrop } from '../services/evidenceService.js';
 import { ATTEMPT_STATES, CAUSES } from '../domain/types.js';
 import { registerV2Photo } from '../bridge/recognitionToItems.js';
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
@@ -58,6 +58,8 @@ import { answerFollowup, askFollowup, getV2Reflection, submitV2Reflection } from
 import { acceptCorrection, directCorrection, getEvidenceView, proposeCorrection } from '../v2/correctionService.js';
 import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
 import { registerStaticAssets } from './staticAssets.js';
+import { CLIENT_SHELL_ROUTES, sendClientShell } from './clientApp.js';
+import { createStudentApi } from './api.js';
 import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
@@ -364,7 +366,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
   r.use((request, response, next) => {
     try {
-      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path === '/install' || request.path === '/install/seen'
+      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path.startsWith('/api/settings') || request.path === '/install' || request.path === '/install/seen'
         || (request.method === 'GET' && request.path === '/materials/session')) { next(); return; }
       if (!stageChoiceNeeded(getDb(), requireProfile().id)) { next(); return; }
       failed(response, 'stage_required');
@@ -389,10 +391,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     r.use(createMaterialsRouter({ ...options.materials, draftNamespace: namespace, admission: options.admission }));
   }
 
-  // 默认进入错题本，保留根地址作为主屏幕入口。材料拍照由 /s/capture 接管。
-  r.get('/', page(async (request, response) => {
-    render(response, await itemsPage(request, response));
-  }));
+  // 根地址和三个子路径下发学生端单页应用（Ionic React，client/）；数据走 /s/api。
+  // 旧的服务端页面（/s/items、/s/photos、/s/settings …）仍然保留，直到单页应用完全接管。
+  // 新账号先在服务端的选学段页选好（关掉脚本也能用）；深链接直接打接口时单页应用自己也会处理 409 stage_required。
+  for (const route of CLIENT_SHELL_ROUTES) r.get(route, (_request, response) => sendClientShell(response));
+  r.use('/api', createStudentApi(ctx, { studentHostWorker: options.studentHostWorker === true, service: options.service, materialsJobs: options.materials?.jobs, accountRoleOf: response => accountRoleOf(response), inviteExpiresOf: response => inviteExpiresOf(response) }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
   r.get('/install', page((_request, response) => render(response, InstallPage({ invitation: options.studentHostWorker === true }))));
 
@@ -1176,6 +1179,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
     const itemId = requireMatch(String(request.params.id), ITEM_ID);
     const source = getLearningSource(itemId);
     if (!source) throw new NotFound();
+    if (source.kind === 'legacy' && request.query.scope === 'page') {
+      // 详情页看的是整张来源页。scope=full 仍是题目框并集，框偏了会切掉题干。
+      response.type('image/jpeg').send(await displayImage(await getItemPage(itemId), displaySize(request.query.s)));
+      return;
+    }
     if (source.kind === 'material') {
       const question = materialStoreForItem(itemId)!.getQuestion(source.questionId)!;
       const fragment = question.stem.find(entry => entry.role === 'question');

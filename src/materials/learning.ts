@@ -2,6 +2,7 @@ import { SUBJECTS, type Subject } from '../domain/types.js';
 import { newId, now } from '../db/connection.js';
 import { MobileRequestError } from '../mobile/service.js';
 import type { MaterialStore } from './store.js';
+import { questionExcerpt } from '../text/stemBlocks.js';
 import { unsupportedSubject } from './subjects.js';
 import { effectiveQuestionStem, readQuestion, resolveQuestionId } from './queries.js';
 
@@ -131,10 +132,10 @@ export function syncMaterialLearning(store:MaterialStore):void {
     const anchor=store.db.prepare(`SELECT s.id,s.batch_id FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.owner_id=? AND a.id=?`).get(store.studentId,stem[0]!.assetId) as {id:string;batch_id:string};
     const index=(store.db.prepare('SELECT COALESCE(MAX(item_index),0)+1 n FROM error_item WHERE asset_id=?').get(anchor.id) as {n:number}).n;
     itemId=newId('itm');
-    store.db.prepare(`INSERT INTO error_item(id,student_id,batch_id,asset_id,item_index,subject,knowledge_tags,status,text_excerpt,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(itemId,store.studentId,anchor.batch_id,anchor.id,index,q.subject,JSON.stringify(q.tags),'ready_for_reflection',stem.map(f=>f.text).join('\n\n').slice(0,80),now(),now());
+    store.db.prepare(`INSERT INTO error_item(id,student_id,batch_id,asset_id,item_index,subject,knowledge_tags,status,text_excerpt,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(itemId,store.studentId,anchor.batch_id,anchor.id,index,q.subject,JSON.stringify(q.tags),'ready_for_reflection',questionExcerpt(stem.map(f=>f.text).join('\n\n')),now(),now());
     store.db.prepare('INSERT INTO material_item_link(owner_id,question_id,item_id) VALUES (?,?,?)').run(store.studentId,q.id,itemId);
    }else{
-    store.db.prepare('UPDATE error_item SET text_excerpt=?,subject=?,knowledge_tags=?,updated_at=? WHERE id=?').run(stem.map(f=>f.text).join('\n\n').slice(0,80),q.subject,JSON.stringify(q.tags),now(),itemId);
+    store.db.prepare('UPDATE error_item SET text_excerpt=?,subject=?,knowledge_tags=?,updated_at=? WHERE id=?').run(questionExcerpt(stem.map(f=>f.text).join('\n\n')),q.subject,JSON.stringify(q.tags),now(),itemId);
    }
   }
  });

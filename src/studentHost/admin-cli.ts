@@ -1,7 +1,7 @@
 /**
  * 学生空间管理 CLI（只能在本机/SSH 里跑；管理网页只能看统计）。必须用服务用户、并显式给出 SEL_STUDENT_HOST_DIR：
  *   sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-host node dist/studentHost/admin-cli.js <命令>
- * 没有设置 SEL_STUDENT_HOST_DIR、或者目录不存在时**拒绝运行**（以前会悄悄在当前目录新建一个空库，发出生产里用不了的码）。
+ * 没有设置 SEL_STUDENT_HOST_DIR、目录不存在、或者目录里没有 registry.db 时**拒绝运行**（以前会悄悄新建一个空库，发出生产里用不了的码）。
  *
  *   create [role]                         新建学生空间（上限见 registry）并生成第一个邀请码；role 缺省 student
  *   invite <studentId>                    给同一学生补一个邀请码（旧码继续有效）
@@ -87,7 +87,10 @@ export function runAdminCli(argv: string[], out: (line: string) => void = consol
   const hostDir = resolveHostDirStrict();
   if (hostDir === null) return 2;
   if (!fs.existsSync(path.join(hostDir, 'registry.db'))) {
-    out(`注意：${hostDir} 里还没有注册库，这次会新建一个空的。如果这不是新装的服务器，请先确认 SEL_STUDENT_HOST_DIR 是否写对。`);
+    // 目录在、库不在：多半是把变量写成了上一级目录。新建空库会发出生产不认的码，所以拒绝。
+    console.error(`拒绝运行：${hostDir} 里没有注册库 registry.db。请确认 SEL_STUDENT_HOST_DIR 和服务用的是同一个目录`
+      + '（生产是 /var/lib/super-error-log/student-host）。新装的服务器请先启动一次服务（启动时会自动建库），再运行这个命令。');
+    return 2;
   }
   const registry = StudentRegistry.open(hostDir);
   try {

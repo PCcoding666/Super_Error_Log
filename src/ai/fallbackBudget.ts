@@ -3,8 +3,10 @@
  *
  * - 只管“Token Plan 失败 → 改走原按量付费接口”这一段；没配 Token Plan 时按量付费就是主用，不受这里限制。
  * - 计数是跨进程的：每个学生 worker 是独立进程，所以账本放在一个共享 SQLite 里
- *   （SEL_AI_FALLBACK_LEDGER_DIR，进程池会把学生网关目录传给 worker；没有时退到 SEL_STUDENT_HOST_DIR、
- *   SEL_STUDENT_DATA_DIR，都没有才只在本进程内存里计数）。
+ *   （SEL_AI_FALLBACK_LEDGER_DIR，进程池会把学生网关目录传给 worker；没有时用 SEL_STUDENT_HOST_DIR）。
+ *   **不会**退到学生自己的目录（那样上限会悄悄变成「每个学生各 200 次」）：学生 worker 找不到共享账本时
+ *   直接拒绝走备用并打一行 sel_ai_fallback_blocked（reason=ledger_dir_missing）。只有非 worker 的单进程
+ *   （本机开发、旧版单学生入口）在两者都没有时才只在本进程内存里计数。
  * - 日期按 Asia/Shanghai 计，零点自动恢复。
  * - 上限：SEL_AI_FALLBACK_DAILY_CALLS（缺省 200 次）、SEL_AI_FALLBACK_DAILY_TOKENS（缺省 2,000,000，按已报告的输入+输出）。
  *   设为 0 表示完全不用备用通道。写错（非整数）直接报配置错误，不会静默放开，也不会降级为 Mock。
@@ -53,7 +55,7 @@ export function shanghaiDay(now = new Date()): string {
 }
 
 export function fallbackLedgerDir(): string | null {
-  for (const name of ['SEL_AI_FALLBACK_LEDGER_DIR', 'SEL_STUDENT_HOST_DIR', 'SEL_STUDENT_DATA_DIR']) {
+  for (const name of ['SEL_AI_FALLBACK_LEDGER_DIR', 'SEL_STUDENT_HOST_DIR']) {
     const value = process.env[name]?.trim();
     if (value) return path.resolve(value);
   }
@@ -123,6 +125,11 @@ function reserve(context: FallbackContext, limits: FallbackLimits): Reservation 
   const day = shanghaiDay(now);
   const id = crypto.randomUUID();
   const dir = fallbackLedgerDir();
+  if (!dir && process.env.SEL_STUDENT_WORKER === '1') {
+    // 学生 worker 必须用全机共享的账本；拿不到就不花钱（fail closed），并留下可告警的记录。
+    logEvent('sel_ai_fallback_blocked', context, null, limits, 'ledger_dir_missing');
+    throw new FallbackBlockedError('ledger', null, limits);
+  }
   if (!dir) {
     const entry = memory.get(day) ?? { calls: 0, tokens: 0, blocked: 0 };
     memory.set(day, entry);

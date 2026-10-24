@@ -9,12 +9,12 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.build.json && mkdir -p dist/web/examples && cp src/web/examples/*.jpg dist/web/examples/",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/web/examples && cp src/web/examples/*.jpg dist/web/examples/ && npm run client:build",
     "start": "node dist/server.js",
     "mobile:dev": "tsx watch src/mobile/server.ts",
     "mobile:start": "node dist/mobile/server.js",
     "web:fake": "tsx tests/e2e/webClientServer.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p client/tsconfig.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "seed": "tsx src/seed.ts",
@@ -24,7 +24,9 @@
     "verify": "npm run typecheck && npm run build && npm run test && npm run test:e2e",
     "ui:preview": "tsx scripts/ui-preview/generate.ts",
     "ui:preview:check": "tsc --project scripts/ui-preview/tsconfig.json --noEmit",
-    "ui:preview:capture": "node scripts/capture-ui-preview.mjs"
+    "ui:preview:capture": "node scripts/capture-ui-preview.mjs",
+    "client:build": "vite build --config client/vite.config.ts",
+    "client:watch": "vite build --config client/vite.config.ts --watch"
   },
   "dependencies": {
     "express": "^5.1.0",
@@ -35,16 +37,23 @@
     "sharp": "^0.34.2"
   },
   "devDependencies": {
+    "@ionic/react": "^9.0.9",
+    "@ionic/react-router": "^9.0.9",
     "@playwright/test": "^1.62.0",
     "@types/express": "^5.0.3",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "ionicons": "^8.1.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289",
+    "react-router": "^6.30.6",
+    "react-router-dom": "^6.30.6",
     "tsx": "^4.20.3",
     "typescript": "^5.9.2",
+    "vite": "^7.3.7",
     "vitest": "^3.2.4"
   }
 }

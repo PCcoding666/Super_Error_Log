@@ -97,7 +97,7 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   await page.getByTestId('next-step-primary').click();
   await page.getByTestId('next-step-primary').click();
   await expect(page.getByTestId('practice-question')).toBeVisible();
-  await page.goto(gateway.base + '/s/');
+  await page.goto(gateway.base + '/s/items');
   const add = page.getByTestId('tab-capture');
   await expect(add).toBeVisible();
   await page.screenshot({ path: info.outputPath('home-paper-ready.png'), fullPage: true });
@@ -119,7 +119,7 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   }
   await page.getByTestId('item-card').last().click();
   await expect(page.getByTestId('question-text')).toHaveText('求 x 的值。');
-  await page.goto(gateway.base + '/s/');
+  await page.goto(gateway.base + '/s/items');
   await page.reload();
   await expect(add).toBeVisible();
   await expect(page).toHaveTitle(/^错题本 · /);
@@ -128,6 +128,7 @@ test('5-question paper stays intact after adding 2 questions from home, refresh 
   await expect(page.getByRole('heading', { name: '输入邀请码' })).toBeVisible();
   await page.getByLabel('12 位邀请码').fill(gateway.reloginCodes[0]!);
   await page.getByRole('button', { name: '进入我的错题本' }).click();
+  await page.goto(gateway.base + '/s/items');
   await expect(add).toBeVisible();
   await expect(page).toHaveTitle(/^错题本 · /);
   await page.goto(gateway.base + printPath);

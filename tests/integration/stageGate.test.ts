@@ -58,7 +58,9 @@ it('a new account must pick 初中 or 高中 before the notebook, once', async (
   expect(chosen.status).toBe(303); expect(chosen.headers.get('location')).toBe('/s/');
   const home = await (await browser.get('/s/')).text();
   expect(home).not.toContain('你现在读初中还是高中？');
-  expect(home).toContain('0 道错题');
+  // 根地址是单页应用的壳；旧的服务端错题本页也不再被门槛拦住。
+  expect(home).toContain('<div id="root"></div>');
+  expect(await (await browser.get('/s/items')).text()).toContain('0 道错题');
   expect(await (await browser.get('/s/settings')).text()).toMatch(/<option[^>]*selected[^>]*>高中</);
 }, 60_000);
 

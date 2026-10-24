@@ -231,6 +231,8 @@ describe('学生注册表', () => {
 
   it('管理 CLI：create 打印一次码、list 不含秘密、revoke-sessions 生效', () => {
     const hostDir = tempRoot('sel-reg-');
+    // 注册库由服务启动时建好；CLI 不再自己新建（见 studentAccounts 的「没有 registry.db 时拒绝运行」）。
+    StudentRegistry.open(hostDir).close();
     process.env.SEL_STUDENT_HOST_DIR = hostDir;
     try {
       const lines: string[] = [];
@@ -297,7 +299,7 @@ describe('学生网关登录与退出', () => {
     expect(cookie).toContain('Path=/s');
   });
 
-  it('失败登录按码限速：同一个码 10 次失败后 429，超限期间该码不再校验；同一网络里别的同学的正确码不受影响（P0-6）', async () => {
+  it('失败登录按码限速：同一个码 10 次失败后 429，超限期间同一组开头的错码仍回 429；同一网络里别的同学的正确码不受影响（P0-6）', async () => {
     const env = await setupHost();
     const browser = new Browser(env.base);
     for (let i = 0; i < 9; i += 1) {
@@ -308,7 +310,7 @@ describe('学生网关登录与退出', () => {
     const limited = await browser.post('/s/login', { code: 'AAAA-BBBB-CCCC' });
     expect(limited.status).toBe(429);
     expect(limited.headers.get('retry-after')).not.toBeNull();
-    // 超限期间同一组开头的码不再校验（防探测）
+    // 超限期间同一组开头的错码仍回 429（先验码：错的被放慢，正确的码不受预算影响）
     expect((await browser.post('/s/login', { code: 'AAAA-BBBB-CCCD' })).status).toBe(429);
     // 同一个出口 IP 的同学用自己的正确码照常登录
     const { studentId } = env.registry.createStudent();

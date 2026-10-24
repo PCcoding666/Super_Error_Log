@@ -1,4 +1,5 @@
 import { backfillLegacyMaterials } from '../materials/legacy.js';
+import { questionExcerpt } from '../text/stemBlocks.js';
 /**
  * v2.0 T3 桥：v2 上传的识别任务 → 错题记录。
  * 只做登记与映射：不复制图片（storage_path 指向手机任务目录里的规范化原图，裁图现算），不调用模型。
@@ -151,7 +152,7 @@ export function bridgeJob(jobId: string, mobileDataDir: string): void {
         content.observations.some((o) => o.kind === 'student_work') ? 1 : 0,
         content.observations.some((o) => o.kind === 'reference_answer') ? 1 : 0,
         content.observations.some((o) => o.kind === 'teacher_note') ? 1 : 0,
-        content.questionText.slice(0, 80), now(), now(),
+        questionExcerpt(content.questionText), now(), now(),
       );
       db.prepare('INSERT INTO evidence_record (item_id, content_json, auto_checks_json, confidence_badge, updated_at) VALUES (?,?,?,?,?)')
         .run(itemId, JSON.stringify(content), JSON.stringify(question.verification ?? null), badgeOf(question), now());
