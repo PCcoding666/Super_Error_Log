@@ -12,7 +12,8 @@ import { assertV2AiConfigured } from './v2/aiConfigGuard.js';
 import { assertAsrConfigured } from './ai/asr.js';
 
 // v2.0 T2 单进程入口：一个 Node 进程同时提供 /v1 识别（语义不变）与 /v2 手机接口，
-// 共享 node:sqlite 库 SEL_DATA_DIR/app.db。云端公网入口不挂任何 Web 页面（F1）。
+// 共享 node:sqlite 库 SEL_DATA_DIR/app.db。云端公网入口不挂旧的 Web 看板（F1）。
+// help.pccoding666.com 的 GET / 是公开说明页，见 src/portal/helpPortal.ts。
 // 缺配置一律 fail-hard，禁止降级为 mock。
 assertV2AiConfigured(config);
 // 学生网页版的语音转写（/v2/reflections/transcribe、/s/voice）同样缺配置即拒绝启动。

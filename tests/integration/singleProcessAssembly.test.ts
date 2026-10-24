@@ -1,7 +1,8 @@
 /**
  * T2 单进程装配 + 共享数据库（RED → GREEN）。
  * 一个 Node 进程同时提供：/v1 识别服务（设备令牌鉴权，语义不变）、/v2/health（设备令牌鉴权）。
- * 共享 SEL_DATA_DIR/app.db。云端公网入口不挂任何 Web 页面：/、/parent、/items、/trends 一律 404。
+ * 共享 SEL_DATA_DIR/app.db。云端公网入口不挂旧的 Web 看板：默认 Host 下 /、/parent、/items、/trends 一律 404。
+ * help.pccoding666.com 的 GET / 例外，见 helpPortal.test.ts。
  * 测试用临时目录与合成数据；不调真实模型、不读 .env、不读 data/。
  */
 import crypto from 'node:crypto';

@@ -576,3 +576,55 @@ sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-
 - “已生成打印包”统计 ready 快照，不是实际纸张打印次数。最近活跃由登录/有效页面访问与已有活动记录推得；升级前没有记录的访问无法追溯。
 
 `admin.db` 在 host 目录保存 scrypt 密码派生值和会话哈希；管理 cookie 与学生 cookie 独立。学习库以只读连接查询，不启动/恢复学生 worker。无需新环境变量或运行时依赖。回滚旧代码时这些新增统计文件会被忽略，额外注册表列不改变旧邀请码兑换规则。
+
+## 产品说明站（help.pccoding666.com）
+
+公开说明页和学生学习页是同一个进程（`dist/main.js`，127.0.0.1:3101），没有新端口、新服务。应用看 `Host` 头：
+
+| Host | `GET /` | `/s/`、`/v1`、`/v2`、`/admin/` |
+| --- | --- | --- |
+| `help.pccoding666.com` | 产品说明页（中文，静态 HTML） | 与现在相同 |
+| `study.pccoding666.com`、IP 直连、其它主机名 | 404 JSON（旧看板仍然不挂） | 与现在相同 |
+
+自动发布只换应用、不重启 Caddy。说明页要在公网用干净的根路径，需要管理员在 **DNS A 记录已经指向本机** 之后，把下面的站点追加到正在使用的 Caddyfile 末尾，再校验并重启 Caddy。不要改 `study.pccoding666.com` 和 IP 两段。不要加 `header_up Host`：浏览器带来的 Host 必须原样交给上游，否则说明页不会出现，`/` 仍是 404。
+
+证书沿用现有 ACME（TLS-ALPN-01，不占 80）。记录还没生效时不要把这段写进 Caddyfile、也不要重启：Caddy 启动时如果拿不到新证书，现有的 `study.pccoding666.com` 会一起起不来。
+
+```
+help.pccoding666.com {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+
+	request_body {
+		max_size 15000000
+	}
+
+	reverse_proxy 127.0.0.1:3101 {
+		header_up X-Real-IP {remote_host}
+		transport http {
+			read_timeout 180s
+		}
+	}
+}
+```
+
+```bash
+caddy validate --config /opt/super-error-log/current/deploy/caddy/Caddyfile
+systemctl restart super-error-log-caddy
+```
+
+仓库里的 `deploy/caddy/Caddyfile` 故意不含这个站点。以后若把上面这段收进仓库，`tests/integration/caddyIpEntry.test.ts` 里 `localCaddyfile` 的命中次数要改：ACME `tls` 块从 1 次改为 2 次，`reverse_proxy 127.0.0.1:3101 {` 从 2 次改为 3 次。
+
+本机可先不经过 Caddy 确认应用（期望说明页 200、学习站根路径仍 404、学生入口仍在）：
+
+```bash
+curl -sI -H 'Host: help.pccoding666.com' http://127.0.0.1:3101/
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: study.pccoding666.com' http://127.0.0.1:3101/
+curl -s -o /dev/null -w '%{http_code}\n' https://study.pccoding666.com/s/
+curl -sI https://help.pccoding666.com/
+```
+
+联系方式（邮箱、微信）在页面上是「待补充」，填上之前改 `src/portal/helpPortal.ts` 再发一版。说明页没有学生数据。
