@@ -65,7 +65,7 @@ ssh sel-deploy@SERVER 'status RUN_ID-ATTEMPT'
 
 备份在 `/var/backups/super-error-log-ci/<run-id>-<attempt>/`：`files.tar`（照片等文件，停服前打包）、`sqlite.tar`（SQLite/WAL 与 systemd 单元，停服后打包），仅 root 可读。**不含 env 文件和 TLS 私钥**（`env`、`*.env`、`*.pem`、`*.key`、`tls*/` 都被排除）。恢复时先停服务，依次 `tar -xf files.tar -C /`、`tar -xf sqlite.tar -C /`。**代码回退不自动恢复数据库**：避免覆盖用户新写入；数据恢复必须另行确认。发布程序比较 `dist/db/` 和 `dist/studentHost/registry.js`，这些已知迁移入口变更时自动发布会提前拒绝，须安排人工发布和迁移验收。禁止把迁移藏在其他入口绕过检查；代码审查仍是必要边界。
 
-每次发布开始时自动只保留最近 3 份发布备份（只删名字是 `<run-id>-<attempt>` 的真实目录，不跟随软链）和最近 3 个 `releases/ci-*`（当前版本永远保留；非 `ci-` 的人工版本不动）。低于 2 GiB 拒绝新发布。此机备份只能覆盖误发布/误操作，不能代替异地备份：每日异地备份见 `deploy/ops/RUNBOOK.md`。改了本程序后要由管理员重新安装 `/usr/local/sbin/sel-ci-deploy`（RUNBOOK 第 7 步）。
+每次发布开始时自动只保留最近 3 份发布备份（只删名字是 `<run-id>-<attempt>` 的真实目录，不跟随软链）和最近 3 个 `releases/ci-*`（当前版本永远保留；非 `ci-` 的人工版本不动）。低于 2 GiB 拒绝新发布。此机备份只能覆盖误发布/误操作，不能代替异地备份：每日异地备份见 `deploy/ops/RUNBOOK.md`。改了本程序后要由管理员重新安装 `/usr/local/sbin/sel-ci-deploy`（RUNBOOK 第 13 步，先做完第 9、10 步的第一次备份和恢复演练）。
 
 ## 验收范围
 
