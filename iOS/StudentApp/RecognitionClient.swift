@@ -89,9 +89,9 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
     } catch { throw RecognitionClientError.invalidResponse }
   }
 
-  // MARK: - 邀请码登录（2026-10-23；网关 /s/api）
+  // MARK: - 邀请码登录（2026-10-23；网关 /s/native）
 
-  /// 邀请码登录（POST <入口>/s/api/login）——原生 App 的免鉴权入口，只在 invitation 模式下可用。
+  /// 邀请码登录（POST <入口>/s/native/login）——原生 App 的免鉴权入口，只在 invitation 模式下可用。
   /// 新码可重复登录，网络丢失后重试会得到另一枚令牌，旧令牌保持有效直到退出或 30 天不用。
   func loginInvitation(code: String, deviceInfo: String) async throws -> InvitationLoginResult {
     guard configuration.isInvitation else { throw RecognitionClientError.invalidPairing }
@@ -105,7 +105,7 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
     catch { throw RecognitionClientError.invalidResponse }
   }
 
-  /// 退出登录（POST <入口>/s/api/logout）：服务器立即撤销这枚令牌；204 无正文。
+  /// 退出登录（POST <入口>/s/native/logout）：服务器立即撤销这枚令牌；204 无正文。
   func logoutInvitation() async throws {
     guard configuration.isInvitation else { throw RecognitionClientError.invalidPairing }
     _ = try await send(makeRequest("logout", method: "POST"))
@@ -241,7 +241,7 @@ final class RecognitionClient: NSObject, URLSessionTaskDelegate, @unchecked Send
   }
 }
 
-/// 邀请码登录响应（服务端 studentHost/router.ts `POST /s/api/login` 契约）。
+/// 邀请码登录响应（服务端 studentHost/router.ts `POST /s/native/login` 契约）。
 struct InvitationLoginResult: Codable, Equatable, Sendable {
   let token: String
   let serviceId: String

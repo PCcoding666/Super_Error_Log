@@ -18,12 +18,13 @@
  *   - 响应 Set-Cookie 只放行业务 cookie（见 BUSINESS_COOKIES），
  *     绝不把内部 sel_device 或 sel_student 发给浏览器；含学生数据的响应一律 no-store。
  *   - 请求体流式转发（不解析 multipart）；有限超时；客户端断连取消上游请求（POST 不自动重放）。
- * - 原生 App（iOS，2026-10-23）：/s/api 下的 JSON 接口，不用 cookie、不进网页路由。
- *   - POST /s/api/login {code} 兑换邀请码 → 返回会话令牌（与网页会话同一张表、同样 30 天滑动续期）
+ * - 原生 App（iOS，2026-10-23）：/s/native 下的 JSON 接口，不用 cookie、不进网页路由（/s/api 是网页单页应用的
+ *     cookie 接口，由 worker 处理，与这里无关）。
+ *   - POST /s/native/login {code} 兑换邀请码 → 返回会话令牌（与网页会话同一张表、同样 30 天滑动续期）
  *     和该学生 worker 的 serviceId；限速与网页登录共用同一套按码计数。
- *   - /s/api/v1/* 与 /s/api/v2/* 要求 Authorization: Bearer <会话令牌>，鉴权后改写成 worker 的
+ *   - /s/native/v1/* 与 /s/native/v2/* 要求 Authorization: Bearer <会话令牌>，鉴权后改写成 worker 的
  *     /v1 /v2（带只有父进程知道的内部设备令牌），只放行 health / recognitions / v2，绝不放行 pairing。
- *   - POST /s/api/logout 立即撤销该令牌。cookie 会话永远进不了 /s/api；令牌也永远进不了网页路由。
+ *   - POST /s/native/logout 立即撤销该令牌。cookie 会话永远进不了 /s/native；令牌也永远进不了网页路由。
  */
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -48,7 +49,7 @@ const ACCOUNT_FLASH_COOKIE = 'sel_account_flash';
 export const SESSION_COOKIE = 'sel_student';
 
 /** 原生 App 接口前缀（挂在 /s 下）与它的协议代次；iOS 的 health 校验也按这个代次。 */
-export const NATIVE_API_PREFIX = '/api';
+export const NATIVE_API_PREFIX = '/native';
 export const NATIVE_PROTOCOL_VERSION = 1;
 /** 原生 App 能经网关到达的 worker 路径：只有上传/识别进度与 /v2 闭环；/v1/pairing 永远不在其中。 */
 const NATIVE_UPSTREAM = /^\/(?:v1\/(?:health|recognitions)(?:\/|$)|v2(?:\/|$))/;
@@ -133,7 +134,7 @@ function safeRelativeUrl(rawUrl: string): string | null {
 }
 
 /**
- * 原生 App 路径 → worker 路径：/api/v1/health → /v1/health。不在白名单内（含 /v1/pairing、/s 网页）返回 null。
+ * 原生 App 路径 → worker 路径：/native/v1/health → /v1/health。不在白名单内（含 /v1/pairing、/s 网页）返回 null。
  * 先过 safeRelativeUrl 的编码/穿越检查，再按 worker 侧的真实前缀放行。
  */
 function nativeUpstreamUrl(rawUrl: string): string | null {

@@ -15,9 +15,9 @@ enum CloudPairing {
     allowedHosts.contains(host) ? "https://\(host)" : nil
   }
 
-  /// 邀请码登录用的网关原生接口前缀（服务端 studentHost/router.ts 的 /s/api）。
-  static let nativeAPIPath = "s/api"
-  /// 白名单主机下的原生接口入口（无尾斜杠）：`https://<host>/s/api`；其他主机返回 nil。
+  /// 邀请码登录用的网关原生接口前缀（服务端 studentHost/router.ts 的 /s/native；/s/api 是网页端的 cookie 接口）。
+  static let nativeAPIPath = "s/native"
+  /// 白名单主机下的原生接口入口（无尾斜杠）：`https://<host>/s/native`；其他主机返回 nil。
   static func nativeAPIURL(forHost host: String) -> String? {
     url(forHost: host).map { "\($0)/\(nativeAPIPath)" }
   }

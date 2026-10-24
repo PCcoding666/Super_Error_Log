@@ -258,7 +258,7 @@ struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
 /// 双模式配对（Task 4）：
 /// - loopback：现有回环校验不变（http + 127.0.0.1/localhost/[::1] + 16 位口令）。
 /// - cloud：白名单入口 HTTPS（IP 直连或域名，取自配对二维码）+ 设备令牌 + deviceId（UUID）+ 可选到期。
-/// - invitation（2026-10-23）：邀请码登录。入口是白名单主机下的 `/s/api`（网关的原生接口），令牌是网关发的
+/// - invitation（2026-10-23）：邀请码登录。入口是白名单主机下的 `/s/native`（网关的原生接口），令牌是网关发的
 ///   会话令牌（与手机网页版同一张表），serviceId 是该学生自己 worker 的服务标识；没有 deviceId。
 ///   `isCloud` 对它也为 true：健康检查、归属校验、连接状态机全部沿用云端逻辑。
 /// 注意：Codable 按模式存储；`baseURL`/`token` 提供模式无关访问。

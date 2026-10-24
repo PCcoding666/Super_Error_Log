@@ -6,7 +6,7 @@ SwiftUI 项目，最低 iOS 18。界面中文；单一「本周」主页，没�
 ## 登录与安装（2026-10-23 起）
 
 - **邀请码登录**：主页「输入邀请码」→ 填老师/家长给的 12 位码（和手机网页版 `/s/` 同一个账号）→ 登录。
-  App 走网关的原生接口 `/s/api`（见 `docs/ios-native-invitation-login.md`），之后的上传、识别进度、本周错题、练习、
+  App 走网关的原生接口 `/s/native`（见 `docs/ios-native-invitation-login.md`），之后的上传、识别进度、本周错题、练习、
   打印、录结果都落在该学生自己的服务器空间里，网页版能看到同一份。设置 ▸ 连接设置里可「退出登录」。
   旧的扫码配对保留在登录页底部作次要入口（没有邀请码的老部署、开发调试）。
 - **装进自己的 iPhone（免费 Apple ID）**：`SEL_IOS_TEAM_ID=<你的 Team ID> zsh iOS/scripts/install-iphone.sh`，
@@ -106,6 +106,6 @@ xcodebuild test-without-building -xctestrun iOS/StudentJourney.xctestrun \
 
 - 模拟器不能录音：按住说话（SFSpeechRecognizer）只能真机验证；语音不可用或被拒时只显示键盘。
 - 真机签名用免费开发者证书 7 天到期（`scripts/install-iphone.sh` 重跑即可）；真机安装、相机实机验收不在模拟器验证范围内。
-- 邀请码登录依赖服务器的 `/s/api`（2026-10-23 起的 `main`）；旧服务器只能用扫码配对。
+- 邀请码登录依赖服务器的 `/s/native`（2026-10-23 起的 `main`）；旧服务器只能用扫码配对。
 - 删除应用会丢失本机照片与缓存；学习记录在服务器。
 - 合成测试不证明真实模型质量；真实照片的识别正确性须对照原图逐项验收。

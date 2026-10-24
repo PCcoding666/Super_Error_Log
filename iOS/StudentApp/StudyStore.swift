@@ -195,7 +195,7 @@ final class StudyStore {
     } catch { errorMessage = error.localizedDescription }
   }
 
-  /// 邀请码登录（2026-10-23）：老师/家长给的 12 位邀请码 → 网关 `/s/api/login` 换会话令牌 → 落库。
+  /// 邀请码登录（2026-10-23）：老师/家长给的 12 位邀请码 → 网关 `/s/native/login` 换会话令牌 → 落库。
   /// 与手机网页版同一个账号；错误文案来自服务器（不含令牌字节）。`transport`：测试注入合成传输。
   @discardableResult
   func loginWithInvitation(code: String, host: String = CloudPairing.domainHost, transport: RecognitionClient? = nil) async -> Bool {

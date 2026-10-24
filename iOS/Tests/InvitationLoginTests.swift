@@ -5,7 +5,7 @@ import Foundation
 // 邀请码登录（2026-10-23）：配置白名单、Codable、登录/退出请求形状、归属校验、StudyStore 落库。
 // 全部走合成 URLProtocol，不连真实服务、不调模型。
 final class InvitationLoginTests: XCTestCase {
-  static let entry = "https://study.pccoding666.com/s/api"
+  static let entry = "https://study.pccoding666.com/s/native"
   static let serviceId = "3f7b69dc-9d37-4aaa-b965-bb61243445a0"
   static let token = "issued-session-token-32-bytes-test!!"
 
@@ -30,10 +30,10 @@ final class InvitationLoginTests: XCTestCase {
     XCTAssertEqual(configuration.token, Self.token)
     XCTAssertEqual(configuration.serviceId, Self.serviceId)
     XCTAssertNil(configuration.deviceId)
-    XCTAssertNoThrow(try PairingConfiguration.invitation(baseURL: "https://8.163.96.197/s/api", serviceId: Self.serviceId, token: Self.token, expiresAt: nil))
-    for bad in ["https://study.pccoding666.com", "https://study.pccoding666.com/s/api/", "http://study.pccoding666.com/s/api",
-      "https://evil.example/s/api", "https://study.pccoding666.com:8443/s/api", "https://study.pccoding666.com/s/api?x=1",
-      "https://user:pw@study.pccoding666.com/s/api"] {
+    XCTAssertNoThrow(try PairingConfiguration.invitation(baseURL: "https://8.163.96.197/s/native", serviceId: Self.serviceId, token: Self.token, expiresAt: nil))
+    for bad in ["https://study.pccoding666.com", "https://study.pccoding666.com/s/native/", "http://study.pccoding666.com/s/native",
+      "https://evil.example/s/native", "https://study.pccoding666.com:8443/s/native", "https://study.pccoding666.com/s/native?x=1",
+      "https://user:pw@study.pccoding666.com/s/native"] {
       XCTAssertThrowsError(try PairingConfiguration.invitation(baseURL: bad, serviceId: Self.serviceId, token: Self.token, expiresAt: nil), bad)
     }
     XCTAssertThrowsError(try PairingConfiguration.invitation(baseURL: Self.entry, serviceId: "not-a-uuid", token: Self.token, expiresAt: nil))
@@ -51,7 +51,7 @@ final class InvitationLoginTests: XCTestCase {
     // 磁盘上的入口被改成别的主机：解码必须失败（不信任磁盘字段）。
     var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     XCTAssertEqual(object["mode"] as? String, "invitation")
-    object["baseURL"] = "https://evil.example/s/api"
+    object["baseURL"] = "https://evil.example/s/native"
     XCTAssertThrowsError(try JSONDecoder().decode(PairingConfiguration.self, from: JSONSerialization.data(withJSONObject: object)))
     // 旧的 cloud 形状照常可读
     let cloud = try PairingConfiguration.cloud(baseURL: "https://study.pccoding666.com", serviceId: Self.serviceId, token: Self.token,
@@ -100,7 +100,7 @@ final class InvitationLoginTests: XCTestCase {
     }
   }
 
-  // MARK: - 健康检查走 /s/api/v1/health 并核对归属
+  // MARK: - 健康检查走 /s/native/v1/health 并核对归属
 
   func testHealthGoesThroughNativeEntryAndChecksServiceId() async throws {
     InvitationSyntheticProtocol.reset()
@@ -175,7 +175,7 @@ final class InvitationLoginTests: XCTestCase {
   }
 }
 
-/// 合成网关：/s/api/login、/s/api/logout、/s/api/v1/health。记录每个请求（含正文）供断言。
+/// 合成网关：/s/native/login、/s/native/logout、/s/native/v1/health。记录每个请求（含正文）供断言。
 final class InvitationSyntheticProtocol: URLProtocol, @unchecked Sendable {
   private static let lock = NSLock()
   nonisolated(unsafe) private static var recorded: [URLRequest] = []
@@ -203,12 +203,12 @@ final class InvitationSyntheticProtocol: URLProtocol, @unchecked Sendable {
     }
     Self.lock.withLock { Self.recorded.append(captured) }
     let url = request.url?.absoluteString ?? ""
-    if url.hasSuffix("/s/api/login") {
+    if url.hasSuffix("/s/native/login") {
       if let override = Self.lock.withLock({ Self.loginOverride }) { respond(status: override.status, body: override.body); return }
       respond(status: 200, body: #"{"token":"issued-session-token-32-bytes-test!!","serviceId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","expiresAt":"2026-11-22T00:00:00.000Z","protocolVersion":1}"#)
-    } else if url.hasSuffix("/s/api/logout") {
+    } else if url.hasSuffix("/s/native/logout") {
       respond(status: 204, body: "")
-    } else if url.hasSuffix("/s/api/v1/health") {
+    } else if url.hasSuffix("/s/native/v1/health") {
       if let override = Self.lock.withLock({ Self.healthOverride }) { respond(status: override.status, body: override.body); return }
       respond(status: 200, body: #"{"version":1,"serviceId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","storageAvailable":true,"visionConfigured":true,"acceptingJobs":true,"protocolVersion":1}"#)
     } else {

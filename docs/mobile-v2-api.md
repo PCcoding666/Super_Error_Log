@@ -14,7 +14,7 @@
   令牌缺失或不符：`401 {"error":{"code":"unauthorized","message":"本地配对令牌无效。"}}`。
 - **云端模式**：设备令牌（`POST /v1/pairing/redeem` 兑换，见 v1 文档）。
   鉴权失败 `401 {"error":{"code":"unauthorized","message":<配对错误文案>}}`。
-- **邀请码登录（原生 App，2026-10-23）**：经网关 `/s/api/v2/...`，`Authorization: Bearer <会话令牌>`；
+- **邀请码登录（原生 App，2026-10-23）**：经网关 `/s/native/v2/...`，`Authorization: Bearer <会话令牌>`；
   网关改写到该学生 worker 的 `/v2`，本文其余内容不变。见 `docs/ios-native-invitation-login.md`。
 
 ### 1.2 限流（仅云端模式）
