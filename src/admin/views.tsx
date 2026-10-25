@@ -13,7 +13,7 @@ export const OPERATIONS: Record<string, string> = {
   mobile_inventory: '整页找题', mobile_transcribe: '题目精读', mobile_verify: '裁图检查', mobile_ground: '识别修正',
   layout: '题目定位', transcribe: '图文转写与作答核对', diagnose: '错因分析', coach: '提示与答案',
   followup: '复盘追问与归纳', match: '回传匹配', correct: '修订建议', asr: '语音转写',
-  crop_inventory: '原图清单', crop_verify: '裁图核验',
+  crop_inventory: '原图清单', crop_verify: '裁图核验', explain: '详情页解答与错因', answer_read: '拍照答案转写',
 };
 const ERRORS: Record<string, string> = { timeout: '调用超时', cancelled: '调用取消', rate_limited: '服务限流', provider_error: '服务或网络错误',
   unsupported: '配置、认证或请求不支持', invalid_json: '响应 JSON 无效', invalid_output: '响应格式无效', interrupted: '调用中断', internal: '内部错误',

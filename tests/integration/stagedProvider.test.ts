@@ -28,6 +28,15 @@ describe('真实 HTTP 边界上的阶段路由（合成响应，不是模型效�
         'layout-duplicate-array': [question, question],
         'layout-too-many-array': Array.from({ length: 31 }, (_, i) => ({ ...question, questionNumber: String(i + 1) })),
       };
+      // 模型在 JSON 里把 \frac、\neq 只写了一个反斜杠：解析后成了换页符、换行符。
+      if (body.model === 'explain-model') {
+        res.end(JSON.stringify({ model: body.model, choices: [{ finish_reason: 'stop', message: { content: '{"answer":"$x = \\frac{1}{2}$","solution":"1. 因为 $a \\neq b$\\n2. 得解","mistake":"你把分母写反了。","cause":"计算","uncertain":null,"figure":{"kind":"html","html":"<svg><script>\\tvar a=1;</script></svg>"}}' } }], usage: { prompt_tokens: 50, completion_tokens: 40, total_tokens: 90 } }));
+        return;
+      }
+      if (body.model === 'answer-read-model') {
+        res.end(JSON.stringify({ model: body.model, choices: [{ finish_reason: 'stop', message: { content: '{"found":true,"text":"7. $x = 3$"}' } }], usage: { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 } }));
+        return;
+      }
       const content = body.model === 'bad-output' ? '{oops' : JSON.stringify(body.model in layouts ? layouts[body.model] : { summary: '所用关系不符合倒数条件', possibleCause: '知识概念', confidence: .7,
         findings: [{ observationIds: ['o1'], explanation: '图中用了两根之和为零' }], clarificationQuestion: '你如何理解互为倒数？' });
       res.end(JSON.stringify({ model: body.model, choices: [{ finish_reason: body.model === 'truncated' ? 'length' : 'stop', message: { content } }], usage: { prompt_tokens: 120, completion_tokens: 60, total_tokens: 180 } }));
@@ -50,6 +59,29 @@ describe('真实 HTTP 边界上的阶段路由（合成响应，不是模型效�
     expect(result.run.completionTokens).toBe(60);
     expect(requests.at(-1)?.model).toBe('diagnostic-model');
     expect(JSON.stringify(requests.at(-1)?.messages)).toContain('x1+x2=0，m=1');
+  });
+  it('详情页解答走 explain 阶段模型，只发识别出的文字，修回 JSON 吃掉的 LaTeX 反斜杠', async () => {
+    const provider = new StagedProvider(new ChatClient({ baseUrl, apiKey: 'synthetic-test-key', models: { explain: 'explain-model' }, timeoutMs: 1000, bailianOnly: false }));
+    const context = { questionNumber: '3', questionText: '解方程 2x = 1', subject: '数学' as const, chapter: '', knowledgeTags: [], questionType: '', requiresDiagram: false,
+      observations: [{ id: 'o1', kind: 'student_work' as const, text: 'x = 2', regionId: null, confidence: .9 }], uncertainties: [] };
+    const photo = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+    const result = await provider.explainItem({ context, images: [photo], providedAnswers: ['x = 1/2'], background: false });
+    expect(result.value).toEqual({ answer: '$x = \\frac{1}{2}$', solution: '1. 因为 $a \\neq b$\n2. 得解', mistake: '你把分母写反了。', cause: '计算', uncertain: null, figure: { kind: 'html', html: '<svg><script>\tvar a=1;</script></svg>' } });
+    expect(result.run).toMatchObject({ stage: 'explain', model: 'explain-model', promptVersion: 'item-explain-v2', maxTokens: 16384 });
+    const sent = JSON.stringify(requests.at(-1)?.messages);
+    expect(sent).toContain('x = 2');
+    expect(sent).toContain('x = 1/2');
+    expect(sent).toContain('data:image/jpeg;base64,');
+  });
+  it('拍的答案页走 answer_read 阶段，带上题号题干和照片', async () => {
+    const provider = new StagedProvider(new ChatClient({ baseUrl, apiKey: 'synthetic-test-key', models: { answer_read: 'answer-read-model' }, timeoutMs: 1000, bailianOnly: false }));
+    const photo = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+    const result = await provider.readAnswerPhoto({ context: { questionNumber: '7', questionText: '求 x', subject: '数学', chapter: '', knowledgeTags: [], questionType: '', requiresDiagram: false, observations: [], uncertainties: [] }, photo, background: false });
+    expect(result.value).toEqual({ found: true, text: '7. $x = 3$' });
+    expect(result.run).toMatchObject({ stage: 'answer_read', promptVersion: 'answer-read-v1' });
+    const sent = JSON.stringify(requests.at(-1)?.messages);
+    expect(sent).toContain('求 x');
+    expect(sent).toContain('data:image/jpeg;base64,');
   });
   it('拒绝截断与非法 JSON，不将损坏响应当成有效证据', async () => {
     await expect(client('truncated').call('diagnose', [])).rejects.toMatchObject({ kind: 'invalid_json' });

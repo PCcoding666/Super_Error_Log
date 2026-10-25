@@ -15,10 +15,15 @@ import { ALL_STAGES } from '../classification/stages.js';
 import { categoryForItem, chapterOf, chooseStudentStage, editItemCategory, stageChoices, STAGE_REQUIRED_MESSAGE } from '../classification/itemCategories.js';
 import { ACCOUNT_ROLE_LABELS, isAccountRole, type AccountRole } from '../studentHost/accountRole.js';
 import { getLearningWeek, listLearningPractices, getLearningPractice } from '../learning/queries.js';
+import type { Figure } from '../ai/evidence.js';
 import type { LearningCard } from '../learning/contracts.js';
 import { getLearningSource, learningCard, learningImageFragments, materialStoreForItem } from '../learning/sources.js';
 import { intakeDay } from '../learning/redoSchedule.js';
-import { getEvidenceView } from '../v2/correctionService.js';
+import {
+  addAnswerPhoto, ANSWER_TEXT_MAX_CHARS, answerPhotoImage, deleteAnswerPhoto, editAnswerPhoto, getItemNote, insightState, listAnswerPhotos, NOTE_MAX_CHARS,
+  prioritizeInsight, requestInsight, retryAnswerPhoto, saveItemNote, type AnswerPhotoRecord, type InsightState,
+} from '../v2/insightService.js';
+import { directCorrection, getEvidenceView } from '../v2/correctionService.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
 import { canRecover } from '../mobile/contracts.js';
@@ -33,7 +38,7 @@ import { loadPhotos, type PhotoView, type WebContext } from './state.js';
 import { detailPhotos } from './detailPhotos.js';
 import { stemFirstSentence } from './views/materials.js';
 import type {
-  DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemDetailResponse, ItemNote,
+  DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemAnswerPhoto, ItemDetailResponse, ItemInsight, ItemTrace,
   NotebookGroup, NotebookItem, NotebookResponse, SettingsResponse, UploadModeResponse,
 } from './apiTypes.js';
 
@@ -41,7 +46,84 @@ const require = createRequire(import.meta.url);
 const VERSION: string = (require('../../package.json') as { version: string }).version;
 const ITEM_ID = /^itm_[0-9a-f]{16}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const KIND_TITLE: Record<string, string> = { student_work: '你写的', correction: '订正', teacher_note: '老师批注', reference_answer: '参考答案', unknown: '其他笔迹' };
+
+/**
+ * 详情页的识别文字分三处放：你写的（原作，订正和看不出是谁写的另外标出）、批改痕迹、资料上的参考答案。
+ * 同一类的几段合在一处，不再一段一行（以前两段原作会出现两行「你写的」）。带着观察 ID，学生可以逐段改。
+ */
+export function groupTraces(observations: Array<{ id: string; kind: string; text: string }>): { work: ItemTrace[]; marking: ItemTrace[]; sourceAnswers: ItemTrace[] } {
+  const work: Array<ItemTrace & { rank: number }> = [], marking: ItemTrace[] = [], sourceAnswers: ItemTrace[] = [];
+  for (const { id, kind, text: raw } of observations) {
+    const text = raw.trim();
+    if (!text) continue;
+    if (kind === 'student_work') work.push({ id, label: null, text, rank: 0 });
+    else if (kind === 'correction') work.push({ id, label: '订正', text, rank: 1 });
+    else if (kind === 'teacher_note') marking.push({ id, label: null, text });
+    else if (kind === 'reference_answer') sourceAnswers.push({ id, label: null, text });
+    else work.push({ id, label: '看不出是谁写的', text, rank: 2 });
+  }
+  return { work: work.sort((a, b) => a.rank - b.rank).map(({ id, label, text }) => ({ id, label, text })), marking, sourceAnswers };
+}
+
+/** 服务里的解答状态 → 学生看到的文字；low：题目文字可能认错了；figureUrl：有交互图时它的地址。 */
+export function toItemInsight(state: InsightState, low: boolean, figureUrl: (figure: Figure) => string = () => ''): ItemInsight {
+  switch (state.state) {
+    case 'unavailable': return { state: 'unavailable', message: '题目文字还没识别完整，AI 暂时解不了这道题，先对照照片核对。' };
+    case 'failed': return state.rateLimited
+      ? { state: 'failed', message: '这道题这一小时试得太多了，过一会儿再点重试。', retryable: false }
+      : { state: 'failed', message: 'AI 没解出来这道题。', retryable: true };
+    case 'ready': {
+      const { insight } = state;
+      const warnings = [
+        ...(low ? ['识别出的题目文字可能有错，解答以照片为准。'] : []),
+        ...(state.requiresDiagram && state.images === 0 ? ['这题有图，但 AI 没看到照片，只看了文字。'] : []),
+        ...(insight.uncertain ? [insight.uncertain] : []),
+      ];
+      return { state: 'ready', answer: insight.answer, solution: insight.solution, mistake: insight.mistake, cause: insight.cause, warnings, figureUrl: insight.figure ? figureUrl(insight.figure) : null };
+    }
+    default: return state;
+  }
+}
+
+/**
+ * 交互图单独一页，在 iframe（sandbox="allow-scripts"）里显示。这一页有自己的 CSP：只许内联脚本和样式，不许任何网络请求、表单和外部资源，
+ * 并用 CSP sandbox 强制成不透明来源（直接打开也读不到 cookie、存储）；只许本站嵌入。高度用 postMessage 告诉父页面。
+ */
+export const FIGURE_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts";
+/** 立体图：我们自己的脚本（不是模型写的）把坐标画成能拖动旋转的 3D 线框图；点名、说明都用 textContent 放进去。 */
+const SOLID_SCRIPT = `(function(){var D=JSON.parse(document.getElementById('d').textContent);var svg=document.getElementById('s'),NS='http://www.w3.org/2000/svg',W=320,H=280;
+var names=Object.keys(D.points),c=[0,0,0];names.forEach(function(n){for(var i=0;i<3;i++)c[i]+=D.points[n][i]/names.length});
+var r=0;names.forEach(function(n){var p=D.points[n];r=Math.max(r,Math.hypot(p[0]-c[0],p[1]-c[1],p[2]-c[2]))});r=r||1;
+var yaw0=-0.55,pitch0=0.38,yaw=yaw0,pitch=pitch0,COLORS=['#d32f2f','#1565c0','#2e7d32','#ef6c00','#6a1b9a','#00838f','#c2185b','#5d4037'];
+function proj(n){var p=D.points[n],x=(p[0]-c[0])/r,y=(p[1]-c[1])/r,z=(p[2]-c[2])/r,cy=Math.cos(yaw),sy=Math.sin(yaw),x1=x*cy-y*sy,y1=x*sy+y*cy,cp=Math.cos(pitch),sp=Math.sin(pitch);return[W/2+x1*105,H/2-(y1*sp+z*cp)*105,y1*cp-z*sp]}
+function el(t,a){var e=document.createElementNS(NS,t);for(var k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e}
+function draw(){while(svg.firstChild)svg.removeChild(svg.firstChild);var P={};names.forEach(function(n){P[n]=proj(n)});
+D.faces.forEach(function(f,i){el('polygon',{points:f.map(function(n){return P[n][0]+','+P[n][1]}).join(' '),fill:COLORS[(i+2)%COLORS.length],'fill-opacity':0.12,stroke:'none'})});
+D.edges.forEach(function(e){var a=P[e[0]],b=P[e[1]],far=(a[2]+b[2])/2>0.15;el('line',{x1:a[0],y1:a[1],x2:b[0],y2:b[1],stroke:far?'#9e9e9e':'#37474f','stroke-width':far?1.2:1.8,'stroke-dasharray':far?'5 4':''})});
+D.highlights.forEach(function(h,i){var a=P[h.from],b=P[h.to];el('line',{x1:a[0],y1:a[1],x2:b[0],y2:b[1],stroke:COLORS[i%COLORS.length],'stroke-width':3,'stroke-linecap':'round'});if(h.label){var t=el('text',{x:(a[0]+b[0])/2+6,y:(a[1]+b[1])/2-6,fill:COLORS[i%COLORS.length],'font-size':13});t.textContent=h.label}});
+names.forEach(function(n){var p=P[n];el('circle',{cx:p[0],cy:p[1],r:2.6,fill:'#263238'});var t=el('text',{x:p[0]+(p[0]>=W/2?6:-6),y:p[1]-6,'text-anchor':p[0]>=W/2?'start':'end','font-size':14,fill:'#263238'});t.textContent=n.replace(/([A-Za-z])(\\d+)$/,function(m,a,d){return a+d.split('').map(function(x){return '₀₁₂₃₄₅₆₇₈₉'[+x]}).join('')})})}
+var drag=null;svg.addEventListener('pointerdown',function(e){drag=[e.clientX,e.clientY];svg.setPointerCapture(e.pointerId)});
+svg.addEventListener('pointermove',function(e){if(!drag)return;yaw+=(e.clientX-drag[0])*0.012;pitch=Math.max(-1.45,Math.min(1.45,pitch+(e.clientY-drag[1])*0.012));drag=[e.clientX,e.clientY];draw()});
+['pointerup','pointercancel'].forEach(function(t){svg.addEventListener(t,function(){drag=null})});
+document.getElementById('reset').addEventListener('click',function(){yaw=yaw0;pitch=pitch0;draw()});
+if(D.caption)document.getElementById('cap').textContent=D.caption;draw()})();`;
+
+/** 交互图页面：立体图用我们自己的渲染脚本，其他用模型写的 HTML。高度用 postMessage 告诉父页面。 */
+export function figureDocument(figure: Figure): string {
+  const body = figure.kind === 'html' ? figure.html
+    : '<svg id="s" viewBox="0 0 320 280" width="100%" style="max-height:360px;touch-action:none;cursor:grab;display:block;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none" role="img" aria-label="可以拖动旋转的立体图"></svg>'
+      + '<p class="hint">用手指拖动可以旋转 · <button type="button" id="reset">回到原来的角度</button></p><p id="cap" class="hint"></p>'
+      + `<script type="application/json" id="d">${JSON.stringify(figure).replace(/</g, '\\u003c')}</script><script>${SOLID_SCRIPT}</script>`;
+  return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>交互图</title>'
+    + '<style>html,body{margin:0;background:#fff}body{padding:6px;color:#1c1c1e;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",system-ui,sans-serif;overflow-x:hidden}svg,canvas,img{max-width:100%}.hint{margin:6px 4px 0;font-size:13px;color:#555}.hint button{font:inherit;color:#0066d6;background:none;border:0;padding:0}</style></head><body>'
+    + body
+    + '<script>(function(){function post(){parent.postMessage({selFigureHeight:Math.ceil(document.body.getBoundingClientRect().height)},"*")}addEventListener("load",post);if(window.ResizeObserver)new ResizeObserver(post).observe(document.body);setTimeout(post,300)})();</script></body></html>';
+}
+
+const toAnswerPhoto = (itemId: string, photo: AnswerPhotoRecord): ItemAnswerPhoto => ({
+  id: photo.id, status: photo.status, text: photo.text, imageUrl: `/s/api/items/${itemId}/answer-photos/${photo.id}/image`,
+});
+const figureUrlFor = (itemId: string) => (figure: Figure): string => `/s/api/items/${itemId}/figure?v=${crypto.createHash('sha256').update(JSON.stringify(figure)).digest('hex').slice(0, 12)}`;
 
 class ApiFailure extends Error { constructor(public status: number, public code: string, message: string) { super(message); } }
 const fail = (status: number, code: string, message: string): never => { throw new ApiFailure(status, code, message); };
@@ -152,7 +234,8 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const item = findItem(String(request.params.id));
     const evidence = getEvidenceView(item.id);
     const images = detailPhotos(item.id, item.source.kind, learningImageFragments(item.id));
-    const notes: ItemNote[] = (evidence?.observations ?? []).map(note => ({ kind: note.kind, title: KIND_TITLE[note.kind] ?? '其他笔迹', text: note.text }));
+    const traces = groupTraces(evidence?.observations ?? []);
+    const badge = evidence?.badge ?? item.badge;
     const category = categoryForItem(item.id);
     const profile = requireProfile();
     const catalog = readCatalog(getDb(), profile.id);
@@ -169,13 +252,91 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       return { grade, subject, chapters: [...new Set([...current, ...fromCatalog, ...used].filter(Boolean))] };
     }));
     const body: ItemDetailResponse = {
-      item: toNotebookItem(item), questionText: evidence?.questionText || item.questionExcerpt || '', badge: evidence?.badge ?? item.badge, revision: evidence?.revision ?? null,
-      images, notes,
+      item: toNotebookItem(item), questionText: evidence?.questionText || item.questionExcerpt || '', badge, revision: evidence?.revision ?? null,
+      images, ...traces, answerPhotos: listAnswerPhotos(item.id).map(photo => toAnswerPhoto(item.id, photo)), editable: !!evidence,
+      insight: toItemInsight(insightState(item.id), badge === 'low', figureUrlFor(item.id)), remark: getItemNote(item.id),
       canDiscard: item.source.kind === 'material' || item.status === 'ready_for_reflection' || item.status === 'eligible_for_review',
       category: { grade: category.grade, subject: category.subject, chapter: category.chapter, stages, subjects, chapterOptions },
       materialUrl: item.source.kind === 'material' && item.source.questionId ? `/s/materials/questions/${item.source.questionId}` : null,
     };
     return body;
+  }));
+
+  // 详情页的 AI 解答在后台排队生成（insightService）；打开详情页只把这道题排到最前。只查这一题，不算整本错题本。
+  const learningItem = (itemId: string): LearningCard => {
+    const card = ITEM_ID.test(itemId) ? learningCard(itemId) : null;
+    return card ?? fail(404, 'not_found', '题目不存在。');
+  };
+  r.get('/items/:id/insight', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    return toItemInsight(insightState(card.id), card.badge === 'low', figureUrlFor(card.id));
+  }));
+  r.post('/items/:id/insight', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    return toItemInsight(requestInsight(card.id, { retry: request.body?.retry === true }), card.badge === 'low', figureUrlFor(card.id));
+  }));
+  r.get('/items/:id/figure', (request, response, next) => {
+    try {
+      const card = learningItem(String(request.params.id));
+      const state = insightState(card.id);
+      if (state.state !== 'ready' || !state.insight.figure) fail(404, 'not_found', '这道题没有交互图。');
+      response.setHeader('content-security-policy', FIGURE_CSP);
+      response.setHeader('x-frame-options', 'SAMEORIGIN');
+      response.type('html').send(figureDocument((state as Extract<InsightState, { state: 'ready' }>).insight.figure!));
+    } catch (error) { next(error); }
+  });
+  r.post('/items/:id/remark', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    const remark = saveItemNote(card.id, request.body?.text);
+    if (!remark) fail(400, 'invalid_request', `备注最多 ${NOTE_MAX_CHARS} 字。`);
+    return { remark };
+  }));
+
+  // 改识别结果：题干或某一段笔迹，键盘直改（不调用模型），规则同「不对，改一下」：学生原作只能改回纸上写的，不能改对。
+  r.post('/items/:id/text', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    const view = getEvidenceView(card.id) ?? fail(409, 'conflict', '这道题没有可修改的识别结果。');
+    const target = str(request.body?.target), after = str(request.body?.text);
+    if (!after.trim() || after.length > 4000) fail(400, 'invalid_request', '内容不能为空，最多 4000 字。');
+    const observation = target === 'question' ? null : view.observations.find(o => o.id === target) ?? fail(404, 'not_found', '这段文字已经不在了，刷新一下。');
+    const before = observation ? observation.text : view.questionText;
+    if (after === before) return { revision: view.revision };
+    const change = observation ? { field: 'observation', observationId: observation.id, before, after } : { field: 'questionText', before, after };
+    const result = directCorrection(card.id, { revision: request.body?.revision, changes: [change] });
+    if (!result.ok) fail(result.httpStatus, result.httpStatus === 409 ? 'conflict' : 'invalid_request', result.message);
+    prioritizeInsight(card.id);
+    return { revision: (result as { revision: number }).revision };
+  }));
+
+  // 拍照录入答案：照片存库，后台转写这道题的答案，学生可以改文字、重新转写、删掉。
+  r.post('/items/:id/answer-photos', express.raw({ type: () => true, limit: '15mb' }), handler(async (request) => {
+    const card = learningItem(String(request.params.id));
+    if (!Buffer.isBuffer(request.body) || !request.body.length) fail(400, 'invalid_request', '先拍一张答案。');
+    const added = await addAnswerPhoto(card.id, request.body as Buffer);
+    if (typeof added === 'string') fail(400, 'invalid_request', added);
+    return { photo: toAnswerPhoto(card.id, added as AnswerPhotoRecord) };
+  }));
+  r.get('/items/:id/answer-photos/:photoId/image', (request, response, next) => {
+    try {
+      const card = learningItem(String(request.params.id));
+      const image = answerPhotoImage(card.id, String(request.params.photoId)) ?? fail(404, 'not_found', '照片不在了。');
+      response.type('image/jpeg').send(image);
+    } catch (error) { next(error); }
+  });
+  r.post('/items/:id/answer-photos/:photoId', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    const photo = editAnswerPhoto(card.id, String(request.params.photoId), request.body?.text) ?? fail(400, 'invalid_request', `答案不能为空，最多 ${ANSWER_TEXT_MAX_CHARS} 字。`);
+    return { photo: toAnswerPhoto(card.id, photo) };
+  }));
+  r.post('/items/:id/answer-photos/:photoId/retry', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    if (!retryAnswerPhoto(card.id, String(request.params.photoId))) fail(409, 'conflict', '这张照片现在不用重新转写。');
+    return { ok: true };
+  }));
+  r.post('/items/:id/answer-photos/:photoId/delete', handler((request) => {
+    const card = learningItem(String(request.params.id));
+    if (!deleteAnswerPhoto(card.id, String(request.params.photoId))) fail(404, 'not_found', '照片不在了。');
+    return { ok: true };
   }));
 
   const discardOne = (itemId: string): string | null => {
@@ -359,6 +520,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     if (error instanceof ApiFailure) { response.status(error.status).json({ error: { code: error.code, message: error.message } }); return; }
     if (error instanceof MobileRequestError) { response.status(error.status).json({ error: { code: error.code, message: error.message } }); return; }
     if (error instanceof SyntaxError || (error as { type?: string })?.type === 'entity.parse.failed') { response.status(400).json({ error: { code: 'invalid_request', message: '请求内容不合法。' } }); return; }
+    if ((error as { type?: string })?.type === 'entity.too.large') { response.status(413).json({ error: { code: 'payload_too_large', message: '照片太大了（超过 15 MB），换一张。' } }); return; }
     console.error(error);
     response.status(500).json({ error: { code: 'internal', message: '出了点问题，稍后再试。' } });
   }) as express.ErrorRequestHandler);

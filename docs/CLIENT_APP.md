@@ -18,6 +18,8 @@
 | `client/src/lib/api.ts` | `/s/api` 的调用封装；非 JSON 响应（登录过期回登录页）时整页跳回 `/s/` |
 | `client/src/lib/uploader.ts` | 拍照上传队列：浏览器端转 JPEG（最长边 4096、超 15 MB 降质量）、每张一个幂等 key、单并发、可重试；本批照片 id 存 sessionStorage |
 | `client/src/components/StemText.tsx`、`src/text/stemBlocks.ts` | 题干渲染：只把 GFM 管道表格画成真表格（窄屏可横滑），其余文字原样保留换行，不做完整 Markdown（题号「10.」、负号、`x_1`、绝对值 `|x-1|` 会被误解析）。表头 + 分隔行才算表格，表体行格数须与表头一致，不符的行留作文字。识别提示词（`src/mobile/vision.ts`）要求模型把题干表格写成管道表格；写入 `text_excerpt` 时先去掉表格再截 80 字（`questionExcerpt`）。已识别的旧题目文字是压平的，需重新识别才有表格 |
+| `client/src/components/Markdown.tsx`、`SolutionModal.tsx`、`FigureFrame.tsx` | 详情页「正确答案」：AI 解答用 `react-markdown` + GFM（列表、加粗、表格）+ `remark-math` 渲染，公式用 KaTeX 只输出 MathML（不要字体和样式表），按需加载（单独一个约 130 KB gzip 的包）。模型输出不可信：不渲染 HTML，链接只留文字、图片只留替代文字，拒绝 `\href` 等命令。交互图在 `sandbox="allow-scripts"` 的 iframe 里，页面由服务器单独下发（见下方 `/figure`） |
+| `client/src/components/TextEditModal.tsx`、`VoiceButton.tsx`、`lib/voice.ts` | 改识别出的文字（题干、你写的、批改痕迹、参考答案、拍的答案）；备注的语音输入（浏览器录音 → 已有的 `POST /s/voice` 转写，最长 59 秒） |
 | `client/src/components/CaptureInput.tsx` | 拍照和相册两个文件框，铺在按钮上由手指直接点开（不靠脚本 `click()`）。相册不带 `capture`、可多选；拍照带 `capture="environment"`。选好就进录入态 |
 | `client/src/lib/chooserWatch.ts` · `components/ChooserBlockedToast.tsx` | 安卓「添加到桌面」的壳（小米浏览器等）不实现文件选择器：文件框有焦点、相册相机都不弹。点文件框后两秒内页面没被盖住也没 change，就提示换手机浏览器打开。服务端另对安卓的 manifest 发 `display: browser`（`src/web/staticAssets.ts`），以后桌面图标在浏览器标签里打开 |
 | `src/web/apiTypes.ts` | 客户端与服务器共用的类型 |
@@ -33,7 +35,12 @@
 | 方法 路径 | 说明 |
 | --- | --- |
 | GET `/notebook?subject&grade&chapter&tag&q` | 错题本：学科 / 学段 / 章节（一级标题）/ 知识点（二级标题）列表，按「今天 / 本周 / 更早」分组的题；`status` 仍可传但界面不再暴露练习状态 |
-| GET `/items/:id` | 题目详情：题干、图片（上传的整页原图；点开同一张大图）、你写的等笔迹、分类 |
+| GET `/items/:id` | 题目详情：题干、图片（上传的整页原图；点开同一张大图）、你写的（原作，订正和看不出是谁写的另外标出；同类几段合在一处）、批改痕迹、照片里资料自带的参考答案、AI 解答状态、学生备注、分类 |
+| GET / POST `/items/:id/insight` `{retry?}` | AI 参考答案、Markdown 解题过程、交互图、根据学生原作推测的错因（`src/v2/insightService.ts`）。**后台排队生成**：题收进错题本后，等这个学生不在上传 / 识别 / 整理材料 / 准备打印时一道一道做；POST 只是把这道题排到最前（`retry: true` 是失败后学生点的重试），不马上调用模型。状态 `none` / `queued` / `generating` 都只显示「稍后就好」，`failed` 才给醒目的「重试」。按题目内容指纹缓存，修改识别结果、录入答案后重新排队；失败自动再试一次；每题每小时最多 6 次；只自动处理最近 `SEL_INSIGHT_BACKFILL_DAYS`（缺省 30）天录入的题，更早的打开时才排队。模型看题目照片（旧流程整题图、材料裁图）。没有学生原作就不推测错因（服务器强制） |
+| GET `/items/:id/figure` | 交互图页面。立体几何：模型只给点坐标、棱、要强调的线和面，我们自己的脚本画成能拖动旋转的 3D 线框图；其他（函数图像、物理等）是模型写的自包含 HTML。这一页带自己的 CSP（只许内联脚本 / 样式，`default-src 'none'`、`form-action 'none'`、`frame-ancestors 'self'`、`sandbox allow-scripts`），网关不覆盖 worker 的这组头 |
+| POST `/items/:id/text` `{revision,target,text}` | 改识别结果：`target` 是 `question` 或观察 ID；键盘直改（`directCorrection`，不调用模型），学生原作只能改回纸上写的（改动 ≤ 原文一半且 ≤ 20 字） |
+| POST `/items/:id/answer-photos`（JPEG 正文）、GET `…/:photoId/image`、POST `…/:photoId` `{text}`、`…/:photoId/retry`、`…/:photoId/delete` | 拍照录入答案：照片缩到长边 2048 存库（每题最多 3 张），后台用模型找出这道题的答案转写（`answer_read` 阶段）；转写可改、没找到可以自己填、可重新识别、可删；转写结果作为解答的参考 |
+| POST `/items/:id/remark` `{text}` | 学生自己记的备注（最多 1000 字，空串即删除）；只给本人看，日志只记题目 ID |
 | POST `/items/discard` `{ids}` | 批量「不是错题」；逐条返回成功 / 失败 |
 | POST `/items/:id/restore` | 撤销移除 |
 | POST `/items/:id/category` `{grade,subject,chapter}` | 改分类 |
@@ -56,4 +63,8 @@
 
 ## 设计方向
 
-参照 iOS Siri 对话列表与 Locally 的一屏结构：没有底部标签栏；右上角胶囊里是视图 / 筛选菜单（网格、列表、选择、章节、知识点；练习状态不再出现在界面上）和设置；左下角搜索；右下角是相册圆钮，它上面还有一颗拍照圆钮。空错题本和录入页另外写着「去拍照 / 从相册选择」。录入态一次上传算一批，按照片分段，找到的题默认已收录、左滑删掉不相关的，没有批改痕迹的页用圆形勾选框挑出做错的题。详情页只有照片、题干、你写的、章节、知识点（AI 识别的二级标题，只读），修改分类时可以从现有章节里选也可以自己填；底部留给以后的「错因教练」对话（学生自己说错在哪，AI 只追问、给台阶，不直接给答案）。
+参照 iOS Siri 对话列表与 Locally 的一屏结构：没有底部标签栏；右上角胶囊里是视图 / 筛选菜单（网格、列表、选择、章节、知识点；练习状态不再出现在界面上）和设置；左下角搜索；右下角是相册圆钮，它上面还有一颗拍照圆钮。空错题本和录入页另外写着「去拍照 / 从相册选择」。录入态一次上传算一批，按照片分段，找到的题默认已收录、左滑删掉不相关的，没有批改痕迹的页用圆形勾选框挑出做错的题。详情页（2026-10-24 按用户要求改版）是照片、题干（识别错了可以改），下面五块：「你写的」「批改痕迹」两行（点开看转写、逐段改；没有就写「没识别到」）；「章节与知识点」一张卡（章节加知识点标签，点按修改分类）；「正确答案」（AI 在后台解好的答案、Markdown 解题过程、几何 / 图像题的交互图，标「AI 解答，仅供参考」；照片里资料自带的答案、学生拍照录入的答案放在前面）；「错因（备注）」（AI 根据学生原作推测的错因，下面是学生自己的备注，可以语音输入，停笔 1 秒自动保存）。AI 推测不会写进备注，也不算学生的反思。
+
+深色模式：Ionic 的 iOS 深色调色板写在 `:root.ios` 上，把 `--ion-item-background` 盖成纯黑，卡片和底色分不开。`theme.css` 的深色值同样写在 `:root.ios` 上、后加载，全应用按 `#1c1c1e` 卡片显示（2026-10-24 修）。
+
+数据：新增 `item_insight`（每次模型调用一行，按内容指纹取用）、`item_answer_photo`、`item_note` 三张表（`src/db/schema.ts`，只新增表、不改旧表）。自动发布会因 `dist/db/` 变化而拒绝，需要人工发布，步骤见 [详情页解答验收](quality/2026-10-24-item-detail-insight.md)。新的模型阶段 `explain`、`answer_read`：百炼模式缺省 `qwen3.8-max`（`SEL_AI_MODEL_EXPLAIN` / `SEL_AI_MODEL_ANSWER_READ` 可改），启动守卫要求它们有模型。后台任务向父进程借模型名额时排在所有前台请求之后，名额满了前台还在等就让出（中止那次调用，稍后重排，不算失败）。

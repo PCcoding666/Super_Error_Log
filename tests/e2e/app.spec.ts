@@ -8,7 +8,8 @@ import sharp from 'sharp';
 const WEB = 'http://127.0.0.1:3196';
 const CONTROL = 'http://127.0.0.1:3197';
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
-test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, userAgent: IPHONE, locale: 'zh-CN', serviceWorkers: 'block' });
+test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, userAgent: IPHONE, locale: 'zh-CN', serviceWorkers: 'block', permissions: ['microphone'],
+  launchOptions: { args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] } });
 test.describe.configure({ mode: 'serial' });
 
 let shade = 0;
@@ -142,7 +143,7 @@ test('网格与列表切换、选择移除并撤销、搜索与章节筛选', as
   await expect(page.getByTestId('item-card')).toHaveCount(4);
 });
 
-test('详情页：照片、题干、你写的、章节可改；移除后回到错题本', async ({ page }) => {
+test('详情页：照片、题干、你写的、批改痕迹、章节与知识点、正确答案、错因备注；章节可改；移除后回到错题本', async ({ page }) => {
   await pair(page);
   await page.getByTestId('item-card').first().click();
   await expect.poll(() => url(page)).toMatch(/^\/s\/q\/itm_/);
@@ -162,6 +163,35 @@ test('详情页：照片、题干、你写的、章节可改；移除后回到�
   await page.getByTestId('photo-back').click();
   await expect(page.locator('ion-modal.photo-viewer')).toBeHidden();
   expect(url(page)).toMatch(/^\/s\/q\/itm_/);
+  // 你写的只有一行（几段原作合在一起）；没有老师批改就写「没识别到」。
+  await expect(page.getByTestId('item-work')).toHaveCount(1);
+  await expect(page.getByTestId('item-marking')).toContainText('没识别到');
+  await page.getByTestId('item-work').click();
+  await expect(page.getByTestId('trace-sheet')).toContainText('x = ');
+  // 点上方空白处收起（ion-modal 宿主元素一直「可见」，以 overlay-hidden 为准）。
+  await page.locator('ion-modal[data-testid="trace-sheet"] ion-backdrop').click({ position: { x: 20, y: 20 } });
+  await expect(page.getByTestId('trace-sheet')).toHaveClass(/overlay-hidden/);
+  // AI 解答在后台排队生成（mock 模式很快）：错因块里是 AI 推测，正确答案点开是 Markdown 渲染的解题过程和交互图。
+  await expect(page.getByTestId('item-mistake')).toContainText('AI 推测 · 推理步骤');
+  await expect(page.getByTestId('item-mistake')).toContainText('【mock】你写的「x = ');
+  await page.getByTestId('item-answer').click();
+  const steps = page.getByTestId('solution-steps');
+  await expect(page.getByTestId('solution-answer')).toContainText('【mock】');
+  await expect(page.getByTestId('solution-sheet')).toContainText('AI 解答，仅供参考');
+  // 交互图在沙箱页里，脚本真的跑起来了（自带 CSP 放行内联脚本，登录 cookie 也带上了）。
+  await expect(page.frameLocator('[data-testid="solution-figure"]').locator('#t')).toContainText('mock 交互图已运行');
+  await expect(steps.locator('strong')).toHaveText('思路');
+  await expect(steps.locator('ol > li')).toHaveCount(3);
+  await expect(steps.locator('math')).toHaveCount(2);
+  await expect(steps.locator('table')).toContainText('等式的性质');
+  await expect(steps).not.toContainText('$');
+  await page.getByTestId('solution-close').click();
+  await expect(page.getByTestId('solution-sheet')).toHaveClass(/overlay-hidden/);
+  // 备注：停笔自动保存，刷新后还在。
+  await page.getByTestId('item-remark').locator('textarea').fill('两轮是平方，不是乘 2');
+  await expect(page.getByTestId('remark-status')).toHaveText('已保存');
+  await page.reload();
+  await expect(page.getByTestId('item-remark').locator('textarea')).toHaveValue('两轮是平方，不是乘 2');
   await expect(page.getByTestId('item-chapter')).toContainText('一元一次方程');
   await expect(page.getByTestId('item-tags')).toContainText('一元一次方程');
   await page.getByTestId('item-chapter').click();
@@ -191,6 +221,68 @@ test('详情页：照片、题干、你写的、章节可改；移除后回到�
   await page.locator('ion-action-sheet').getByRole('button', { name: '移除', exact: true }).click();
   await expect.poll(() => url(page)).toMatch(/^\/s\/?$/);
   await expect(page.getByTestId('item-card')).toHaveCount(3);
+});
+
+test('详情页：识别错了能改、拍照录入答案、语音记备注', async ({ page }) => {
+  await pair(page);
+  await page.getByTestId('item-card').first().click();
+  await expect.poll(() => url(page)).toMatch(/^\/s\/q\/itm_/);
+  await expect(page.getByTestId('item-mistake')).toContainText('AI 推测');
+  // 改题干：改完页面上换成新文字，解答按新内容重新排队、很快又好了。
+  await page.getByTestId('stem-edit').click();
+  const input = page.locator('ion-modal[data-testid="text-edit"] textarea');
+  await expect(input).not.toHaveValue('');
+  const stem = await input.inputValue();
+  await input.fill(`${stem}（改过）`);
+  await page.getByTestId('text-edit-save').click();
+  await expect(page.getByTestId('text-edit')).toHaveClass(/overlay-hidden/);
+  await expect(page.getByTestId('question-text')).toContainText('（改过）');
+  await expect(page.getByTestId('item-mistake')).toContainText('【mock】', { timeout: 20_000 });
+  // 改你写的：只能把认错的字改回来；改成另一个答案会被拒绝，提示留在弹层里。
+  await page.getByTestId('item-work').click();
+  await page.getByTestId('trace-edit').first().click();
+  await input.fill('完全换成另一个正确答案 x = 100');
+  await page.getByTestId('text-edit-save').click();
+  await expect(page.getByTestId('text-edit-error')).toContainText('超过允许幅度');
+  const work = await page.locator('ion-modal[data-testid="trace-sheet"] pre').first().textContent();
+  await input.fill(`${work!.slice(0, -1)}9`);
+  await page.getByTestId('text-edit-save').click();
+  await expect(page.locator('ion-modal[data-testid="trace-sheet"] pre').first()).toHaveText(`${work!.slice(0, -1)}9`);
+  await page.locator('ion-modal[data-testid="trace-sheet"] ion-backdrop').click({ position: { x: 20, y: 20 } });
+  await expect(page.getByTestId('trace-sheet')).toHaveClass(/overlay-hidden/);
+  // 拍照录入答案：后台转写这道题的答案，放进「正确答案」里。
+  await page.getByTestId('answer-photo-input').setInputFiles([await synthetic('#ffffff')]);
+  await expect(page.getByTestId('answer-photo-add')).toContainText('已录 1 张', { timeout: 20_000 });
+  await page.getByTestId('item-answer').click();
+  await expect(page.getByTestId('answer-photo')).toContainText('【mock】', { timeout: 20_000 });
+  await expect(page.getByTestId('solution-steps')).toContainText('对照你拍的答案', { timeout: 20_000 });
+  await page.getByTestId('solution-close').click();
+  await expect(page.getByTestId('solution-sheet')).toHaveClass(/overlay-hidden/);
+  // 语音记备注：说一段，转好的文字接在备注后面并保存。
+  await page.getByTestId('voice-button').click();
+  await expect(page.getByTestId('voice-button')).toContainText('说完了');
+  await page.waitForTimeout(1200);
+  await page.getByTestId('voice-button').click();
+  await expect(page.getByTestId('item-remark').locator('textarea')).toHaveValue(/我以为移项不用变号/, { timeout: 20_000 });
+  await expect(page.getByTestId('remark-status')).toHaveText('已保存');
+});
+
+test('详情页：立体图由程序画，能拖动旋转', async ({ page }) => {
+  await pair(page);
+  await page.getByTestId('item-card').filter({ hasText: '△' }).first().click();
+  await expect.poll(() => url(page)).toMatch(/^\/s\/q\/itm_/);
+  await expect(page.getByTestId('item-answer')).toContainText('AI 解答，仅供参考', { timeout: 20_000 });
+  await page.getByTestId('item-answer').click();
+  const figure = page.frameLocator('[data-testid="solution-figure"]');
+  await expect(figure.locator('#s line')).not.toHaveCount(0);
+  await expect(figure.locator('#cap')).toHaveText('【mock】红线是 BD');
+  const before = await figure.locator('#s circle').first().getAttribute('cx');
+  const box = (await page.getByTestId('solution-figure').boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + 100);
+  await page.mouse.down();
+  for (let step = 1; step <= 8; step += 1) await page.mouse.move(box.x + box.width / 2 + step * 10, box.y + 100);
+  await page.mouse.up();
+  await expect.poll(() => figure.locator('#s circle').first().getAttribute('cx')).not.toBe(before);
 });
 
 test('设置页：学段、练习即将推出、添加到主屏幕；刷新深链接仍是单页应用', async ({ page }) => {

@@ -39,6 +39,8 @@ export class MaterialJobs {
   }
 
   register(kind: MaterialJobKind, run: (jobId: string, signal: AbortSignal) => Promise<void>): void { this.handlers.set(kind, run); }
+  /** 还有排队或正在跑的材料任务（后台解答等它们做完再开始）。 */
+  busy(): boolean { return this.occupancy.size > 0 || this.active.size > 0; }
   get(jobId: string): JobTicket | null { const row = this.row(jobId); return row ? ticket(row) : null; }
   execution(jobId: string): MaterialExecution {
     const row = this.require(jobId);

@@ -70,6 +70,16 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await expect(page.getByTestId('item-photo-note')).toContainText('整张照片');
   // 合成原图高 320。题目裁框只占页高的三分之一，整页才到得了 300。
   await expect.poll(() => detailPhoto.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight >= 300)).toBe(true);
+  // 材料流程的题：你写的来自作答片段；照片里的参考答案和 AI 解答放在「正确答案」里。
+  await expect(page.getByTestId('item-work')).toHaveCount(1);
+  await expect(page.getByTestId('item-answer')).toContainText('AI 解答，仅供参考', { timeout: 20_000 });
+  await page.getByTestId('item-answer').click();
+  await expect(page.getByTestId('solution-sheet')).toContainText('Synthetic reference answer: 2');
+  await expect(page.getByTestId('solution-answer')).toContainText('【mock】', { timeout: 20_000 });
+  // 经过邀请码网关：交互图那一页用的是 worker 给的 CSP（网关不覆盖），脚本能跑；材料流程的裁图也发给了模型。
+  await expect(page.frameLocator('[data-testid="solution-figure"]').locator('#t')).toContainText(/mock 交互图已运行（看到 [1-9]/);
+  await page.getByTestId('solution-close').click();
+  await expect(page.getByTestId('solution-sheet')).toHaveClass(/overlay-hidden/);
   await page.getByTestId('back-link').click();
   await page.getByTestId('settings-link').click();
   await expect(page.getByTestId('settings-my-invite')).toHaveAttribute('href', '/s/account');

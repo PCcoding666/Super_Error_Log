@@ -53,7 +53,41 @@ export interface NotebookResponse {
 }
 
 export interface ItemImage { url: string; fullUrl: string; title: string }
-export interface ItemNote { kind: string; title: string; text: string }
+/** 一段识别出的文字。id 是识别记录里的观察 ID（改文字时用）；label 为 null 是这一类的本体（你写的原作、老师批改），订正、看不出是谁写的另外标出。 */
+export interface ItemTrace { id: string; label: string | null; text: string }
+
+/**
+ * 详情页的 AI 参考答案与推测错因（未经老师核验），在后台排队生成。
+ * none：还没轮到；queued：排上了，等空闲；generating：正在生成——这三种都只是「稍后就有」，不用强调；
+ * unavailable：题目文字不完整等，没法生成；failed：没生成出来，retryable 为 false 时是一小时内问得太多。
+ */
+export type ItemInsight =
+  | { state: 'none' }
+  | { state: 'queued' }
+  | { state: 'generating' }
+  | { state: 'unavailable'; message: string }
+  | { state: 'failed'; message: string; retryable: boolean }
+  | {
+    state: 'ready';
+    /** 各小问的最终答案（可含 $…$ 公式）。 */
+    answer: string;
+    /** Markdown 解题过程，公式用 $…$ / $$…$$。 */
+    solution: string;
+    /** 根据学生原作推测的错因；没有原作时为 null。 */
+    mistake: string | null;
+    /** 错因类别（知识概念、计算……）；没有时为 null。 */
+    cause: string | null;
+    /** 提醒：题目可能认错、AI 没看到照片、要对照原题核实的地方。 */
+    warnings: string[];
+    /** 几何、函数图像这类题的交互图（无网络的沙箱页）；没有时为 null。 */
+    figureUrl: string | null;
+  };
+
+/** 学生拍照录入的答案：reading 转写中；done 有文字（可改）；not_found 照片里没找到这道题；failed 没转写出来。 */
+export interface ItemAnswerPhoto { id: string; status: 'reading' | 'done' | 'not_found' | 'failed'; text: string | null; imageUrl: string }
+
+/** 学生自己记的备注；没记过时 text 为空串、updatedAt 为 null。 */
+export interface ItemRemark { text: string; updatedAt: string | null }
 
 export interface ChapterOptions { grade: string; subject: string; chapters: string[] }
 
@@ -63,7 +97,18 @@ export interface ItemDetailResponse {
   badge: 'ok' | 'low';
   revision: number | null;
   images: ItemImage[];
-  notes: ItemNote[];
+  /** 你写的：原作、订正、看不出是谁写的笔迹。 */
+  work: ItemTrace[];
+  /** 批改痕迹：老师的勾叉、批注。 */
+  marking: ItemTrace[];
+  /** 照片里资料自带的参考答案（转写）。 */
+  sourceAnswers: ItemTrace[];
+  /** 学生自己拍照录入的答案。 */
+  answerPhotos: ItemAnswerPhoto[];
+  /** 识别出的题干和笔迹能不能直接改（有识别记录时）；改的时候带上 revision。 */
+  editable: boolean;
+  insight: ItemInsight;
+  remark: ItemRemark;
   canDiscard: boolean;
   /** chapterOptions：每个「学段 × 学科」可选的章节（一级标题）：学科目录里的章节加上同学段同学科已有题目用过的章节。 */
   category: { grade: string; subject: string; chapter: string; stages: string[]; subjects: string[]; chapterOptions: ChapterOptions[] };
