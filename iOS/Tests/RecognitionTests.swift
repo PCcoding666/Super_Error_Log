@@ -20,42 +20,6 @@ final class RecognitionTests: XCTestCase {
     XCTAssertEqual(first.updatedAt, second.updatedAt)
   }
 
-  func testAdditiveRecoveryAndCandidatePositionDecodeWithoutRewritingOldDocuments() throws {
-    let old = try Self.job()
-    XCTAssertNil(old.questions[0].candidateBox)
-    let updated = try Self.job(["\"selectionEvidence\":\"marked_wrong\"": #""candidateBox":{"x":0.6,"y":0.1,"width":0.3,"height":0.4},"selectionEvidence":"marked_wrong""#])
-    XCTAssertEqual(updated.questions[0].candidateBox?.x, 0.6)
-    let failure = try RecognitionCodec.decoder().decode(RecognitionFailure.self, from: Data(#"{"code":"invalid_output","message":"合成失败","stage":"verify","retryable":false,"recoverable":true}"#.utf8))
-    XCTAssertFalse(failure.retryable); XCTAssertTrue(failure.canRecover)
-    let legacy = try RecognitionCodec.decoder().decode(RecognitionFailure.self, from: Data(#"{"code":"invalid_output","message":"合成失败","stage":"verify","retryable":false}"#.utf8))
-    XCTAssertFalse(legacy.canRecover, "Old client records need explicit server policy refresh, never optimistic recovery")
-    var state = StudyState(); let photo = UUID().uuidString + ".jpg"
-    try state.ingest(old, photoName: photo); try state.ingest(updated, photoName: photo)
-    XCTAssertEqual(state.recognitionTasks[0].job?.questions[0].candidateBox?.x, 0.6)
-    XCTAssertEqual(state.realProblems[0].stem, "求 x 的值。")
-  }
-
-  func testVerifiedDiagramUsesIndependentVerificationAndAllocatedMedia() throws {
-    let substitutions = ["\"requiresDiagram\":false": "\"requiresDiagram\":true",
-      "\"regions\":[]": #""regions":[{"id":"d1","kind":"diagram","box":{"x":0.1,"y":0.1,"width":0.2,"height":0.2},"confidence":0.8,"cleanForPrint":false}]"#,
-      "\"diagramMediaIds\":[]": #""diagramMediaIds":["2ddc034b-b0f8-4288-b9c1-4f496cfb90df"]"#]
-    XCTAssertTrue(try Self.job(substitutions).questions[0].canAccept,
-      "API deliberately leaves model cleanForPrint false; independent verification and real media govern acceptance")
-    var missing = substitutions
-    missing.removeValue(forKey: "\"diagramMediaIds\":[]")
-    XCTAssertFalse(try Self.job(missing).questions[0].canAccept)
-  }
-
-  func testLegacyStateAndPacksMigrateWithoutRewritingStudentValues() throws {
-    let json = #"{"schemaVersion":1,"drafts":{"5516-14":{"attempt":"I had a plan","note":"My original note"}},"selectedIDs":[],"packs":[{"id":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","createdAt":0,"problemIDs":["5516-14"],"outcomes":{}}],"importedPhotos":[]}"#
-    let loaded = try JSONDecoder().decode(StudyState.self, from: Data(json.utf8))
-    XCTAssertEqual(loaded.drafts["5516-14"]?.note, "My original note")
-    XCTAssertEqual(loaded.drafts["5516-14"]?.attempt, "I had a plan")
-    XCTAssertEqual(loaded.packs[0].problemSnapshots.count, 1)
-    XCTAssertTrue(loaded.packs[0].problemSnapshots[0].isExample)
-    XCTAssertEqual(loaded.schemaVersion, 2)
-  }
-
   func testLoopbackPairingRejectsCredentialOrRemoteURLs() throws {
     for url in ["https://127.0.0.1:3101", "http://evil.test:3101", "http://user:pass@localhost:3101", "http://localhost:3101/?token=x", "http://localhost:3101/#x", "http://localhost:3101/path"] {
       XCTAssertThrowsError(try PairingConfiguration(baseURL: url, token: "synthetic-pairing-only"))
@@ -69,30 +33,6 @@ final class RecognitionTests: XCTestCase {
     XCTAssertEqual(PairingScope.account(collectionName: "StudentExperience"), "loopback-pairing")
     XCTAssertEqual(PairingScope.account(collectionName: "UITest-3f7b69dc-9d37-4aaa-b965-bb61243445a0"), "loopback-pairing-qa-3F7B69DC-9D37-4AAA-B965-BB61243445A0")
     XCTAssertNil(PairingScope.account(collectionName: "UITest-invalid"))
-  }
-
-  func testPersistedRealStateRejectsEscapingMediaPathsAndForgedAcceptance() throws {
-    var state = StudyState()
-    try state.ingest(try Self.job(), photoName: UUID().uuidString + ".jpg")
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let persistence = StudyPersistence(directory: directory)
-    try persistence.save(state)
-    var document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: persistence.stateURL)) as? [String: Any])
-    var problems = try XCTUnwrap(document["realProblems"] as? [[String: Any]])
-    problems[0]["sourceImagePath"] = "../../outside.source"
-    document["realProblems"] = problems
-    let corrupted = try JSONSerialization.data(withJSONObject: document)
-    try corrupted.write(to: persistence.stateURL)
-    XCTAssertThrowsError(try persistence.load())
-    XCTAssertEqual(try Data(contentsOf: persistence.stateURL), corrupted)
-  }
-
-  func testPrintedTextPaginationRetainsEveryLongStemCharacter() throws {
-    let text = (1...160).map { "第\($0)小问：求 x² + y² 的值，保留条件 α ≥ 2。" }.joined(separator: "\n")
-    let ranges = try PrintedTextLayout.ranges(for: text, width: 511, height: 550)
-    XCTAssertGreaterThan(ranges.count, 2)
-    XCTAssertEqual(ranges.map { (text as NSString).substring(with: $0) }.joined(), text)
-    XCTAssertTrue(ranges.allSatisfy { $0.length > 0 })
   }
 
   func testSyntheticHTTPUploadReusesSavedBytesAndKeyAndDecodesEnvelope() async throws {
@@ -126,25 +66,6 @@ final class RecognitionTests: XCTestCase {
     XCTAssertEqual(SyntheticRecognitionProtocol.requests().last?.value(forHTTPHeaderField: "Authorization"), "Bearer synthetic-pairing-only")
   }
 
-  func testRemoteIngestionDeduplicatesJobIDAndPreservesLocalSourceAndConfirmation() throws {
-    var state = StudyState()
-    let original = UUID().uuidString + ".jpg"
-    try state.ingest(try Self.job(), photoName: original)
-    try state.ingest(try Self.job(["\"revision\":8": "\"revision\":7", "\"status\":\"confirmed\"": "\"status\":\"ready\""]), photoName: UUID().uuidString + ".jpg")
-    XCTAssertEqual(state.recognitionTasks.count, 1)
-    XCTAssertEqual(state.recognitionTasks[0].photoName, original)
-    XCTAssertEqual(state.realProblems.count, 1)
-    XCTAssertEqual(state.recognitionTasks[0].job?.revision, 8)
-  }
-
-  func testHigherJobRevisionCannotRewriteSameQuestionRevision() throws {
-    var state = StudyState()
-    let name = UUID().uuidString + ".jpg"
-    try state.ingest(try Self.job(), photoName: name)
-    try state.ingest(try Self.job(["\"revision\":8": "\"revision\":9", "\"status\":\"confirmed\"": "\"status\":\"ready\""]), photoName: name)
-    XCTAssertEqual(state.realProblems.count, 1)
-    XCTAssertEqual(state.recognitionTasks.first?.job?.questions.first?.status, "confirmed")
-  }
 }
 
 final class SyntheticRecognitionProtocol: URLProtocol, @unchecked Sendable {

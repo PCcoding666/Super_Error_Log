@@ -50,10 +50,15 @@
 
 ## iOS 侧
 
+2026-10-25 起原生 App 的界面和网页版一一对应（错题本 / 录入 / 详情 / 设置），对照表见 `iOS/README.md`。
+
 - `PairingConfiguration.invitation(baseURL:serviceId:token:expiresAt:)`：入口必须恰为白名单主机的 `https://<host>/s/native`
-  （`CloudPairing.nativeAPIURL(forHost:)`）；`isCloud == true`，健康检查、归属校验、连接状态机与扫码配对完全一样；
-  `isInvitation == true` 时设置页多一个「退出登录」。钥匙串存储形状 `{ mode: "invitation", baseURL, serviceId, token, expiresAt? }`，
-  读回时重新走白名单校验。
-- 登录页 `InvitationLoginView`：12 位邀请码 + 入口（域名 / IP 直连）；旧扫码配对保留为次要入口。
-- `-cloud-loopback` UI 测试覆盖对 invitation 模式同样生效（覆盖地址后缀 `/s/native`）；现有 UI 测试仍走扫码路径。
-- 单元测试：`iOS/Tests/InvitationLoginTests.swift`。
+  （`CloudPairing.nativeAPIURL(forHost:)`）；钥匙串存储形状 `{ mode: "invitation", baseURL, serviceId, token, expiresAt? }`，
+  读回时重新走白名单校验。登录用 `RecognitionClient.loginInvitation` / `logoutInvitation`，状态在 `Web/AccountSession.swift`
+  （只恢复邀请码登录存下的凭据；旧扫码配对的凭据不用）。
+- 数据请求全部走 `Web/WebClient.swift` → `/s/native/web/*`（Bearer 令牌，网关代带 cookie）。401 → `AccountSession.expire()`，
+  回登录页并提示重新输入邀请码。新账号先选学段（409 `stage_required`）。
+- 登录页 `NotebookUI/LoginView.swift`：12 位邀请码 + 入口（域名 / IP 直连）。
+- `-cloud-loopback` UI 测试覆盖对 invitation 模式同样生效（覆盖地址后缀 `/s/native`）。
+- 单元测试：`iOS/Tests/InvitationLoginTests.swift`（配置白名单、登录 / 退出请求形状）、`WebParityTests.swift`（接口形状、路径映射、
+  上传表单、重定向、照片转换）、`WebModelFlowTests.swift`（上传队列、错题本筛选与撤销、录入分段、登录会话）。
