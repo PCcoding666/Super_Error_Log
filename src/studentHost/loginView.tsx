@@ -2,6 +2,7 @@
 import type { ReactNode } from 'react';
 import { Page, Problem } from '../web/views/layout.js';
 import type { AttemptBlock } from './attemptGuard.js';
+import { encodeQr, qrSvg } from './qr.js';
 
 /** 页面上显示北京时间（与学习页一致）。 */
 function beijing(date: Date): string {
@@ -22,18 +23,34 @@ function throttleText(block: NonNullable<AttemptBlock>, subject = '这个码'): 
 }
 
 /**
- * 微信等应用内置浏览器的提示（P0-11 / B5）：可以继续用，但换到浏览器才能放到桌面、打印，
- * 而且微信里登录过的状态到了浏览器里不通用——先把邀请码记下来。
+ * 微信等应用内置浏览器的提示（P0-11 / B5；2026-11-01 改成分步引导）：可以继续用，但换到浏览器才能放到桌面、打印，
+ * 而且微信里登录过的状态到了浏览器里不通用。给出右上角「…」的具体步骤，再给一个「复制网址」按钮：
+ * copyUrl 由网关按本站入口拼好（带着预填的邀请码时连码一起带上），粘到浏览器地址栏就是同一个填好码的登录页。
+ * 复制脚本是网关自己的 /s/account-copy.js（CSP script-src 'self'）；没有脚本时按钮不出现，步骤照样能看。
  */
-export function InAppBrowserNotice(props: { show: boolean; where: 'login' | 'register' }): ReactNode {
+export function InAppBrowserNotice(props: { show: boolean; where: 'login' | 'register'; copyUrl?: string }): ReactNode {
   if (!props.show) return null;
+  const withCode = props.copyUrl?.includes('?code=') === true;
   return (
     <section className="card tone-orange" data-testid="in-app-browser-notice" role="note">
-      <p><b>现在是在微信（或其他 App）里打开的。</b></p>
-      <p>可以先在这里用。想放到手机桌面、打印练习，请点右上角「…」，选「在浏览器打开」。</p>
+      <p><b>现在是在微信（或其他 App）里打开的。</b>可以先在这里用；想放到手机桌面、打印练习，换到浏览器打开：</p>
+      <ol className="steps-text" data-testid="in-app-browser-steps">
+        <li>点右上角「…」。</li>
+        <li>选「在浏览器打开」（iPhone 上叫「在 Safari 中打开」，有的手机叫「用浏览器打开」）。</li>
+        <li>{props.where === 'login' ? '在浏览器里再点「进入我的错题本」。' : '在浏览器里继续注册。'}</li>
+      </ol>
+      {props.copyUrl ? (
+        <p>
+          <button type="button" className="btn secondary" data-copy-text={props.copyUrl} data-testid="in-app-copy-url" hidden>复制网址</button>
+          <span className="hint" role="status" data-copy-status="" />
+        </p>
+      ) : null}
       <p className="muted small">{props.where === 'register'
         ? '注册后会给你一个邀请码，换到浏览器以后要用它再登录一次，请先截图或复制保存。'
-        : '换到浏览器以后要重新输入邀请码；登录后在「设置 → 我的邀请码」里可以再看到它。'}</p>
+        : withCode
+          ? '找不到「在浏览器打开」就点「复制网址」，粘到浏览器地址栏打开——网址里已经带着你的邀请码。'
+          : '换到浏览器以后要重新输入邀请码；登录后在「设置 → 我的邀请码」里可以再看到它。'}</p>
+      {props.copyUrl ? <script src="/s/account-copy.js" defer></script> : null}
     </section>
   );
 }
@@ -41,18 +58,33 @@ export function InAppBrowserNotice(props: { show: boolean; where: 'login' | 'reg
 /**
  * 登录页（§学生体验）：输入 12 位专属邀请码。错误提示统一一句话——不暴露学生是否存在、码是过期还是已用。
  * 粘贴分组（XXXX-XXXX-XXXX）、空格、大小写都接受。
+ * 带码的链接 / 二维码（/s/?code=…）打开时 prefill 预填进输入框；学生点「进入我的错题本」才兑换，GET 永不建会话。
  */
-export function LoginPage(props: { error?: string | null; blocked?: AttemptBlock; inAppBrowser?: boolean }): ReactNode {
+export function LoginPage(props: { error?: string | null; blocked?: AttemptBlock; inAppBrowser?: boolean;
+  /** 链接里带来的邀请码（已规范化成 XXXX-XXXX-XXXX）。 */
+  prefill?: string | null;
+  /** 链接里带了 code 但看不出是 12 位码：提示手动输入，不回显原文。 */
+  prefillInvalid?: boolean;
+  /** 这台手机已经登录着一个账号，又打开了带码的链接：说明点进入会换账号。 */
+  switching?: boolean;
+  /** 微信里「复制网址」要复制的地址（带着预填的码）。 */
+  copyUrl?: string }): ReactNode {
   return (
     <Page
       title="输入邀请码"
       back={null}
       showSettings={false}
-      bar={{ caption: '首次使用可先注册，已有邀请码直接登录', primary: { title: '进入我的错题本', key: 'login', form: 'login-form' }, secondary: [] }}
+      bar={{ caption: props.prefill ? '邀请码已填好，点一下就进入' : '首次使用可先注册，已有邀请码直接登录', primary: { title: '进入我的错题本', key: 'login', form: 'login-form' }, secondary: [] }}
     >
       <h1 data-testid="login-title">输入邀请码</h1>
-      <p className="lead">每个学生有自己的邀请码。输入以后，这台手机看到的就是你自己的错题本。</p>
-      <InAppBrowserNotice show={props.inAppBrowser === true} where="login" />
+      {props.prefill ? (
+        <p className="lead" data-testid="prefill-lead">邀请码已经从链接里填好了，点下面的「进入我的错题本」就行。
+          {props.switching ? '这台手机现在登录着一个账号；进入后会换成这个邀请码的错题本，原来的账号在这台手机上退出。' : ''}</p>
+      ) : (
+        <p className="lead">每个学生有自己的邀请码。输入以后，这台手机看到的就是你自己的错题本。</p>
+      )}
+      <InAppBrowserNotice show={props.inAppBrowser === true} where="login" copyUrl={props.copyUrl} />
+      {props.prefillInvalid ? <p className="hint tone-orange" role="status" data-testid="prefill-invalid">链接里带的邀请码不完整，请对照老师给的 12 位码手动输入。</p> : null}
       {props.blocked ? (
         <Problem title="试得太频繁了" detail={throttleText(props.blocked)} />
       ) : props.error ? (
@@ -72,6 +104,7 @@ export function LoginPage(props: { error?: string | null; blocked?: AttemptBlock
             spellCheck={false}
             maxLength={20}
             placeholder="XXXX-XXXX-XXXX"
+            defaultValue={props.prefill ?? undefined}
             data-testid="invite-code-input"
           />
         </form>
@@ -254,6 +287,31 @@ function CopyableCode(props: { code: string; testId: string }): ReactNode {
   );
 }
 
+/**
+ * 换手机用的登录链接 + 二维码（2026-11-01）：新手机扫一下，或把链接发过去，打开就是填好码的登录页。
+ * 二维码在服务端编成内联 SVG（src/studentHost/qr.ts），不请求任何外部资源；链接和码一样只在这一页出现。
+ */
+function LoginLinkBlock(props: { link: string }): ReactNode {
+  let qr: { side: number; path: string } | null = null;
+  try { qr = qrSvg(encodeQr(props.link).modules); } catch { qr = null; }
+  return (
+    <div data-testid="my-invite-link-block">
+      <p className="field-label">换手机登录：用新手机的相机扫这个码，或把链接发到新手机</p>
+      {qr ? (
+        <svg viewBox={`0 0 ${qr.side} ${qr.side}`} width="208" height="208" shapeRendering="crispEdges" role="img" aria-label="登录链接二维码"
+          data-testid="my-invite-qr" style={{ display: 'block', margin: '0 auto', background: '#fff' }}>
+          <rect width={qr.side} height={qr.side} fill="#fff" />
+          <path d={qr.path} fill="#000" />
+        </svg>
+      ) : null}
+      <p><code id="my-invite-link-value" data-testid="my-invite-link" style={{ fontSize: '0.95rem', userSelect: 'all', overflowWrap: 'anywhere' }}>{props.link}</code></p>
+      <p><button type="button" className="btn secondary" data-copy-target="my-invite-link-value" data-testid="my-invite-link-copy" hidden>复制链接</button>
+        <span className="hint" role="status" data-copy-status="" /></p>
+      <p className="hint">链接和二维码里就是上面这个邀请码，一样别发给别人。新手机打开后点「进入我的错题本」。</p>
+    </div>
+  );
+}
+
 /** 凭证只随本次成功响应展示；不放进 URL、日志或浏览器持久存储。找回成功也用这一页。 */
 export function RegistrationCompletePage(props: { code: string; expiresAt: Date; inAppBrowser?: boolean; recovered?: boolean }): ReactNode {
   return (
@@ -284,7 +342,9 @@ export function RegistrationCompletePage(props: { code: string; expiresAt: Date;
  */
 export function AccountPage(props: { code: string | null; expiresAt: Date | null; studentExpiresAt: Date | null; now: Date; regenerated?: boolean;
   /** 有没有设过找回码；null = 不是自助注册的账号，没有找回。 */
-  recovery?: boolean | null; pinSaved?: boolean; pinError?: string }): ReactNode {
+  recovery?: boolean | null; pinSaved?: boolean; pinError?: string;
+  /** 带着这个码的登录链接（网关按本站入口拼好）；拼不出来或没有码时不显示换手机的二维码。 */
+  loginLink?: string | null }): ReactNode {
   const expiry = props.expiresAt ?? props.studentExpiresAt;
   const daysLeft = expiry ? Math.ceil((expiry.getTime() - props.now.getTime()) / 86_400_000) : null;
   const expiring = daysLeft === null || daysLeft <= 7;
@@ -307,6 +367,7 @@ export function AccountPage(props: { code: string | null; expiresAt: Date | null
             <p>这台手机登录用的邀请码</p>
             <CopyableCode code={props.code} testId="my-invite-code" />
             {props.expiresAt ? <p className="hint">到期时间：<time dateTime={props.expiresAt.toISOString()}>{beijing(props.expiresAt)}（北京时间）</time>。</p> : null}
+            {props.loginLink ? <LoginLinkBlock link={props.loginLink} /> : null}
           </>
         ) : (
           <p data-testid="invite-code-unavailable">这台手机看不到原来的邀请码（为了安全，邀请码只在用它登录的那台手机上能看到，过期或换过的码也看不到）。需要的话点「重新生成邀请码」。</p>
