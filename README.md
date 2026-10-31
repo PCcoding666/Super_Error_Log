@@ -15,7 +15,7 @@
 
 本轮设计：[学生邀请码网页版](docs/superpowers/specs/2026-10-15-student-invite-web-design.md)；发布与验收状态：[交付记录](docs/quality/2026-10-15-student-web-release.md)。功能需 `SEL_STUDENT_HOST_ENABLED=1`；受控试用上限3个学生。下方原生App与本机演示说明保留作历史与开发参考。
 
-学生怎么用见[学生使用指南](docs/product/STUDENT_GUIDE.md)；产品负责人自查用[走查方法](docs/product/WALKTHROUGH_GUIDE.md)，最近一次结果见[2026-10-22 学生视角走查](docs/quality/2026-10-22-student-walkthrough.md)。
+学生怎么用见[学生使用指南](docs/product/STUDENT_GUIDE.md)；老师怎么发码、学生扫码一键进入、微信里怎么办、怎么放到桌面见[老师发码指南](docs/product/TEACHER_INVITE_GUIDE.md)；产品负责人自查用[走查方法](docs/product/WALKTHROUGH_GUIDE.md)，最近一次结果见[2026-10-22 学生视角走查](docs/quality/2026-10-22-student-walkthrough.md)。
 
 ## 管理后台（开发版本，尚未部署）
 

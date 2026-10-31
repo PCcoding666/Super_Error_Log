@@ -4,6 +4,9 @@
  * - 登录：POST /s/login（同源校验）兑换邀请码 → sel_student 会话 cookie
  *   （HttpOnly、SameSite=Lax、Path=/s、非本机 Secure、30 天，活跃使用时滑动续期）。错误提示统一，不暴露学生存在性。
  *   限速按「码」计失败次数（成功不计），另有很宽的单 IP 上限和全站预算，见 attemptGuard.ts（P0-6）。
+ *   预填链接（2026-11-01）：GET /s/?code=XXXX-XXXX-XXXX（或 /s/login?code=）只把码填进输入框，学生点按钮才 POST 兑换；
+ *   GET 永不建会话、不计限速。码只在查询串里：访问日志只记路由模板不记查询串，页面 Referrer-Policy same-origin，
+ *   已登录的手机打开带码链接也只看到登录页（查询串不转发给 worker）。见 inviteLink.ts。
  * - 注册：POST /s/register 填姓名、手机号和自己设的 4 位找回码。设了 SEL_REGISTRATION_CODE_REQUIRED=1 时
  *   还要老师/管理员预发的班级注册码（默认不要）。
  * - 找回：POST /s/recover 姓名 + 手机号 + 找回码对上，作废旧码和会话，当场发新码；同一账号连续错 5 次锁 24 小时。
@@ -44,6 +47,7 @@ import { sendHtml } from '../views/render.js';
 import { AccountPage, HostErrorPage, LoginPage, RecoveryPage, RegistrationPage, RegistrationCompletePage, registrationFieldErrors } from './loginView.js';
 import { CAPACITY_RETRY_SECONDS, CapacityWaitlist, capacityLines, capacityPageHtml } from './busyView.js';
 import { LiveStats } from './liveStats.js';
+import { CODE_QUERY_PARAM, isSafeHostHeader, loginLink, loginPageUrl, prefillCodeFromQuery } from './inviteLink.js';
 
 /** 「我的邀请码」换码成功的一次性提示（网关自用，不转发给 worker，也不在业务 cookie 白名单里）。 */
 const ACCOUNT_FLASH_COOKIE = 'sel_account_flash';
@@ -194,24 +198,37 @@ export interface StudentHostGatewayOptions {
   failureDelayMs?: number;
 }
 
-/** 「复制邀请码」的小脚本：网关自己提供（script-src 'self'），没有脚本时码本身可以长按选择。 */
+/**
+ * 「复制」的小脚本：网关自己提供（script-src 'self'），没有脚本时码 / 链接本身可以长按选择。
+ * - data-copy-target=<id>：复制那个元素的文字（邀请码、登录链接）；
+ * - data-copy-text=<文本>：复制属性里的文字（微信里的「复制网址」，带着预填的码）。
+ * 同一页可能挂两次这个脚本（通知块和码块各带一个 <script>）：按钮绑过一次就跳过。
+ */
 const COPY_SCRIPT = `(() => {
-  for (const button of document.querySelectorAll('[data-copy-target]')) {
-    const target = document.getElementById(button.getAttribute('data-copy-target'));
+  for (const button of document.querySelectorAll('[data-copy-target],[data-copy-text]')) {
+    if (button.dataset.copyBound) continue;
+    button.dataset.copyBound = '1';
+    const target = button.hasAttribute('data-copy-target') ? document.getElementById(button.getAttribute('data-copy-target')) : null;
     const status = button.parentElement && button.parentElement.querySelector('[data-copy-status]');
-    if (!target) continue;
+    if (button.hasAttribute('data-copy-target') && !target) continue;
     button.hidden = false;
     button.addEventListener('click', async () => {
-      const text = (target.textContent || '').trim();
+      const text = target ? (target.textContent || '').trim() : (button.getAttribute('data-copy-text') || '');
       let ok = false;
       try { await navigator.clipboard.writeText(text); ok = true; } catch (error) {
         try {
-          const range = document.createRange(); range.selectNodeContents(target);
-          const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-          ok = document.execCommand('copy');
+          if (target) {
+            const range = document.createRange(); range.selectNodeContents(target);
+            const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+            ok = document.execCommand('copy');
+          } else {
+            const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly', '');
+            area.style.position = 'fixed'; area.style.opacity = '0';
+            document.body.appendChild(area); area.select(); ok = document.execCommand('copy'); area.remove();
+          }
         } catch (inner) { ok = false; }
       }
-      if (status) status.textContent = ok ? '已复制。' : '没能自动复制，请长按邀请码手动复制或截图。';
+      if (status) status.textContent = ok ? '已复制。' : (target ? '没能自动复制，请长按手动复制或截图。' : '没能自动复制，请长按浏览器地址栏手动复制。');
     });
   }
 })();`;
@@ -259,9 +276,27 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
 
     // ---------- 公开资源（无学生数据；与 worker 同一份静态壳） ----------
     registerStaticAssets(r);
-    r.get('/login', (_request, response) => response.redirect(303, '/s/'));
+    // 带码的登录链接也可以写成 /s/login?code=…：只保留合法形状的码，统一跳到登录页。GET 永不兑换。
+    r.get('/login', (request, response) => {
+      const prefill = prefillCodeFromQuery(request.query[CODE_QUERY_PARAM]);
+      response.redirect(303, prefill ? `/s/?${CODE_QUERY_PARAM}=${prefill}` : '/s/');
+    });
 
     const inApp = (request: Request): boolean => isInAppBrowserAgent(request.headers['user-agent']);
+    /** 浏览器眼里的本站入口：协议由部署形态给出，主机来自 Host 头且只认安全形状；拼不出来返回 null（页面少一个复制按钮而已）。 */
+    const siteOrigin = (request: Request): string | null => (isSafeHostHeader(request.headers.host) ? `${expectedScheme}//${request.headers.host}` : null);
+    /**
+     * 登录页。只有 GET /s/?code=… 这一条路径会把查询串里的码预填进输入框（规范化后；别的路径、别的参数一律不看），
+     * 微信里的「复制网址」也连码一起带上。这里只渲染，不兑换、不计限速、不记日志——查询串不会出现在任何日志里
+     * （sel_http 之类只记路由模板，见 src/web/trail.ts routeTemplate）。
+     */
+    const sendLoginPage = (request: Request, response: Response, extra: Partial<Parameters<typeof LoginPage>[0]> = {}): void => {
+      const raw = request.method === 'GET' && request.path === '/' ? request.query[CODE_QUERY_PARAM] : undefined;
+      const prefill = prefillCodeFromQuery(raw);
+      const origin = siteOrigin(request);
+      const copyUrl = origin ? (prefill ? loginLink(origin, prefill) : loginPageUrl(origin)) : undefined;
+      sendHtml(response, LoginPage({ inAppBrowser: inApp(request), prefill, prefillInvalid: raw !== undefined && prefill === null, copyUrl, ...extra }));
+    };
 
     // ---------- 公开资源：复制脚本（无学生数据） ----------
     r.get('/account-copy.js', (_request, response) => {
@@ -375,11 +410,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
           if (wasOver) await slowDown();
           response.setHeader('retry-after', String(retryAfter.seconds));
           response.status(429);
-          sendHtml(response, LoginPage({ blocked: retryAfter, inAppBrowser: inApp(request) }));
+          sendLoginPage(request, response, { blocked: retryAfter });
           return;
         }
         response.status(400);
-        sendHtml(response, LoginPage({ error: error.message, inAppBrowser: inApp(request) }));
+        sendLoginPage(request, response, { error: error.message });
       }
     });
 
@@ -502,7 +537,13 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
           return;
         }
         response.status(token ? 401 : 200);
-        sendHtml(response, LoginPage({ inAppBrowser: isInAppBrowserAgent(request.headers['user-agent']) }));
+        sendLoginPage(request, response);
+        return;
+      }
+      // 已登录的手机又打开了带码的链接（换账号、扫了同学的码、老师发了新码）：同样只显示填好码的登录页，
+      // 点「进入」才兑换并换掉本机会话；带码的查询串不转发给 worker。
+      if (request.method === 'GET' && request.path === '/' && request.query[CODE_QUERY_PARAM] !== undefined) {
+        sendLoginPage(request, response, { switching: true });
         return;
       }
       // 滑动续期（P0-11）：每天最多一次把会话往后顺延 30 天，并重写 cookie 的有效期。
@@ -520,6 +561,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     });
 
     // ---------- 我的邀请码（网关直接处理，不进 worker） ----------
+    /** 「我的邀请码」页给换手机用的登录链接（二维码由页面按它编）：本设备能看到码、且能拼出本站入口时才有。 */
+    const accountLoginLink = (request: Request, code: string | null): string | null => {
+      const origin = siteOrigin(request);
+      return code && origin ? loginLink(origin, code) : null;
+    };
     r.get(/^\/account\/?$/, (request, response) => {
       const info = registry.sessionInvitation(String(response.locals.sessionToken));
       if (!info) { response.redirect(303, '/s/'); return; }
@@ -528,7 +574,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       if (flash) clearCookie(request, response, ACCOUNT_FLASH_COOKIE);
       response.setHeader('referrer-policy', 'no-referrer');
       sendHtml(response, AccountPage({ ...info, now: now(), regenerated: flash === '1', pinSaved: flash === 'pin',
-        recovery: registry.hasRecoveryPin(String(response.locals.studentId)) }));
+        recovery: registry.hasRecoveryPin(String(response.locals.studentId)), loginLink: accountLoginLink(request, info.code) }));
     });
     // POST/Redirect/GET：换码成功后 303 回到 /s/account，刷新页面只是重新查看，不会再换一次。
     // 新码保存在本会话可解的副本里，跳转后的页面照样能看到、能复制。
@@ -555,7 +601,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         if (!info) { response.redirect(303, '/s/'); return; }
         response.status(400);
         response.setHeader('referrer-policy', 'no-referrer');
-        sendHtml(response, AccountPage({ ...info, now: now(), recovery: registry.hasRecoveryPin(studentId), pinError: error.message }));
+        sendHtml(response, AccountPage({ ...info, now: now(), recovery: registry.hasRecoveryPin(studentId), pinError: error.message, loginLink: accountLoginLink(request, info.code) }));
         return;
       }
       setCookie(request, response, ACCOUNT_FLASH_COOKIE, 'pin', 120);

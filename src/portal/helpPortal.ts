@@ -5,6 +5,7 @@
  * study.pccoding666.com 的 GET / 仍是 404；/s、/v1、/v2、/admin 不在这里处理。
  * help.pccoding666.com 子域名暂不使用（DNS 仍是 NXDOMAIN）。不要再按主机名把 GET / 换成这一页。
  * 页面是静态文案，不含学生数据、邀请码或密钥。发布包只带 dist/，所以 HTML 随 tsc 编译进去。
+ * 联系方式（2026-11-01）只从环境变量 SEL_HELP_CONTACT_WECHAT / SEL_HELP_CONTACT_EMAIL 读：没设就不显示那一行，代码里不写个人信息。
  */
 import type { Express, Request, Response, NextFunction } from 'express';
 
@@ -15,7 +16,35 @@ const STUDY_URL = 'https://study.pccoding666.com/s/';
 const PORTAL_URL = 'https://study.pccoding666.com/help/';
 const GITHUB_URL = 'https://github.com/PCcoding666/Super_Error_Log';
 
-export function helpPortalHtml(): string {
+export interface HelpContact { wechat?: string; email?: string }
+
+/** 从环境变量读联系方式；空白当没有，长度截到 120。 */
+export function readHelpContact(env: NodeJS.ProcessEnv = process.env): HelpContact {
+  const pick = (name: string): string | undefined => {
+    const value = env[name]?.trim();
+    return value ? value.slice(0, 120) : undefined;
+  };
+  return { wechat: pick('SEL_HELP_CONTACT_WECHAT'), email: pick('SEL_HELP_CONTACT_EMAIL') };
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
+}
+
+/** 联系方式区块：有哪一项显示哪一项；一项都没有时只说找老师。 */
+function contactHtml(contact: HelpContact): string {
+  const rows: string[] = [];
+  if (contact.email) {
+    const safe = escapeHtml(contact.email);
+    const link = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(contact.email) ? `<a href="mailto:${safe}">${safe}</a>` : safe;
+    rows.push(`<div><dt>邮箱</dt><dd data-contact="email">${link}</dd></div>`);
+  }
+  if (contact.wechat) rows.push(`<div><dt>微信</dt><dd data-contact="wechat">${escapeHtml(contact.wechat)}</dd></div>`);
+  if (rows.length === 0) return '<p class="quiet" data-contact="none">使用中有问题，先问给你邀请码的老师。</p>';
+  return `<dl class="contact">${rows.join('')}</dl>`;
+}
+
+export function helpPortalHtml(contact: HelpContact = readHelpContact()): string {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -44,12 +73,14 @@ aside a:hover{color:var(--ink);text-decoration:none}
 body:has(#product:target) a[href="#product"],
 body:has(#use:target) a[href="#use"],
 body:has(#start:target) a[href="#start"],
+body:has(#install:target) a[href="#install"],
 body:has(#contact:target) a[href="#contact"]{color:var(--ink);font-weight:600}
 main{max-width:760px;padding:72px 56px 96px}
 h1{margin:0 0 16px;font-size:44px;line-height:1.15;font-weight:600;letter-spacing:-.04em}
 .lede{margin:0;max-width:38em;color:var(--muted);font-size:20px;line-height:1.6}
 h2{margin:72px 0 16px;font-size:28px;line-height:1.3;font-weight:600;letter-spacing:-.03em;scroll-margin-top:88px}
 h2 .num{margin-right:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;font-weight:400;color:var(--faint);letter-spacing:0}
+h3{margin:40px 0 8px;font-size:20px;line-height:1.3;font-weight:600;letter-spacing:-.02em;scroll-margin-top:88px}
 p{margin:0 0 16px}
 .quiet{color:var(--muted)}
 ol.steps{list-style:none;margin:8px 0 0;padding:0}
@@ -91,6 +122,7 @@ footer p{margin:0 0 6px}
       <a href="#product">产品是什么</a>
       <a href="#use">怎么用</a>
       <a href="#start">开始使用</a>
+      <a href="#install">放到手机桌面</a>
       <a href="#contact">联系方式</a>
     </nav>
   </aside>
@@ -113,15 +145,24 @@ footer p{margin:0 0 6px}
     </ol>
 
     <h2 id="start"><span class="num">03</span>开始使用</h2>
-    <p>用老师或管理员给的邀请码，在手机浏览器打开学习页。</p>
+    <p>三步就能用起来。手机浏览器打开就行，不用装 App。</p>
+    <ol class="steps" data-testid="start-steps">
+      <li><strong><span>01</span>扫码或点链接</strong>老师会给你一个二维码或一条链接。用手机相机扫一下，或直接点链接，打开的登录页里邀请码已经填好。只拿到 12 位邀请码的，打开下面的学习页手动输入。</li>
+      <li><strong><span>02</span>进入错题本</strong>点「进入我的错题本」。在微信里打开的，先点右上角「…」→「在浏览器打开」（iPhone 上叫「在 Safari 中打开」），到浏览器里再进入。</li>
+      <li><strong><span>03</span>拍一张批改过的卷子</strong>点「去拍照」，拍一张老师批改过的卷子，放平、拍全。做错的题会收进错题本，接下来照上面「怎么用」的节奏走。</li>
+    </ol>
     <p><a class="cta" href="${STUDY_URL}">开始使用</a></p>
     <p class="url"><a href="${STUDY_URL}">${STUDY_URL}</a></p>
 
+    <h3 id="install">放到手机桌面</h3>
+    <p class="quiet">放到桌面以后，像 App 一样一点就开，不用每次找链接。这一步要在浏览器里做，微信里做不了。</p>
+    <ol class="steps" data-testid="install-steps">
+      <li><strong>iPhone · Safari</strong>用 Safari 打开学习页 → 点底部「分享」（方框加向上箭头）→ 往下找「添加到主屏幕」→ 点右上角「添加」。</li>
+      <li><strong>安卓 · Chrome</strong>用 Chrome 打开学习页 → 点右上角「⋮」→「添加到主屏幕」（有的叫「安装应用」）→「添加」。安卓上图标打开的还是浏览器页面，这样拍照和相册才能正常用。</li>
+    </ol>
+
     <h2 id="contact"><span class="num">04</span>联系方式</h2>
-    <dl class="contact">
-      <div><dt>邮箱</dt><dd>待补充</dd></div>
-      <div><dt>微信</dt><dd>待补充</dd></div>
-    </dl>
+    ${contactHtml(contact)}
 
     <footer>
       <p><a href="${GITHUB_URL}">GitHub</a></p>
@@ -148,7 +189,7 @@ function sendHelpPortal(response: Response): void {
   response.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
   response.setHeader('cache-control', 'public, max-age=300');
   response.removeHeader('pragma');
-  response.send(helpPortalHtml());
+  response.send(helpPortalHtml(readHelpContact()));
 }
 
 /**

@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createMobileApp } from '../../src/mobile/router.js';
 import type { MobileRecognitionService } from '../../src/mobile/service.js';
 import type { MobileVisionBoundary } from '../../src/mobile/vision.js';
-import { HELP_PORTAL_PATH, helpPortalHtml } from '../../src/portal/helpPortal.js';
+import { HELP_PORTAL_PATH, helpPortalHtml, readHelpContact } from '../../src/portal/helpPortal.js';
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -58,9 +58,9 @@ async function listen(): Promise<number> {
 }
 
 describe('产品说明页文案', () => {
-  const html = helpPortalHtml();
+  const html = helpPortalHtml({});
 
-  it('用中文写清产品、一周用法、学习页、占位联系方式和 GitHub', () => {
+  it('用中文写清产品、一周用法、学习页和 GitHub；没配联系方式时不出现占位符', () => {
     expect(HELP_PORTAL_PATH).toBe('/help/');
     expect(html).toContain('href="https://study.pccoding666.com/help/"');
     expect(html).toContain('href="/help/"');
@@ -73,12 +73,49 @@ describe('产品说明页文案', () => {
     expect(html).toContain('下周末记结果');
     expect(html).toContain('href="https://study.pccoding666.com/s/"');
     expect(html).toContain('开始使用');
-    expect(html).toContain('>邮箱<');
-    expect(html).toContain('>微信<');
-    expect(html.match(/待补充/g)?.length).toBe(2);
+    expect(html).not.toContain('待补充');
+    expect(html).not.toContain('>邮箱<');
+    expect(html).not.toContain('>微信<');
+    expect(html).toContain('data-contact="none"');
     expect(html).toContain('https://github.com/PCcoding666/Super_Error_Log');
     expect(html).not.toContain('sel.pccoding666.com');
     expect(html).not.toContain('help.pccoding666.com');
+  });
+
+  it('「开始使用」是三步：扫码或点链接 → 进入错题本 → 拍一张批改过的卷子；附 iPhone Safari 与安卓 Chrome 的添加到主屏幕步骤', () => {
+    const start = /<h2 id="start">[\s\S]*?<h2 id="contact">/.exec(html)![0];
+    expect(start).toContain('data-testid="start-steps"');
+    expect(start.match(/<li><strong><span>0\d<\/span>/g)?.length).toBe(3);
+    expect(start).toContain('扫码或点链接');
+    expect(start).toContain('邀请码已经填好');
+    expect(start).toContain('进入错题本');
+    expect(start).toContain('在浏览器打开');
+    expect(start).toContain('拍一张批改过的卷子');
+    expect(start).toContain('<h3 id="install">放到手机桌面</h3>');
+    expect(start).toContain('iPhone · Safari');
+    expect(start).toContain('添加到主屏幕');
+    expect(start).toContain('安卓 · Chrome');
+    expect(html).toContain('<a href="#install">放到手机桌面</a>');
+    // 说明页不含任何邀请码或带码链接的样子
+    expect(html).not.toMatch(/code=[A-Z0-9]{4}-/);
+  });
+
+  it('联系方式只从环境变量读：设了哪项显示哪项，HTML 转义，邮箱可点；代码里没有个人信息', () => {
+    expect(readHelpContact({})).toEqual({ wechat: undefined, email: undefined });
+    expect(readHelpContact({ SEL_HELP_CONTACT_WECHAT: '  ', SEL_HELP_CONTACT_EMAIL: '' })).toEqual({ wechat: undefined, email: undefined });
+    const contact = readHelpContact({ SEL_HELP_CONTACT_WECHAT: 'teacher_wx_<test>', SEL_HELP_CONTACT_EMAIL: 'help@example.com' });
+    expect(contact).toEqual({ wechat: 'teacher_wx_<test>', email: 'help@example.com' });
+    const both = helpPortalHtml(contact);
+    expect(both).toContain('<dt>邮箱</dt><dd data-contact="email"><a href="mailto:help@example.com">help@example.com</a></dd>');
+    expect(both).toContain('<dt>微信</dt><dd data-contact="wechat">teacher_wx_&lt;test&gt;</dd>');
+    expect(both).not.toContain('teacher_wx_<test>');
+    expect(both).not.toContain('data-contact="none"');
+    const onlyWechat = helpPortalHtml({ wechat: 'teacher_wx' });
+    expect(onlyWechat).toContain('<dt>微信</dt>');
+    expect(onlyWechat).not.toContain('<dt>邮箱</dt>');
+    const oddEmail = helpPortalHtml({ email: '发邮件到 help at example dot com' });
+    expect(oddEmail).toContain('<dd data-contact="email">发邮件到 help at example dot com</dd>');
+    expect(oddEmail).not.toContain('mailto:');
   });
 });
 
