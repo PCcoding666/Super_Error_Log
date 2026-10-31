@@ -277,10 +277,13 @@ test('详情页：立体图由程序画，能拖动旋转', async ({ page }) => 
   await expect(figure.locator('#s line')).not.toHaveCount(0);
   await expect(figure.locator('#cap')).toHaveText('【mock】红线是 BD');
   const before = await figure.locator('#s circle').first().getAttribute('cx');
-  const box = (await page.getByTestId('solution-figure').boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + 100);
+  // 图在答案下面，字体不同（macOS / Linux）时可能落在首屏以外；弹层滑入时位置也在变。先等它停稳、滚进来，再按画布本身的位置拖。
+  await page.getByTestId('solution-figure').scrollIntoViewIfNeeded();
+  const box = (await figure.locator('#s').boundingBox())!;
+  const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
   await page.mouse.down();
-  for (let step = 1; step <= 8; step += 1) await page.mouse.move(box.x + box.width / 2 + step * 10, box.y + 100);
+  for (let step = 1; step <= 8; step += 1) await page.mouse.move(x + step * 10, y);
   await page.mouse.up();
   await expect.poll(() => figure.locator('#s circle').first().getAttribute('cx')).not.toBe(before);
 });
