@@ -18,6 +18,7 @@
 - 最近人工发布基线：**0.5.0-r2**，2026-10-15 13:48 UTC+8发布；运行代码提交`a006f0a`，随后`602323a`补充发布记录。自动发布启用后，当前版本以 [Actions 发布摘要](https://github.com/PCcoding666/Super_Error_Log/actions) 和服务器 `current/deploy/ci-release.json` 为准，不要把这条历史基线当成实时版本。
 - 学生入口：https://study.pccoding666.com/s/ 。生产资料/凭证不在仓库；不要为开发去创建或清空真实学生数据。
 - 发布授权（2026-10-15）：用户选择“合并后自动上线”，并授权主分支整理。只有 `main` push 的 CI 全绿才会调用 production；PR 和其他分支不发布。发布规则见 [自动发布说明](../deploy/ci/README.md)。
+- 2026-11-01：main 4806d18（#88 + #85）已人工发布上线（`releases/manual-4806d18`）。此前 #88 被后续提交取代而跳过，#85 因 `dist/db` 改表被自动发布拒绝。方案、脚本、演练与发布证据见 [人工发布 4806d18](quality/2026-11-01-manual-release-4806d18.md)。线上 `dist/db` 现与 main 一致，之后合并到 main 的提交可以恢复自动发布。
 - R2 的 27 条提交在 PR #13 中逐项审查整合，取舍和验收见 [审查记录](quality/2026-10-15-pr13-review.md)；实际合并/发布状态查看 PR 和 Actions。历史界面设计已存入 docs，详见 [分支说明](BRANCHES.md)。
 
 ## 2. 生产 0.5.0-r2 实际做到哪里
