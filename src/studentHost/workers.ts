@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aiConcurrency, imageConcurrency, maxLiveWorkers, workerIdleMs } from './limits.js';
 import { PermitPool } from './permits.js';
-import { elapsedMs, logEvent } from '../observability/log.js';
+import { elapsedMs, logEvent, type LogFields, type LogLevel } from '../observability/log.js';
 
 export const WORKER_START_TIMEOUT_MS = 20_000;
 const STOP_TIMEOUT_MS = 5_000;
@@ -53,6 +53,11 @@ export interface StudentWorkerPoolOptions {
    * 传 null 只保留内存里的最近几行（测试用）。
    */
   onStderr?: ((studentId: string, line: string) => void) | null;
+  /**
+   * 进程池自己的生命周期日志（sel_worker_start / sel_worker_stop，只有学生 ID 前 8 位、耗时、存活数）。
+   * 缺省写一行 JSON 到主进程 stderr（journald）；传 null 关掉（测试里要求 stderr 完全安静时）。
+   */
+  onEvent?: ((event: string, level: LogLevel, fields: LogFields) => void) | null;
   /** 跨学生共享的目录（学生网关目录）：备用 AI 通道的每日计数放在这里，所有 worker 共用一份。 */
   sharedDir?: string;
 }
@@ -124,11 +129,13 @@ export class StudentWorkerPool {
 
   private readonly options: StudentWorkerPoolOptions & Required<Pick<StudentWorkerPoolOptions, 'onError'>>;
   private readonly onStderr: ((studentId: string, line: string) => void) | null;
+  private readonly onEvent: (event: string, level: LogLevel, fields: LogFields) => void;
 
   constructor(options: StudentWorkerPoolOptions) {
     // 生产池以前没传 onError，worker 崩溃、存储故障只留在内存 20 行里，主机上看不到。现在缺省进 journald。
     this.options = { ...options, onError: options.onError ?? logWorkerError };
     this.onStderr = options.onStderr === undefined ? forwardWorkerStderr : options.onStderr;
+    this.onEvent = options.onEvent === undefined ? logEvent : (options.onEvent ?? (() => undefined));
     this.startTimeoutMs = options.startTimeoutMs ?? WORKER_START_TIMEOUT_MS;
     this.refreshIntervalMs = options.refreshIntervalMs ?? TOKEN_REFRESH_INTERVAL_MS;
     this.idleMs = options.idleMs ?? workerIdleMs();
@@ -321,7 +328,7 @@ export class StudentWorkerPool {
     const entry: WorkerEntry = {
       child, endpoint, refreshTimer: null, idleTimer: null, stderrTail, lastUsedAt: Date.now(), expectedExit: false, deferIdle: false, startedAt: Date.now(),
     };
-    logEvent('sel_worker_start', 'info', { student: studentId.slice(0, 8), ms: elapsedMs(forkStartedAt), live: this.entries.size + 1, pid: child.pid ?? null });
+    this.onEvent('sel_worker_start', 'info', { student: studentId.slice(0, 8), ms: elapsedMs(forkStartedAt), live: this.entries.size + 1, pid: child.pid ?? null });
     // 崩溃/退出：从表里摘除（下一次 ensure 重拉），通知观察者。不做自动重启，避免崩溃风暴。
     child.once('exit', (code, signal) => {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
@@ -330,7 +337,7 @@ export class StudentWorkerPool {
       this.aiPermits.dropOwner(studentId);
       this.imagePermits.dropOwner(studentId);
       if (!this.stopping && !entry.expectedExit) this.options.onError?.(studentId, `worker 退出（code ${code ?? 'null'} ${signal ?? ''}）`);
-      else logEvent('sel_worker_stop', 'info', { student: studentId.slice(0, 8), reason: this.stopping ? 'shutdown' : entry.stopReason ?? 'idle', uptimeMs: Date.now() - entry.startedAt, live: this.entries.size, code: code ?? null, signal: signal ?? null });
+      else this.onEvent('sel_worker_stop', 'info', { student: studentId.slice(0, 8), reason: this.stopping ? 'shutdown' : entry.stopReason ?? 'idle', uptimeMs: Date.now() - entry.startedAt, live: this.entries.size, code: code ?? null, signal: signal ?? null });
     });
     child.on('message', (message: unknown) => {
       if (!message || typeof message !== 'object') return;
