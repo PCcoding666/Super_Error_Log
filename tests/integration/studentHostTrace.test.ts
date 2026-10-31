@@ -69,7 +69,16 @@ async function setupHost(): Promise<Host> {
   const hostDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-trace-'));
   roots.push(hostDir);
   const registry = StudentRegistry.open(hostDir);
-  const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock', SEL_E2E_LEGACY_CAPTURE: '1' } });
+  const pool = new StudentWorkerPool({
+    dirFor: id => registry.studentDir(id),
+    env: { SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock', SEL_E2E_LEGACY_CAPTURE: '1' },
+    // worker 是独立进程：它写 stderr 的 JSON 行由父进程加前缀转发（journald 里看到的就是这样）。这里按同样的方式收下来。
+    onStderr: (_studentId, line) => {
+      const start = line.indexOf('{');
+      if (start < 0) return;
+      try { lines.push(JSON.parse(line.slice(start)) as LogLine); } catch { /* worker 的普通 stderr 行 */ }
+    },
+  });
   const gateway = await createStudentHostGateway({ hostDir, registry, pool, failureDelayMs: 0 });
   gateways.push(gateway);
   const app = express();
@@ -181,6 +190,43 @@ describe('学生网关可观测性', () => {
     expect((await browser.get('/s/api/settings', { accept: 'application/json' })).status).toBe(200);
     expect(of('sel_worker_start').filter(line => line.student === short)).toHaveLength(2);
   }, 90_000);
+
+  it('浏览器端上报 /s/api/client-log：白名单字段进 sel_client_event，并记进该学生的互动记录；垃圾字段丢掉', async () => {
+    const host = await setupHost();
+    const { browser, studentId } = await login(host);
+    const good = { kind: 'upload_failed', cid: 'abc123def4', code: 'upload_timeout', message: '上传超时了。'.repeat(60), route: '/s/new', rid: 'abcdefghjkmn', status: 0, retryable: true, build: 'local.2611010150', online: true, visible: false };
+    const junk = [{ kind: 'not_a_kind' }, 'string', null, { kind: 'script_error', code: '<script>alert(1)</script>', route: '/s/q/itm_0123456789abcdef?x=1', message: 'TypeError: x is not a function', cid: 'bad id' }];
+    const response = await browser.json('/s/api/client-log', { events: [good, ...junk] });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, accepted: 2 });
+    const events = of('sel_client_event');
+    expect(events).toHaveLength(2);
+    const upload = events.find(line => line.kind === 'upload_failed')!;
+    expect(upload).toMatchObject({ level: 'warn', cid: 'abc123def4', code: 'upload_timeout', route: '/s/new', rid: 'abcdefghjkmn', retryable: true, build: 'local.2611010150', online: true, visible: false, ua: 'ios-safari' });
+    expect((upload.message as string).length).toBeLessThanOrEqual(200);
+    const script = events.find(line => line.kind === 'script_error')!;
+    // 错误码不合形状就丢掉；路由只留模板、查询串不进日志；编号形状不对也丢掉。
+    expect(script).toMatchObject({ level: 'error', route: '/s/q/:itemId', message: 'TypeError: x is not a function' });
+    expect(script).not.toHaveProperty('code');
+    expect(script).not.toHaveProperty('cid');
+    expect(JSON.stringify(events)).not.toContain('<script>');
+    // 上报本身成功时不记访问日志（出错才记）。
+    expect(of('sel_http').some(line => line.route === '/s/api/client-log')).toBe(false);
+    // 该学生自己的互动记录里多了两行 web_error client:…（和老页面的 client: 约定一致）。
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(path.join(host.registry.studentDir(studentId), 'app.db'), { readOnly: true, timeout: 5000 });
+    try {
+      const rows = db.prepare("SELECT entity_type FROM audit_event WHERE name = 'web_error' AND entity_type LIKE '%#client:%' ORDER BY rowid").all() as Array<{ entity_type: string }>;
+      expect(rows.map(row => row.entity_type)).toEqual(['/s/new#client:upload_failed:upload_timeout', '/s/q/:itemId#client:script_error']);
+      // 上报请求本身不记成一次提交。
+      expect(db.prepare("SELECT COUNT(*) AS n FROM audit_event WHERE entity_type LIKE '%client-log%'").get()).toEqual({ n: 0 });
+    } finally { db.close(); }
+    // 没选学段的新账号也能上报（学段门槛放行）。
+    const fresh = host.registry.createStudent();
+    const freshBrowser = new Browser(host.base);
+    expect((await freshBrowser.form('/s/login', { code: host.registry.issueInvitation(fresh.studentId).code })).status).toBe(303);
+    expect((await freshBrowser.json('/s/api/client-log', { events: [{ kind: 'render_error', code: 'TypeError', route: '/s/' }] })).status).toBe(200);
+  }, 60_000);
 
   it('网关关闭时 worker 按预期退出：sel_worker_stop 记 shutdown，不算错误', async () => {
     const host = await setupHost();

@@ -137,7 +137,7 @@ export function HomePage(): ReactNode {
       {data && (data.finding || data.pendingIntake) ? <IonList inset lines="none" className="intake-hint">
         <IonItem routerLink="/new" detail data-testid="intake-hint"><IonLabel>{data.finding ? `AI 正在找题（${data.finding} 张照片）` : `照片里还有 ${data.pendingIntake} 道没收进错题本`}</IonLabel></IonItem>
       </IonList> : null}
-      {error && error.code !== 'stage_required' ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
+      {error && error.code !== 'stage_required' ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
       {data && !items.length && !loading ? <div className="empty" data-testid="empty-notebook">
         <IonIcon icon={cameraOutline} />
         <b>{data.total ? '没有符合筛选的题' : '拍一张批改过的卷子'}</b>

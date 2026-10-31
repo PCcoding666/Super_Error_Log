@@ -7,6 +7,8 @@
  * 提示换浏览器打开。iOS 的选择菜单盖在页面上不触发这些事件，所以只在安卓上看。
  * 服务端同时对安卓的 manifest 发 display: browser，以后「添加到桌面」会在浏览器标签里打开。
  */
+import { report } from './report';
+
 export const CHOOSER_GRACE_MS = 2000;
 
 const isAndroid = (): boolean => /Android/i.test(navigator.userAgent);
@@ -39,6 +41,10 @@ export function watchChooser(input: HTMLInputElement): void {
     window.removeEventListener('pagehide', mark);
     document.removeEventListener('visibilitychange', onVisibility);
     input.removeEventListener('change', mark);
-    if (!opened && document.visibilityState === 'visible') chooserHint.show();
+    if (!opened && document.visibilityState === 'visible') {
+      chooserHint.show();
+      // 报一条：哪些安卓壳吞了选择器、发生了多少次，服务器日志里能数出来（只有类别，没有机型以外的任何信息）。
+      report('chooser_blocked', { code: 'android_shell' });
+    }
   }, CHOOSER_GRACE_MS);
 }

@@ -79,7 +79,7 @@ const SECURITY_HEADERS: Record<string, string> = {
 };
 
 /** 成功时不记访问日志的公开资源（出错仍记）：静态壳、图标、manifest、Service Worker、图片。 */
-const QUIET_ACCESS = /^\/(?:app\/assets\/|assets\/|img\/|manifest\.webmanifest$|sw\.js$|account-copy\.js$|offline$)/;
+const QUIET_ACCESS = /^\/(?:app\/assets\/|assets\/|img\/|manifest\.webmanifest$|sw\.js$|account-copy\.js$|offline$|api\/client-log$)/;
 
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'set-cookie', 'content-length']);
 /** 语音转写（60s）之外留有裕量；识别/打印都是 202 异步，不会被这个上限卡住。 */

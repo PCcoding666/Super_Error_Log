@@ -376,7 +376,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }));
   r.use((request, response, next) => {
     try {
-      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path.startsWith('/api/settings') || request.path === '/install' || request.path === '/install/seen'
+      if (options.studentHostWorker !== true || request.path === '/settings' || request.path.startsWith('/settings/') || request.path.startsWith('/api/settings') || request.path === '/api/client-log' || request.path === '/install' || request.path === '/install/seen'
         || (request.method === 'GET' && request.path === '/materials/session')) { next(); return; }
       if (!stageChoiceNeeded(getDb(), requireProfile().id)) { next(); return; }
       failed(response, 'stage_required');

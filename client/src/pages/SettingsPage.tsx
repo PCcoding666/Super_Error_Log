@@ -21,7 +21,7 @@ export function SettingsPage(): ReactNode {
     <IonHeader className="plain-header ion-no-border"><IonToolbar><IonButtons slot="start"><IonBackButton defaultHref="/" text="" data-testid="back-link" /></IonButtons></IonToolbar></IonHeader>
     <IonContent fullscreen className="settings">
       <h1 className="page-title">设置</h1>
-      {error ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
+      {error ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
       {data ? <>
         <IonListHeader className="group-label">学习</IonListHeader>
         <IonList inset lines="full">

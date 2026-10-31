@@ -8,8 +8,8 @@ import { createRequire } from 'node:module';
 import express, { Router, type Request, type Response } from 'express';
 import { getDb } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
-import { errorSummary, logEvent } from '../observability/log.js';
-import { routeTemplate } from './trail.js';
+import { errorSummary, logEvent, requestIdOf, uaFamily } from '../observability/log.js';
+import { routeTemplate, trail } from './trail.js';
 import { requireProfile } from '../services/studentService.js';
 import { readCatalog } from '../classification/catalog.js';
 import { JUNIOR_CATALOG } from '../classification/juniorCatalog.js';
@@ -516,6 +516,46 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     marks.dismissed.add(photoId);
     writePhotoMarks(request, response, marks, week.map(photo => photo.jobId), { kind: 'dismissed', id: photoId });
     return { ok: true };
+  }));
+
+  // ---------- 浏览器端出错上报（client/src/lib/report.ts） ----------
+  // 服务器看不见的事：脚本报错、渲染白屏、fetch 没发出去、上传在浏览器里失败、安卓壳吞掉选择器。
+  // 每条写一行 sel_client_event（只收白名单字段、全部截短、路由只留模板），并记进互动记录 web_error …#client:类别:错误码。
+  const CLIENT_EVENT_LEVEL: Record<string, 'error' | 'warn'> = {
+    script_error: 'error', unhandled_rejection: 'error', render_error: 'error', api_not_json: 'error', api_server_error: 'error',
+    api_network: 'warn', upload_failed: 'warn', chooser_blocked: 'warn',
+  };
+  const SHORT_CODE = /^[A-Za-z0-9_.:-]{1,60}$/;
+  const CLIENT_ID = /^[A-Za-z0-9]{6,16}$/;
+  r.post('/client-log', handler((request, response) => {
+    const raw = Array.isArray(request.body?.events) ? (request.body.events as unknown[]).slice(0, 20) : [];
+    const device = typeof response.locals.deviceId === 'string' ? response.locals.deviceId : null;
+    let accepted = 0;
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const event = item as Record<string, unknown>;
+      const kind = str(event.kind);
+      const level = CLIENT_EVENT_LEVEL[kind];
+      if (!level) continue;
+      const code = SHORT_CODE.test(str(event.code)) ? str(event.code) : undefined;
+      const route = routeTemplate(str(event.route) || '/s/*');
+      logEvent('sel_client_event', level, {
+        kind, cid: CLIENT_ID.test(str(event.cid)) ? str(event.cid) : undefined, code, route,
+        message: str(event.message).slice(0, 200) || undefined,
+        rid: requestIdOf(event.rid) ?? undefined,
+        status: Number.isInteger(event.status) ? (event.status as number) : undefined,
+        retryable: typeof event.retryable === 'boolean' ? event.retryable : undefined,
+        build: str(event.build).slice(0, 40) || undefined,
+        online: typeof event.online === 'boolean' ? event.online : undefined,
+        visible: typeof event.visible === 'boolean' ? event.visible : undefined,
+        component: str(event.component).slice(0, 80) || undefined,
+        ua: uaFamily(request.headers['user-agent']),
+        reportRid: String(response.locals.requestId ?? '-'),
+      });
+      trail('error', route, `client:${kind}${code ? `:${code}` : ''}`, device);
+      accepted += 1;
+    }
+    return { ok: true, accepted };
   }));
 
   r.use(((error: unknown, request: Request, response: Response, _next: express.NextFunction) => {

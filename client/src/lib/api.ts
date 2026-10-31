@@ -1,26 +1,39 @@
 import type { ApiError, DiscardResponse, IntakeResponse, ItemAnswerPhoto, ItemDetailResponse, ItemInsight, ItemRemark, NotebookResponse, SettingsResponse, UploadModeResponse } from '../../../src/web/apiTypes';
+import { report } from './report';
 
 export class RequestError extends Error {
-  constructor(public status: number, public code: string, message: string) { super(message); }
+  /** requestId：服务器给这次请求的编号（响应头 x-sel-request-id / 错误 JSON 里的 requestId）；页面上显示成「错误编号」。 */
+  constructor(public status: number, public code: string, message: string, public requestId: string | null = null) { super(message); }
 }
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    credentials: 'same-origin',
-    cache: 'no-store',
-    headers: { accept: 'application/json', ...(init.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : {}), ...(init.headers ?? {}) },
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { accept: 'application/json', ...(init.body && !(init.body instanceof FormData) ? { 'content-type': 'application/json' } : {}), ...(init.headers ?? {}) },
+    });
+  } catch (error) {
+    // 请求根本没发出去 / 没回来（断网、被壳拦截）：服务器看不到，由浏览器报一条。
+    report('api_network', { code: error instanceof Error ? error.name : 'fetch', message: error instanceof Error ? error.message : undefined });
+    throw new RequestError(0, 'network', '网络没连上，稍后再试。');
+  }
+  const rid = response.headers.get('x-sel-request-id');
   const type = response.headers.get('content-type') ?? '';
   if (!type.includes('application/json')) {
     // 登录过期时网关回登录页（HTML）；整页跳过去让学生重新登录。
     if (response.status === 401 || response.status === 403 || response.redirected || response.status === 200) { location.assign('/s/'); }
-    throw new RequestError(response.status, 'not_json', '暂时连不上，稍后再试。');
+    else report('api_not_json', { code: `http_${response.status}`, status: response.status, rid });
+    throw new RequestError(response.status, 'not_json', '暂时连不上，稍后再试。', rid);
   }
   const body = (await response.json()) as T | ApiError;
   if (!response.ok) {
     const error = (body as ApiError).error ?? { code: 'unknown', message: '暂时连不上，稍后再试。' };
-    throw new RequestError(response.status, error.code, error.message);
+    const requestId = error.requestId ?? rid;
+    if (response.status >= 500) report('api_server_error', { code: error.code, status: response.status, rid: requestId });
+    throw new RequestError(response.status, error.code, error.message, requestId);
   }
   return body as T;
 }
