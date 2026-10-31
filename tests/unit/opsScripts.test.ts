@@ -263,6 +263,33 @@ describe('health check and alert push', () => {
     expect(alerts.map((a: Any) => a.id)).not.toContain('fallback');
   });
 
+  it('counts request failures, proxy errors and browser-reported errors from the structured log; names the reasons in the push', async () => {
+    const { runChecks, config, countEvents, groupEvents } = await load('sel-healthcheck.mjs');
+    const app = [
+      '{"event":"sel_http","level":"info","rid":"a","status":200}',
+      '[worker 0000aaaa] {"event":"sel_request_failed","level":"error","rid":"b","route":"/s/api/items/:itemId"}',
+      '{"event":"sel_proxy_error","level":"error","reason":"upstream_timeout"}',
+      '{"event":"sel_proxy_error","level":"error","reason":"upstream_timeout"}',
+      '{"event":"sel_proxy_error","level":"error","reason":"worker_start"}',
+      '{"event":"sel_proxy_error","level":"warn","reason":"capacity"}',
+      '[worker 0000aaaa] {"event":"sel_client_event","level":"error","kind":"script_error"}',
+      '[worker 0000bbbb] {"event":"sel_client_event","level":"warn","kind":"upload_failed"}',
+    ].join('\n');
+    expect(countEvents(app, 'sel_proxy_error')).toBe(4);
+    expect(countEvents(app, 'sel_proxy_error', 'error')).toBe(3);
+    expect(groupEvents(app, 'sel_proxy_error', 'reason')).toBe('upstream_timeout 2、worker_start 1、capacity 1');
+    const cfg = { ...config(), skip: new Set(['systemd', 'http', 'cert']) };
+    const { facts, alerts } = await runChecks(cfg, { statsProvider: () => ({ queue: { queued: 0, running: 0 }, legacyJobs: 0, aiHour: { calls: 0, failed: 0 }, unreadable: 0 }),
+      journalReader: (args: string[]) => args.includes('super-error-log') ? app : '' });
+    expect(facts).toMatchObject({ requestFailures5m: 1, proxyErrors5m: 3, clientErrors5m: 1 });
+    const ids = alerts.map((a: Any) => a.id);
+    expect(ids).toEqual(expect.arrayContaining(['request-failed', 'proxy']));
+    // 一条学生手机上报没过缺省阈值（3），不推送。
+    expect(ids).not.toContain('client-errors');
+    expect(alerts.find((a: Any) => a.id === 'proxy').text).toContain('upstream_timeout 2');
+    expect(alerts.find((a: Any) => a.id === 'request-failed').text).toContain('/s/api/items/:itemId');
+  });
+
   it('cert check resolves null when the peer accepts but never completes the TLS handshake', async () => {
     const { certDaysLeft } = await load('sel-healthcheck.mjs');
     const sockets: net.Socket[] = [];
