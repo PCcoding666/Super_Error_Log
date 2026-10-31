@@ -121,4 +121,27 @@ describe('lazy workers and the global AI permit', () => {
     childOf(shared, 'a').send({ type: 'please-release', kind: 'ai', id: 'a1' });
     await waitFor(() => granted.includes('b1'));
   });
+
+  it('ready 之前发出的名额申请也要受理；申请后启动失败的 worker 不留名额', async () => {
+    // 2026-11-01 生产：学生 worker 启动即跑后台解答队列，在 send(ready) 之前向父进程借图片名额；
+    // 父进程那时只挂了握手监听器，申请被静默丢掉，worker 永远等不到 permit → item_insight 永远为空、不调模型、worker 不空闲退出。
+    const early = pool({ aiConcurrency: 1, env: { SEL_FAKE_ACQUIRE_BEFORE_READY: 'early' } });
+    await early.ensure('a');
+    const seen: string[] = [];
+    childOf(early, 'a').on('message', (message: unknown) => {
+      if ((message as { type?: string }).type === 'granted-list') seen.push(...((message as { ids?: string[] }).ids ?? []));
+    });
+    const ask = (): void => { childOf(early, 'a').send({ type: 'please-list-granted' }); };
+    ask();
+    await waitFor(() => { if (!seen.includes('early')) ask(); return seen.includes('early'); }, 3_000);
+    expect(early.capacitySnapshot().aiInUse).toBe(1);
+    childOf(early, 'a').send({ type: 'please-release', kind: 'ai', id: 'early' });
+    await waitFor(() => early.capacitySnapshot().aiInUse === 0, 3_000);
+
+    // 申请到名额后启动失败（进程退出）：名额随进程归还，不堵住别的学生。
+    const dying = pool({ aiConcurrency: 1, env: { SEL_FAKE_ACQUIRE_BEFORE_READY: 'doomed', SEL_FAKE_DIE_AFTER_ACQUIRE: '1' } });
+    await expect(dying.ensure('a')).rejects.toBeInstanceOf(WorkerStartError);
+    await waitFor(() => dying.capacitySnapshot().aiInUse === 0, 3_000);
+    expect(dying.capacitySnapshot().aiWaiting).toBe(0);
+  });
 });
