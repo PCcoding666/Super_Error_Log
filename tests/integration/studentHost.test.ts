@@ -654,6 +654,54 @@ describe('学生 worker 隔离与代理', () => {
     expect(pool.isRunning(studentId)).toBe(true);
   }, 90_000);
 
+  it('worker 启动时错题本里已有题、还没有解答：后台解答照常生成（名额申请在 ready 之前到父进程，不能丢）', async () => {
+    // 2026-11-01 生产：83 题的学生每次 worker 启动，后台解答队列在 send(ready) 之前就向父进程借图片名额，
+    // 父进程把它丢了，队列永远卡在第一题：item_insight 一直为空、不调模型、worker 也不空闲退出。
+    const hostDir = tempRoot('sel-host-');
+    const registry = StudentRegistry.open(hostDir);
+    const pool = new StudentWorkerPool({
+      dirFor: studentId => registry.studentDir(studentId),
+      env: { SEL_STUDENT_WORKER_FAKE: '1', SEL_AI_MODE: 'mock', SEL_E2E_LEGACY_CAPTURE: '1', SEL_INSIGHT_QUEUE_INTERVAL_MS: '500' },
+      refreshIntervalMs: 0,
+    });
+    const gateway = await createStudentHostGateway({ hostDir, registry, pool });
+    gateways.push(gateway);
+    const env: HostSetup = { base: await serve(gateway), gateway, registry, pool, hostDir };
+    const { browser, studentId } = await loginBrowser(env);
+    const upload = await uploadPhoto(browser, await photoBytes('#d9e6c3'));
+    expect(upload.ok).toBe(true);
+    let questionId: string | undefined;
+    await waitFor(async () => {
+      const html = await (await browser.get(`/s/photos/${upload.jobId}`)).text();
+      questionId = /name="questionIds" value="([^"]+)"/.exec(html)?.[1];
+      return questionId !== undefined;
+    });
+    expect((await browser.post(`/s/photos/${upload.jobId}/select`, { questionIds: questionId! })).status).toBe(303);
+    let itemId: string | undefined;
+    await waitFor(async () => {
+      const html = await (await browser.get('/s/items')).text();
+      itemId = /\/s\/items\/(itm_[0-9a-f]{16})/.exec(html)?.[1];
+      return itemId !== undefined;
+    });
+    const insightState = async (): Promise<string> => ((await (await browser.get(`/s/api/items/${itemId}`)).json()) as { insight: { state: string } }).insight.state;
+    // 题是在这个 worker 就绪之后录入的，名额申请正常受理：解答会生成。
+    await waitFor(async () => (await insightState()) === 'ready');
+    await env.pool.stop(studentId);
+    expect(env.pool.isRunning(studentId)).toBe(false);
+    // 还原生产现场：库里有题、还没有解答。下次启动，后台队列第一件事就是为这道题借名额。
+    const file = path.join(registry.studentDir(studentId), 'app.db');
+    const db = new DatabaseSync(file, { timeout: 5000 });
+    db.exec("DELETE FROM item_insight; DELETE FROM audit_event WHERE name LIKE 'item_insight_%'");
+    db.close();
+    expect((await browser.get(`/s/api/items/${itemId}`)).status).toBe(200);
+    expect(env.pool.isRunning(studentId)).toBe(true);
+    await waitFor(async () => (await insightState()) === 'ready', 20_000);
+    const check = new DatabaseSync(file, { readOnly: true, timeout: 5000 });
+    expect(check.prepare('SELECT COUNT(*) AS n FROM item_insight WHERE item_id = ? AND content_json IS NOT NULL').get(itemId!)).toEqual({ n: 1 });
+    expect(check.prepare("SELECT COUNT(*) AS n FROM audit_event WHERE name = 'item_insight_ready' AND entity_id = ?").get(itemId!)).toEqual({ n: 1 });
+    check.close();
+  }, 120_000);
+
   it('worker 启动失败：503 页面，不路由到别人', async () => {
     const hostDir = tempRoot('sel-host-');
     const registry = StudentRegistry.open(hostDir);
