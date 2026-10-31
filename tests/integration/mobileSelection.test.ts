@@ -140,9 +140,9 @@ const select = (request: RequestFn, jobId: string, questionIds: unknown) =>
   request(`/v1/recognitions/${jobId}/select`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ questionIds }) });
 
 describe('v2.1a 找题后分流：未选不精读', () => {
-  it('2 道有痕迹 + 3 道无痕迹：只精读 2 道，其余 unselected 且公开任务可见题号与候选框', async () => {
+  it('2 道判错/订正 + 3 道无痕迹/看不清/只有勾：只精读 2 道，其余 unselected 且公开任务可见题号与候选框', async () => {
     const vision = new SelectVision();
-    vision.candidates = [candidate('1', 'marked_wrong'), candidate('2', 'corrected'), candidate('3', 'unmarked'), candidate('4', 'unclear'), candidate('5', 'unmarked')];
+    vision.candidates = [candidate('1', 'marked_wrong'), candidate('2', 'corrected'), candidate('3', 'unmarked'), candidate('4', 'unclear'), candidate('5', 'marked_right')];
     const { request } = await setup(vision);
     const accepted = await json(await submit(request, await jpeg()));
     const job = await waitFor(request, accepted.job.id, 'completed');
@@ -158,6 +158,7 @@ describe('v2.1a 找题后分流：未选不精读', () => {
       expect(q.evidence).toBeNull();
       expect(q.candidateBox).toEqual(candidateBox);
     }
+    expect(byNumber.get('5').selectionEvidence).toBe('marked_right');
   });
 
   it('全部无痕迹：找题后直接 completed，零次精读调用', async () => {

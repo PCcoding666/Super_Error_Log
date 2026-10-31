@@ -22,8 +22,9 @@ export interface ChatTrace {
   usage: { prompt_tokens: number | null; completion_tokens: number | null };
   error: { kind: string; message: string } | null;
 }
-/** background：后台任务（详情页解答的预生成），向父进程借名额时排在前台请求之后。 */
-export interface ChatOptions { baseUrl: string; apiKey: string; models: Record<string, string>; timeoutMs: number; bailianOnly: boolean; maxTokens?: number; trace?: (trace: ChatTrace) => void | Promise<void>; signal?: AbortSignal; beforeRequest?: () => Promise<void>; background?: boolean }
+/** background：后台任务（详情页解答的预生成），向父进程借名额时排在前台请求之后。
+ * rejectDuplicateKeys：正文对象里出现重复字段即判 invalid_json（JSON.parse 会静默只留最后一个值）。 */
+export interface ChatOptions { baseUrl: string; apiKey: string; models: Record<string, string>; timeoutMs: number; bailianOnly: boolean; maxTokens?: number; trace?: (trace: ChatTrace) => void | Promise<void>; signal?: AbortSignal; beforeRequest?: () => Promise<void>; background?: boolean; rejectDuplicateKeys?: boolean }
 export interface Message { role: 'system' | 'user'; content: unknown }
 export const PROMPT_VERSION = 'evidence-v1-20260907';
 export const MAX_INPUT_TOKEN_RESERVATION = 100_000;
@@ -95,6 +96,30 @@ export function assertEndpoint(baseUrl: string, bailianOnly: boolean): void {
   const official = ['dashscope.aliyuncs.com', 'dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com', 'cn-hongkong.dashscope.aliyuncs.com'].includes(u.hostname)
     || /^[a-z0-9-]+\.(cn-beijing|ap-southeast-1|cn-hongkong|us-east-1|eu-central-1|ap-northeast-1)\.maas\.aliyuncs\.com$/.test(u.hostname);
   if (bailianOnly && (!official || !u.pathname.endsWith('/compatible-mode/v1'))) throw new AiError('unsupported', '百炼模式只允许其官方按量付费接口');
+}
+
+/** 第一个在同一对象里重复出现的键；没有则 null。只对已能被 JSON.parse 解析的文本调用。 */
+export function duplicateJsonKey(text: string): string | null {
+  const objects: Array<Set<string> | null> = []; // 每层容器：对象记已见键，数组为 null
+  let expectKey = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (char === '"') {
+      let end = index + 1;
+      while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+      const keys = objects.at(-1);
+      if (expectKey && keys) {
+        const key = JSON.parse(text.slice(index, end + 1)) as string;
+        if (keys.has(key)) return key;
+        keys.add(key);
+      }
+      expectKey = false; index = end;
+    } else if (char === '{') { objects.push(new Set()); expectKey = true; }
+    else if (char === '[') { objects.push(null); expectKey = false; }
+    else if (char === '}' || char === ']') { objects.pop(); expectKey = false; }
+    else if (char === ',') expectKey = objects.at(-1) instanceof Set;
+  }
+  return null;
 }
 
 function containsImage(messages: Message[]): boolean {
@@ -180,6 +205,7 @@ export class ChatClient {
       const choice = body.choices?.[0];
       if (choice?.finish_reason !== 'stop' || typeof choice.message?.content !== 'string') throw new AiError('invalid_json', '模型输出被截断、拒绝或缺少正文');
       let value: unknown; try { value = JSON.parse(choice.message.content); } catch { throw new AiError('invalid_json', '模型正文不符合 JSON 契约'); }
+      if (o.rejectDuplicateKeys && duplicateJsonKey(choice.message.content) !== null) throw new AiError('invalid_json', '模型正文有重复字段，结构不可信');
       return { value, run: { stage, model, durationMs: Date.now() - started, promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, maxTokens, thinking: false, promptVersion: PROMPT_VERSION } };
     } catch (e) {
       if (o.signal?.aborted) { reportedError = { kind: 'cancelled', message: '调用已取消' }; throw o.signal.reason; }
