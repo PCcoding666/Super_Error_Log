@@ -1,6 +1,7 @@
 import { ATTEMPT_STATES, CAUSES } from '../../src/domain/types.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getDb, newId, now } from '../../src/db/connection.js';
+import { localDayText } from '../../src/domain/calendarDay.js';
 import { ensureStudentProfile } from '../../src/services/studentService.js';
 import { MaterialStore } from '../../src/materials/store.js';
 import { setQuestionIncluded, syncMaterialLearning } from '../../src/materials/learning.js';
@@ -172,8 +173,27 @@ it('keeps delayed independent return rules for material practice',()=>{
  const packet=createLearningPractice({itemIds:[item]});expect(packet.ok).toBe(true);if(!packet.ok)return;
  db.prepare("UPDATE review_packet SET status='generated',generated_at=? WHERE id=?").run(now(),packet.detail.id);
  db.prepare("UPDATE error_item SET status='packet_generated' WHERE id=?").run(item);
- const response=submitLearningReturns(packet.detail.id,{results:[{itemId:item,completion:'independent',correct:true,performedOn:now().slice(0,10)}]});expect(response.ok).toBe(true);
+ const response=submitLearningReturns(packet.detail.id,{results:[{itemId:item,completion:'independent',correct:true,performedOn:localDayText(new Date())}]});expect(response.ok).toBe(true);
  expect(db.prepare('SELECT status FROM error_item WHERE id=?').get(item)).toEqual({status:'attempted'});
+});
+
+// 作答日、首次打印日都按进程时区的日历日算（生产 Asia/Shanghai）。北京时间 0–8 点 UTC 还是前一天：
+// 拿 now().slice(0,10) 当作答日会被拒收，题留在未回传的包里，下次建包就 409「当前不可安排」。
+it('accepts a paper return on the local calendar day between 00:00 and 08:00 Beijing time',()=>{
+ const timeZone=process.env.TZ;process.env.TZ='Asia/Shanghai';
+ vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-31T18:30:00.000Z'));
+ try{
+  expect(localDayText(new Date())).toBe('2026-11-01');expect(now().slice(0,10)).toBe('2026-10-31');
+  const {store,question,add,db}=fixture();add('question','凌晨回传题');const item=setQuestionIncluded(store,question,true,store.getQuestion(question)!.revision).itemId!;
+  const packet=createLearningPractice({itemIds:[item]});expect(packet.ok).toBe(true);if(!packet.ok)return;
+  db.prepare("UPDATE review_packet SET status='generated',generated_at=? WHERE id=?").run(now(),packet.detail.id);
+  db.prepare("UPDATE error_item SET status='packet_generated' WHERE id=?").run(item);
+  const returned=(performedOn:string)=>submitLearningReturns(packet.detail.id,{results:[{itemId:item,completion:'independent',correct:true,performedOn}]});
+  expect(returned('2026-10-31')).toMatchObject({ok:true,results:[{ok:false,error:'实际作答日期不能早于复习包首次打印日期'}]});
+  // 当天做对仍只算 attempted，不算掌握；题回到候选，可以排进下一份练习。
+  expect(returned('2026-11-01')).toMatchObject({ok:true,results:[{ok:true,toStatus:'attempted'}]});
+  expect(createLearningPractice({itemIds:[item]})).toMatchObject({ok:true});
+ }finally{vi.useRealTimers();if(timeZone===undefined)delete process.env.TZ;else process.env.TZ=timeZone;}
 });
 
 it('does not switch the current worker identity for a foreign item or packet',()=>{

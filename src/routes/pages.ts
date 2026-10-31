@@ -327,7 +327,9 @@ export function pagesRouter(): Router {
     }
     try { buildPacketPrintData(String(req.params.id)); }
     catch (e) { res.status(409).send(e instanceof Error ? e.message : '打印证据需要重新校对'); return; }
-    res.download(resolved, `复习包_${packet.week}.pdf`);
+    // 以 packetsDir 为 root：send 只检查 root 以下的路径段，数据目录在 .claude/worktrees 这类点目录下时不被当成隐藏文件 404。
+    const root = path.resolve(packetsDir());
+    res.download(path.relative(root, resolved), `复习包_${packet.week}.pdf`, { root });
   });
 
   r.get('/packets/:id/print-preview', requireStudent, (req, res) => {
