@@ -38,6 +38,8 @@ export const CLIENT_BUILD: string = typeof __SEL_CLIENT_BUILD__ === 'string' ? _
 const ENDPOINT = '/s/api/client-log';
 const DEDUPE_MS = 60_000;
 const MAX_PER_PAGE = 40;
+/** 服务端一次最多收这么多条（src/web/api.ts 的 /client-log 只看前 20 条）；攒多了分几批发，不然后面的会被丢掉。 */
+const MAX_BATCH = 20;
 const FLUSH_MS = 1500;
 const MAX_MESSAGE = 200;
 
@@ -79,7 +81,7 @@ function flush(unloading = false): void {
   if (!navigator.onLine && !unloading) return; // 离线：留在队列里，回到在线再发
   const batch = queue;
   queue = [];
-  send(batch, unloading);
+  for (let start = 0; start < batch.length; start += MAX_BATCH) send(batch.slice(start, start + MAX_BATCH), unloading);
 }
 
 function schedule(): void {
