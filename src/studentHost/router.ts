@@ -44,6 +44,8 @@ import { sendHtml } from '../views/render.js';
 import { AccountPage, HostErrorPage, LoginPage, RecoveryPage, RegistrationPage, RegistrationCompletePage, registrationFieldErrors } from './loginView.js';
 import { CAPACITY_RETRY_SECONDS, CapacityWaitlist, capacityLines, capacityPageHtml } from './busyView.js';
 import { LiveStats } from './liveStats.js';
+import { elapsedMs, errorSummary, logEvent, newRequestId, uaFamily } from '../observability/log.js';
+import { routeTemplate } from '../web/trail.js';
 
 /** 「我的邀请码」换码成功的一次性提示（网关自用，不转发给 worker，也不在业务 cookie 白名单里）。 */
 const ACCOUNT_FLASH_COOKIE = 'sel_account_flash';
@@ -75,6 +77,9 @@ const SECURITY_HEADERS: Record<string, string> = {
   'referrer-policy': 'same-origin',
   'x-frame-options': 'DENY',
 };
+
+/** 成功时不记访问日志的公开资源（出错仍记）：静态壳、图标、manifest、Service Worker、图片。 */
+const QUIET_ACCESS = /^\/(?:app\/assets\/|assets\/|img\/|manifest\.webmanifest$|sw\.js$|account-copy\.js$|offline$|api\/client-log$)/;
 
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'set-cookie', 'content-length']);
 /** 语音转写（60s）之外留有裕量；识别/打印都是 202 异步，不会被这个上限卡住。 */
@@ -244,18 +249,50 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   // 不在启动时为每个已注册学生拉起进程。第一次打开再 fork；空闲后由进程池退出。
   // 未完成的识别和打印留在该学生自己的目录里，下次启动时的恢复扫描会续做。
 
+  const rid = (response: Response): string => String(response.locals.requestId ?? '-');
+  /** 网关自己拒绝的请求：原因进访问日志（学生看到「回到登录页」时，这里能说出为什么）。 */
+  const refuse = (response: Response, reason: string): void => { response.locals.gatewayReason = reason; };
+
   const buildRouter = (deps: StudentHostGatewayDeps): Router => {
     const r = Router();
     const form = express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 20 });
     const expectedScheme = deps.originScheme ?? 'http:';
     const isCrossSite = (request: Request): boolean => crossSite(request, expectedScheme);
 
-    r.use((_request, response, next) => {
+    r.use((request, response, next) => {
+      // 请求 ID：网关生成、回给浏览器（x-sel-request-id）、交给 worker（内部头）；三边日志靠它对上。
+      const requestId = newRequestId();
+      response.locals.requestId = requestId;
+      response.setHeader('x-sel-request-id', requestId);
+      const startedAt = process.hrtime.bigint();
+      let logged = false;
+      const access = (aborted: boolean): void => {
+        if (logged) return;
+        logged = true;
+        const status = response.statusCode;
+        if (!aborted && status < 400 && QUIET_ACCESS.test(request.path)) return;
+        const code = response.getHeader('x-sel-error-code');
+        logEvent('sel_http', status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info', {
+          rid: requestId, method: request.method, route: routeTemplate(`/s${request.path}`), status, ms: elapsedMs(startedAt),
+          student: typeof response.locals.studentId === 'string' ? response.locals.studentId.slice(0, 8) : undefined,
+          reason: typeof response.locals.gatewayReason === 'string' ? response.locals.gatewayReason : undefined,
+          code: typeof code === 'string' ? code.slice(0, 60) : undefined,
+          ua: uaFamily(request.headers['user-agent']),
+          native: response.locals.native === true ? true : undefined,
+          aborted: aborted ? true : undefined,
+        });
+      };
+      response.on('finish', () => access(false));
+      response.on('close', () => access(!response.writableFinished));
       for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.setHeader(name, value);
       // 默认禁止缓存；公开静态壳由共享注册函数单独设置缓存策略。
       response.setHeader('cache-control', 'private, no-store');
       next();
     });
+    const logLogin = (request: Request, response: Response, outcome: string, extra: { student?: string; native?: boolean } = {}): void => {
+      if (outcome !== 'ok') refuse(response, outcome);
+      logEvent('sel_login', outcome === 'ok' ? 'info' : 'warn', { rid: rid(response), outcome, ip: deps.ipOf(request), ua: uaFamily(request.headers['user-agent']), student: extra.student?.slice(0, 8), native: extra.native ? true : undefined });
+    };
 
     // ---------- 公开资源（无学生数据；与 worker 同一份静态壳） ----------
     registerStaticAssets(r);
@@ -272,7 +309,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     // ---------- 公开注册（姓名手机号 + 找回码；打开时另要注册码；不能指定账号身份或学生 ID） ----------
     r.get('/register', (request, response) => sendHtml(response, RegistrationPage({ inAppBrowser: inApp(request), requireCode })));
     r.post('/register', form, async (request, response) => {
-      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      if (isCrossSite(request)) { refuse(response, 'cross_site'); response.status(403).send('forbidden'); return; }
       const ip = deps.ipOf(request);
       const field = (name: string): string => typeof request.body?.[name] === 'string' ? request.body[name] : '';
       const values = { name: field('name').slice(0, 60), phone: field('phone').slice(0, 40), regcode: field('regcode').slice(0, 20) };
@@ -312,6 +349,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
             return;
           }
         }
+        refuse(response, `register:${error.code}`);
         response.status(error.code === 'capacity_full' ? 503 : 400);
         const kept = error.code === 'invalid_registration_code' ? { ...values, regcode: '' } : values;
         page({ error: error.message, duplicate: error.code === 'duplicate_registration', fieldErrors: registrationFieldErrors(error.code, kept), values: kept });
@@ -321,7 +359,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     // ---------- 自助找回（姓名 + 手机号 + 找回码 → 作废旧码，发新码） ----------
     r.get('/recover', (request, response) => sendHtml(response, RecoveryPage({ inAppBrowser: inApp(request) })));
     r.post('/recover', form, (request, response) => {
-      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      if (isCrossSite(request)) { refuse(response, 'cross_site'); response.status(403).send('forbidden'); return; }
       const ip = deps.ipOf(request);
       const field = (name: string): string => typeof request.body?.[name] === 'string' ? request.body[name] : '';
       const values = { name: field('name').slice(0, 60), phone: field('phone').slice(0, 40) };
@@ -342,6 +380,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       } catch (error) {
         if (!(error instanceof RegistryError)) throw error;
         if (error.code === 'recovery_failed') recoveryGuard.failure(key, ip);
+        refuse(response, `recover:${error.code}`);
         response.status(error.code === 'recovery_locked' ? 429 : 400);
         sendHtml(response, RecoveryPage({ error: error.message, inAppBrowser: inApp(request), values }));
       }
@@ -349,7 +388,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
 
     // ---------- 登录（兑换邀请码） ----------
     r.post('/login', form, async (request, response) => {
-      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      if (isCrossSite(request)) { refuse(response, 'cross_site'); response.status(403).send('forbidden'); return; }
       const ip = deps.ipOf(request);
       const raw = typeof request.body?.code === 'string' ? request.body.code : '';
       const key = codeKey(raw, ip);
@@ -357,6 +396,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       try {
         const session = registry.redeem(raw);
         loginGuard.success(key, ip);
+        logLogin(request, response, 'ok', { student: session.studentId });
         const seconds = Math.max(1, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000));
         const previous = readCookies(request)[SESSION_COOKIE];
         if (previous) registry.revokeSession(previous);
@@ -371,6 +411,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         const wasOver = loginGuard.blocked(key, ip) !== null;
         loginGuard.failure(key, ip);
         const retryAfter = loginGuard.blocked(key, ip);
+        logLogin(request, response, retryAfter ? 'rate_limited' : error.code);
         if (retryAfter) {
           if (wasOver) await slowDown();
           response.setHeader('retry-after', String(retryAfter.seconds));
@@ -387,7 +428,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     const nativeJson = express.json({ limit: '4kb', strict: true });
     r.post(`${NATIVE_API_PREFIX}/login`, nativeJson, async (request, response) => {
       // 原生请求不带 Origin；带了就按网页同源规则查，防止网页脚本借这个口子拿令牌。
-      if (isCrossSite(request)) { response.status(403).json({ error: { code: 'forbidden', message: '不接受跨站请求。' } }); return; }
+      if (isCrossSite(request)) { refuse(response, 'cross_site'); response.status(403).json({ error: { code: 'forbidden', message: '不接受跨站请求。' } }); return; }
       const ip = deps.ipOf(request);
       const body = request.body as Record<string, unknown> | undefined;
       const raw = typeof body?.code === 'string' ? body.code : '';
@@ -406,6 +447,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         const wasOver = loginGuard.blocked(key, ip) !== null;
         loginGuard.failure(key, ip);
         const retryAfter = loginGuard.blocked(key, ip);
+        logLogin(request, response, retryAfter ? 'rate_limited' : error.code, { native: true });
         if (retryAfter) {
           if (wasOver) await slowDown();
           rateLimited(retryAfter);
@@ -415,6 +457,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         return;
       }
       loginGuard.success(key, ip);
+      logLogin(request, response, 'ok', { student: session.studentId, native: true });
       // 学生空间的 serviceId 来自它自己的 worker（每个学生目录一份、重启不变）：App 之后每次 health 都核对它。
       // 与 proxyToWorker 一样先 retain：容量腾挪与空闲退出都按 inflight 计数排除正在服务的 worker，
       // 否则别的学生并发启动可能把正在做登录检查的这个 worker 当空闲进程停掉。
@@ -433,6 +476,8 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         // 空间没起来就不发令牌：已建的会话立即撤销，App 下次重试会重新兑换（新码可重复登录）。
         registry.revokeSession(session.sessionToken);
         const capacity = error instanceof WorkerStartError && error.reason === 'capacity';
+        refuse(response, capacity ? 'capacity' : 'worker_start');
+        logEvent('sel_proxy_error', capacity ? 'warn' : 'error', { rid: rid(response), student: session.studentId.slice(0, 8), reason: capacity ? 'capacity' : 'worker_start', native: true, ...errorSummary(error) });
         response.setHeader('retry-after', String(capacity ? CAPACITY_RETRY_SECONDS : 30));
         response.status(503).json({ error: { code: capacity ? 'capacity' : 'unavailable', message: capacity ? '现在人有点多，请过一会儿再登录。' : '你的学习空间正在准备中，等半分钟再试。' } });
         return;
@@ -451,7 +496,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
 
     // ---------- 退出（立即撤销会话；清本机页面标记，不动学习数据） ----------
     r.post('/logout', form, async (request, response) => {
-      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      if (isCrossSite(request)) { refuse(response, 'cross_site'); response.status(403).send('forbidden'); return; }
       const token = readCookies(request)[SESSION_COOKIE];
       const session = token ? registry.authenticate(token) : null;
       if (session && request.body?.namespace) {
@@ -476,6 +521,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
         const bearer = bearerToken(request);
         const native = bearer ? registry.authenticate(bearer) : null;
         if (!native) {
+          refuse(response, bearer ? 'session_invalid' : 'no_session');
           response.status(401).json({ error: { code: 'unauthorized', message: '登录已失效，请重新输入邀请码。' } });
           return;
         }
@@ -491,6 +537,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       const token = readCookies(request)[SESSION_COOKIE];
       const session = token ? registry.authenticate(token) : null;
       if (!session) {
+        refuse(response, token ? 'session_invalid' : 'no_session');
         if (token) clearCookie(request, response, SESSION_COOKIE);
         if (request.method !== 'GET') {
           // 语音转写与脚本请求拿 JSON 401；普通表单提交回登录页。
@@ -533,7 +580,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     // POST/Redirect/GET：换码成功后 303 回到 /s/account，刷新页面只是重新查看，不会再换一次。
     // 新码保存在本会话可解的副本里，跳转后的页面照样能看到、能复制。
     r.post(/^\/account\/regenerate\/?$/, form, (request, response) => {
-      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      if (isCrossSite(request)) { refuse(response, 'cross_site'); response.status(403).send('forbidden'); return; }
       try {
         registry.regenerateOwnInvitation(String(response.locals.sessionToken));
       } catch (error) {
@@ -545,7 +592,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       response.redirect(303, '/s/account');
     });
     r.post(/^\/account\/recovery\/?$/, form, (request, response) => {
-      if (isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      if (isCrossSite(request)) { refuse(response, 'cross_site'); response.status(403).send('forbidden'); return; }
       const studentId = String(response.locals.studentId);
       try {
         registry.setRecoveryPin(studentId, typeof request.body?.pin === 'string' ? request.body.pin.slice(0, 16) : '');
@@ -567,27 +614,32 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       const studentId = String(response.locals.studentId);
       if (response.locals.native === true) {
         const upstream = nativeUpstreamUrl(request.url);
-        if (upstream === null) { response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }); return; }
-        void proxyToWorker(request, response, studentId, upstream.url, deps, { native: true, web: upstream.web }).catch(() => {
-          if (!response.headersSent) response.status(503).json({ error: { code: 'unavailable', message: '暂时进不去，请稍后再试。' } });
+        if (upstream === null) { refuse(response, 'path_refused'); response.status(404).json({ error: { code: 'not_found', message: '接口不存在。' } }); return; }
+        void proxyToWorker(request, response, studentId, upstream.url, deps, { native: true, web: upstream.web }).catch((error: unknown) => {
+          refuse(response, 'proxy_exception');
+          logEvent('sel_proxy_error', 'error', { rid: rid(response), student: studentId.slice(0, 8), reason: 'proxy_exception', native: true, ...errorSummary(error) });
+          if (!response.headersSent) response.status(503).json({ error: { code: 'unavailable', message: '暂时进不去，请稍后再试。', requestId: rid(response) } });
         });
         return;
       }
       // 业务 POST 的同源校验在进 worker 之前完成（被拒不触达 worker）。
-      if (request.method === 'POST' && isCrossSite(request)) { response.status(403).send('forbidden'); return; }
+      if (request.method === 'POST' && isCrossSite(request)) { refuse(response, 'cross_site'); response.status(403).send('forbidden'); return; }
       // Express routes accept case differences and a trailing slash. Check the same variants.
       if (request.method === 'POST' && /^\/voice\/?$/i.test(request.path)) {
         const context = request.headers['x-sel-voice-context'];
         const expected = String(response.locals.voiceContext);
         if (typeof context !== 'string' || !/^[0-9a-f]{64}$/.test(context)
           || !crypto.timingSafeEqual(Buffer.from(context), Buffer.from(expected))) {
+          refuse(response, 'voice_context_mismatch');
           response.status(409).json({ error: { code: 'voice_context_mismatch', message: '登录状态已改变，请刷新页面后重新录音。' } });
           return;
         }
       }
       const relUrl = safeRelativeUrl(request.url);
-      if (relUrl === null) { response.status(404).type('text/plain').send('not found'); return; }
-      void proxyToWorker(request, response, studentId, relUrl, deps).catch(() => {
+      if (relUrl === null) { refuse(response, 'path_refused'); response.status(404).type('text/plain').send('not found'); return; }
+      void proxyToWorker(request, response, studentId, relUrl, deps).catch((error: unknown) => {
+        refuse(response, 'proxy_exception');
+        logEvent('sel_proxy_error', 'error', { rid: rid(response), student: studentId.slice(0, 8), reason: 'proxy_exception', ...errorSummary(error) });
         if (!response.headersSent) response.status(503).type('text/plain').send('暂时进不去');
       });
     });
@@ -603,6 +655,9 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
   const proxyToWorker = async (request: Request, response: Response, studentId: string, relUrl: string, deps: StudentHostGatewayDeps, mode: { native: boolean; web?: boolean } = { native: false }): Promise<void> => {
     const native = mode.native;
     const nativeWeb = native && mode.web === true;
+    const startedAt = process.hrtime.bigint();
+    const requestId = rid(response);
+    const student = studentId.slice(0, 8);
     let retained = false;
     const releaseWorker = (): void => {
       if (!retained) return;
@@ -627,6 +682,9 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
       // Early reject happens before we pipe the body to a worker: drain what the client is still sending.
       drainRequest();
       const capacity = error instanceof WorkerStartError && error.reason === 'capacity';
+      const reason = capacity ? 'capacity' : error instanceof WorkerStartError ? 'worker_start' : 'gateway_error';
+      refuse(response, reason);
+      logEvent('sel_proxy_error', capacity ? 'warn' : 'error', { rid: requestId, student, reason, ms: elapsedMs(startedAt), native: native ? true : undefined, ...errorSummary(error) });
       if (native && !response.headersSent) {
         if (capacity) live.rejected(studentId);
         response.setHeader('retry-after', String(capacity ? CAPACITY_RETRY_SECONDS : 30));
@@ -666,6 +724,8 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     const headers: Record<string, string> = {
       host: typeof request.headers.host === 'string' ? request.headers.host : 'localhost',
       'x-real-ip': deps.ipOf(request),
+      // 只有父进程会带这个头（白名单重建已丢弃浏览器同名头）；worker 用它当本次请求的 ID。
+      'x-sel-internal-request-id': requestId,
       accept: typeof request.headers.accept === 'string' ? request.headers.accept : '*/*',
     };
     // Opaque draft/replay expectations; the receiving worker validates these against its own database.
@@ -726,7 +786,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
           response.setHeader('cache-control', 'private, no-store');
         }
         // 上游响应中途出错（worker 崩溃/连接被重置）：已写出的部分不能算数，直接断开。
-        upstreamResponse.on('error', () => response.destroy());
+        upstreamResponse.on('error', (error: Error) => {
+          refuse(response, 'upstream_response_error');
+          logEvent('sel_proxy_error', 'error', { rid: requestId, student, reason: 'upstream_response_error', ms: elapsedMs(startedAt), errMessage: error.message.slice(0, 200) });
+          response.destroy();
+        });
         upstreamResponse.pipe(response);
       },
     );
@@ -734,10 +798,14 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     // body. On a normal, fully-proxied request the body has already ended, so draining is a no-op; when
     // the upstream drops early it rescues the still-arriving client body from stalling into a 502.
     upstream.on('close', () => { drainRequest(); releaseWorker(); });
-    upstream.on('timeout', () => upstream.destroy(new Error('学生空间响应超时')));
-    upstream.on('error', () => {
+    let timedOut = false;
+    upstream.on('timeout', () => { timedOut = true; upstream.destroy(new Error('学生空间响应超时')); });
+    upstream.on('error', (error: Error) => {
       drainRequest();
       releaseWorker();
+      const reason = timedOut ? 'upstream_timeout' : 'upstream_error';
+      refuse(response, reason);
+      logEvent('sel_proxy_error', 'error', { rid: requestId, student, reason, ms: elapsedMs(startedAt), native: native ? true : undefined, errMessage: error.message.slice(0, 200) });
       if (!response.headersSent && native) { response.status(502).json({ error: { code: 'bad_gateway', message: '你的学习空间刚断了一下，稍等再试。' } }); return; }
       if (!response.headersSent) { response.status(502); sendHtml(response, HostErrorPage({ title: '暂时连不上', detail: '你的学习空间刚断了一下，稍等再试。' })); return; }
       response.destroy();

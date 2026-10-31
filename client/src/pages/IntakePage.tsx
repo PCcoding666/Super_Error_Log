@@ -101,7 +101,7 @@ export function IntakePage(): ReactNode {
         </IonItem>)}
         {pendingUploads.some(entry => entry.state === 'failed' && entry.retryable) ? <IonItem lines="none"><IonButton slot="end" fill="clear" onClick={() => uploader.retry()} data-testid="upload-retry">再试一次</IonButton></IonItem> : null}
       </IonList> : null}
-      {error ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
+      {error ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
       {current.map(renderPhoto)}
       {earlier.length ? <details className="intake-earlier"><summary>更早的 {earlier.length} 张</summary>{earlier.map(renderPhoto)}</details> : null}
       <div className="bottom-space intake-space" />

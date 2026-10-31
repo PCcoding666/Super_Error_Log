@@ -10,6 +10,7 @@ import type { MaterialStore } from '../materials/store.js';
 import { MaterialJobs } from '../materials/jobs.js';
 import { MaterialUploads } from '../materials/uploads.js';
 import { registerHelpPortal } from '../portal/helpPortal.js';
+import { errorSummary, logEvent, requestIdOf } from '../observability/log.js';
 
 export interface CreateMobileAppOptions {
   dataDir: string;
@@ -314,7 +315,11 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
       return;
     }
     if (error instanceof SyntaxError) { response.status(400).json({ error: { code: 'invalid_json', message: '请求 JSON 无法解析。' } }); return; }
-    response.status(500).json({ error: { code: 'internal', message: '本地服务暂时无法完成请求。' } });
+    // 学生空间 worker 收到的是父进程网关交来的请求 ID（内部头；外来值只按形状校验、只用于日志）。
+    const requestId = requestIdOf(request.headers['x-sel-internal-request-id']) ?? '-';
+    logEvent('sel_request_failed', 'error', { rid: requestId, method: request.method, route: request.path.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi, ':id').slice(0, 80), status: 500, ...errorSummary(error) });
+    response.setHeader('x-sel-error-code', 'internal');
+    response.status(500).json({ error: { code: 'internal', message: '本地服务暂时无法完成请求。', ...(requestId !== '-' ? { requestId } : {}) } });
   };
   app.use(errors);
   return app;

@@ -8,6 +8,8 @@ import { createRequire } from 'node:module';
 import express, { Router, type Request, type Response } from 'express';
 import { getDb } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
+import { errorSummary, logEvent, requestIdOf, uaFamily } from '../observability/log.js';
+import { routeTemplate, trail } from './trail.js';
 import { requireProfile } from '../services/studentService.js';
 import { readCatalog } from '../classification/catalog.js';
 import { JUNIOR_CATALOG } from '../classification/juniorCatalog.js';
@@ -516,13 +518,60 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     return { ok: true };
   }));
 
-  r.use(((error: unknown, _request: Request, response: Response, _next: express.NextFunction) => {
-    if (error instanceof ApiFailure) { response.status(error.status).json({ error: { code: error.code, message: error.message } }); return; }
-    if (error instanceof MobileRequestError) { response.status(error.status).json({ error: { code: error.code, message: error.message } }); return; }
-    if (error instanceof SyntaxError || (error as { type?: string })?.type === 'entity.parse.failed') { response.status(400).json({ error: { code: 'invalid_request', message: '请求内容不合法。' } }); return; }
-    if ((error as { type?: string })?.type === 'entity.too.large') { response.status(413).json({ error: { code: 'payload_too_large', message: '照片太大了（超过 15 MB），换一张。' } }); return; }
-    console.error(error);
-    response.status(500).json({ error: { code: 'internal', message: '出了点问题，稍后再试。' } });
+  // ---------- 浏览器端出错上报（client/src/lib/report.ts） ----------
+  // 服务器看不见的事：脚本报错、渲染白屏、fetch 没发出去、上传在浏览器里失败、安卓壳吞掉选择器。
+  // 每条写一行 sel_client_event（只收白名单字段、全部截短、路由只留模板），并记进互动记录 web_error …#client:类别:错误码。
+  const CLIENT_EVENT_LEVEL: Record<string, 'error' | 'warn'> = {
+    script_error: 'error', unhandled_rejection: 'error', render_error: 'error', api_not_json: 'error', api_server_error: 'error',
+    api_network: 'warn', upload_failed: 'warn', chooser_blocked: 'warn',
+  };
+  const SHORT_CODE = /^[A-Za-z0-9_.:-]{1,60}$/;
+  const CLIENT_ID = /^[A-Za-z0-9]{6,16}$/;
+  r.post('/client-log', handler((request, response) => {
+    const raw = Array.isArray(request.body?.events) ? (request.body.events as unknown[]).slice(0, 20) : [];
+    const device = typeof response.locals.deviceId === 'string' ? response.locals.deviceId : null;
+    let accepted = 0;
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const event = item as Record<string, unknown>;
+      const kind = str(event.kind);
+      const level = CLIENT_EVENT_LEVEL[kind];
+      if (!level) continue;
+      const code = SHORT_CODE.test(str(event.code)) ? str(event.code) : undefined;
+      const route = routeTemplate(str(event.route) || '/s/*');
+      logEvent('sel_client_event', level, {
+        kind, cid: CLIENT_ID.test(str(event.cid)) ? str(event.cid) : undefined, code, route,
+        message: str(event.message).slice(0, 200) || undefined,
+        rid: requestIdOf(event.rid) ?? undefined,
+        status: Number.isInteger(event.status) ? (event.status as number) : undefined,
+        retryable: typeof event.retryable === 'boolean' ? event.retryable : undefined,
+        build: str(event.build).slice(0, 40) || undefined,
+        online: typeof event.online === 'boolean' ? event.online : undefined,
+        visible: typeof event.visible === 'boolean' ? event.visible : undefined,
+        component: str(event.component).slice(0, 80) || undefined,
+        ua: uaFamily(request.headers['user-agent']),
+        reportRid: String(response.locals.requestId ?? '-'),
+      });
+      trail('error', route, `client:${kind}${code ? `:${code}` : ''}`, device);
+      accepted += 1;
+    }
+    return { ok: true, accepted };
+  }));
+
+  r.use(((error: unknown, request: Request, response: Response, _next: express.NextFunction) => {
+    // 出错一律带请求 ID（页面上显示成「错误编号」），错误码放进响应头，网关的访问日志据此记原因。
+    const requestId = String(response.locals.requestId ?? '-');
+    const sendError = (status: number, code: string, message: string): void => {
+      if (!response.headersSent) response.setHeader('x-sel-error-code', code);
+      response.status(status).json({ error: { code, message, requestId } });
+    };
+    if (error instanceof ApiFailure) { sendError(error.status, error.code, error.message); return; }
+    if (error instanceof MobileRequestError) { sendError(error.status, error.code, error.message); return; }
+    if (error instanceof SyntaxError || (error as { type?: string })?.type === 'entity.parse.failed') { sendError(400, 'invalid_request', '请求内容不合法。'); return; }
+    if ((error as { type?: string })?.type === 'entity.too.large') { sendError(413, 'payload_too_large', '照片太大了（超过 15 MB），换一张。'); return; }
+    // 未预期的错误：一行结构化日志（请求 ID、方法、路由模板、错误摘要），不带请求内容。
+    logEvent('sel_request_failed', 'error', { rid: requestId, method: request.method, route: routeTemplate(`/s/api${request.path}`), status: 500, ...errorSummary(error) });
+    sendError(500, 'internal', '出了点问题，稍后再试。');
   }) as express.ErrorRequestHandler);
   return r;
 }

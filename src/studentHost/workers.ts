@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aiConcurrency, imageConcurrency, maxLiveWorkers, workerIdleMs } from './limits.js';
 import { PermitPool } from './permits.js';
+import { elapsedMs, logEvent, type LogFields, type LogLevel } from '../observability/log.js';
 
 export const WORKER_START_TIMEOUT_MS = 20_000;
 const STOP_TIMEOUT_MS = 5_000;
@@ -52,15 +53,18 @@ export interface StudentWorkerPoolOptions {
    * 传 null 只保留内存里的最近几行（测试用）。
    */
   onStderr?: ((studentId: string, line: string) => void) | null;
+  /**
+   * 进程池自己的生命周期日志（sel_worker_start / sel_worker_stop，只有学生 ID 前 8 位、耗时、存活数）。
+   * 缺省写一行 JSON 到主进程 stderr（journald）；传 null 关掉（测试里要求 stderr 完全安静时）。
+   */
+  onEvent?: ((event: string, level: LogLevel, fields: LogFields) => void) | null;
   /** 跨学生共享的目录（学生网关目录）：备用 AI 通道的每日计数放在这里，所有 worker 共用一份。 */
   sharedDir?: string;
 }
 
 /** 主进程 stderr 一行一条结构化记录；journalctl -u super-error-log 可直接 grep event。 */
 export function logWorkerError(studentId: string, message: string): void {
-  try {
-    process.stderr.write(`${JSON.stringify({ event: 'sel_worker_error', level: 'error', at: new Date().toISOString(), student: studentId.slice(0, 8), message: message.slice(0, 2000) })}\n`);
-  } catch { /* stderr 已关闭 */ }
+  logEvent('sel_worker_error', 'error', { student: studentId.slice(0, 8), message: message.slice(0, 2000) });
 }
 
 export function forwardWorkerStderr(studentId: string, line: string): void {
@@ -84,6 +88,9 @@ interface WorkerEntry {
   expectedExit: boolean;
   /** 观察到后台任务后，要等它结束再重新计算空闲时间。 */
   deferIdle: boolean;
+  startedAt: number;
+  /** 预期退出的原因（sel_worker_stop 日志用）；崩溃没有这个字段。 */
+  stopReason?: 'idle' | 'evicted' | 'shutdown';
 }
 
 /** 父进程退出兜底：全进程只挂一次 exit 钩子（worker 侧另有 IPC 断开自退，双保险）。 */
@@ -122,11 +129,13 @@ export class StudentWorkerPool {
 
   private readonly options: StudentWorkerPoolOptions & Required<Pick<StudentWorkerPoolOptions, 'onError'>>;
   private readonly onStderr: ((studentId: string, line: string) => void) | null;
+  private readonly onEvent: (event: string, level: LogLevel, fields: LogFields) => void;
 
   constructor(options: StudentWorkerPoolOptions) {
     // 生产池以前没传 onError，worker 崩溃、存储故障只留在内存 20 行里，主机上看不到。现在缺省进 journald。
     this.options = { ...options, onError: options.onError ?? logWorkerError };
     this.onStderr = options.onStderr === undefined ? forwardWorkerStderr : options.onStderr;
+    this.onEvent = options.onEvent === undefined ? logEvent : (options.onEvent ?? (() => undefined));
     this.startTimeoutMs = options.startTimeoutMs ?? WORKER_START_TIMEOUT_MS;
     this.refreshIntervalMs = options.refreshIntervalMs ?? TOKEN_REFRESH_INTERVAL_MS;
     this.idleMs = options.idleMs ?? workerIdleMs();
@@ -217,7 +226,7 @@ export class StudentWorkerPool {
     while (this.entries.size + this.slotsReserved > this.maxLive) {
       const victim = this.pickVictim(studentId, skipped);
       if (!victim) throw new WorkerStartError(studentId, '同时打开的学习空间已达上限。', 'capacity');
-      const stopped = await this.idleStop(victim);
+      const stopped = await this.idleStop(victim, 'evicted');
       if (!stopped) skipped.add(victim);
     }
   }
@@ -233,6 +242,7 @@ export class StudentWorkerPool {
   }
 
   private async fork(studentId: string): Promise<WorkerEndpoint> {
+    const forkStartedAt = process.hrtime.bigint();
     const studentDir = this.options.dirFor(studentId);
     const resolved = this.options.workerScript
       ? { script: this.options.workerScript, execArgv: this.options.execArgv ?? [] }
@@ -281,6 +291,8 @@ export class StudentWorkerPool {
       const fail = (reason: string, kill: boolean): void => {
         cleanup();
         if (kill) child.kill('SIGKILL');
+        // 启动失败和崩溃走同一条 sel_worker_error（巡检只认它）；原因是我们自己的文案，不含秘密。
+        this.options.onError(studentId, `worker 启动失败：${reason}`);
         reject(new WorkerStartError(studentId, reason));
       };
       const timer = setTimeout(() => fail(`启动超时（${this.startTimeoutMs} ms）`, true), this.startTimeoutMs);
@@ -314,8 +326,9 @@ export class StudentWorkerPool {
     });
 
     const entry: WorkerEntry = {
-      child, endpoint, refreshTimer: null, idleTimer: null, stderrTail, lastUsedAt: Date.now(), expectedExit: false, deferIdle: false,
+      child, endpoint, refreshTimer: null, idleTimer: null, stderrTail, lastUsedAt: Date.now(), expectedExit: false, deferIdle: false, startedAt: Date.now(),
     };
+    this.onEvent('sel_worker_start', 'info', { student: studentId.slice(0, 8), ms: elapsedMs(forkStartedAt), live: this.entries.size + 1, pid: child.pid ?? null });
     // 崩溃/退出：从表里摘除（下一次 ensure 重拉），通知观察者。不做自动重启，避免崩溃风暴。
     child.once('exit', (code, signal) => {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
@@ -324,6 +337,7 @@ export class StudentWorkerPool {
       this.aiPermits.dropOwner(studentId);
       this.imagePermits.dropOwner(studentId);
       if (!this.stopping && !entry.expectedExit) this.options.onError?.(studentId, `worker 退出（code ${code ?? 'null'} ${signal ?? ''}）`);
+      else this.onEvent('sel_worker_stop', 'info', { student: studentId.slice(0, 8), reason: this.stopping ? 'shutdown' : entry.stopReason ?? 'idle', uptimeMs: Date.now() - entry.startedAt, live: this.entries.size, code: code ?? null, signal: signal ?? null });
     });
     child.on('message', (message: unknown) => {
       if (!message || typeof message !== 'object') return;
@@ -398,15 +412,15 @@ export class StudentWorkerPool {
   }
 
   /** 仅在没有转发、worker 也报告没有后台任务时退出。忙则留下。 */
-  private idleStop(studentId: string): Promise<boolean> {
+  private idleStop(studentId: string, reason: 'idle' | 'evicted' = 'idle'): Promise<boolean> {
     const existing = this.idleStops.get(studentId);
     if (existing) return existing;
-    const run = this.idleStopNow(studentId).finally(() => { this.idleStops.delete(studentId); });
+    const run = this.idleStopNow(studentId, reason).finally(() => { this.idleStops.delete(studentId); });
     this.idleStops.set(studentId, run);
     return run;
   }
 
-  private async idleStopNow(studentId: string): Promise<boolean> {
+  private async idleStopNow(studentId: string, reason: 'idle' | 'evicted'): Promise<boolean> {
     const entry = this.entries.get(studentId);
     if (!entry) return true;
     if ((this.inflight.get(studentId) ?? 0) > 0) return false;
@@ -414,6 +428,7 @@ export class StudentWorkerPool {
     if (this.entries.get(studentId) !== entry) return true;
     if ((this.inflight.get(studentId) ?? 0) > 0 || busy) return false;
     entry.expectedExit = true;
+    entry.stopReason = reason;
     this.disarm(entry);
     const child = entry.child;
     if (child.exitCode !== null || child.killed) return true;
@@ -435,7 +450,7 @@ export class StudentWorkerPool {
       else child.kill('SIGTERM');
     });
     const stopped = await outcome;
-    if (!stopped && this.entries.get(studentId) === entry) entry.expectedExit = false;
+    if (!stopped && this.entries.get(studentId) === entry) { entry.expectedExit = false; entry.stopReason = undefined; }
     return stopped;
   }
 
@@ -474,6 +489,7 @@ export class StudentWorkerPool {
     const entry = this.entries.get(studentId);
     if (!entry) return;
     entry.expectedExit = true;
+    entry.stopReason = 'shutdown';
     this.disarm(entry);
     this.entries.delete(studentId);
     if (entry.refreshTimer) clearInterval(entry.refreshTimer);

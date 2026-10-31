@@ -19,6 +19,8 @@ import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
 import { sendHtml } from '../views/render.js';
+import { errorSummary, logEvent } from '../observability/log.js';
+import { routeTemplate } from './trail.js';
 import { type MaterialInclusionMark, type MaterialJobView, type MaterialUnplacedGroup, MaterialGradeActionPage, MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const roles: MaterialRole[] = ['question', 'diagram', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown'];
@@ -370,9 +372,13 @@ export function createMaterialsRouter(options: {
     r.use(((err: unknown, req: Request, res: Response, _next: express.NextFunction) => {
         const status = err instanceof MobileRequestError ? err.status : (err as {type?:string})?.type === 'entity.too.large' ? 413 : err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE' ? 413 : err instanceof SyntaxError || err instanceof multer.MulterError ? 400 : 500;
         const message = err instanceof MobileRequestError ? err.message : status === 413 ? '照片超过 15 MB，请换一张。' : status === 400 ? '照片或填写的内容不完整，请重选后再试。' : '暂时没保存好，请稍后再试。';
+        const requestId = String(res.locals.requestId ?? '-');
+        const code = err instanceof MobileRequestError ? err.code : status === 500 ? 'internal' : 'invalid_request';
+        if (status === 500) logEvent('sel_request_failed', 'error', { rid: requestId, method: req.method, route: routeTemplate(`/s${req.path}`), status, ...errorSummary(err) });
+        if (!res.headersSent) res.setHeader('x-sel-error-code', code);
         res.status(status);
         if (json(req))
-            res.json({ error: { code: err instanceof MobileRequestError ? err.code : 'invalid_request', message } });
+            res.json({ error: { code, message, requestId } });
         else
             res.type('html').send(`<!doctype html><html lang="zh"><meta name="viewport" content="width=device-width,initial-scale=1"><p>${message}</p><a href="/s/capture">返回拍照</a> · <a href="/s/materials">刷新材料</a></html>`);
     }) as express.ErrorRequestHandler);

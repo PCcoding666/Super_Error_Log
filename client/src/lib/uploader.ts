@@ -29,7 +29,10 @@ export interface UploadEntry {
 }
 export type UploadMode = { kind: 'legacy' } | { kind: 'materials'; namespace: string };
 
-class UploadFailure extends Error { constructor(public kind: string, message: string, public retryable: boolean) { super(message); } }
+import { report } from './report';
+
+/** requestId：服务器给这次上传请求的编号（响应头 x-sel-request-id）；服务器那边出错时拼进提示，学生报编号就能查到。 */
+class UploadFailure extends Error { constructor(public kind: string, message: string, public retryable: boolean, public requestId: string | null = null) { super(message); } }
 
 const uuid = (): string => crypto.randomUUID();
 function isHeic(file: File | null): boolean {
@@ -95,9 +98,11 @@ function xhrUpload(url: string, body: FormData, headers: Record<string, string>,
         try { parsed = JSON.parse(xhr.responseText); } catch { /* 不是 JSON */ }
         const id = xhr.status >= 200 && xhr.status < 300 ? accept(xhr.status, parsed) : null;
         if (id) { finish(null, id); return; }
-        const error = (parsed as { error?: { message?: string; code?: string } } | null)?.error;
-        if (error && typeof error.message === 'string') finish(new UploadFailure(`upload_${xhr.status}`, error.message, xhr.status !== 400 && error.code !== 'invalid_image'));
-        else finish(new UploadFailure(xhr.status >= 500 ? 'upload_server' : 'upload_bad', '没传上去。过一会儿再试，照片还在这个页面里。', true));
+        let rid: string | null = null;
+        try { rid = xhr.getResponseHeader('x-sel-request-id'); } catch { rid = null; }
+        const error = (parsed as { error?: { message?: string; code?: string; requestId?: string } } | null)?.error;
+        if (error && typeof error.message === 'string') finish(new UploadFailure(`upload_${xhr.status}`, error.message, xhr.status !== 400 && error.code !== 'invalid_image', error.requestId ?? rid));
+        else finish(new UploadFailure(xhr.status >= 500 ? 'upload_server' : 'upload_bad', '没传上去。过一会儿再试，照片还在这个页面里。', true, rid));
       };
       xhr.ontimeout = () => finish(new UploadFailure('upload_timeout', '上传超时了。照片还在这个页面里，点「再试一次」。', true));
       xhr.onerror = () => finish(new UploadFailure('upload_network', '网络没连上，没传上去。照片还在这个页面里。', true));
@@ -197,7 +202,11 @@ class Uploader {
         : error instanceof Error && error.message === 'encode' ? new UploadFailure('prepare_encode', '照片转换没完成。点「再试一次」，或者换一张。', true)
         : isHeic(entry.file) ? new UploadFailure('prepare_heic', '这张照片是 HEIC 格式，这个浏览器读不了。用 iPhone 自带的 Safari 打开这个网页再选一次，或者换一张 JPEG 照片。', false)
         : new UploadFailure('prepare_decode', '这个浏览器读不了这张照片。换 Safari 打开试试，或者选一张 JPEG 照片。', false);
-      entry.state = 'failed'; entry.progress = 0; entry.message = failure.message; entry.retryable = failure.retryable;
+      // 服务器那边没处理好（5xx / 响应形状不对）：把错误编号拼进提示，学生照着报就能在日志里找到这一次。
+      const serverSide = failure.requestId && (failure.kind === 'upload_server' || failure.kind === 'upload_bad' || /^upload_5\d\d$/.test(failure.kind));
+      entry.state = 'failed'; entry.progress = 0; entry.retryable = failure.retryable;
+      entry.message = serverSide ? `${failure.message}（错误编号 ${failure.requestId}）` : failure.message;
+      report('upload_failed', { code: failure.kind, message: failure.message, retryable: failure.retryable, rid: failure.requestId });
       if (!failure.retryable) { entry.file = null; entry.blob = null; }
     }
     this.emit();
