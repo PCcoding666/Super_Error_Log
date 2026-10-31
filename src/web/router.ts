@@ -63,7 +63,8 @@ import { createStudentApi } from './api.js';
 import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
-import { trailRecorder, trailTaps } from './trail.js';
+import { routeTemplate, trailRecorder, trailTaps } from './trail.js';
+import { errorSummary, logEvent, newRequestId, requestIdOf } from '../observability/log.js';
 import { DEFAULT_TIME_ZONE, localDayOrdinal, localDayText, stepCaption, type StepKind } from './weekPlan.js';
 import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, PairPage, TodayPage, type BusyReason, type TodayWait } from './views/today.js';
 import { CapturePage, PhotosPage, PickPage, findingSince } from './views/photos.js';
@@ -236,14 +237,23 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   const form = express.urlencoded({ extended: false, limit: '64kb', parameterLimit: 200 });
   const r = Router();
 
-  r.use((_request, response, next) => {
+  r.use((request, response, next) => {
+    // 请求 ID：学生空间 worker 用父进程网关交来的（内部头；浏览器带来的同名头在网关已被丢弃），单进程模式自己生成。
+    // 回给浏览器（x-sel-request-id），500 时写进日志和页面上的「错误编号」。
+    const requestId = (options.studentHostWorker === true ? requestIdOf(request.headers['x-sel-internal-request-id']) : null) ?? newRequestId();
+    response.locals.requestId = requestId;
+    response.setHeader('x-sel-request-id', requestId);
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.setHeader(name, value);
     next();
   });
   // 互动记录：每个请求结束时记看页 / 提交 / 跳过 / 出错（只记路由模板、动作标识、设备 ID，见 trail.ts）。
   r.use(trailRecorder());
   /** 给这次请求的互动记录标一个出错原因（固定的短标识，不是给人看的文案）。 */
-  const failed = (response: Response, code: string): void => { response.locals.trailError = code; };
+  const failed = (response: Response, code: string): void => {
+    response.locals.trailError = code;
+    // 网关的访问日志从这个头读出错原因（它只是固定的短标识，不是给人看的文案）。
+    if (!response.headersSent) response.setHeader('x-sel-error-code', code);
+  };
 
   // ---------- 公开资源（无学生数据） ----------
   registerStaticAssets(r);
@@ -1203,6 +1213,10 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   r.use((_request, response) => render(response, ErrorPage({ title: '这一页不存在', detail: '可能链接不完整。回到错题本接着做。' }), 404));
 
   const errors: ErrorRequestHandler = (error, request, response, _next) => {
+    const expected = error instanceof NotFound || error instanceof MobileRequestError || (error as { type?: string }).type === 'entity.too.large';
+    const requestId = String(response.locals.requestId ?? '-');
+    // 未预期的错误先记日志再回应：带请求 ID、方法、路由模板和错误摘要，不带题目、照片或任何请求内容。
+    if (!expected) logEvent('sel_request_failed', 'error', { rid: requestId, method: request.method, route: routeTemplate(`/s${request.path}`), status: 500, ...errorSummary(error) });
     if (response.headersSent) return;
     const isImage = request.path.startsWith('/img/');
     if (error instanceof NotFound || (error instanceof MobileRequestError && error.status === 404)) {
@@ -1214,8 +1228,9 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       response.status(413).json({ error: { code: 'payload_too_large', message: request.path === '/voice' ? '录音超过 5 MB 限制。' : '内容太大了。' } });
       return;
     }
-    if (request.path === '/voice' || isImage || wantsJson(request)) { response.status(500).json({ error: { code: 'internal', message: '服务器暂时没处理好，再试一次。' } }); return; }
-    render(response, ErrorPage({ title: '服务器暂时没处理好', detail: '再试一次；照片和错题都还在。' }), 500);
+    response.setHeader('x-sel-error-code', 'internal');
+    if (request.path === '/voice' || isImage || wantsJson(request)) { response.status(500).json({ error: { code: 'internal', message: '服务器暂时没处理好，再试一次。', requestId } }); return; }
+    render(response, ErrorPage({ title: '服务器暂时没处理好', detail: `再试一次；照片和错题都还在。反馈时报上错误编号 ${requestId}。` }), 500);
   };
   r.use(errors);
   return r;

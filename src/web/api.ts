@@ -8,6 +8,8 @@ import { createRequire } from 'node:module';
 import express, { Router, type Request, type Response } from 'express';
 import { getDb } from '../db/connection.js';
 import { audit } from '../services/eventLog.js';
+import { errorSummary, logEvent } from '../observability/log.js';
+import { routeTemplate } from './trail.js';
 import { requireProfile } from '../services/studentService.js';
 import { readCatalog } from '../classification/catalog.js';
 import { JUNIOR_CATALOG } from '../classification/juniorCatalog.js';
@@ -516,13 +518,20 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     return { ok: true };
   }));
 
-  r.use(((error: unknown, _request: Request, response: Response, _next: express.NextFunction) => {
-    if (error instanceof ApiFailure) { response.status(error.status).json({ error: { code: error.code, message: error.message } }); return; }
-    if (error instanceof MobileRequestError) { response.status(error.status).json({ error: { code: error.code, message: error.message } }); return; }
-    if (error instanceof SyntaxError || (error as { type?: string })?.type === 'entity.parse.failed') { response.status(400).json({ error: { code: 'invalid_request', message: '请求内容不合法。' } }); return; }
-    if ((error as { type?: string })?.type === 'entity.too.large') { response.status(413).json({ error: { code: 'payload_too_large', message: '照片太大了（超过 15 MB），换一张。' } }); return; }
-    console.error(error);
-    response.status(500).json({ error: { code: 'internal', message: '出了点问题，稍后再试。' } });
+  r.use(((error: unknown, request: Request, response: Response, _next: express.NextFunction) => {
+    // 出错一律带请求 ID（页面上显示成「错误编号」），错误码放进响应头，网关的访问日志据此记原因。
+    const requestId = String(response.locals.requestId ?? '-');
+    const sendError = (status: number, code: string, message: string): void => {
+      if (!response.headersSent) response.setHeader('x-sel-error-code', code);
+      response.status(status).json({ error: { code, message, requestId } });
+    };
+    if (error instanceof ApiFailure) { sendError(error.status, error.code, error.message); return; }
+    if (error instanceof MobileRequestError) { sendError(error.status, error.code, error.message); return; }
+    if (error instanceof SyntaxError || (error as { type?: string })?.type === 'entity.parse.failed') { sendError(400, 'invalid_request', '请求内容不合法。'); return; }
+    if ((error as { type?: string })?.type === 'entity.too.large') { sendError(413, 'payload_too_large', '照片太大了（超过 15 MB），换一张。'); return; }
+    // 未预期的错误：一行结构化日志（请求 ID、方法、路由模板、错误摘要），不带请求内容。
+    logEvent('sel_request_failed', 'error', { rid: requestId, method: request.method, route: routeTemplate(`/s/api${request.path}`), status: 500, ...errorSummary(error) });
+    sendError(500, 'internal', '出了点问题，稍后再试。');
   }) as express.ErrorRequestHandler);
   return r;
 }
