@@ -1,0 +1,2 @@
+# 仍允许不用模板直接开 issue。缺陷与需求模板见同目录的 bug.yml、feature.yml。
+blank_issues_enabled: true
