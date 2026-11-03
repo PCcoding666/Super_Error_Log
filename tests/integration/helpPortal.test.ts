@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createMobileApp } from '../../src/mobile/router.js';
 import type { MobileRecognitionService } from '../../src/mobile/service.js';
 import type { MobileVisionBoundary } from '../../src/mobile/vision.js';
-import { HELP_PORTAL_PATH, helpPortalHtml } from '../../src/portal/helpPortal.js';
+import { HELP_PORTAL_PATH, helpPortalHtml, readHelpImage } from '../../src/portal/helpPortal.js';
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -60,17 +60,30 @@ async function listen(): Promise<number> {
 describe('产品说明页文案', () => {
   const html = helpPortalHtml();
 
-  it('用中文写清产品、一周用法、学习页、占位联系方式和 GitHub', () => {
+  it('用中文写清注册、拍照、收题、打印、纸上做、记结果、学习页和 GitHub', () => {
     expect(HELP_PORTAL_PATH).toBe('/help/');
     expect(html).toContain('href="https://study.pccoding666.com/help/"');
     expect(html).toContain('href="/help/"');
     expect(html).toContain('产品是什么');
-    expect(html).toContain('怎么用');
-    expect(html).toContain('周末拍卷');
+    expect(html).toContain('注册与登录');
+    expect(html).toContain('怎么拍照');
+    expect(html).toContain('怎么选错题');
+    expect(html).toContain('常见问题');
+    expect(html).toContain('拍卷子');
     expect(html).toContain('收进错题本');
     expect(html).toContain('打印练习');
-    expect(html).toContain('工作日纸上做');
-    expect(html).toContain('下周末记结果');
+    expect(html).toContain('纸上做');
+    expect(html).toContain('记结果');
+    expect(html).toContain('示意图');
+    expect(html).toContain('添加到桌面');
+    expect(html).toContain('添加到主屏幕');
+    expect(html).toContain('display 是 browser');
+    expect(html).toContain('/s/manifest.webmanifest');
+    expect(html).toContain('https://study.pccoding666.com/s/register');
+    expect(html).toContain('https://study.pccoding666.com/s/recover');
+    expect(html).toContain('4 位数字找回码');
+    expect(html).toContain('加入 N 道');
+    expect(html).toContain('即将推出');
     expect(html).toContain('href="https://study.pccoding666.com/s/"');
     expect(html).toContain('开始使用');
     expect(html).toContain('>邮箱<');
@@ -79,6 +92,11 @@ describe('产品说明页文案', () => {
     expect(html).toContain('https://github.com/PCcoding666/Super_Error_Log');
     expect(html).not.toContain('sel.pccoding666.com');
     expect(html).not.toContain('help.pccoding666.com');
+    for (const word of ['周末', '工作日', '下周末', '寄宿制', '单页', '多页']) expect(html, word).not.toContain(word);
+    const images = [...html.matchAll(/src="\/help\/img\/([a-z0-9-]+\.webp)"/g)].map(match => match[1]);
+    expect(images.length).toBeGreaterThan(10);
+    expect(new Set(images).size).toBe(images.length);
+    for (const name of images) expect(readHelpImage(name!)?.length ?? 0).toBeGreaterThan(1000);
   });
 });
 
@@ -90,7 +108,33 @@ describe('说明页在 /help/，不占用学生学习站，也不看 Host', () =
     expect(portal.status).toBe(200);
     expect(portal.type).toContain('text/html');
     expect(portal.cache).toContain('public');
-    expect(portal.body).toContain('周末拍卷');
+    expect(portal.body).toContain('拍卷子');
+    const portalHeaders = await new Promise<Record<string, string | string[] | undefined>>((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port, method: 'GET', path: '/help/' }, response => {
+        response.resume();
+        response.on('end', () => resolve(response.headers));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(String(portalHeaders['content-security-policy'])).toContain("img-src 'self'");
+
+    const image = await request(port, 'GET', '/help/img/notebook-empty.webp', 'study.pccoding666.com');
+    expect(image.status).toBe(200);
+    expect(image.type).toContain('image/webp');
+    expect(image.cache).toContain('public');
+    expect(image.cache).toContain('max-age=86400');
+    expect(image.body.startsWith('RIFF')).toBe(true);
+    expect(image.body).toContain('WEBP');
+
+    const missing = await request(port, 'GET', '/help/img/not-a-photo.webp', 'study.pccoding666.com');
+    expect(missing.status).toBe(404);
+    expect(missing.type).toContain('application/json');
+    expect(missing.body).not.toContain('拍卷子');
+
+    const traversal = await request(port, 'GET', '/help/img/..%2FhelpPortal.ts', 'study.pccoding666.com');
+    expect(traversal.status).toBe(404);
+    expect(traversal.body).not.toContain('拍卷子');
     expect(portal.body).toContain('href="https://study.pccoding666.com/s/"');
     expect(portal.body).toContain('href="/help/"');
 
@@ -100,7 +144,7 @@ describe('说明页在 /help/，不占用学生学习站，也不看 Host', () =
 
     const oldHost = await request(port, 'GET', '/help/', 'help.pccoding666.com');
     expect(oldHost.status).toBe(200);
-    expect(oldHost.body).toContain('周末拍卷');
+    expect(oldHost.body).toContain('拍卷子');
 
     const head = await request(port, 'HEAD', '/help/', 'study.pccoding666.com');
     expect(head.status).toBe(200);
@@ -110,7 +154,7 @@ describe('说明页在 /help/，不占用学生学习站，也不看 Host', () =
     const slash = await request(port, 'GET', '/help', 'study.pccoding666.com');
     expect(slash.status).toBe(301);
     expect(slash.location).toBe('/help/');
-    expect(slash.body).not.toContain('周末拍卷');
+    expect(slash.body).not.toContain('拍卷子');
 
     const slashQuery = await request(port, 'GET', '/help?from=start', 'study.pccoding666.com');
     expect(slashQuery.status).toBe(301);
@@ -128,7 +172,7 @@ describe('说明页在 /help/，不占用学生学习站，也不看 Host', () =
     const oldHostRoot = await request(port, 'GET', '/', 'help.pccoding666.com');
     expect(oldHostRoot.status).toBe(404);
     expect(oldHostRoot.type).toContain('application/json');
-    expect(oldHostRoot.body).not.toContain('周末拍卷');
+    expect(oldHostRoot.body).not.toContain('拍卷子');
 
     const localRoot = await request(port, 'GET', '/');
     expect(localRoot.status).toBe(404);
@@ -137,16 +181,16 @@ describe('说明页在 /help/，不占用学生学习站，也不看 Host', () =
     const student = await request(port, 'GET', '/s/', 'study.pccoding666.com');
     expect(student.status).toBe(404);
     expect(student.type).toContain('application/json');
-    expect(student.body).not.toContain('周末拍卷');
+    expect(student.body).not.toContain('拍卷子');
 
     const studentHelp = await request(port, 'GET', '/s/help', 'study.pccoding666.com');
     expect(studentHelp.status).toBe(404);
-    expect(studentHelp.body).not.toContain('周末拍卷');
+    expect(studentHelp.body).not.toContain('拍卷子');
 
     const extra = await request(port, 'GET', '/help/extra', 'study.pccoding666.com');
     expect(extra.status).toBe(404);
     expect(extra.type).toContain('application/json');
-    expect(extra.body).not.toContain('周末拍卷');
+    expect(extra.body).not.toContain('拍卷子');
 
     const health = await request(port, 'GET', '/v1/health', 'study.pccoding666.com');
     expect(health.status).toBe(401);
