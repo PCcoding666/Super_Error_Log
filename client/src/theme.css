@@ -29,8 +29,10 @@
 .muted { color: var(--sel-muted); }
 .tone-red { color: #d7282f; }
 .tone-orange { color: #974b06; }
-.bottom-space { height: 200px; }
-.intake-space { height: 190px; }
+.bottom-space { height: 240px; }
+.bottom-space.tall { height: 420px; }
+.intake-space { height: 220px; }
+.intake-space.tall { height: 460px; }
 .problem { margin: 16px 20px; padding: 14px 16px; background: var(--ion-item-background); border-radius: 16px; }
 
 /* ---------- 错题本（根） ---------- */
@@ -70,10 +72,34 @@ ion-list-header.group-label { --background: transparent; margin-left: 4px; }
 .pick-button ion-icon { font-size: 20px; pointer-events: none; }
 .pick-solid { background: var(--ion-color-primary); color: #fff; }
 .pick-plain { background: #fff; color: var(--ion-color-primary); box-shadow: 0 1px 4px rgba(0, 0, 0, .12); }
-.pick-text { flex: 1; background: transparent; color: var(--ion-color-primary); }
+.pick-text { flex: 1; background: transparent; color: var(--ion-color-primary); white-space: nowrap; }
 .pick-button:focus-within, .fab-circle:focus-within { outline: 3px solid var(--ion-color-primary); outline-offset: 3px; }
 /* 和左下角小圆钮同一外沿：ion-fab 底边 10px，small 按钮再缩进 8px。 */
-.capture-corner { position: absolute; z-index: 10; top: auto; left: auto; right: calc(18px + var(--ion-safe-area-right, 0px)); bottom: 18px; display: flex; flex-direction: column; align-items: center; gap: 12px; width: max-content; height: max-content; }
+.capture-corner, .capture-dock { position: absolute; z-index: 10; top: auto; left: auto; right: calc(18px + var(--ion-safe-area-right, 0px)); bottom: calc(18px + max(var(--ion-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px))); display: flex; flex-direction: column; align-items: flex-end; gap: 10px; width: max-content; max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); height: max-content; }
+.capture-dock.has-tray { left: calc(12px + env(safe-area-inset-left, 0px)); width: auto; align-items: stretch; }
+.capture-dock-picks { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.capture-dock.has-tray .capture-dock-picks, .capture-dock.has-tray .capture-mode-bar { align-self: flex-end; }
+.capture-mode-bar { display: flex; padding: 3px; border-radius: 999px; background: rgba(17, 17, 17, .9); box-shadow: 0 4px 16px rgba(0, 0, 0, .16); }
+.capture-mode-bar button { border: 0; background: transparent; color: #fff; min-width: 72px; min-height: 44px; padding: 0 14px; border-radius: 999px; font: inherit; font-size: 15px; font-weight: 600; }
+.capture-mode-bar button[aria-checked="true"] { background: #fff; color: #111; }
+.capture-inline { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+.capture-inline .capture-mode-bar { align-self: center; }
+.capture-tray { width: 100%; background: var(--ion-item-background); border-radius: 18px; padding: 10px 10px 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, .12); }
+.capture-tray-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.capture-tray-head p { margin: 0; font-size: 15px; font-weight: 600; }
+.capture-done { border: 0; background: var(--ion-color-primary); color: #fff; border-radius: 999px; min-height: 36px; padding: 0 16px; font: inherit; font-size: 15px; font-weight: 600; }
+.capture-film { display: flex; gap: 8px; overflow-x: auto; list-style: none; margin: 0; padding: 0 0 2px; }
+.capture-film li { position: relative; flex: none; width: 92px; }
+.capture-film img, .capture-film-fallback { width: 92px; height: 92px; object-fit: cover; border-radius: 10px; background: #e5e5ea; display: block; }
+.capture-page-delete { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .65); color: #fff; font-size: 16px; line-height: 1; }
+.capture-kinds { display: flex; gap: 4px; margin-top: 4px; }
+.capture-kinds button { flex: 1; border: 0; background: rgba(120, 120, 128, .16); color: var(--ion-text-color); border-radius: 999px; min-height: 28px; padding: 0; font: inherit; font-size: 11px; font-weight: 600; }
+.capture-kinds button[aria-pressed="true"] { background: var(--ion-color-primary); color: #fff; }
+.capture-overflow { margin: 6px 0 0; color: #974b06; font-size: 12px; }
+@media (prefers-color-scheme: dark) {
+  .capture-mode-bar { background: rgba(255, 255, 255, .18); }
+  .capture-mode-bar button[aria-checked="true"] { background: #fff; color: #111; }
+}
 .fab-circle { position: relative; display: flex; align-items: center; justify-content: center; border-radius: 50%; box-shadow: 0 4px 16px rgba(0, 0, 0, .14); overflow: hidden; }
 .fab-album { width: 60px; height: 60px; background: var(--sel-black); color: #fff; }
 .fab-camera { width: 52px; height: 52px; background: #fff; color: #111; }

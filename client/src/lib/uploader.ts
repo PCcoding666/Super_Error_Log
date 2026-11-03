@@ -1,3 +1,5 @@
+import type { CaptureUploadHints } from './captureSession';
+
 /**
  * 拍照上传（搬自旧页面脚本 src/web/photoUpload.ts / uploadQueue.ts 的核心约定）：
  * - 先在浏览器里用 canvas 转成 JPEG（最长边 4096、去拍摄信息、超过 15 MB 逐级降质量），转换成功才上传；
@@ -26,7 +28,12 @@ export interface UploadEntry {
   photoId: string | null;
   file: File | null;
   blob: Blob | null;
+  /** Sent with the upload so the extract pipeline knows single page vs one multi-page set. */
+  hints: CaptureUploadHints;
+  /** Pages that share a setId are one capture. Null is the ordinary single-page stream. */
+  setId: string | null;
 }
+export type { CaptureUploadHints };
 export type UploadMode = { kind: 'legacy' } | { kind: 'materials'; namespace: string };
 
 class UploadFailure extends Error { constructor(public kind: string, message: string, public retryable: boolean) { super(message); } }
@@ -121,8 +128,9 @@ class Uploader {
   /** 还没问过服务器时为 null：第一张发出去之前先取（材料流程不接受旧端点）。 */
   private mode: UploadMode | null = null;
   private modeRequest: Promise<UploadMode> | null = null;
-  private materialsCaptureId: string | null = null;
   private materialsCaptureRequestId = uuid();
+  /** One slot per multi-page set, plus `ambient` for single-page uploads. */
+  private captureSlots = new Map<string, { requestId: string; id: string | null }>();
 
   constructor() { try { this.batchIds = JSON.parse(sessionStorage.getItem(BATCH_KEY) ?? '[]') as string[]; } catch { this.batchIds = []; } }
   subscribe(listener: Listener): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -138,7 +146,7 @@ class Uploader {
   setMode(mode: UploadMode): void {
     const same = this.mode !== null && mode.kind === this.mode.kind && (mode.kind !== 'materials' || this.mode.kind !== 'materials' || mode.namespace === this.mode.namespace);
     if (same) return;
-    this.mode = mode; this.materialsCaptureId = null; this.materialsCaptureRequestId = uuid();
+    this.mode = mode; this.materialsCaptureRequestId = uuid(); this.captureSlots.delete('ambient');
   }
   /** 首次上传前向服务器确认该走哪套端点；网络失败按可重试处理，照片留在队列里。 */
   private resolveMode(): Promise<UploadMode> {
@@ -159,13 +167,14 @@ class Uploader {
   /** 本批里已经传好的张数；录入态据此等服务器把题找出来。 */
   get succeeded(): number { return this.entries.filter(entry => entry.state === 'succeeded').length; }
 
-  add(files: File[]): void {
+  add(files: File[], detail?: { hints?: CaptureUploadHints | CaptureUploadHints[]; setId?: string | null }): void {
     if (this.batchClosed) { this.batchClosed = false; this.batchIds = []; this.saveBatch(); this.entries = this.entries.filter(entry => entry.state === 'failed' && entry.retryable); }
-    for (const file of files) {
+    files.forEach((file, index) => {
       let previewUrl: string | null = null;
       try { previewUrl = URL.createObjectURL(file); } catch { previewUrl = null; }
-      this.entries.push({ key: uuid(), name: file.name || '照片', state: 'queued', progress: 0, message: '等待上传', retryable: false, previewUrl, photoId: null, file, blob: null });
-    }
+      const hints = Array.isArray(detail?.hints) ? (detail.hints[index] ?? { captureMode: 'single' as const }) : (detail?.hints ?? { captureMode: 'single' as const });
+      this.entries.push({ key: uuid(), name: file.name || '照片', state: 'queued', progress: 0, message: '等待上传', retryable: false, previewUrl, photoId: null, file, blob: null, hints, setId: detail?.setId ?? null });
+    });
     this.emit();
     this.pump();
   }
@@ -202,12 +211,27 @@ class Uploader {
     }
     this.emit();
   }
+  /** Same request id retries the same capture. A multi-page set does not share the single-page capture. */
+  private async ensureCapture(namespace: string, key: string, requestId: string): Promise<string> {
+    let slot = this.captureSlots.get(key);
+    if (!slot) { slot = { requestId, id: null }; this.captureSlots.set(key, slot); }
+    if (slot.id) return slot.id;
+    let response: Response;
+    try { response = await fetch('/s/materials/captures', { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json', 'x-draft-namespace': namespace }, body: JSON.stringify({ requestId: slot.requestId }) }); }
+    catch { throw new UploadFailure('capture_network', '网络没连上，没传上去。照片还在这个页面里。', true); }
+    const body = (await response.json().catch(() => ({}))) as { id?: string; error?: { message?: string } };
+    if (!response.ok || !body.id) throw new UploadFailure('capture', body.error?.message ?? '暂时无法上传，稍后再试。', response.status >= 500 || response.status === 429);
+    slot.id = body.id;
+    return slot.id;
+  }
   private async send(entry: UploadEntry): Promise<string> {
     const onProgress = (p: number): void => { entry.progress = p; entry.message = p >= 100 ? '上传完成，正在处理照片…' : `正在上传 ${p}%`; this.emit(); };
     const mode = await this.resolveMode();
+    const hintsJson = JSON.stringify(entry.hints);
     if (mode.kind === 'legacy') {
       const data = new FormData();
       data.append('key', entry.key);
+      data.append('hints', hintsJson);
       data.append('photo', entry.blob!, 'photo.jpg');
       return xhrUpload('/s/capture', data, {}, onProgress, (_status, body) => {
         const value = body as { ok?: boolean; jobId?: string } | null;
@@ -215,18 +239,10 @@ class Uploader {
       });
     }
     const namespace = mode.namespace;
-    if (!this.materialsCaptureId) {
-      // 断网时 fetch 直接抛错：按可重试的上传失败处理，照片和 requestId 都留着，不能当成图片读不了。
-      let response: Response;
-      try { response = await fetch('/s/materials/captures', { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json', 'x-draft-namespace': namespace }, body: JSON.stringify({ requestId: this.materialsCaptureRequestId }) }); }
-      catch { throw new UploadFailure('capture_network', '网络没连上，没传上去。照片还在这个页面里。', true); }
-      const body = (await response.json().catch(() => ({}))) as { id?: string; error?: { message?: string } };
-      if (!response.ok || !body.id) throw new UploadFailure('capture', body.error?.message ?? '暂时无法上传，稍后再试。', response.status >= 500 || response.status === 429);
-      this.materialsCaptureId = body.id;
-    }
+    const captureId = await this.ensureCapture(namespace, entry.setId ?? 'ambient', entry.setId ?? this.materialsCaptureRequestId);
     const data = new FormData();
-    data.append('captureId', this.materialsCaptureId);
-    data.append('hints', '{}');
+    data.append('captureId', captureId);
+    data.append('hints', hintsJson);
     data.append('photo', entry.blob!, 'photo.jpg');
     return xhrUpload('/s/materials/uploads', data, { 'x-draft-namespace': namespace, 'x-upload-id': entry.key }, onProgress, (_status, body) => {
       const value = body as { ok?: boolean; assetId?: string; job?: { id?: string; kind?: string } } | null;

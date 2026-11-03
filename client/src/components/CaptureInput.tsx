@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import type { ChangeEvent, ReactNode } from 'react';
+import { captureSession } from '../lib/captureSession';
 import { watchChooser } from '../lib/chooserWatch';
 import { uploader } from '../lib/uploader';
 
@@ -23,6 +24,8 @@ function usePickFiles(): (event: ChangeEvent<HTMLInputElement>) => void {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     if (!files.length) return;
+    // 多页先留在本页：连拍、删一张、标试卷或答题卡，点「完成」再一次提交。
+    if (captureSession.mode === 'multi') { captureSession.add(files); return; }
     uploader.add(files);
     navigate('/new');
   };
