@@ -8,6 +8,8 @@ function conflict(message: string): never { throw new MobileRequestError(409, 's
 export const MAX_SET_PAGES = 8;
 /** An unfinished multi-page set is extracted from the pages already stored after this long. */
 export const SET_HOLD_MS = 10 * 60 * 1000;
+/** A page the combined extract did not cover. Retryable: the next attempt reads that page on its own. */
+export const SET_PAGE_MISSING = { code: 'set_page_missing', message: '这一页没有和整组一起识别出来，可以单独重试。', retryable: true } as const;
 
 export type CaptureSetMode = 'multi' | 'single' | 'unset';
 export function captureSetMode(hints: CaptureHints): CaptureSetMode {

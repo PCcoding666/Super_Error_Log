@@ -187,7 +187,11 @@ export function createMaterialsRouter(options: {
         catch (error) { next(error); }
     });
     r.post('/materials/captures/:id/complete', (req, res, next) => {
-        try { const id = text(req.params.id); captureOwned(id); jobs.releaseCapture(id); res.json({ ok: true }); }
+        try {
+            const id = text(req.params.id); captureOwned(id);
+            const release = jobs.releaseCapture(id);
+            res.json({ ok: release.accepted, accepted: release.accepted, queued: release.queued });
+        }
         catch (error) { next(error); }
     });
     const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 2, fields: 12, parts: 16 } }).single('photo');

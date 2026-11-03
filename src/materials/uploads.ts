@@ -77,6 +77,7 @@ export class MaterialUploads {
     const duplicate = input.hints.questionId || input.hints.attemptId ? null : this.findDuplicate(hash, canonical(input.hints), input.hints.captureMode === 'multi' ? input.captureId : undefined);
     if (duplicate) return duplicate;
     this.validateSet(input);
+    if (input.hints.captureMode === 'multi' && this.jobs.capturePhase(input.captureId) === 'abandoned') throw new MobileRequestError(409, 'set_conflict', '这组多页已经放弃，不能再加入。');
     const owned = !reservation; const reserve = reservation ?? { slot: false, capacity: false, handoff: false };
     let staging: string | undefined; let committedDirectory: string | undefined;
     try {
@@ -102,8 +103,12 @@ export class MaterialUploads {
         await fs.rename(staging, finalDirectory); staging = undefined; committedDirectory = finalDirectory; await syncDirectory(this.directory);
       }
       const assetId = newId('mas'); const sourceId = newId('ast');
-      const defer = holdsExtract(input.hints);
-      const job = this.jobs.enqueue('extract', assetId, input.uploadId, hash, { reservation: reserve, input: defer ? { deferred: true } : undefined, persist: () => {
+      const phase = input.hints.captureMode === 'multi' ? this.jobs.capturePhase(input.captureId) : 'waiting';
+      // A page that arrives after the lead is chosen joins that set. It does not become another first page.
+      // Once the lead has finished, the page is read on its own. An abandoned set is rejected above.
+      const join = phase === 'released' && this.jobs.leadPending(input.captureId);
+      const defer = phase === 'waiting' && holdsExtract(input.hints);
+      const job = this.jobs.enqueue('extract', assetId, input.uploadId, hash, { reservation: reserve, input: join ? { setRole: 'follow' } : defer ? { deferred: true } : undefined, persist: () => {
         const capture = this.store.db.prepare('SELECT source_batch_id FROM material_capture WHERE owner_id=? AND id=?').get(this.store.studentId, input.captureId) as { source_batch_id: string | null };
         const batchId = capture.source_batch_id ?? newId('bat');
         if (!capture.source_batch_id) {

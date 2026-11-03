@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import express from 'express';
 import sharp from 'sharp';
 import { SCHEMA_SQL } from '../../src/db/schema.js';
 import { newId } from '../../src/db/connection.js';
@@ -15,8 +16,9 @@ import { extractMaterial } from '../../src/materials/extraction.js';
 import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
+import { createMaterialsRouter } from '../../src/web/materialsRouter.js';
 import type { CaptureHints, Extraction, Fragment } from '../../src/materials/contracts.js';
-import type { MaterialPageImage } from '../../src/materials/provider.js';
+import { MaterialProviderError, PartialMaterialExtractionError, type ExtractedMaterial, type MaterialPageImage } from '../../src/materials/provider.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -43,6 +45,18 @@ async function fixture(capacity = 4) {
 
 function jobInput(db: DatabaseSync, id: string): Record<string, unknown> {
   return JSON.parse((db.prepare('SELECT input_json FROM material_job WHERE id=?').get(id) as { input_json: string }).input_json) as Record<string, unknown>;
+}
+function jobError(db: DatabaseSync, id: string): { code?: string; retryable?: boolean } | null {
+  const row = db.prepare('SELECT error FROM material_job WHERE id=?').get(id) as { error: string | null };
+  return row.error ? JSON.parse(row.error) as { code?: string; retryable?: boolean } : null;
+}
+function storedExtraction(db: DatabaseSync, assetId: string): string | null {
+  return (db.prepare('SELECT extraction_json FROM material_asset WHERE id=?').get(assetId) as { extraction_json: string | null }).extraction_json;
+}
+function pageExtraction(uploads: MaterialUploads, assetId: string, role: Fragment['role'], text: string): Extraction {
+  const sourceHash = uploads.source(assetId).sourceHash;
+  const fragment: Fragment = { assetId, fragmentId: newId('mfr'), revision: 1, sourceHash, box: { x: 0, y: 0, width: 1, height: 1 }, role, text, number: '1', subpart: null, page: 1, order: 0, requiresDiagram: false, check: 'passed', uncertainties: [] };
+  return { assetId, revision: 1, document: { title: null, subject: '数学', date: null, printedCode: null, page: 1 }, fragments: [fragment], warnings: [], runs: [] };
 }
 
 describe('multi-page capture', () => {
@@ -161,5 +175,152 @@ describe('multi-page capture', () => {
     expect(jobInput(f.db, saved.job.id).setRole).toBe('lead');
     expect(jobInput(f.db, saved.job.id).deferred).toBeUndefined();
     expect(admission.tryAcquireJobCapacity().accepted).toBe(false);
+  });
+
+  it('settles the other pages when the first page fails, including a partial result', async () => {
+    const f = await fixture();
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2, pageKind: 'paper' } });
+    const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' } });
+    await expect(extractMaterial(f.store, { extract: async () => { throw new MaterialProviderError('provider_down', '模型没有返回。', true); } }, paper.job.id, new AbortController().signal)).rejects.toMatchObject({ code: 'provider_down' });
+    expect(f.jobs.get(sheet.job.id)?.state).toBe('failed');
+    expect(jobError(f.db, sheet.job.id)).toMatchObject({ code: 'set_page_missing', retryable: true });
+    expect(storedExtraction(f.db, paper.assetId)).toBeNull();
+    expect(storedExtraction(f.db, sheet.assetId)).toBeNull();
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 2 });
+    const again = f.store.createCapture(randomUUID()).id;
+    const lead = await f.uploads.save({ captureId: again, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#222'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2 } });
+    const omitted = await f.uploads.save({ captureId: again, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#333'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 } });
+    const partialLead = pageExtraction(f.uploads, lead.assetId, 'question', '1+1=?');
+    const partialResult: ExtractedMaterial = { ...partialLead, set: [partialLead] };
+    await expect(extractMaterial(f.store, { extract: async () => { throw new PartialMaterialExtractionError(partialResult, new MaterialProviderError('fragment_unavailable', '有一块没读出来。', true)); } }, lead.job.id, new AbortController().signal)).rejects.toMatchObject({ code: 'fragment_unavailable' });
+    expect(storedExtraction(f.db, lead.assetId)).toContain('1+1=?');
+    expect(storedExtraction(f.db, omitted.assetId)).toBeNull();
+    expect(f.jobs.get(omitted.job.id)?.state).toBe('failed');
+    expect(jobError(f.db, omitted.job.id)).toMatchObject({ code: 'set_page_missing', retryable: true });
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 4 });
+  });
+
+  it('marks a page the model left out as failed and retryable, then a retry reads that page alone', async () => {
+    const f = await fixture();
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2, pageKind: 'paper' } });
+    const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' } });
+    const lead = pageExtraction(f.uploads, paper.assetId, 'question', '1+1=?');
+    const seen: number[] = [];
+    await extractMaterial(f.store, { extract: async (input: { pages?: MaterialPageImage[] }) => { seen.push(input.pages?.length ?? 0); return { ...lead, set: [lead] }; } }, paper.job.id, new AbortController().signal);
+    expect(seen).toEqual([2]);
+    expect(f.jobs.get(paper.job.id)?.state).toBe('queued');
+    expect(f.jobs.get(sheet.job.id)?.state).toBe('failed');
+    expect(jobError(f.db, sheet.job.id)).toMatchObject({ code: 'set_page_missing', retryable: true });
+    expect(jobInput(f.db, sheet.job.id).setRole).toBeUndefined();
+    expect(storedExtraction(f.db, sheet.assetId)).toBeNull();
+    const retried = f.jobs.retry(sheet.job.id, randomUUID());
+    expect(retried.state).toBe('queued');
+    await f.jobs.resume();
+    expect(f.jobs.get(sheet.job.id)?.state).not.toBe('failed');
+    const alone = pageExtraction(f.uploads, sheet.assetId, 'student_work', '2');
+    await extractMaterial(f.store, { extract: async (input: { pages?: MaterialPageImage[] }) => { seen.push(input.pages?.length ?? 0); return alone; } }, sheet.job.id, new AbortController().signal);
+    expect(seen).toEqual([2, 0]);
+    expect(storedExtraction(f.db, sheet.assetId)).toContain('2');
+  });
+
+  it('fails a follower left queued when restart finds the first page already finished', async () => {
+    const f = await fixture();
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2 } });
+    const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 } });
+    expect(jobInput(f.db, paper.job.id).setRole).toBe('lead');
+    expect(jobInput(f.db, sheet.job.id).setRole).toBe('follow');
+    f.db.prepare("UPDATE material_job SET state='succeeded' WHERE id=?").run(paper.job.id);
+    await f.jobs.stop();
+    const scheduler = new MobileRecognitionService(await MobileRecognitionStore.open(f.dir), { inventory: async () => ({ candidates: [], warnings: [], capacityReached: false }), recognizeQuestion: async () => { throw new Error('unused'); } });
+    const admission = new AdmissionController({ jobCapacity: 4, diskProbe: async () => 10n ** 12n });
+    scheduler.useAdmission(admission);
+    const restarted = new MaterialJobs(f.store, scheduler, admission);
+    cleanups.push(async () => { await scheduler.stop(); });
+    await restarted.resume();
+    expect(restarted.get(paper.job.id)?.state).toBe('succeeded');
+    expect(restarted.get(sheet.job.id)?.state).toBe('failed');
+    expect(jobError(f.db, sheet.job.id)).toMatchObject({ code: 'set_page_missing', retryable: true });
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 2 });
+  });
+
+  it('reports a full queue from complete instead of claiming the set started', async () => {
+    const f = await fixture(1);
+    const saved = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2 } });
+    expect(f.admission.tryAcquireJobCapacity().accepted).toBe(true);
+    expect(f.jobs.releaseCapture(f.captureId)).toEqual({ accepted: false, queued: true });
+    expect(jobInput(f.db, saved.job.id)).toEqual({ deferred: true });
+    const app = express();
+    app.use('/s', createMaterialsRouter({ store: f.store, uploads: f.uploads, jobs: f.jobs, admission: f.admission, draftNamespace: f.store.getWorkspace().draftNamespace }));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+    const port = (server.address() as { port: number }).port;
+    const response = await fetch(`http://127.0.0.1:${port}/s/materials/captures/${f.captureId}/complete`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', 'x-draft-namespace': f.store.getWorkspace().draftNamespace } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: false, accepted: false, queued: true });
+    expect(jobInput(f.db, saved.job.id)).toEqual({ deferred: true });
+  });
+
+  it('lets a late page join the set, and does not elect a new lead after the first page finished', async () => {
+    const held = await fixture(2);
+    const paper = await held.uploads.save({ captureId: held.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await held.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2, pageKind: 'paper' } });
+    expect(held.jobs.releaseCapture(held.captureId)).toEqual({ accepted: true, queued: false });
+    expect(jobInput(held.db, paper.job.id).setRole).toBe('lead');
+    const sheet = await held.uploads.save({ captureId: held.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await held.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' } });
+    expect(jobInput(held.db, sheet.job.id)).toEqual({ setRole: 'follow' });
+    expect(jobInput(held.db, paper.job.id).setRole).toBe('lead');
+    expect(held.admission.tryAcquireJobCapacity().accepted).toBe(true); held.admission.releaseJobCapacity();
+    const f = await fixture();
+    const done = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'done.jpg', bytes: await f.jpeg('#444'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2 } });
+    expect(f.jobs.releaseCapture(f.captureId).accepted).toBe(true);
+    f.db.prepare("UPDATE material_job SET state='succeeded' WHERE id=?").run(done.job.id);
+    const late = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'late.jpg', bytes: await f.jpeg('#555'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 } });
+    expect(jobInput(f.db, late.job.id).deferred).toBeUndefined();
+    expect(jobInput(f.db, late.job.id).setRole).toBeUndefined();
+    expect(jobInput(f.db, done.job.id).setRole).toBe('lead');
+    f.jobs.releaseCapture(f.captureId);
+    expect(jobInput(f.db, late.job.id).setRole).toBeUndefined();
+    expect(f.jobs.get(done.job.id)?.state).toBe('succeeded');
+  });
+
+  it('rejects another page after the set was abandoned and keeps the saved photo', async () => {
+    const f = await fixture();
+    const saved = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2 } });
+    expect(f.jobs.abandonCapture(f.captureId)).toBe(1);
+    await expect(f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 } })).rejects.toMatchObject({ status: 409, code: 'set_conflict' });
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
+    expect(f.jobs.get(saved.job.id)?.state).toBe('failed');
+    expect(jobError(f.db, saved.job.id)?.code).toBe('set_abandoned');
+  });
+
+  it('does not write an extraction that finishes after the set was abandoned', async () => {
+    const f = await fixture();
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2 } });
+    const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 } });
+    const lead = pageExtraction(f.uploads, paper.assetId, 'question', '应该丢掉');
+    await extractMaterial(f.store, { extract: async () => { f.jobs.abandonCapture(f.captureId); return { ...lead, set: [lead, pageExtraction(f.uploads, sheet.assetId, 'student_work', '也丢掉')] }; } }, paper.job.id, new AbortController().signal);
+    expect(storedExtraction(f.db, paper.assetId)).toBeNull();
+    expect(storedExtraction(f.db, sheet.assetId)).toBeNull();
+    expect(f.jobs.get(paper.job.id)?.state).toBe('failed');
+    expect(f.jobs.get(sheet.job.id)?.state).toBe('failed');
+    expect(jobError(f.db, paper.job.id)?.code).toBe('set_abandoned');
+    expect(jobError(f.db, sheet.job.id)?.code).toBe('set_abandoned');
+    expect(jobError(f.db, sheet.job.id)?.retryable).toBe(false);
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 2 });
+  });
+
+  it('refuses to abandon a capture that is not a multi-page set and keeps the photo', async () => {
+    const f = await fixture();
+    const single = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'one.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'single' } });
+    let refused: unknown; try { f.jobs.abandonCapture(f.captureId); } catch (error) { refused = error; }
+    expect(refused).toMatchObject({ status: 409, code: 'set_conflict' });
+    expect(f.jobs.get(single.job.id)?.state).toBe('queued');
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 1 });
+    const plain = f.store.createCapture(randomUUID()).id;
+    const album = await f.uploads.save({ captureId: plain, uploadId: randomUUID(), filename: 'album.jpg', bytes: await f.jpeg('#111'), hints: {} });
+    let plainRefused: unknown; try { f.jobs.abandonCapture(plain); } catch (error) { plainRefused = error; }
+    expect(plainRefused).toMatchObject({ status: 409, code: 'set_conflict' });
+    expect(f.jobs.get(album.job.id)?.state).toBe('queued');
+    expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 2 });
   });
 });

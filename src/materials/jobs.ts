@@ -3,7 +3,7 @@ import { canRecover } from '../mobile/contracts.js';
 import type { AdmissionController } from '../mobile/admission.js';
 import type { AdmissionReserve } from '../mobile/router.js';
 import { MobileRecognitionService, MobileRequestError } from '../mobile/service.js';
-import { SET_HOLD_MS } from './captureHints.js';
+import { SET_HOLD_MS, SET_PAGE_MISSING } from './captureHints.js';
 import type { CaptureHints, JobTicket, MaterialJobKind } from './contracts.js';
 import { MaterialStore } from './store.js';
 
@@ -64,7 +64,9 @@ export class MaterialJobs {
     const supplied = options.reservation?.capacity === true && !options.reservation.handoff;
     // Waiting pages are not work yet. They must not take a slot in the per-student queue.
     const deferred = this.deferred({ input_json: JSON.stringify(options.input ?? {}) });
-    if (!deferred && this.admission && !supplied && !this.admission.tryAcquireJobCapacity().accepted) throw new MobileRequestError(429, 'capacity_full', '处理队列已满，请稍后重试。');
+    const follower = this.follower({ input_json: JSON.stringify(options.input ?? {}) });
+    // A page joining a set that already has a lead does not take a second slot and does not start its own extract.
+    if (!deferred && !follower && this.admission && !supplied && !this.admission.tryAcquireJobCapacity().accepted) throw new MobileRequestError(429, 'capacity_full', '处理队列已满，请稍后重试。');
     const id = newId('mjob');
     try {
       this.store.transaction(() => {
@@ -75,30 +77,27 @@ export class MaterialJobs {
         options.persistJob?.({id,kind,state:'queued'});
       });
     } catch (error) {
-      if (!deferred && this.admission && !supplied) this.admission.releaseJobCapacity();
+      if (!deferred && !follower && this.admission && !supplied) this.admission.releaseJobCapacity();
       throw error;
     }
-    if (deferred) return ticket(this.require(id));
+    if (deferred || follower) return ticket(this.require(id));
     this.occupancy.add(id);
     if (supplied) options.reservation!.handoff = true;
     this.schedule(id);
     return ticket(this.require(id));
   }
 
-  /** Start one extract for a multi-page set from the pages already stored. Followers do not take a slot. */
-  releaseCapture(captureId: string): void {
+  /**
+   * Start one extract for a multi-page set from the pages already stored. Followers do not take a slot.
+   * `accepted` is false when nothing started. `queued` stays true when the pages are still waiting because the queue is full.
+   */
+  releaseCapture(captureId: string): { accepted: boolean; queued: boolean } {
     const rows = this.captureJobs(captureId);
-    if (!rows.length) return;
-    const lead = this.leadOf(rows);
-    if (this.admission && !this.occupancy.has(lead.id) && !this.admission.tryAcquireJobCapacity().accepted) return;
-    for (const row of rows) {
-      const input = this.inputOf(row);
-      delete input.deferred;
-      input.setRole = row.id === lead.id ? 'lead' : 'follow';
-      this.writeInput(row.id, input);
-    }
-    if (!this.occupancy.has(lead.id)) this.occupancy.add(lead.id);
-    if (!this.active.has(lead.id)) this.schedule(lead.id);
+    if (!rows.length) return { accepted: false, queued: false };
+    const appointed = this.appointedLead(captureId);
+    if (appointed && !rows.some(row => row.id === appointed.id)) return this.startIndividuals(rows);
+    const lead = appointed ? rows.find(row => row.id === appointed.id)! : this.leadOf(rows);
+    return this.startLead(lead, rows);
   }
 
   /** Process whatever pages have arrived once a set has been waiting too long. Survives restart via resume(). */
@@ -112,8 +111,33 @@ export class MaterialJobs {
     for (const row of rows) this.releaseCapture(row.captureId);
   }
 
-  /** Drop an unfinished set. The pages stay saved; their extract jobs do not keep a queue slot. */
+  /** waiting: still held. released: a lead was chosen. abandoned: the student gave the set up. */
+  capturePhase(captureId: string): 'waiting' | 'released' | 'abandoned' {
+    const rows = this.store.db.prepare(`SELECT j.state, j.input_json, j.error FROM material_job j
+      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
+      WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=?`).all(this.store.studentId, captureId) as { state: string; input_json: string; error: string | null }[];
+    for (const row of rows) {
+      if (!row.error) continue;
+      try { if ((JSON.parse(row.error) as { code?: string }).code === 'set_abandoned') return 'abandoned'; } catch { /* not a structured error */ }
+    }
+    for (const row of rows) {
+      const input = this.inputOf(row);
+      if (input.setRole === 'lead' || input.setRole === 'follow' || input.deferred !== true) return 'released';
+    }
+    return 'waiting';
+  }
+
+  /** True while the chosen first page has not reached a terminal state. */
+  leadPending(captureId: string): boolean {
+    const lead = this.appointedLead(captureId);
+    return !!lead && pending(lead.state);
+  }
+
+  /** Drop an unfinished multi-page set. The pages stay saved; their extract jobs do not keep a queue slot. */
   abandonCapture(captureId: string): number {
+    const assets = this.store.db.prepare('SELECT hints_json FROM material_asset WHERE owner_id=? AND capture_id=?').all(this.store.studentId, captureId) as { hints_json: string }[];
+    const multi = assets.some(row => { try { return (JSON.parse(row.hints_json) as CaptureHints).captureMode === 'multi'; } catch { return false; } });
+    if (!multi) throw new MobileRequestError(409, 'set_conflict', '这不是一组多页。');
     const rows = this.captureJobs(captureId);
     let abandoned = 0;
     for (const row of rows) {
@@ -158,6 +182,7 @@ export class MaterialJobs {
       if (this.follower(row)) {
         const saved = row.asset_id ? this.store.db.prepare('SELECT extraction_json FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { extraction_json: string | null } | undefined : undefined;
         if (saved?.extraction_json) this.transition(row.id, 'succeeded', null);
+        else if (this.leadTerminal(row)) this.failMissing(row.id);
         continue;
       }
       if (!this.occupancy.has(row.id)) { this.admission?.noteExistingOccupancy(); this.occupancy.add(row.id); }
@@ -252,6 +277,77 @@ export class MaterialJobs {
   }
   private deferred(row: { input_json: string }): boolean { return this.inputOf(row).deferred === true; }
   private follower(row: { input_json: string }): boolean { return this.inputOf(row).setRole === 'follow'; }
+  /** The job that was chosen to read the set, including after it has already finished. */
+  private appointedLead(captureId: string): JobRow | undefined {
+    const rows = this.store.db.prepare(`SELECT j.* FROM material_job j
+      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
+      WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=?`).all(this.store.studentId, captureId) as JobRow[];
+    return rows.find(row => this.inputOf(row).setRole === 'lead');
+  }
+  private leadTerminal(row: JobRow): boolean {
+    if (!row.asset_id) return false;
+    const asset = this.store.db.prepare('SELECT capture_id FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { capture_id: string } | undefined;
+    if (!asset) return false;
+    const lead = this.appointedLead(asset.capture_id);
+    return !!lead && lead.id !== row.id && !pending(lead.state);
+  }
+  /** The first page already finished. Remaining pages are extracted on their own, never as a new lead. */
+  private startIndividuals(rows: (JobRow & { hints_json: string })[]): { accepted: boolean; queued: boolean } {
+    let accepted = false;
+    let queued = false;
+    for (const row of rows) {
+      const input = this.inputOf(row);
+      if (input.setRole === 'lead') continue;
+      if (input.setRole === 'follow') {
+        const saved = row.asset_id ? this.store.db.prepare('SELECT extraction_json FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { extraction_json: string | null } | undefined : undefined;
+        if (saved?.extraction_json) this.transition(row.id, 'succeeded', null);
+        else this.failMissing(row.id);
+        continue;
+      }
+      if (!this.deferred(row) && (this.occupancy.has(row.id) || !pending(row.state))) { accepted = true; continue; }
+      if (!this.occupancy.has(row.id)) {
+        if (this.admission && !this.admission.tryAcquireJobCapacity().accepted) { queued = true; continue; }
+        this.occupancy.add(row.id);
+      }
+      delete input.deferred;
+      delete input.setRole;
+      this.writeInput(row.id, input);
+      this.schedule(row.id);
+      accepted = true;
+    }
+    return { accepted, queued };
+  }
+  /** Keep an already chosen lead. Pages that are already running on their own are left alone. */
+  private startLead(lead: JobRow & { hints_json: string }, rows: (JobRow & { hints_json: string })[]): { accepted: boolean; queued: boolean } {
+    const participants = rows.filter(row => {
+      const input = this.inputOf(row);
+      return row.id === lead.id || input.deferred === true || input.setRole === 'follow' || input.setRole === 'lead';
+    });
+    if (this.admission && !this.occupancy.has(lead.id) && !this.admission.tryAcquireJobCapacity().accepted) return { accepted: false, queued: true };
+    for (const row of participants) {
+      const input = this.inputOf(row);
+      delete input.deferred;
+      input.setRole = row.id === lead.id ? 'lead' : 'follow';
+      this.writeInput(row.id, input);
+    }
+    if (!this.occupancy.has(lead.id)) this.occupancy.add(lead.id);
+    if (!this.active.has(lead.id)) this.schedule(lead.id);
+    return { accepted: true, queued: false };
+  }
+  /** A follower the lead did not cover. Clearing the role lets a retry read this page by itself. */
+  private failMissing(id: string): void {
+    const row = this.require(id);
+    if (row.state !== 'queued' && row.state !== 'interrupted') return;
+    const input = this.inputOf(row);
+    delete input.deferred;
+    delete input.setRole;
+    this.store.transaction(() => {
+      const current = this.require(id);
+      if (current.state !== 'queued' && current.state !== 'interrupted') return;
+      this.writeInput(id, input);
+      this.transition(id, 'failed', SET_PAGE_MISSING);
+    });
+  }
   private writeInput(id: string, input: Record<string, unknown>): void {
     this.store.db.prepare('UPDATE material_job SET input_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=?').run(JSON.stringify(input), this.store.studentId, id);
   }
@@ -306,7 +402,27 @@ export class MaterialJobs {
       if (this.require(id).state === 'running') this.transition(id, 'succeeded', null);
     } catch (error) {
       if (pending(this.require(id).state)) this.transition(id, signal.aborted ? 'interrupted' : 'failed', signal.aborted ? { code: 'interrupted', message: '处理已中断，已完成结果仍然保留。', retryable: true } : failure(error));
-    } finally { this.signals.delete(id); this.release(id); }
+    } finally {
+      // A page can join while the lead's write is already done. Settle it once the lead is actually finished.
+      this.settleFinishedLead(id);
+      this.signals.delete(id); this.release(id);
+    }
+  }
+  /** The lead reached a terminal state. Covered followers are done; the rest can be retried alone. */
+  private settleFinishedLead(id: string): void {
+    const row = this.row(id);
+    if (!row?.asset_id || this.inputOf(row).setRole !== 'lead' || pending(row.state)) return;
+    const asset = this.store.db.prepare('SELECT capture_id FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { capture_id: string } | undefined;
+    if (!asset) return;
+    const followers = this.store.db.prepare(`SELECT j.id, j.asset_id FROM material_job j
+      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
+      WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=? AND j.state IN ('queued','interrupted')`).all(this.store.studentId, asset.capture_id) as { id: string; asset_id: string }[];
+    for (const follower of followers) {
+      if (this.inputOf(this.require(follower.id)).setRole !== 'follow') continue;
+      const saved = this.store.db.prepare('SELECT extraction_json FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, follower.asset_id) as { extraction_json: string | null } | undefined;
+      if (saved?.extraction_json) this.transition(follower.id, 'succeeded', null);
+      else this.failMissing(follower.id);
+    }
   }
   private row(id: string): JobRow | undefined { return this.store.db.prepare('SELECT * FROM material_job WHERE owner_id=? AND id=?').get(this.store.studentId, id) as JobRow | undefined; }
   private require(id: string): JobRow { const row = this.row(id); if (!row) throw new MobileRequestError(404, 'not_found', '材料任务不存在。'); return row; }
