@@ -7,6 +7,7 @@ import { normalizePhoto } from '../media/images.js';
 import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, type AdmissionReserve } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
+import { holdsExtract } from './captureHints.js';
 import type { CaptureHints, JobTicket } from './contracts.js';
 import { MaterialJobs } from './jobs.js';
 import { MaterialStore } from './store.js';
@@ -99,7 +100,8 @@ export class MaterialUploads {
         await fs.rename(staging, finalDirectory); staging = undefined; committedDirectory = finalDirectory; await syncDirectory(this.directory);
       }
       const assetId = newId('mas'); const sourceId = newId('ast');
-      const job = this.jobs.enqueue('extract', assetId, input.uploadId, hash, { reservation: reserve, persist: () => {
+      const defer = holdsExtract(input.hints);
+      const job = this.jobs.enqueue('extract', assetId, input.uploadId, hash, { reservation: reserve, input: defer ? { deferred: true } : undefined, persist: () => {
         const capture = this.store.db.prepare('SELECT source_batch_id FROM material_capture WHERE owner_id=? AND id=?').get(this.store.studentId, input.captureId) as { source_batch_id: string | null };
         const batchId = capture.source_batch_id ?? newId('bat');
         if (!capture.source_batch_id) {
@@ -112,6 +114,10 @@ export class MaterialUploads {
           .run(assetId, this.store.studentId, input.captureId, sourceId, input.hints.documentId ?? null, input.uploadId, canonical(input.hints), fingerprint);
         this.store.db.prepare('UPDATE source_batch SET total_files=total_files+1 WHERE id=? AND student_id=?').run(batchId, this.store.studentId);
       } });
+      if (defer) {
+        const count = this.store.db.prepare('SELECT count(*) AS n FROM material_asset WHERE owner_id=? AND capture_id=?').get(this.store.studentId, input.captureId) as { n: number };
+        if (count.n >= (input.hints.pageCount ?? 0)) this.jobs.releaseCapture(input.captureId);
+      }
       return { assetId, job, created: true };
     } catch (error) {
       if (staging) await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined);

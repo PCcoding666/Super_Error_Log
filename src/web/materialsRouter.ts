@@ -12,6 +12,7 @@ import { newId } from '../db/connection.js';
 import type { MaterialStore } from '../materials/store.js';
 import type { MaterialUploads } from '../materials/uploads.js';
 import type { MaterialJobs } from '../materials/jobs.js';
+import { readCaptureSet } from '../materials/captureHints.js';
 import type { CaptureHints, MaterialRole } from '../materials/contracts.js';
 import { assignDocument, assetLinkRevision, linkRevision, relink, relinkNewAttempt, undoLink } from '../materials/links.js';
 import { answerHistory, latestFragments, linkedFragments } from '../materials/queries.js';
@@ -51,7 +52,7 @@ function hints(value: unknown): CaptureHints {
                 bad();
             result[k] = v[k];
         }
-    return result;
+    return { ...result, ...readCaptureSet(v) };
 }
 function pageNumber(value: unknown): number { const n = Number(value ?? 0); return Number.isSafeInteger(n) && n >= 0 ? Math.min(n, 100000) : 0; }
 function revision(value: unknown): number {
@@ -284,8 +285,13 @@ export function createMaterialsRouter(options: {
         if (ids.length > 100)
             bad();
         // Hints edit display/role suggestions only. Association has separate checked actions.
+        // Capture mode is fixed when the photo is uploaded; a later label edit must not rewrite it.
         if (selected.documentId || selected.questionId || selected.attemptId)
             bad();
+        delete selected.captureMode;
+        delete selected.pageIndex;
+        delete selected.pageCount;
+        delete selected.pageKind;
         store.transaction(() => {
             for (const id of ids) {
                 assetLinkRevision(store, id);
@@ -293,10 +299,15 @@ export function createMaterialsRouter(options: {
                     hints_json: string;
                 };
                 const old = JSON.parse(row.hints_json) as CaptureHints;
+                const set: CaptureHints = {};
+                if (old.captureMode) set.captureMode = old.captureMode;
+                if (old.pageIndex) set.pageIndex = old.pageIndex;
+                if (old.pageCount) set.pageCount = old.pageCount;
+                if (old.pageKind) set.pageKind = old.pageKind;
                 delete old.roles;
                 delete old.marking;
                 delete old.label;
-                store.db.prepare('UPDATE material_asset SET hints_json=? WHERE owner_id=? AND id=?').run(JSON.stringify({ ...old, ...selected }), store.studentId, id);
+                store.db.prepare('UPDATE material_asset SET hints_json=? WHERE owner_id=? AND id=?').run(JSON.stringify({ ...old, ...selected, ...set }), store.studentId, id);
             }
         });
         result(req, res, { ok: true });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import sharp from 'sharp';
-import { createMaterialProvider, type MaterialRequestExecutor, type MaterialSource } from '../../src/materials/provider.js';
+import { MULTI_PAGE_LOCATE_NOTE, MULTI_PAGE_READ_NOTE, createMaterialProvider, type MaterialRequestExecutor, type MaterialSource } from '../../src/materials/provider.js';
 import { assertV2AiConfigured } from '../../src/v2/aiConfigGuard.js';
 
 const cleanup: (() => Promise<void>)[] = [];
@@ -156,6 +156,37 @@ describe('grounded material provider protocol', () => {
     const assertion = expect(running).rejects.toThrow('synthetic cancel');
     await expect.poll(() => f.requests.length).toBe(1); controller.abort(new Error('synthetic cancel')); await assertion;
     expect(f.requests).toHaveLength(1);
+  });
+
+  it('sends every page of one multi-page submission to locate and keeps each crop on its own page', async () => {
+    const f = await local((body, res) => send(res, response(body)));
+    const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct });
+    const paper = await image();
+    const sheet = await sharp({ create: { width: 80, height: 60, channels: 3, background: '#abc' } }).jpeg().toBuffer();
+    const result = await provider.extract({
+      assetId: source.assetId, revision: 1, bytes: sheet,
+      hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' },
+      pages: [
+        { assetId: 'paper', pageIndex: 1, pageKind: 'paper', bytes: paper },
+        { assetId: source.assetId, pageIndex: 2, pageKind: 'answer_sheet', bytes: sheet },
+      ],
+    }, new AbortController().signal);
+    const parts = f.requests[0]!.messages[1]!.content as { type: string; text?: string }[];
+    const text = parts.filter(part => part.type === 'text').map(part => part.text ?? '').join('\n');
+    expect(parts.filter(part => part.type === 'image_url')).toHaveLength(2);
+    expect(text).toContain(MULTI_PAGE_LOCATE_NOTE);
+    expect(text).toContain('中学');
+    expect(text).toContain('当前页');
+    expect(text).toContain('答题卡');
+    expect(text).not.toMatch(/初中|高中|小学/);
+    expect(MULTI_PAGE_LOCATE_NOTE).not.toMatch(/初中|高中|小学/);
+    expect(MULTI_PAGE_READ_NOTE).toContain('中学');
+    const later = f.requests.slice(1);
+    expect(later.length).toBeGreaterThan(0);
+    expect(later.every(request => (request.messages[1]!.content as { type: string }[]).filter(part => part.type === 'image_url').length === 1)).toBe(true);
+    expect(later.every(request => JSON.stringify(request.messages).includes(MULTI_PAGE_READ_NOTE))).toBe(true);
+    expect(result.runs[0]?.promptVersion).toBe('material-v1.2');
+    expect(result.runs.slice(1).every(run => run.promptVersion === 'material-v1.2')).toBe(true);
   });
 
   it('keeps mock deterministic and offline, and real configuration fail-hard', async () => {

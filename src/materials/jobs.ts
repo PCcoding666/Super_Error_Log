@@ -73,8 +73,23 @@ export class MaterialJobs {
     }
     this.occupancy.add(id);
     if (supplied) options.reservation!.handoff = true;
-    this.schedule(id);
+    // A multi-page set stays queued until every page of that capture is stored.
+    const held = !!options.input && typeof options.input === 'object' && !Array.isArray(options.input) && (options.input as { deferred?: boolean }).deferred === true;
+    if (!held) this.schedule(id);
     return ticket(this.require(id));
+  }
+
+  /** Start extract jobs for a multi-page set once every page has been saved. */
+  releaseCapture(captureId: string): void {
+    const rows = this.store.db.prepare(`SELECT j.* FROM material_job j
+      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
+      WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=? AND j.state IN ('queued','interrupted')`).all(this.store.studentId, captureId) as JobRow[];
+    for (const row of rows) {
+      if (this.deferred(row)) this.clearDeferred(row.id);
+      if (!this.occupancy.has(row.id)) { this.admission?.noteExistingOccupancy(); this.occupancy.add(row.id); }
+      if (this.active.has(row.id)) continue;
+      this.schedule(row.id);
+    }
   }
 
   retry(jobId: string, requestId: string): JobTicket {
@@ -103,6 +118,8 @@ export class MaterialJobs {
     const rows = this.store.db.prepare("SELECT * FROM material_job WHERE owner_id=? AND state IN ('queued','running','interrupted')").all(this.store.studentId) as JobRow[];
     for (const row of rows) {
       if (!this.occupancy.has(row.id)) { this.admission?.noteExistingOccupancy(); this.occupancy.add(row.id); }
+      if (this.held(row)) continue;
+      if (this.deferred(row)) this.clearDeferred(row.id);
       this.schedule(row.id);
     }
   }
@@ -113,7 +130,11 @@ export class MaterialJobs {
     const settled = await Promise.allSettled([...this.active.values()]);
     const errors: unknown[] = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     for (const id of [...this.occupancy]) {
-      try { if (pending(this.require(id).state)) this.transition(id, 'interrupted', { code: 'interrupted', message: '处理已中断，保存的材料仍然保留。', retryable: true }); }
+      try {
+        const row = this.require(id);
+        // An incomplete multi-page set is still waiting for the rest of its pages, not a failed extract.
+        if (pending(row.state) && !this.held(row)) this.transition(id, 'interrupted', { code: 'interrupted', message: '处理已中断，保存的材料仍然保留。', retryable: true });
+      }
       catch (error) { errors.push(error); }
       finally { this.release(id); }
     }
@@ -181,6 +202,31 @@ export class MaterialJobs {
     }
   }
 
+  private inputOf(row: { input_json: string }): Record<string, unknown> {
+    try {
+      const value = JSON.parse(row.input_json) as unknown;
+      return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    } catch { return {}; }
+  }
+  private deferred(row: { input_json: string }): boolean { return this.inputOf(row).deferred === true; }
+  /** True while a multi-page extract is waiting for the rest of its capture. */
+  private held(row: JobRow): boolean {
+    if (!this.deferred(row) || !row.asset_id) return false;
+    const asset = this.store.db.prepare('SELECT capture_id, hints_json FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { capture_id: string; hints_json: string } | undefined;
+    if (!asset) return false;
+    const hints = this.inputOf({ input_json: asset.hints_json });
+    const pageCount = hints.pageCount;
+    if (hints.captureMode !== 'multi' || typeof pageCount !== 'number' || pageCount <= 1) return false;
+    const count = this.store.db.prepare('SELECT count(*) AS n FROM material_asset WHERE owner_id=? AND capture_id=?').get(this.store.studentId, asset.capture_id) as { n: number };
+    return count.n < pageCount;
+  }
+  private clearDeferred(id: string): void {
+    const row = this.require(id);
+    const input = this.inputOf(row);
+    if (input.deferred !== true) return;
+    delete input.deferred;
+    this.store.db.prepare('UPDATE material_job SET input_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=?').run(JSON.stringify(input), this.store.studentId, id);
+  }
   private schedule(id: string): void {
     const row = this.require(id);
     if (this.stopped || !pending(row.state) || !this.handlers.has(row.kind)) return;

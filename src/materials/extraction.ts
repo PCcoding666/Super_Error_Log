@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import type { Extraction } from './contracts.js';
+import type { CaptureHints, Extraction } from './contracts.js';
+import type { MaterialPageImage } from './provider.js';
 import { MaterialStore } from './store.js';
 import { reconcileAsset } from './matching.js';
 import type { MaterialJobs } from './jobs.js';
@@ -15,13 +16,30 @@ function input(store: MaterialStore, jobId: string): Input {
     .get(store.studentId, jobId) as Input | undefined;
   if (!row) throw new Error('material extraction job not found'); return row;
 }
+/** Every page of a multi-page submission, in the student's order, so locate can see them together. */
+async function setPages(store: MaterialStore, assetId: string): Promise<MaterialPageImage[]> {
+  const owner = store.db.prepare('SELECT capture_id FROM material_asset WHERE owner_id=? AND id=?').get(store.studentId, assetId) as { capture_id: string } | undefined;
+  if (!owner) return [];
+  const rows = store.db.prepare(`SELECT a.id, a.hints_json, s.storage_path FROM material_asset a
+    JOIN source_asset s ON s.id=a.source_asset_id
+    WHERE a.owner_id=? AND a.capture_id=? ORDER BY a.rowid`).all(store.studentId, owner.capture_id) as { id: string; hints_json: string; storage_path: string }[];
+  const pages: MaterialPageImage[] = [];
+  for (const row of rows) {
+    let hints: CaptureHints = {};
+    try { hints = JSON.parse(row.hints_json) as CaptureHints; } catch { hints = {}; }
+    pages.push({ assetId: row.id, pageIndex: hints.pageIndex ?? 0, pageKind: hints.pageKind ?? null, bytes: await fs.readFile(row.storage_path) });
+  }
+  return pages.sort((a, b) => a.pageIndex - b.pageIndex || a.assetId.localeCompare(b.assetId));
+}
 export type MaterialReconciler = (assetId: string, extraction: Extraction) => void | Promise<void>;
 
 /** Persists source evidence only. Question/document association belongs to the reconciler. */
 export async function extractMaterial(store: MaterialStore, provider: MaterialProvider, jobId: string, signal: AbortSignal, reconcile?: MaterialReconciler): Promise<void> {
   const row = input(store, jobId); const source = { assetId: row.asset_id, revision: row.revision, sourceHash: row.sourceHash };
   let result: Extraction; let partial: PartialMaterialExtractionError | undefined;
-  try { result = await provider.extract({ assetId: row.asset_id, revision: row.revision, bytes: await fs.readFile(row.storage_path), hints: JSON.parse(row.hints_json) }, signal); }
+  const hints = JSON.parse(row.hints_json) as CaptureHints;
+  const pages = hints.captureMode === 'multi' ? await setPages(store, row.asset_id) : undefined;
+  try { result = await provider.extract({ assetId: row.asset_id, revision: row.revision, bytes: await fs.readFile(row.storage_path), hints, pages }, signal); }
   catch (error) { if (!(error instanceof PartialMaterialExtractionError)) throw error; partial = error; result = error.extraction; }
   signal.throwIfAborted(); validateMaterialExtraction(result, source);
   const persisted = store.transaction(() => {
