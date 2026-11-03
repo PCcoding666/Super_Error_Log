@@ -8,9 +8,10 @@ import { unsupportedSubject } from './subjects.js';
 import type { CaptureHints, CapturePageKind, DocumentClues, Extraction, Fragment, MaterialRole, Grade, ReferenceAnswer } from './contracts.js';
 
 /** One saved page of a multi-page submission. Coordinates in the model output stay on the current page. */
-export type MaterialPageImage = { assetId: string; pageIndex: number; pageKind: CapturePageKind | null; bytes: Buffer };
+export type MaterialPageImage = { assetId: string; pageIndex: number; pageKind: CapturePageKind | null; bytes: Buffer; revision?: number; sourceHash?: string };
+export type ExtractedMaterial = Extraction & { set?: Extraction[] };
 export interface MaterialProvider {
-  extract(input: { assetId: string; revision: number; bytes: Buffer; hints: CaptureHints; pages?: MaterialPageImage[] }, signal: AbortSignal): Promise<Extraction>;
+  extract(input: { assetId: string; revision: number; bytes: Buffer; hints: CaptureHints; pages?: MaterialPageImage[] }, signal: AbortSignal): Promise<ExtractedMaterial>;
 }
 /** Identity of the preserved original, assigned by the server, never derived from the model JPEG. */
 export type MaterialSource = { assetId: string; revision: number; sourceHash: string };
@@ -95,6 +96,19 @@ function inventory(value: unknown, source: MaterialSource): { document: Document
   }
   return { document, candidates, warnings: list(v.warnings) };
 }
+function inventorySet(value: unknown, pages: MaterialSource[]): Map<string, ReturnType<typeof inventory>> {
+  const v = record(unwrap(value, 'pages'));
+  if (!Array.isArray(v.pages) || v.pages.length > 8) return invalid();
+  const found = new Map<string, ReturnType<typeof inventory>>();
+  for (const raw of v.pages) {
+    const page = record(raw);
+    const assetId = str(page.assetId, 128);
+    const pageSource = pages.find(item => item.assetId === assetId);
+    if (!pageSource || found.has(assetId)) return invalid();
+    found.set(assetId, inventory(page, pageSource));
+  }
+  return found;
+}
 function reference(value: unknown, source: MaterialSource, candidate: Candidate): Record<string, unknown> {
   // A mirrored request item carries the candidate as `key`; either name must match when present.
   const v = record(value); identity(v.source, source); echoed(v.candidateKey, candidate.key); echoed(v.key, candidate.key); return v;
@@ -157,11 +171,11 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
       const multi = input.hints.captureMode === 'multi';
       const promptVersion = multi ? MULTI_PAGE_REVISION : PROMPT_REVISION;
       const submission = multi ? { captureMode: 'multi' as const, pageIndex: input.hints.pageIndex ?? null, pageCount: input.hints.pageCount ?? null, pageKind: input.hints.pageKind ?? null, instruction: MULTI_PAGE_READ_NOTE } : undefined;
-      const invoke = async <T>(stage: ModelStage, key: string, operation: string, payload: Record<string, unknown>, images: Buffer[], validate: (value: unknown) => T, labels?: string[]): Promise<T> => {
+      const invoke = async <T>(stage: ModelStage, key: string, operation: string, payload: Record<string, unknown>, images: Buffer[], validate: (value: unknown) => T, labels?: string[], echo: MaterialSource = source): Promise<T> => {
         const result = await binding.request<StageResult<T>>(`${VERSION}:${source.revision}:${key}`, async (requestSignal, beforeRequest) => {
           const combined = AbortSignal.any([signal, requestSignal]); combined.throwIfAborted();
           const client = new ChatClient({ ...options.chat!, bailianOnly: options.mode === 'bailian' || options.chat!.bailianOnly, signal: combined, beforeRequest: requestHook(options, beforeRequest) });
-          const content: { type: string; text?: string; image_url?: { url: string } }[] = [{ type: 'text', text: JSON.stringify({ operation, source, ...payload }) }];
+          const content: { type: string; text?: string; image_url?: { url: string } }[] = [{ type: 'text', text: JSON.stringify({ operation, source: echo, ...payload }) }];
           images.forEach((item, index) => {
             const label = labels?.[index];
             if (label) content.push({ type: 'text', text: label });
@@ -173,72 +187,107 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
         });
         signal.throwIfAborted(); runs.push(result.run); return result.value;
       };
+      const candidateSchema = { key: 'unique string', role: ROLES, box: { x: '0..1', y: '0..1', width: '>0', height: '>0' }, number: 'printed question number|null', subpart: 'printed subpart|null', page: 'positive integer|null', order: 'unique increasing nonnegative integer', requiresDiagram: 'boolean' };
+      const documentSchema = { title: 'string|null', subject: 'string|null', date: 'string|null', printedCode: 'string|null', page: 'positive integer|null' };
+      const finishPage = async (pageSource: MaterialSource, pageBytes: Buffer, located: ReturnType<typeof inventory>, pageHints: CaptureHints, scopedKeys: boolean): Promise<Extraction> => {
+        if (unsupportedSubject(located.document.subject)) {
+          return validateMaterialExtraction({ assetId: pageSource.assetId, revision: pageSource.revision, document: located.document, fragments: [], warnings: [...located.warnings, 'unsupported_subject'], runs: [] }, pageSource);
+        }
+        const fragments: Fragment[] = []; const warnings = [...located.warnings]; let failure: MaterialProviderError | undefined;
+        const pageSubmission = pageHints.captureMode === 'multi' ? { captureMode: 'multi' as const, pageIndex: pageHints.pageIndex ?? null, pageCount: pageHints.pageCount ?? null, pageKind: pageHints.pageKind ?? null, instruction: MULTI_PAGE_READ_NOTE } : submission;
+        for (const candidate of located.candidates) {
+          signal.throwIfAborted();
+          try {
+            const cropped = await cropPhoto(pageBytes, candidate.box);
+            const readKey = scopedKeys ? `read:${pageSource.assetId}:${candidate.key}` : `read:${candidate.key}`;
+            const read = await invoke('material_extract', readKey, 'read', { candidate, ...(pageSubmission ? { submission: pageSubmission } : {}), schema: { candidateKey: candidate.key, text: 'verbatim visible content only', uncertainties: ['string'] } }, [cropped], value => {
+              const v = reference(unwrap(value, 'text'), pageSource, candidate); return { text: str(v.text), uncertainties: list(v.uncertainties) };
+            }, undefined, pageSource);
+            const verifyKey = scopedKeys ? `verify:${pageSource.assetId}:${candidate.key}` : `verify:${candidate.key}`;
+            const checked = await invoke('material_verify', verifyKey, 'verify', { candidate, fragment: read, ...(pageSubmission ? { submission: pageSubmission } : {}),
+              schema: { candidateKey: candidate.key, check: 'passed|low|failed', coverage: 'complete|incomplete|uncertain', textMatches: 'boolean', roleMatches: 'boolean', uncertainties: ['string'] },
+            }, [pageBytes], value => {
+              const v = reference(unwrap(value, 'check'), pageSource, candidate);
+              if (!['passed', 'low', 'failed'].includes(v.check as string) || !['complete', 'incomplete', 'uncertain'].includes(v.coverage as string)) return invalid();
+              const textMatches = bool(v.textMatches); const roleMatches = bool(v.roleMatches);
+              const uncertainties = list(v.uncertainties);
+              if (v.coverage !== 'complete') uncertainties.push('incomplete_coverage');
+              if (!textMatches) uncertainties.push('text_mismatch');
+              if (!roleMatches) uncertainties.push('role_mismatch');
+              const passed = v.check === 'passed' && v.coverage === 'complete' && textMatches && roleMatches && !uncertainties.length && !read.uncertainties.length;
+              return { check: (v.check === 'failed' ? 'failed' : passed ? 'passed' : 'low') as Fragment['check'], uncertainties };
+            }, undefined, pageSource);
+            const { key: _key, ...region } = candidate;
+            fragments.push({ ...pageSource, ...region, text: read.text, check: checked.check, uncertainties: [...read.uncertainties, ...checked.uncertainties] });
+          } catch (error) {
+            signal.throwIfAborted();
+            const classified = classify(error);
+            failure ??= classified;
+            warnings.push(`fragment_unavailable:${candidate.key}:${classified.code}`);
+          }
+        }
+        for (const fragment of fragments) if (fragment.role === 'question' && fragment.requiresDiagram) {
+          const supported = fragment.number !== null && fragment.page !== null && fragments.some(f =>
+            f.role === 'diagram' && f.check === 'passed' && f.number === fragment.number &&
+            f.page === fragment.page && f.subpart === fragment.subpart);
+          if (!supported) {
+            if (fragment.check === 'passed') fragment.check = 'low'; fragment.uncertainties.push('missing_diagram');
+          }
+        }
+        const extraction = validateMaterialExtraction({ assetId: pageSource.assetId, revision: pageSource.revision, document: located.document, fragments, warnings, runs: [] }, pageSource);
+        if (failure) throw new PartialMaterialExtractionError(extraction, failure);
+        return extraction;
+      };
       const ordered = (input.pages ?? []).slice().sort((a, b) => a.pageIndex - b.pageIndex || a.assetId.localeCompare(b.assetId)).slice(0, 8);
       const together = multi && ordered.length > 1;
-      const locateImages: Buffer[] = [];
-      const locateLabels: string[] = [];
-      if (together) {
-        for (const page of ordered) {
-          locateImages.push(page.assetId === input.assetId ? bytes : await resize(page.bytes));
-          const kind = page.pageKind === 'paper' ? '试卷' : page.pageKind === 'answer_sheet' ? '答题卡' : '未标注';
-          locateLabels.push(`第 ${page.pageIndex} 页，${kind}，${page.assetId === input.assetId ? '当前页' : '同一提交的其他页'}`);
-        }
-      } else locateImages.push(bytes);
-      const located = await invoke('material_extract', 'locate', 'locate', {
-        hints: input.hints,
-        ...(together ? { submission: { ...submission, instruction: MULTI_PAGE_LOCATE_NOTE } } : {}),
-        schema: { document: { title: 'string|null', subject: 'string|null', date: 'string|null', printedCode: 'string|null', page: 'positive integer|null' }, candidates: [{ key: 'unique string', role: ROLES, box: { x: '0..1', y: '0..1', width: '>0', height: '>0' }, number: 'printed question number|null', subpart: 'printed subpart|null', page: 'positive integer|null', order: 'unique increasing nonnegative integer', requiresDiagram: 'boolean' }], warnings: ['string'] },
-      }, locateImages, v => inventory(v, source), together ? locateLabels : undefined);
-      // Trial scope is 数学/物理/化学. A clearly named other subject stops after this one locate call:
-      // no per-region reads or verifications, and the original photo stays saved.
-      if (unsupportedSubject(located.document.subject)) {
-        return validateMaterialExtraction({ assetId: source.assetId, revision: source.revision, document: located.document, fragments: [], warnings: [...located.warnings, 'unsupported_subject'], runs }, source);
-      }
-      const fragments: Fragment[] = []; const warnings = [...located.warnings]; let failure: MaterialProviderError | undefined;
-      for (const candidate of located.candidates) {
-        signal.throwIfAborted();
+      if (!together) {
+        const located = await invoke('material_extract', 'locate', 'locate', {
+          hints: input.hints,
+          schema: { document: documentSchema, candidates: [candidateSchema], warnings: ['string'] },
+        }, [bytes], v => inventory(v, source));
         try {
-          const cropped = await cropPhoto(bytes, candidate.box);
-          const read = await invoke('material_extract', `read:${candidate.key}`, 'read', { candidate, ...(submission ? { submission } : {}), schema: { candidateKey: candidate.key, text: 'verbatim visible content only', uncertainties: ['string'] } }, [cropped], value => {
-            const v = reference(unwrap(value, 'text'), source, candidate); return { text: str(v.text), uncertainties: list(v.uncertainties) };
-          });
-          const checked = await invoke('material_verify', `verify:${candidate.key}`, 'verify', { candidate, fragment: read, ...(submission ? { submission } : {}),
-            schema: { candidateKey: candidate.key, check: 'passed|low|failed', coverage: 'complete|incomplete|uncertain', textMatches: 'boolean', roleMatches: 'boolean', uncertainties: ['string'] },
-          }, [bytes], value => {
-            const v = reference(unwrap(value, 'check'), source, candidate);
-            if (!['passed', 'low', 'failed'].includes(v.check as string) || !['complete', 'incomplete', 'uncertain'].includes(v.coverage as string)) return invalid();
-            const textMatches = bool(v.textMatches); const roleMatches = bool(v.roleMatches);
-            const uncertainties = list(v.uncertainties);
-            if (v.coverage !== 'complete') uncertainties.push('incomplete_coverage');
-            if (!textMatches) uncertainties.push('text_mismatch');
-            if (!roleMatches) uncertainties.push('role_mismatch');
-            const passed = v.check === 'passed' && v.coverage === 'complete' && textMatches && roleMatches && !uncertainties.length && !read.uncertainties.length;
-            return { check: (v.check === 'failed' ? 'failed' : passed ? 'passed' : 'low') as Fragment['check'], uncertainties };
-          });
-          const { key: _key, ...region } = candidate;
-          fragments.push({ ...source, ...region, text: read.text, check: checked.check, uncertainties: [...read.uncertainties, ...checked.uncertainties] });
+          const extraction = await finishPage(source, bytes, located, input.hints, false);
+          extraction.runs = [...runs];
+          return extraction;
         } catch (error) {
-          signal.throwIfAborted();
-          const classified = classify(error);
-          failure ??= classified;
-          warnings.push(`fragment_unavailable:${candidate.key}:${classified.code}`);
-          // Bad references never enter persistence; successful siblings remain usable.
+          if (error instanceof PartialMaterialExtractionError) error.extraction.runs = [...runs];
+          throw error;
         }
       }
-      for (const fragment of fragments) if (fragment.role === 'question' && fragment.requiresDiagram) {
-        // Missing identifiers never establish support. Equal null subparts represent
-        // whole-question scope only when the question number and page are explicit.
-        // A shared diagram's applicability to a specific subpart remains unresolved.
-        const supported = fragment.number !== null && fragment.page !== null && fragments.some(f =>
-          f.role === 'diagram' && f.check === 'passed' && f.number === fragment.number &&
-          f.page === fragment.page && f.subpart === fragment.subpart);
-        if (!supported) {
-          if (fragment.check === 'passed') fragment.check = 'low'; fragment.uncertainties.push('missing_diagram');
+      // One locate sees every page. Later pages are read from their own crop, not by sending the set again.
+      const prepared: { bytes: Buffer; pageSource: MaterialSource; page: MaterialPageImage }[] = [];
+      const labels: string[] = [];
+      for (const page of ordered) {
+        const pageSource: MaterialSource = page.assetId === input.assetId
+          ? source
+          : { assetId: page.assetId, revision: page.revision ?? source.revision, sourceHash: page.sourceHash ?? source.sourceHash };
+        prepared.push({ bytes: page.assetId === input.assetId ? bytes : await resize(page.bytes), pageSource, page });
+        const kind = page.pageKind === 'paper' ? '试卷' : page.pageKind === 'answer_sheet' ? '答题卡' : '未标注';
+        labels.push(`第 ${page.pageIndex} 页，${kind}，${page.assetId === input.assetId ? '当前页' : '同一提交的其他页'}`);
+      }
+      const locatedPages = await invoke('material_extract', 'locate-set', 'locate-set', {
+        hints: input.hints,
+        submission: { ...submission, instruction: MULTI_PAGE_LOCATE_NOTE },
+        pages: prepared.map(item => ({ assetId: item.pageSource.assetId, revision: item.pageSource.revision, sourceHash: item.pageSource.sourceHash, pageIndex: item.page.pageIndex, pageKind: item.page.pageKind })),
+        schema: { pages: [{ assetId: 'string', document: documentSchema, candidates: [candidateSchema], warnings: ['string'] }] },
+      }, prepared.map(item => item.bytes), v => inventorySet(v, prepared.map(item => item.pageSource)), labels);
+      const extractions: Extraction[] = []; let failure: MaterialProviderError | undefined;
+      for (const item of prepared) {
+        if (item.page.assetId !== input.assetId && (item.page.revision === undefined || !item.page.sourceHash)) continue;
+        const found = locatedPages.get(item.pageSource.assetId) ?? { document: { title: null, subject: null, date: null, printedCode: null, page: item.page.pageIndex || null }, candidates: [], warnings: [] };
+        const pageHints: CaptureHints = { ...input.hints, pageIndex: item.page.pageIndex, pageKind: item.page.pageKind ?? undefined };
+        try { extractions.push(await finishPage(item.pageSource, item.bytes, found, pageHints, true)); }
+        catch (error) {
+          if (!(error instanceof PartialMaterialExtractionError)) throw error;
+          extractions.push(error.extraction); failure ??= error.failure;
         }
       }
-      const extraction = validateMaterialExtraction({ assetId: source.assetId, revision: source.revision, document: located.document, fragments, warnings, runs }, source);
-      if (failure) throw new PartialMaterialExtractionError(extraction, failure);
-      return extraction;
+      const lead = extractions.find(item => item.assetId === source.assetId) ?? extractions[0];
+      if (!lead) return invalid();
+      lead.runs = [...runs];
+      const result: ExtractedMaterial = { ...lead, set: extractions };
+      if (failure) throw new PartialMaterialExtractionError(result, failure);
+      return result;
     },
   };
 }

@@ -80,6 +80,13 @@ export class CaptureSession {
     this.pages = this.pages.map(page => page.id === id ? { ...page, kind } : page);
     this.emit();
   }
+  /** Drop the tray without uploading. */
+  discard(): void {
+    for (const page of this.pages) if (page.previewUrl) URL.revokeObjectURL(page.previewUrl);
+    this.pages = [];
+    this.overflow = false;
+    this.emit();
+  }
   /** Hand the staged pages to the uploader and clear the tray. */
   take(): StagedPage[] {
     const pages = this.pages;

@@ -158,8 +158,15 @@ describe('grounded material provider protocol', () => {
     expect(f.requests).toHaveLength(1);
   });
 
-  it('sends every page of one multi-page submission to locate and keeps each crop on its own page', async () => {
-    const f = await local((body, res) => send(res, response(body)));
+  it('sends every page of one multi-page submission to one locate and keeps each crop on its own page', async () => {
+    const f = await local((body, res) => {
+      const operation = context(body).operation;
+      if (operation === 'locate-set') {
+        send(res, { pages: [{ assetId: source.assetId, source: { ...source }, document, candidates: [candidate('q', 'question')], warnings: [] }] });
+        return;
+      }
+      send(res, response(body));
+    });
     const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct });
     const paper = await image();
     const sheet = await sharp({ create: { width: 80, height: 60, channels: 3, background: '#abc' } }).jpeg().toBuffer();

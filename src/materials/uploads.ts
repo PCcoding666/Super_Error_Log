@@ -7,7 +7,7 @@ import { normalizePhoto } from '../media/images.js';
 import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, type AdmissionReserve } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
-import { holdsExtract } from './captureHints.js';
+import { assertCaptureSet, holdsExtract } from './captureHints.js';
 import type { CaptureHints, JobTicket } from './contracts.js';
 import { MaterialJobs } from './jobs.js';
 import { MaterialStore } from './store.js';
@@ -73,8 +73,10 @@ export class MaterialUploads {
     // P1-1: the same student sending byte-identical photo again (re-upload, unsure it went through)
     // reuses the saved photo and its extraction; it never stores a second copy or calls the AI again.
     // An explicit supplement (this photo is the work for question/attempt X) stays a separate material.
-    const duplicate = input.hints.questionId || input.hints.attemptId ? null : this.findDuplicate(hash, canonical(input.hints));
+    // A multi-page page can only dedupe inside its own capture. Reusing another set's page would leave this set short.
+    const duplicate = input.hints.questionId || input.hints.attemptId ? null : this.findDuplicate(hash, canonical(input.hints), input.hints.captureMode === 'multi' ? input.captureId : undefined);
     if (duplicate) return duplicate;
+    this.validateSet(input);
     const owned = !reservation; const reserve = reservation ?? { slot: false, capacity: false, handoff: false };
     let staging: string | undefined; let committedDirectory: string | undefined;
     try {
@@ -130,10 +132,11 @@ export class MaterialUploads {
     } finally { if (owned && this.admission) releaseUploadAdmission(this.admission, reserve); }
   }
   /** Only an equivalent upload is a duplicate: different role/marking/label/document hints are new information and stay a separate material. */
-  private findDuplicate(hash: string, hints: string): Saved | null {
-    const rows = this.store.db.prepare(`SELECT a.id,a.hints_json FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id
-      WHERE a.owner_id=? AND s.content_hash=? ORDER BY a.rowid`).all(this.store.studentId, hash) as { id: string; hints_json: string }[];
+  private findDuplicate(hash: string, hints: string, captureId?: string): Saved | null {
+    const rows = this.store.db.prepare(`SELECT a.id,a.hints_json,a.capture_id FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id
+      WHERE a.owner_id=? AND s.content_hash=? ORDER BY a.rowid`).all(this.store.studentId, hash) as { id: string; hints_json: string; capture_id: string }[];
     for (const row of rows) {
+      if (captureId && row.capture_id !== captureId) continue;
       let current: string; try { current = canonical(JSON.parse(row.hints_json)); } catch { continue; }
       if (current !== hints) continue;
       const job = this.store.db.prepare("SELECT id,kind,state FROM material_job WHERE owner_id=? AND asset_id=? AND kind='extract' ORDER BY rowid DESC LIMIT 1")
@@ -141,6 +144,12 @@ export class MaterialUploads {
       if (job) return { assetId: row.id, job, created: false, duplicate: true };
     }
     return null;
+  }
+  /** Reject a page that would mix modes, repeat a page number, or disagree about how many pages are in the set. */
+  private validateSet(input: Input): void {
+    const rows = this.store.db.prepare('SELECT hints_json FROM material_asset WHERE owner_id=? AND capture_id=? ORDER BY rowid').all(this.store.studentId, input.captureId) as { hints_json: string }[];
+    const existing = rows.map(row => { try { return JSON.parse(row.hints_json) as CaptureHints; } catch { return {}; } });
+    assertCaptureSet(existing, input.hints);
   }
   private validateContext(input: Input): void {
     if (!this.store.db.prepare('SELECT 1 FROM material_capture WHERE owner_id=? AND id=?').get(this.store.studentId, input.captureId)) throw new MobileRequestError(404, 'not_found', '拍摄批次不存在。');

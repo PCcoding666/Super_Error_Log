@@ -1,5 +1,6 @@
 /**
- * 学生端拍照栏：默认单页仍是拍一张就上传；多页先留下缩略图，删一张、标试卷/答题卡，点「完成」再一次提交。
+ * 旧单学生演示服务器走 /s/capture，不会把多页合成一份。多页入口只在材料流程里出现。
+ * 多页提交的端到端见 captureModeMaterials.spec.ts。
  */
 import { mkdirSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
@@ -25,7 +26,7 @@ async function pair(page: Page): Promise<void> {
 
 const dock = (page: Page) => page.locator('[data-testid="capture-dock"]:visible');
 
-test('单页马上上传，多页攒齐后一次提交，并带上拍摄模式', async ({ page }) => {
+test('旧流程只保留单页，拍一张就上传', async ({ page }) => {
   const posts: string[] = [];
   // 应答成功但不写进合成服务器：那台服务器是整份端到端共用的一个学生，写进去会让后面的错题本用例不再是空本。
   await page.route('**/s/capture', async route => {
@@ -38,7 +39,7 @@ test('单页马上上传，多页攒齐后一次提交，并带上拍摄模式',
   const bar = dock(page).getByTestId('capture-mode-bar');
   await expect(bar).toBeVisible();
   await expect(bar.getByTestId('capture-mode-single')).toHaveAttribute('aria-checked', 'true');
-  await expect(bar.getByTestId('capture-mode-multi')).toHaveAttribute('aria-checked', 'false');
+  await expect(bar.getByTestId('capture-mode-multi')).toHaveCount(0);
   await expect(page.locator('#camera-input')).toHaveAttribute('capture', 'environment');
   await expect(page.locator('#camera-input')).not.toHaveAttribute('multiple');
   await expect(page.locator('#library-input')).toHaveAttribute('multiple', '');
@@ -52,30 +53,5 @@ test('单页马上上传，多页攒齐后一次提交，并带上拍摄模式',
   await expect.poll(() => posts.length, { timeout: 20_000 }).toBe(1);
   expect(posts[0]).toContain('"captureMode":"single"');
   await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
-
-  await page.getByRole('radio', { name: '多页' }).click();
-  await expect(page.getByRole('radio', { name: '多页' })).toHaveAttribute('aria-checked', 'true');
-  expect(await page.evaluate(() => localStorage.getItem('sel-capture-mode'))).toBe('multi');
-  const before = posts.length;
-  const camera = page.getByTestId('intake-camera').locator('input');
-  await camera.setInputFiles(await synthetic('#b0d3e0'));
-  await camera.setInputFiles(await synthetic('#c8e0b0'));
-  await expect(page.getByTestId('capture-count')).toHaveText('已拍 2 张');
-  await expect(page.getByTestId('capture-page')).toHaveCount(2);
-  expect(posts).toHaveLength(before);
-  await page.getByTestId('capture-page').nth(0).getByRole('button', { name: '试卷' }).click();
-  await page.getByTestId('capture-page').nth(1).getByRole('button', { name: '答题卡' }).click();
-  await page.getByTestId('capture-page-delete').first().click();
-  await expect(page.getByTestId('capture-count')).toHaveText('已拍 1 张');
-  await camera.setInputFiles(await synthetic('#e0d0b0'));
-  await expect(page.getByTestId('capture-count')).toHaveText('已拍 2 张');
-  await page.screenshot({ path: '/opt/cursor/artifacts/capture-mode-tray.png' });
-  await page.getByTestId('capture-set-done').click();
-  await expect.poll(() => posts.length, { timeout: 20_000 }).toBe(before + 2);
-  const submitted = posts.slice(before);
-  expect(submitted.every(body => body.includes('"captureMode":"multi"'))).toBe(true);
-  expect(submitted.some(body => body.includes('"pageKind":"answer_sheet"'))).toBe(true);
-  expect(submitted.some(body => body.includes('"pageIndex":1'))).toBe(true);
-  expect(submitted.some(body => body.includes('"pageIndex":2'))).toBe(true);
-  expect(submitted.some(body => body.includes('"pageCount":2'))).toBe(true);
+  await expect(page.getByTestId('capture-mode-multi')).toHaveCount(0);
 });

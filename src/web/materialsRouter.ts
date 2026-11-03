@@ -178,6 +178,18 @@ export function createMaterialsRouter(options: {
             bad();
         res.json(store.createCapture(req.body.requestId));
     });
+    const captureOwned = (id: string): void => {
+        if (!store.db.prepare('SELECT 1 FROM material_capture WHERE owner_id=? AND id=?').get(store.studentId, id))
+            throw new MobileRequestError(404, 'not_found', '拍摄批次不存在。');
+    };
+    r.post('/materials/captures/:id/abandon', (req, res, next) => {
+        try { const id = text(req.params.id); captureOwned(id); res.json({ ok: true, abandoned: jobs.abandonCapture(id) }); }
+        catch (error) { next(error); }
+    });
+    r.post('/materials/captures/:id/complete', (req, res, next) => {
+        try { const id = text(req.params.id); captureOwned(id); jobs.releaseCapture(id); res.json({ ok: true }); }
+        catch (error) { next(error); }
+    });
     const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 2, fields: 12, parts: 16 } }).single('photo');
     r.post('/materials/uploads', async (req, res, next) => {
         const reserve = admission ? trackUploadAdmission(admission, res) : undefined;

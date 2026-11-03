@@ -3,7 +3,8 @@ import { canRecover } from '../mobile/contracts.js';
 import type { AdmissionController } from '../mobile/admission.js';
 import type { AdmissionReserve } from '../mobile/router.js';
 import { MobileRecognitionService, MobileRequestError } from '../mobile/service.js';
-import type { JobTicket, MaterialJobKind } from './contracts.js';
+import { SET_HOLD_MS } from './captureHints.js';
+import type { CaptureHints, JobTicket, MaterialJobKind } from './contracts.js';
 import { MaterialStore } from './store.js';
 
 type JobRow = JobTicket & { request_id: string; question_id: string | null; asset_id: string | null; basis_key: string; input_json: string; error: string | null };
@@ -32,10 +33,14 @@ export class MaterialJobs {
   private readonly requests = new Map<string, Promise<unknown>>();
   private readonly shutdown = new AbortController();
   private stopped = false;
+  private readonly holdTimer: ReturnType<typeof setInterval>;
 
   constructor(readonly store: MaterialStore, private readonly scheduler: MobileRecognitionService, private readonly admission: AdmissionController | null) {
     this.dataDir = scheduler.store.dataDir;
     scheduler.registerExternalLifecycle({ resume: () => this.resume(), stop: () => this.stop() });
+    // A live process must notice an abandoned set without waiting for the next restart.
+    this.holdTimer = setInterval(() => { if (!this.stopped) this.releaseExpiredHolds(); }, 60_000);
+    this.holdTimer.unref?.();
   }
 
   register(kind: MaterialJobKind, run: (jobId: string, signal: AbortSignal) => Promise<void>): void { this.handlers.set(kind, run); }
@@ -57,7 +62,9 @@ export class MaterialJobs {
     }
     if (this.stopped || !this.scheduler.acceptingJobs()) throw paused();
     const supplied = options.reservation?.capacity === true && !options.reservation.handoff;
-    if (this.admission && !supplied && !this.admission.tryAcquireJobCapacity().accepted) throw new MobileRequestError(429, 'capacity_full', '处理队列已满，请稍后重试。');
+    // Waiting pages are not work yet. They must not take a slot in the per-student queue.
+    const deferred = this.deferred({ input_json: JSON.stringify(options.input ?? {}) });
+    if (!deferred && this.admission && !supplied && !this.admission.tryAcquireJobCapacity().accepted) throw new MobileRequestError(429, 'capacity_full', '处理队列已满，请稍后重试。');
     const id = newId('mjob');
     try {
       this.store.transaction(() => {
@@ -68,28 +75,57 @@ export class MaterialJobs {
         options.persistJob?.({id,kind,state:'queued'});
       });
     } catch (error) {
-      if (this.admission && !supplied) this.admission.releaseJobCapacity();
+      if (!deferred && this.admission && !supplied) this.admission.releaseJobCapacity();
       throw error;
     }
+    if (deferred) return ticket(this.require(id));
     this.occupancy.add(id);
     if (supplied) options.reservation!.handoff = true;
-    // A multi-page set stays queued until every page of that capture is stored.
-    const held = !!options.input && typeof options.input === 'object' && !Array.isArray(options.input) && (options.input as { deferred?: boolean }).deferred === true;
-    if (!held) this.schedule(id);
+    this.schedule(id);
     return ticket(this.require(id));
   }
 
-  /** Start extract jobs for a multi-page set once every page has been saved. */
+  /** Start one extract for a multi-page set from the pages already stored. Followers do not take a slot. */
   releaseCapture(captureId: string): void {
-    const rows = this.store.db.prepare(`SELECT j.* FROM material_job j
-      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
-      WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=? AND j.state IN ('queued','interrupted')`).all(this.store.studentId, captureId) as JobRow[];
+    const rows = this.captureJobs(captureId);
+    if (!rows.length) return;
+    const lead = this.leadOf(rows);
+    if (this.admission && !this.occupancy.has(lead.id) && !this.admission.tryAcquireJobCapacity().accepted) return;
     for (const row of rows) {
-      if (this.deferred(row)) this.clearDeferred(row.id);
-      if (!this.occupancy.has(row.id)) { this.admission?.noteExistingOccupancy(); this.occupancy.add(row.id); }
-      if (this.active.has(row.id)) continue;
-      this.schedule(row.id);
+      const input = this.inputOf(row);
+      delete input.deferred;
+      input.setRole = row.id === lead.id ? 'lead' : 'follow';
+      this.writeInput(row.id, input);
     }
+    if (!this.occupancy.has(lead.id)) this.occupancy.add(lead.id);
+    if (!this.active.has(lead.id)) this.schedule(lead.id);
+  }
+
+  /** Process whatever pages have arrived once a set has been waiting too long. Survives restart via resume(). */
+  releaseExpiredHolds(maxAgeMs = SET_HOLD_MS): void {
+    const seconds = Math.max(1, Math.floor(maxAgeMs / 1000));
+    const rows = this.store.db.prepare(`SELECT DISTINCT a.capture_id AS captureId FROM material_job j
+      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
+      WHERE j.owner_id=? AND j.kind='extract' AND j.state IN ('queued','interrupted')
+        AND json_extract(j.input_json,'$.deferred') = 1
+        AND datetime(a.created_at) <= datetime('now', ?)`).all(this.store.studentId, `-${seconds} seconds`) as { captureId: string }[];
+    for (const row of rows) this.releaseCapture(row.captureId);
+  }
+
+  /** Drop an unfinished set. The pages stay saved; their extract jobs do not keep a queue slot. */
+  abandonCapture(captureId: string): number {
+    const rows = this.captureJobs(captureId);
+    let abandoned = 0;
+    for (const row of rows) {
+      if (!pending(row.state)) continue;
+      if (this.occupancy.has(row.id)) this.release(row.id);
+      const input = this.inputOf(row);
+      delete input.deferred;
+      this.writeInput(row.id, input);
+      this.transition(row.id, 'failed', { code: 'set_abandoned', message: '这组多页没有传完，已放弃。', retryable: false });
+      abandoned += 1;
+    }
+    return abandoned;
   }
 
   retry(jobId: string, requestId: string): JobTicket {
@@ -113,19 +149,25 @@ export class MaterialJobs {
 
   async resume(): Promise<void> {
     if (this.stopped) return;
+    this.releaseExpiredHolds();
     // Link invalidation can cancel a queued job before its handler was registered.
     for (const id of this.occupancy) if (!this.active.has(id)&&!pending(this.require(id).state)) this.release(id);
     const rows = this.store.db.prepare("SELECT * FROM material_job WHERE owner_id=? AND state IN ('queued','running','interrupted')").all(this.store.studentId) as JobRow[];
     for (const row of rows) {
-      if (!this.occupancy.has(row.id)) { this.admission?.noteExistingOccupancy(); this.occupancy.add(row.id); }
       if (this.held(row)) continue;
+      if (this.follower(row)) {
+        const saved = row.asset_id ? this.store.db.prepare('SELECT extraction_json FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { extraction_json: string | null } | undefined : undefined;
+        if (saved?.extraction_json) this.transition(row.id, 'succeeded', null);
+        continue;
+      }
+      if (!this.occupancy.has(row.id)) { this.admission?.noteExistingOccupancy(); this.occupancy.add(row.id); }
       if (this.deferred(row)) this.clearDeferred(row.id);
       this.schedule(row.id);
     }
   }
 
   async stop(): Promise<void> {
-    this.stopped = true; this.shutdown.abort(paused());
+    this.stopped = true; clearInterval(this.holdTimer); this.shutdown.abort(paused());
     // Join started callbacks, including durable checkpoint writes, before releasing ownership.
     const settled = await Promise.allSettled([...this.active.values()]);
     const errors: unknown[] = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
@@ -209,6 +251,21 @@ export class MaterialJobs {
     } catch { return {}; }
   }
   private deferred(row: { input_json: string }): boolean { return this.inputOf(row).deferred === true; }
+  private follower(row: { input_json: string }): boolean { return this.inputOf(row).setRole === 'follow'; }
+  private writeInput(id: string, input: Record<string, unknown>): void {
+    this.store.db.prepare('UPDATE material_job SET input_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=?').run(JSON.stringify(input), this.store.studentId, id);
+  }
+  private captureJobs(captureId: string): (JobRow & { hints_json: string })[] {
+    return this.store.db.prepare(`SELECT j.*, a.hints_json FROM material_job j
+      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
+      WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=? AND j.state IN ('queued','interrupted','running')`).all(this.store.studentId, captureId) as (JobRow & { hints_json: string })[];
+  }
+  private leadOf(rows: (JobRow & { hints_json: string })[]): JobRow & { hints_json: string } {
+    return [...rows].sort((a, b) => {
+      const page = (row: { hints_json: string }) => { try { return (JSON.parse(row.hints_json) as CaptureHints).pageIndex ?? 0; } catch { return 0; } };
+      return page(a) - page(b) || a.id.localeCompare(b.id);
+    })[0]!;
+  }
   /** True while a multi-page extract is waiting for the rest of its capture. */
   private held(row: JobRow): boolean {
     if (!this.deferred(row) || !row.asset_id) return false;
@@ -225,7 +282,7 @@ export class MaterialJobs {
     const input = this.inputOf(row);
     if (input.deferred !== true) return;
     delete input.deferred;
-    this.store.db.prepare('UPDATE material_job SET input_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=?').run(JSON.stringify(input), this.store.studentId, id);
+    this.writeInput(id, input);
   }
   private schedule(id: string): void {
     const row = this.require(id);

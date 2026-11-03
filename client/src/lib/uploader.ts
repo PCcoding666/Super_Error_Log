@@ -148,6 +148,8 @@ class Uploader {
     if (same) return;
     this.mode = mode; this.materialsCaptureRequestId = uuid(); this.captureSlots.delete('ambient');
   }
+  /** 拍摄条据此决定要不要显示「多页」。生产邀请码空间是 materials；旧单学生演示才是 legacy。 */
+  route(): Promise<UploadMode> { return this.resolveMode(); }
   /** 首次上传前向服务器确认该走哪套端点；网络失败按可重试处理，照片留在队列里。 */
   private resolveMode(): Promise<UploadMode> {
     if (this.mode) return Promise.resolve(this.mode);
@@ -210,6 +212,21 @@ class Uploader {
       if (!failure.retryable) { entry.file = null; entry.blob = null; }
     }
     this.emit();
+    if (entry.setId) void this.settleSet(entry.setId);
+  }
+  /** A page that can never be uploaded must not leave the saved pages waiting. Retryable failures stay open. */
+  private async settleSet(setId: string): Promise<void> {
+    const mates = this.entries.filter(item => item.setId === setId);
+    if (mates.some(item => item.state === 'queued' || item.state === 'preparing' || item.state === 'uploading')) return;
+    if (mates.some(item => item.state === 'failed' && item.retryable)) return;
+    if (mates.every(item => item.state === 'succeeded')) return;
+    const slot = this.captureSlots.get(setId);
+    const mode = this.mode;
+    if (!slot?.id || mode?.kind !== 'materials') return;
+    const action = mates.some(item => item.state === 'succeeded') ? 'complete' : 'abandon';
+    try {
+      await fetch(`/s/materials/captures/${slot.id}/${action}`, { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json', 'x-draft-namespace': mode.namespace } });
+    } catch { /* 服务器会在等待结束后用已经收到的页继续。 */ }
   }
   /** Same request id retries the same capture. A multi-page set does not share the single-page capture. */
   private async ensureCapture(namespace: string, key: string, requestId: string): Promise<string> {
