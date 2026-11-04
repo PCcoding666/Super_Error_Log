@@ -2,7 +2,7 @@ import { IonButton, IonCheckbox, IonContent, IonIcon, IonItem, IonItemOption, Io
 import { checkmark } from 'ionicons/icons';
 import { useEffect, useMemo, useReducer, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { initialUploadDayFilter, intakeListParams, reduceUploadDayFilter } from '../../../src/materials/dayFilter';
+import { initialUploadDayFilter, intakeListParams, intakeResponseMatches, intakeWaitsForUpload, reduceUploadDayFilter } from '../../../src/materials/dayFilter';
 import type { IntakePhoto } from '../../../src/web/apiTypes';
 import { CaptureDock } from '../components/CaptureDock';
 import { useCaptureSession } from '../lib/captureSession';
@@ -34,12 +34,14 @@ export function IntakePage(): ReactNode {
 
   useEffect(() => { if (data) uploader.setMode(data.mode === 'materials' && data.draftNamespace ? { kind: 'materials', namespace: data.draftNamespace } : { kind: 'legacy' }); }, [data]);
   // 还在找题、还在上传、或刚传完还没登记：每 3 秒取一次，只换数据不整页刷新。
-  const busy = !!data?.busy || uploading || uploads.some(entry => entry.state === 'succeeded' && !data?.photos.some(photo => photo.id === entry.photoId));
+  // 传完的照片会留在队列里直到点「完成」。只有全部列表或今天的第一页一定会收录它。
+  const awaitingUpload = intakeWaitsForUpload(filter) && uploads.some(entry => entry.state === 'succeeded' && !!entry.photoId && !data?.photos.some(photo => photo.id === entry.photoId));
+  const busy = !!data?.busy || uploading || awaitingUpload;
   useEffect(() => { if (!busy) return; const timer = setInterval(() => { void reload(); }, 3000); return () => clearInterval(timer); }, [busy, reload]);
 
   const batchSize = uploadedIds.size + uploads.filter(entry => !entry.photoId).length;
-  // 筛选刚切换时，上一份「全部」还在 data 里，先别把它当成这一天的结果。
-  const listReady = !filter.enabled || (data?.filter?.date === filter.day && data.page === filter.page);
+  // 筛选切换后，上一份结果（全部或另一天）先不要当成这一次的列表。
+  const listReady = intakeResponseMatches(filter, data);
   const photos: IntakePhoto[] = (listReady ? data?.photos : []) ?? [];
   // 本批上传的照片在前，其余（历史）折在后面。
   // 本批按拍摄先后排（和学生选照片的顺序一致）；没有本批时只展开最近一张。
@@ -101,7 +103,7 @@ export function IntakePage(): ReactNode {
     <IonContent fullscreen className="intake">
       <div className="intake-top">
         <h1>录入</h1>
-        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : filter.enabled ? (!listReady ? '正在查找…' : busy ? 'AI 正在找题' : data?.total ? `这一天上传了 ${data.total} 张` : '这一天没有上传的材料') : busy ? 'AI 正在找题' : found ? `找到 ${found} 道，已加入错题本 · 不相关的左滑删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
+        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : !listReady ? '正在查找…' : filter.enabled ? (busy ? 'AI 正在找题' : data?.total ? `这一天上传了 ${data.total} 张` : '这一天没有上传的材料') : busy ? 'AI 正在找题' : found ? `找到 ${found} 道，已加入错题本 · 不相关的左滑删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
       </div>
       <IonList inset lines="full" className="intake-filter">
         <IonItem>
@@ -124,7 +126,7 @@ export function IntakePage(): ReactNode {
         {pendingUploads.some(entry => entry.state === 'failed' && entry.retryable) ? <IonItem lines="none"><IonButton slot="end" fill="clear" onClick={() => uploader.retry()} data-testid="upload-retry">再试一次</IonButton></IonItem> : null}
       </IonList> : null}
       {error ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
-      {filter.enabled && listReady && !photos.length && !error ? <div className="intake-day-empty" data-testid="day-filter-empty">
+      {filter.enabled && listReady && !busy && !photos.length && !error ? <div className="intake-day-empty" data-testid="day-filter-empty">
         <b>这一天没有上传的材料</b>
         <p>换一天看看，或关掉筛选看全部。</p>
       </div> : null}

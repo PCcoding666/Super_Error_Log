@@ -159,3 +159,18 @@ export function intakeListParams(state: UploadDayFilter): Record<string, string>
   if (!state.enabled) return {};
   return { date: state.day, page: String(state.page) };
 }
+
+/** 服务端这份列表是不是当前筛选要的。还没返回时，关掉筛选沿用原来的空列表；打开筛选则先不要显示上一份。 */
+export function intakeResponseMatches(state: UploadDayFilter, data: { filter?: { date?: string | null } | null; page?: number } | null): boolean {
+  if (!data) return !state.enabled;
+  if (!state.enabled) return data.filter == null;
+  return data.filter?.date === state.day && data.page === state.page;
+}
+
+/**
+ * 刚传完、服务器列表里还没有的照片要继续刷新。
+ * 「全部」和「今天的第一页」一定会带上这张新照片。别的日期和后面的页不会出现它，不能因此一直刷新。
+ */
+export function intakeWaitsForUpload(state: UploadDayFilter, now: Date = new Date()): boolean {
+  return !state.enabled || (state.page === 0 && state.day === singaporeToday(now));
+}

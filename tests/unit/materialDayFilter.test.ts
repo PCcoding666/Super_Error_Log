@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import {
-  assetPageQuery, createdAtRangeSql, DayFilterError, intakeListParams, instantInRange, isCalendarDay, parseAssetDayFilter,
+  assetPageQuery, createdAtRangeSql, DayFilterError, intakeListParams, intakeResponseMatches, intakeWaitsForUpload, instantInRange, isCalendarDay, parseAssetDayFilter,
   reduceUploadDayFilter, singaporeDayBounds, singaporeToday,
 } from '../../src/materials/dayFilter.js';
 
@@ -42,6 +42,22 @@ describe('新加坡自然日', () => {
     state = reduceUploadDayFilter(state, { type: 'toggle', enabled: false });
     expect(state.page).toBe(0);
     expect(intakeListParams(state)).toEqual({});
+  });
+
+  it('关掉筛选后，还带着日期的上一份结果不算全部；只有今天第一页才等新照片出现', () => {
+    const today = { enabled: true, day: '2026-11-04', page: 0 };
+    const filtered = { filter: { date: '2026-11-04' }, page: 0 };
+    expect(intakeResponseMatches({ enabled: false, day: '2026-11-04', page: 0 }, filtered)).toBe(false);
+    expect(intakeResponseMatches({ enabled: false, day: '2026-11-04', page: 0 }, {})).toBe(true);
+    expect(intakeResponseMatches({ enabled: false, day: '2026-11-04', page: 0 }, null)).toBe(true);
+    expect(intakeResponseMatches(today, null)).toBe(false);
+    expect(intakeResponseMatches({ ...today, page: 1 }, filtered)).toBe(false);
+    expect(intakeResponseMatches(today, filtered)).toBe(true);
+    const now = new Date('2026-11-03T16:00:00.000Z');
+    expect(intakeWaitsForUpload({ enabled: false, day: '2020-01-01', page: 3 }, now)).toBe(true);
+    expect(intakeWaitsForUpload(today, now)).toBe(true);
+    expect(intakeWaitsForUpload({ ...today, page: 1 }, now)).toBe(false);
+    expect(intakeWaitsForUpload({ enabled: true, day: '2020-01-01', page: 0 }, now)).toBe(false);
   });
 
   it('SQL 按新加坡日界收照片，ISO 和空格两种时间戳都认，别的同学的不收', () => {
