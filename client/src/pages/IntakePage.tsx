@@ -1,7 +1,8 @@
-import { IonButton, IonCheckbox, IonContent, IonIcon, IonItem, IonItemOption, IonItemOptions, IonItemSliding, IonLabel, IonList, IonPage, IonSpinner, IonToast } from '@ionic/react';
+import { IonButton, IonCheckbox, IonContent, IonIcon, IonItem, IonItemOption, IonItemOptions, IonItemSliding, IonLabel, IonList, IonPage, IonSpinner, IonToast, IonToggle } from '@ionic/react';
 import { checkmark } from 'ionicons/icons';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useReducer, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { initialUploadDayFilter, intakeListParams, reduceUploadDayFilter } from '../../../src/materials/dayFilter';
 import type { IntakePhoto } from '../../../src/web/apiTypes';
 import { CaptureDock } from '../components/CaptureDock';
 import { useCaptureSession } from '../lib/captureSession';
@@ -23,7 +24,9 @@ function timeLabel(iso: string): string {
 export function IntakePage(): ReactNode {
   const navigate = useNavigate();
   const uploads = useUploads();
-  const { data, error, reload } = useLoad(() => api.intake(), []);
+  const [filter, dispatchFilter] = useReducer(reduceUploadDayFilter, undefined, () => initialUploadDayFilter());
+  const listParams = intakeListParams(filter);
+  const { data, error, reload } = useLoad(() => api.intake(listParams), [listParams.date ?? '', listParams.page ?? '']);
   const [picked, setPicked] = useState<Record<string, Set<string>>>({});
   const [toast, setToast] = useState<string | null>(null);
   const uploading = uploads.some(entry => entry.state !== 'succeeded' && entry.state !== 'failed');
@@ -35,11 +38,16 @@ export function IntakePage(): ReactNode {
   useEffect(() => { if (!busy) return; const timer = setInterval(() => { void reload(); }, 3000); return () => clearInterval(timer); }, [busy, reload]);
 
   const batchSize = uploadedIds.size + uploads.filter(entry => !entry.photoId).length;
-  const photos: IntakePhoto[] = data?.photos ?? [];
+  // 筛选刚切换时，上一份「全部」还在 data 里，先别把它当成这一天的结果。
+  const listReady = !filter.enabled || (data?.filter?.date === filter.day && data.page === filter.page);
+  const photos: IntakePhoto[] = (listReady ? data?.photos : []) ?? [];
   // 本批上传的照片在前，其余（历史）折在后面。
   // 本批按拍摄先后排（和学生选照片的顺序一致）；没有本批时只展开最近一张。
-  const current = (batchSize ? photos.filter(photo => uploadedIds.has(photo.id)) : photos.slice(0, 1)).slice().sort((a, b) => Date.parse(a.takenAt) - Date.parse(b.takenAt) || a.number - b.number);
-  const earlier = photos.filter(photo => !current.includes(photo));
+  // 按日筛选时服务器已经排好、并且只返回那一天的这一页，不再拆成「本批 / 更早」。
+  const current = filter.enabled
+    ? photos
+    : (batchSize ? photos.filter(photo => uploadedIds.has(photo.id)) : photos.slice(0, 1)).slice().sort((a, b) => Date.parse(a.takenAt) - Date.parse(b.takenAt) || a.number - b.number);
+  const earlier = filter.enabled ? [] : photos.filter(photo => !current.includes(photo));
   const found = current.reduce((n, photo) => n + photo.questions.length, 0);
   const pendingUploads = uploads.filter(entry => !entry.photoId);
   const capture = useCaptureSession();
@@ -62,7 +70,7 @@ export function IntakePage(): ReactNode {
     <IonList inset lines="full">
       <IonItem lines="full" className="intake-head" detail={false}>
         <a slot="start" className="intake-thumb" href={photo.full} target="_blank" rel="noreferrer" aria-label="查看原图"><img src={photo.thumb} alt="" loading="lazy" /></a>
-        <IonLabel><h2>第 {current.length > 1 ? index + 1 : photo.number} 张{photo.questions.length ? ` · ${photo.questions.length} 道` : ''}</h2><p>{timeLabel(photo.takenAt)} · {photo.statusText}</p></IonLabel>
+        <IonLabel><h2>第 {filter.enabled || current.length <= 1 ? photo.number : index + 1} 张{photo.questions.length ? ` · ${photo.questions.length} 道` : ''}</h2><p>{timeLabel(photo.takenAt)} · {photo.statusText}</p></IonLabel>
         {photo.state === 'finding' ? <IonSpinner slot="end" name="lines-small" /> : null}
       </IonItem>
       {photo.questions.map(question => <IonItemSliding key={question.id}>
@@ -93,8 +101,20 @@ export function IntakePage(): ReactNode {
     <IonContent fullscreen className="intake">
       <div className="intake-top">
         <h1>录入</h1>
-        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : busy ? 'AI 正在找题' : found ? `找到 ${found} 道，已加入错题本 · 不相关的左滑删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
+        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : filter.enabled ? (!listReady ? '正在查找…' : busy ? 'AI 正在找题' : data?.total ? `这一天上传了 ${data.total} 张` : '这一天没有上传的材料') : busy ? 'AI 正在找题' : found ? `找到 ${found} 道，已加入错题本 · 不相关的左滑删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
       </div>
+      <IonList inset lines="full" className="intake-filter">
+        <IonItem>
+          <IonLabel>按日期筛选</IonLabel>
+          <IonToggle slot="end" checked={filter.enabled} aria-label="按日期筛选" data-testid="day-filter-toggle"
+            onIonChange={event => { if (event.detail.checked !== filter.enabled) dispatchFilter({ type: 'toggle', enabled: event.detail.checked }); }} />
+        </IonItem>
+        {filter.enabled ? <IonItem lines="none">
+          <IonLabel>上传日</IonLabel>
+          <input slot="end" type="date" value={filter.day} aria-label="上传日期" data-testid="day-filter-date"
+            onChange={event => dispatchFilter({ type: 'day', day: event.target.value })} />
+        </IonItem> : null}
+      </IonList>
       {pendingUploads.length ? <IonList inset lines="full" className="upload-list">
         {pendingUploads.map(entry => <IonItem key={entry.key} className="intake-head" detail={false} data-upload-state={entry.state}>
           {entry.previewUrl ? <img slot="start" className="intake-thumb" src={entry.previewUrl} alt="" /> : null}
@@ -104,7 +124,15 @@ export function IntakePage(): ReactNode {
         {pendingUploads.some(entry => entry.state === 'failed' && entry.retryable) ? <IonItem lines="none"><IonButton slot="end" fill="clear" onClick={() => uploader.retry()} data-testid="upload-retry">再试一次</IonButton></IonItem> : null}
       </IonList> : null}
       {error ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
+      {filter.enabled && listReady && !photos.length && !error ? <div className="intake-day-empty" data-testid="day-filter-empty">
+        <b>这一天没有上传的材料</b>
+        <p>换一天看看，或关掉筛选看全部。</p>
+      </div> : null}
       {current.map(renderPhoto)}
+      {filter.enabled && listReady && ((data?.page ?? 0) > 0 || data?.hasMore) ? <div className="intake-pager">
+        <IonButton fill="clear" disabled={!filter.page} data-testid="day-filter-prev" onClick={() => dispatchFilter({ type: 'page', page: filter.page - 1 })}>上一页</IonButton>
+        <IonButton fill="clear" disabled={!data?.hasMore} data-testid="day-filter-next" onClick={() => dispatchFilter({ type: 'page', page: filter.page + 1 })}>下一页</IonButton>
+      </div> : null}
       {earlier.length ? <details className="intake-earlier"><summary>更早的 {earlier.length} 张</summary>{earlier.map(renderPhoto)}</details> : null}
       <div className={capture.pages.length ? 'bottom-space intake-space tall' : 'bottom-space intake-space'} />
       <div className="intake-bottom">
