@@ -28,6 +28,7 @@ import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekSer
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
 import { canRecover } from '../mobile/contracts.js';
 import { includeQuestions, inclusionIntents, markedRight, notYetIncluded, setQuestionIncluded, sortQuestions, unplacedMaterial } from '../materials/learning.js';
+import { ASSET_PAGE_SIZE, createdAtRangeSql, DayFilterError, instantInRange, parseAssetDayFilter, type AssetDayFilter } from '../materials/dayFilter.js';
 import { unsupportedSubject, UNSUPPORTED_SUBJECT_MESSAGE } from '../materials/subjects.js';
 import type { MaterialJobs } from '../materials/jobs.js';
 import type { QuestionBundle } from '../materials/contracts.js';
@@ -128,6 +129,17 @@ const figureUrlFor = (itemId: string) => (figure: Figure): string => `/s/api/ite
 class ApiFailure extends Error { constructor(public status: number, public code: string, message: string) { super(message); } }
 const fail = (status: number, code: string, message: string): never => { throw new ApiFailure(status, code, message); };
 const str = (value: unknown): string => (typeof value === 'string' ? value : '');
+function pageIndex(value: unknown): number { const n = Number(value ?? 0); return Number.isSafeInteger(n) && n >= 0 ? Math.min(n, 100000) : 0; }
+function readDayFilter(query: { date?: unknown; from?: unknown; to?: unknown }): AssetDayFilter | null {
+  try { return parseAssetDayFilter(query); }
+  catch (error) { if (error instanceof DayFilterError) fail(400, 'invalid_request', error.message); throw error; }
+}
+function dayFilterBody(filter: AssetDayFilter, page: number, total: number): Pick<IntakeResponse, 'filter' | 'page' | 'pageSize' | 'total' | 'hasMore'> {
+  return {
+    filter: { date: filter.date, from: filter.from, to: filter.to },
+    page, pageSize: ASSET_PAGE_SIZE, total, hasMore: (page + 1) * ASSET_PAGE_SIZE < total,
+  };
+}
 const list = (value: unknown): string[] => (Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string') : []);
 
 function crossSite(request: Request): boolean {
@@ -404,7 +416,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
   }));
 
   // ---------- 录入态 ----------
-  const legacyIntake = async (request: Request): Promise<IntakeResponse> => {
+  const legacyIntake = async (request: Request, filter: AssetDayFilter | null, page: number): Promise<IntakeResponse> => {
     const marks = readPhotoMarks(request);
     const week = getLearningWeek(ctx.mobileDataDir, 'all', true);
     const photos = await loadPhotos(ctx, { ...week, photos: getRegisteredPhotos(ctx.mobileDataDir, true) }, marks);
@@ -428,12 +440,20 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       };
     };
     const visible = photos.filter(photo => !(photo.dismissed && photo.failure)).sort((a, b) => Date.parse(b.registeredAt) - Date.parse(a.registeredAt) || b.number - a.number);
-    return { mode: 'legacy', draftNamespace: null, photos: visible.map(toPhoto), busy: visible.some(photo => photo.state === 'finding') };
+    if (!filter) return { mode: 'legacy', draftNamespace: null, photos: visible.map(toPhoto), busy: visible.some(photo => photo.state === 'finding') };
+    const matched = visible.filter(photo => instantInRange(photo.registeredAt, filter));
+    const start = page * ASSET_PAGE_SIZE;
+    return {
+      mode: 'legacy', draftNamespace: null, photos: matched.slice(start, start + ASSET_PAGE_SIZE).map(toPhoto),
+      busy: matched.some(photo => photo.state === 'finding'), ...dayFilterBody(filter, page, matched.length),
+    };
   };
 
-  const materialsIntake = (): IntakeResponse => {
+  const materialsIntake = (filter: AssetDayFilter | null, page: number): IntakeResponse => {
     const store = ctx.materials!;
-    const assets = store.db.prepare('SELECT id, created_at, json_extract(extraction_json, \'$.document.subject\') AS subject FROM material_asset WHERE owner_id=? ORDER BY created_at DESC, rowid DESC').all(store.studentId) as { id: string; created_at: string; subject: string | null }[];
+    const range = createdAtRangeSql(filter);
+    const total = filter ? (store.db.prepare(`SELECT count(*) n FROM material_asset WHERE owner_id=?${range.sql}`).get(store.studentId, ...range.params) as { n: number }).n : 0;
+    const assets = store.db.prepare(`SELECT id, created_at, json_extract(extraction_json, '$.document.subject') AS subject FROM material_asset WHERE owner_id=?${range.sql} ORDER BY created_at DESC, rowid DESC${filter ? ` LIMIT ${ASSET_PAGE_SIZE} OFFSET ?` : ''}`).all(...(filter ? [store.studentId, ...range.params, page * ASSET_PAGE_SIZE] : [store.studentId])) as { id: string; created_at: string; subject: string | null }[];
     const jobs = store.db.prepare(`SELECT j.id, j.state, j.asset_id, j.error FROM material_job j WHERE j.owner_id=? AND j.kind='extract'
       AND NOT EXISTS (SELECT 1 FROM material_job n WHERE n.owner_id=j.owner_id AND n.kind='extract' AND n.asset_id=j.asset_id AND n.rowid>j.rowid)`).all(store.studentId) as { id: string; state: string; asset_id: string | null; error: string | null }[];
     const jobByAsset = new Map(jobs.map(job => [job.asset_id, job]));
@@ -448,6 +468,8 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       included.set(asset, [...(included.get(asset) ?? []), q]);
     }
     const cropOf = (q: QuestionBundle): string | null => { const f = q.stem.find(fragment => fragment.role === 'question') ?? q.stem[0]; return f ? `/s/materials/fragments/${f.fragmentId}/crop?revision=${f.revision}` : null; };
+    const span = filter ? total : assets.length;
+    const offset = filter ? page * ASSET_PAGE_SIZE : 0;
     const photos: IntakePhoto[] = assets.map((asset, index) => {
       const job = jobByAsset.get(asset.id);
       const other = unsupportedSubject(asset.subject);
@@ -462,15 +484,28 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       const statusText = state === 'finding' ? 'AI 正在找题' : state === 'failed' ? '没整理成功' : state === 'unsupported' ? `${other}：${UNSUPPORTED_SUBJECT_MESSAGE}`
         : state === 'needsPick' ? '没有批改痕迹 · 勾出做错的题' : questions.length ? `找到 ${questions.length} 道${correct ? ` · ${correct} 道打了 √` : ''}` : correct ? `${correct} 道都打了 √，没有错题` : '没有新增错题';
       return {
-        id: asset.id, number: assets.length - index, takenAt: asset.created_at.includes('T') ? asset.created_at : asset.created_at.replace(' ', 'T') + 'Z',
+        id: asset.id, number: span - offset - index, takenAt: asset.created_at.includes('T') ? asset.created_at : asset.created_at.replace(' ', 'T') + 'Z',
         thumb: `/s/materials/assets/${asset.id}/image`, full: `/s/materials/assets/${asset.id}/image`, state, statusText, questions, candidates,
         failure: failed ? { title: '没整理成功', detail: retryable ? '原图已保留，可以重新整理。' : '看不清或格式不对，请重拍这张。', retryable } : null,
       };
     });
-    return { mode: 'materials', draftNamespace: store.getWorkspace().draftNamespace, photos, busy: photos.some(photo => photo.state === 'finding') };
+    const listedIds = filter
+      ? new Set((store.db.prepare(`SELECT id FROM material_asset WHERE owner_id=?${range.sql}`).all(store.studentId, ...range.params) as { id: string }[]).map(row => row.id))
+      : null;
+    const busy = listedIds
+      ? jobs.some(job => !!job.asset_id && listedIds.has(job.asset_id) && (job.state === 'queued' || job.state === 'running'))
+      : photos.some(photo => photo.state === 'finding');
+    return {
+      mode: 'materials', draftNamespace: store.getWorkspace().draftNamespace, photos, busy,
+      ...(filter ? dayFilterBody(filter, page, total) : {}),
+    };
   };
 
-  r.get('/intake', handler(async (request) => (ctx.materials ? materialsIntake() : legacyIntake(request))));
+  r.get('/intake', handler(async (request) => {
+    const filter = readDayFilter(request.query);
+    const page = pageIndex(request.query.page);
+    return ctx.materials ? materialsIntake(filter, page) : legacyIntake(request, filter, page);
+  }));
   // 上传队列在发第一张之前先问这个：材料流程的学生空间不接受旧的 /s/capture。
   r.get('/upload', handler((): UploadModeResponse => (ctx.materials ? { mode: 'materials', draftNamespace: ctx.materials.getWorkspace().draftNamespace } : { mode: 'legacy', draftNamespace: null })));
 
