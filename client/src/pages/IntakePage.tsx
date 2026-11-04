@@ -1,9 +1,10 @@
 import { IonButton, IonCheckbox, IonContent, IonIcon, IonItem, IonItemOption, IonItemOptions, IonItemSliding, IonLabel, IonList, IonPage, IonSpinner, IonToast } from '@ionic/react';
-import { albumsOutline, cameraOutline, checkmark } from 'ionicons/icons';
+import { checkmark } from 'ionicons/icons';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { IntakePhoto } from '../../../src/web/apiTypes';
-import { PickLabel } from '../components/CaptureInput';
+import { CaptureDock } from '../components/CaptureDock';
+import { useCaptureSession } from '../lib/captureSession';
 import { Problem } from '../components/Problem';
 import { api } from '../lib/api';
 import { useLoad, useUploads } from '../lib/hooks';
@@ -41,6 +42,7 @@ export function IntakePage(): ReactNode {
   const earlier = photos.filter(photo => !current.includes(photo));
   const found = current.reduce((n, photo) => n + photo.questions.length, 0);
   const pendingUploads = uploads.filter(entry => !entry.photoId);
+  const capture = useCaptureSession();
 
   const remove = async (itemId: string): Promise<void> => {
     try { const result = await api.discard([itemId]); if (result.failed[0]) setToast(result.failed[0].message); }
@@ -104,13 +106,10 @@ export function IntakePage(): ReactNode {
       {error ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
       {current.map(renderPhoto)}
       {earlier.length ? <details className="intake-earlier"><summary>更早的 {earlier.length} 张</summary>{earlier.map(renderPhoto)}</details> : null}
-      <div className="bottom-space intake-space" />
+      <div className={capture.pages.length ? 'bottom-space intake-space tall' : 'bottom-space intake-space'} />
       <div className="intake-bottom">
         <IonButton expand="block" shape="round" size="large" onClick={() => { uploader.finishBatch(); navigate('/', { replace: true }); }} data-testid="intake-done"><IonIcon icon={checkmark} slot="start" />完成</IonButton>
-        <div className="intake-picks">
-          <PickLabel kind="camera" className="pick-button pick-text" testId="intake-camera"><IonIcon icon={cameraOutline} aria-hidden="true" />拍照</PickLabel>
-          <PickLabel kind="album" className="pick-button pick-text" testId="intake-album"><IonIcon icon={albumsOutline} aria-hidden="true" />从相册选择</PickLabel>
-        </div>
+        <CaptureDock placement="inline" />
       </div>
       <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
     </IonContent>

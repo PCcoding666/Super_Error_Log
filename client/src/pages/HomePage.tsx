@@ -7,6 +7,8 @@ import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { NotebookItem, NotebookResponse } from '../../../src/web/apiTypes';
 import { PickLabel } from '../components/CaptureInput';
+import { CaptureDock } from '../components/CaptureDock';
+import { useCaptureSession } from '../lib/captureSession';
 import { Problem } from '../components/Problem';
 import { StageGate } from '../components/StageGate';
 import { api } from '../lib/api';
@@ -35,6 +37,7 @@ export function HomePage(): ReactNode {
   const [toast, setToast] = useState<{ message: string; undo?: string[] } | null>(null);
   const [connected, setConnected] = useState(params.get('paired') === '1' || params.get('login') === '1');
   const [menuEvent, setMenuEvent] = useState<Event | null>(null);
+  const capture = useCaptureSession();
 
   const patch = useCallback((changes: Record<string, string>) => {
     const next = new URLSearchParams(params);
@@ -153,13 +156,10 @@ export function HomePage(): ReactNode {
           ? <div className="notebook-grid">{group.items.map(item => renderCard(item, group.key))}</div>
           : <IonList lines="full" className="notebook-list">{group.items.map(renderRow)}</IonList>}
       </section>)}
-      <div className="bottom-space" />
+      <div className={capture.pages.length ? 'bottom-space tall' : 'bottom-space'} />
       {!selecting ? <>
         <IonFab vertical="bottom" horizontal="start" slot="fixed"><IonFabButton color="light" size="small" className="corner corner-search" aria-label="搜索" data-testid="corner-search" onClick={() => setSearchOpen(open => !open)}><IonIcon icon={searchOutline} /></IonFabButton></IonFab>
-        <div className="capture-corner" slot="fixed">
-          <PickLabel kind="camera" className="fab-circle fab-camera" inputId="camera-input"><IonIcon icon={cameraOutline} aria-hidden="true" /></PickLabel>
-          <PickLabel kind="album" className="fab-circle fab-album" inputId="library-input" testId="next-step-primary"><IonIcon icon={albumsOutline} aria-hidden="true" /></PickLabel>
-        </div>
+        <CaptureDock placement="corner" cameraInputId="camera-input" albumInputId="library-input" albumTestId="next-step-primary" />
       </> : <IonFab vertical="bottom" horizontal="end" slot="fixed"><IonFabButton color="danger" className="corner" aria-label="移除所选" data-testid="discard-selected" disabled={!selected.size} onClick={() => setConfirming(true)}><IonIcon icon={trashOutline} /></IonFabButton></IonFab>}
       <IonActionSheet isOpen={confirming} onDidDismiss={() => setConfirming(false)} header={`把这 ${selected.size} 道移出错题本？`} subHeader="原图保留，移出后可以撤销。"
         buttons={[{ text: '移除', role: 'destructive', handler: () => { void discard([...selected]); } }, { text: '取消', role: 'cancel' }]} />

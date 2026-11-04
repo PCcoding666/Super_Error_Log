@@ -2,9 +2,19 @@ import type { Box } from '../media/images.js';
 import type { StageRun } from '../ai/chatClient.js';
 export type MaterialRole = 'question' | 'diagram' | 'student_work' | 'correction'
   | 'teacher_mark' | 'reference_answer' | 'unknown';
+export type CaptureMode = 'single' | 'multi';
+/** paper = 试卷, answer_sheet = 答题卡. Omitted means the student did not tag the page. */
+export type CapturePageKind = 'paper' | 'answer_sheet';
 export type CaptureHints = {
   roles?: MaterialRole[]; marking?: 'unmarked' | 'marked' | 'partial';
   label?: string; documentId?: string; questionId?: string; attemptId?: string;
+  /** single: one page, extracted on its own. multi: these pages are one submission. */
+  captureMode?: CaptureMode;
+  /** 1-based position in a multi-page submission. */
+  pageIndex?: number;
+  /** How many pages the student submitted together. At most 8. */
+  pageCount?: number;
+  pageKind?: CapturePageKind;
 };
 export type SourceRegion = { assetId: string; fragmentId: string; revision: number; box: Box; sourceHash: string };
 export type Fragment = SourceRegion & {
