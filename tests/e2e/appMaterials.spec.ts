@@ -60,6 +60,15 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await photo.getByTestId('pick-submit').click();
   await expect(page.locator('section.intake-photo[data-state="done"]')).toHaveCount(1, { timeout: 30_000 });
   await expect(page.locator('.intake-top p')).toContainText('找到 1 道');
+  // 按上传日筛选：当天仍能看到刚拍的这张；没有材料的日子是空态，关掉后又回到全部。
+  await page.getByTestId('day-filter-toggle').click();
+  await expect(page.getByTestId('day-filter-date')).toBeVisible();
+  await expect(page.locator('section.intake-photo')).toHaveCount(1);
+  await page.getByTestId('day-filter-date').fill('2020-01-01');
+  await expect(page.getByTestId('day-filter-empty')).toBeVisible();
+  await expect(page.locator('section.intake-photo')).toHaveCount(0);
+  await page.getByTestId('day-filter-toggle').click();
+  await expect(page.locator('section.intake-photo')).toHaveCount(1);
   expect(legacyUploads).toEqual([]);
   await page.getByTestId('intake-done').click();
   await expect(page.getByTestId('item-card')).toHaveCount(1);

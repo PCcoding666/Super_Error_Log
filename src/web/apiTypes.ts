@@ -175,4 +175,13 @@ export interface IntakeResponse {
   photos: IntakePhoto[];
   /** 还有照片在找题：客户端据此轮询。 */
   busy: boolean;
+  /**
+   * 按上传日筛选时才有。没有这些字段就是全部材料，顺序和分页与以前一样。
+   * date 是新加坡自然日；from/to 是含当天的起止日。page 从 0 起，每页 8 张。
+   */
+  filter?: { date: string | null; from: string | null; to: string | null };
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  hasMore?: boolean;
 }

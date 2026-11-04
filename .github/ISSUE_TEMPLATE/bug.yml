@@ -1,0 +1,65 @@
+name: 缺陷
+description: 报告不正确的行为或故障
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。请不要在标题、正文、日志或截图里粘贴学生姓名、手机号或邀请码。
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 现象
+      description: 实际发生了什么？
+      placeholder: 例如：拍照上传后一直停在「正在找题」，刷新后照片不见了。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 怎样一步步重现？
+      placeholder: |
+        1. 打开 …
+        2. 点击 …
+        3. 看到 …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望
+      description: 你期望发生什么？
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 设备 / 浏览器
+      description: 机型和浏览器。例如 iPhone 15 / Safari 18，或 Android / Chrome。
+      placeholder: iPhone / Safari
+    validations:
+      required: false
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: 学段
+      description: 可选。初中或高中。
+      options:
+        - 初中
+        - 高中
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图
+      description: 可把截图拖到这里。截图里不要出现学生姓名、手机号或邀请码。
+    validations:
+      required: false
