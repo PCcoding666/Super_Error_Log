@@ -60,7 +60,7 @@ async function listen(): Promise<number> {
 describe('产品说明页文案', () => {
   const html = helpPortalHtml();
 
-  it('用中文写清注册、拍照、收题、打印、纸上做、记结果、学习页和 GitHub', () => {
+  it('用中文写清注册、拍照、收题、单页多页、练习即将推出、学习页和 GitHub', () => {
     expect(HELP_PORTAL_PATH).toBe('/help/');
     expect(html).toContain('href="https://study.pccoding666.com/help/"');
     expect(html).toContain('href="/help/"');
@@ -71,9 +71,11 @@ describe('产品说明页文案', () => {
     expect(html).toContain('常见问题');
     expect(html).toContain('拍卷子');
     expect(html).toContain('收进错题本');
-    expect(html).toContain('打印练习');
-    expect(html).toContain('纸上做');
-    expect(html).toContain('记结果');
+    expect(html).toContain('选拍摄模式');
+    expect(html).toContain('单页');
+    expect(html).toContain('多页');
+    expect(html).toContain('没有练习入口');
+    expect(html).not.toContain('/s/practices');
     expect(html).toContain('示意图');
     expect(html).toContain('添加到桌面');
     expect(html).toContain('添加到主屏幕');
@@ -92,11 +94,12 @@ describe('产品说明页文案', () => {
     expect(html).toContain('https://github.com/PCcoding666/Super_Error_Log');
     expect(html).not.toContain('sel.pccoding666.com');
     expect(html).not.toContain('help.pccoding666.com');
-    for (const word of ['周末', '工作日', '下周末', '寄宿制', '单页', '多页']) expect(html, word).not.toContain(word);
+    for (const word of ['周末', '工作日', '下周末', '寄宿制']) expect(html, word).not.toContain(word);
     const images = [...html.matchAll(/src="\/help\/img\/([a-z0-9-]+\.webp)"/g)].map(match => match[1]);
     expect(images.length).toBeGreaterThan(10);
     expect(new Set(images).size).toBe(images.length);
     for (const name of images) expect(readHelpImage(name!)?.length ?? 0).toBeGreaterThan(1000);
+    expect(images.some(name => name?.startsWith('practice-'))).toBe(false);
   });
 });
 

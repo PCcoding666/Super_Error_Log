@@ -1,16 +1,17 @@
 /**
  * 给公开说明页拍合成示例图。只启动本机临时服务器，照片和账号都是编的，退出即删。
  * 运行：npx tsx scripts/capture-help-guide.ts
+ *
+ * 错题本 / 录入 / 详情走邀请码网关 + 材料流程，这样能拍到生产上的「单页 / 多页」模式条。
+ * 注册 / 登录 / 找回等仍用同一网关。练习截图不再拍：设置里写着即将推出，学生端没有入口。
  */
-import { fork, spawn, type ChildProcess } from 'node:child_process';
+import { fork, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
 const OUT = path.resolve('src/portal/help-img');
-const WEB_PORT = 3320;
-const CONTROL_PORT = 3321;
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -40,18 +41,27 @@ async function save(page: Page, name: string): Promise<void> {
   console.log(`${name}.webp ${kb}KB`);
 }
 
-function waitForHttp(url: string, child: ChildProcess): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`timeout ${url}`)), 90_000);
-    const poll = async (): Promise<void> => {
-      if (child.exitCode !== null) { clearTimeout(timer); reject(new Error(`server exited ${child.exitCode}`)); return; }
-      try {
-        const response = await fetch(url);
-        if (response.ok || response.status === 404) { clearTimeout(timer); resolve(); return; }
-      } catch { /* still booting */ }
-      setTimeout(() => { void poll(); }, 400);
-    };
-    void poll();
+function startHost(): { child: ChildProcess; ready: Promise<{ base: string; codes: string[] }> } {
+  const child = fork(path.resolve('tests/e2e/studentHostServer.ts'), [], {
+    execArgv: ['--import', 'tsx'],
+    env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_E2E_MATERIAL_CAPTURE: '1' },
+    stdio: ['ignore', 'inherit', 'pipe', 'ipc'],
+  });
+  child.stderr?.on('data', chunk => process.stderr.write(chunk));
+  const ready = new Promise<{ base: string; codes: string[] }>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('host timeout')), 60_000);
+    child.once('exit', () => { clearTimeout(timer); reject(new Error('host exited')); });
+    child.once('message', message => { clearTimeout(timer); resolve(message as { base: string; codes: string[] }); });
+  });
+  return { child, ready };
+}
+
+async function stopHost(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null) return;
+  await new Promise<void>(resolve => {
+    const timer = setTimeout(() => child.kill('SIGKILL'), 8_000);
+    child.once('exit', () => { clearTimeout(timer); resolve(); });
+    if (child.connected) child.send({ stop: true }, () => {}); else child.kill('SIGTERM');
   });
 }
 
@@ -67,47 +77,70 @@ async function main(): Promise<void> {
     serviceWorkers: 'block',
   });
   const page = await context.newPage();
-
-  const web = spawn('npx', ['tsx', 'tests/e2e/webClientServer.ts'], {
-    env: { ...process.env, SEL_WEB_E2E_PORT: String(WEB_PORT), SEL_WEB_E2E_CONTROL_PORT: String(CONTROL_PORT), SEL_AI_MODE: 'mock', NODE_ENV: 'test' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
-  });
-  web.stdout?.on('data', chunk => process.stdout.write(chunk));
-  web.stderr?.on('data', chunk => process.stderr.write(chunk));
+  const { child, ready } = startHost();
   try {
-    await waitForHttp(`http://127.0.0.1:${CONTROL_PORT}/pairing-link`, web);
-    const { link } = await (await fetch(`http://127.0.0.1:${CONTROL_PORT}/pairing-link`)).json() as { link: string };
-    await page.goto(link.replace('https://study.pccoding666.com', `http://127.0.0.1:${WEB_PORT}`));
-    await page.getByTestId('next-step-primary').click();
-    await page.waitForURL(/\/s\/\?paired=1$/);
+    const { base, codes } = await ready;
+
+    await page.goto(`${base}/s/`);
+    await page.getByTestId('login-title').waitFor();
+    await save(page, 'login');
+
+    await page.goto(`${base}/s/register`);
+    await page.getByRole('heading', { name: '注册账号' }).waitFor();
+    await save(page, 'register');
+    await page.locator('#register-name').fill('示例学生');
+    await page.locator('#register-phone').fill('13800001111');
+    await page.getByTestId('register-pin-input').fill('2580');
+    await page.locator('#register-form').evaluate((form: HTMLFormElement) => form.requestSubmit());
+    await page.getByTestId('registered-invite-code').waitFor({ timeout: 20_000 });
+    await save(page, 'register-done');
+
+    await page.goto(`${base}/s/recover`);
+    await page.getByRole('heading', { name: '找回邀请码' }).waitFor();
+    await save(page, 'recover');
+
+    await page.goto(`${base}/s/`);
+    await page.getByLabel('12 位邀请码').fill(codes[0]!);
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await page.waitForURL(/login=1/);
+    if (await page.getByRole('heading', { name: '你现在读初中还是高中？' }).count()) {
+      await save(page, 'stage');
+      await page.getByRole('button', { name: '初中', exact: true }).click();
+    }
+
     await page.getByTestId('empty-notebook').waitFor();
-    await page.getByText('已连接').waitFor({ state: 'hidden' });
+    await page.getByTestId('capture-mode-bar').waitFor();
+    await page.getByTestId('capture-mode-multi').waitFor();
+    await page.waitForTimeout(400);
     await save(page, 'notebook-empty');
 
     const [chooser] = await Promise.all([
       page.waitForEvent('filechooser'),
       page.locator('#library-input').click(),
     ]);
+    // 材料合成提取默认给出没有批改痕迹、需要勾选的题；再传一张同批照片只为占位。
     await chooser.setFiles([
-      { name: 'marked.jpg', mimeType: 'image/jpeg', buffer: await jpeg('marked') },
       { name: 'plain.jpg', mimeType: 'image/jpeg', buffer: await jpeg('plain') },
+      { name: 'marked.jpg', mimeType: 'image/jpeg', buffer: await jpeg('marked') },
     ]);
     await page.waitForURL(/\/s\/new$/);
-    const marked = page.locator('section.intake-photo[data-state="done"]');
-    await marked.waitFor({ timeout: 40_000 });
-    await page.locator('section.intake-photo[data-state="needsPick"]').waitFor({ timeout: 40_000 });
-    await marked.scrollIntoViewIfNeeded();
+    // Ionic keeps the previous page mounted; only the inline dock on 录入 is this page's bar.
+    await page.locator('.capture-inline [data-testid="capture-mode-multi"]').waitFor();
+    const pick = page.locator('section.intake-photo[data-state="needsPick"]').first();
+    await pick.waitFor({ timeout: 60_000 });
+    await page.waitForTimeout(500);
     await save(page, 'intake-auto');
-    const pick = page.locator('section.intake-photo[data-state="needsPick"]');
     await pick.scrollIntoViewIfNeeded();
     await pick.getByTestId('pick-candidate').first().click();
     await page.waitForTimeout(300);
     await save(page, 'intake-pick');
+    await pick.getByTestId('pick-submit').click();
+    await page.locator('section.intake-photo[data-state="done"]').first().waitFor({ timeout: 40_000 });
 
     await page.getByTestId('intake-done').click();
     await page.waitForURL(/\/s\/?(\?|$)/);
-    await page.getByTestId('item-card').first().waitFor();
+    await page.getByTestId('item-card').first().waitFor({ timeout: 40_000 });
+    await page.waitForTimeout(400);
     await save(page, 'notebook-list');
 
     await page.getByTestId('item-card').first().click();
@@ -123,78 +156,8 @@ async function main(): Promise<void> {
     await page.locator('ion-popover').getByText('不是错题，移除').waitFor();
     await save(page, 'item-menu');
 
-    await page.goto(`http://127.0.0.1:${WEB_PORT}/s/me`);
-    await page.getByText('即将推出').waitFor();
-    await save(page, 'settings-practice');
-
-    await fetch(`http://127.0.0.1:${CONTROL_PORT}/time-travel?days=7`, { method: 'POST' });
-    await page.goto(`http://127.0.0.1:${WEB_PORT}/s/practices`);
-    await page.getByRole('heading', { name: '练习' }).waitFor();
-    await page.waitForTimeout(500);
-    await save(page, 'practice-home');
-    const start = page.getByRole('button', { name: /开始做这/ });
-    if (await start.count()) {
-      await start.click();
-      await page.waitForURL(/\/s\/practice\/pkt_/);
-      await page.getByTestId('practice-question').waitFor({ timeout: 60_000 });
-      await save(page, 'practice-question');
-      await page.getByRole('link', { name: '打印练习' }).click();
-      await page.getByRole('heading', { name: '打印练习纸' }).waitFor({ timeout: 60_000 });
-      await page.waitForTimeout(800);
-      await save(page, 'practice-print');
-      const practiceUrl = page.url().replace(/\/print\/.*/, (match) => match.replace('/print/', '/practice/').replace(/\/.*/, ''));
-      const id = page.url().match(/pkt_[^/?]+/)?.[0];
-      if (id) {
-        await page.goto(`http://127.0.0.1:${WEB_PORT}/s/practice/${id}?mode=paper&view=check`);
-        await page.getByText('把纸上每道题的结果记下来').waitFor({ timeout: 30_000 });
-        await save(page, 'practice-record');
-        await page.goto(`http://127.0.0.1:${WEB_PORT}/s/practice/${id}/submit`);
-        await page.getByRole('heading', { name: '拍照交练习' }).waitFor();
-        await save(page, 'practice-submit');
-      }
-      void practiceUrl;
-    }
-  } finally {
-    try { process.kill(-web.pid!, 'SIGTERM'); } catch { web.kill('SIGTERM'); }
-  }
-
-  const host = fork(path.resolve('tests/e2e/studentHostServer.ts'), [], {
-    execArgv: ['--import', 'tsx'],
-    env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock' },
-    stdio: ['ignore', 'inherit', 'pipe', 'ipc'],
-  });
-  host.stderr?.on('data', chunk => process.stderr.write(chunk));
-  const ready = await new Promise<{ base: string; codes: string[] }>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('host timeout')), 40_000);
-    host.once('exit', () => { clearTimeout(timer); reject(new Error('host exited')); });
-    host.once('message', message => { clearTimeout(timer); resolve(message as { base: string; codes: string[] }); });
-  });
-  try {
-    const base = ready.base;
-    await page.goto(`${base}/s/`);
-    await page.getByTestId('login-title').waitFor();
-    await save(page, 'login');
-    await page.goto(`${base}/s/register`);
-    await page.getByRole('heading', { name: '注册账号' }).waitFor();
-    await save(page, 'register');
-    await page.locator('#register-name').fill('示例学生');
-    await page.locator('#register-phone').fill('13800001111');
-    await page.getByTestId('register-pin-input').fill('2580');
-    await page.locator('#register-form').evaluate((form: HTMLFormElement) => form.requestSubmit());
-    await page.getByTestId('registered-invite-code').waitFor({ timeout: 20_000 });
-    await save(page, 'register-done');
-    await page.goto(`${base}/s/recover`);
-    await page.getByRole('heading', { name: '找回邀请码' }).waitFor();
-    await save(page, 'recover');
-    await page.goto(`${base}/s/`);
-    await page.getByLabel('12 位邀请码').fill(ready.codes[0]!);
-    await page.getByRole('button', { name: '进入我的错题本' }).click();
-    await page.waitForURL(/login=1/);
-    if (await page.getByRole('heading', { name: '你现在读初中还是高中？' }).count()) {
-      await save(page, 'stage');
-      await page.getByRole('button', { name: '初中', exact: true }).click();
-    }
     await page.goto(`${base}/s/me`);
+    await page.getByText('即将推出').waitFor();
     await page.getByTestId('settings-my-invite').waitFor();
     await save(page, 'settings');
     await page.goto(`${base}/s/account`);
@@ -204,11 +167,17 @@ async function main(): Promise<void> {
     await page.getByRole('heading', { name: '放到主屏幕' }).waitFor();
     await save(page, 'install');
   } finally {
-    if (host.connected) host.send({ stop: true });
-    host.kill('SIGTERM');
-    setTimeout(() => host.kill('SIGKILL'), 4000).unref();
+    await stopHost(child);
     await context.close();
     await browser.close();
+  }
+
+  for (const stale of ['practice-home', 'practice-question', 'practice-print', 'practice-record', 'practice-submit', 'settings-practice']) {
+    const file = path.join(OUT, `${stale}.webp`);
+    if (fs.existsSync(file)) {
+      fs.unlinkSync(file);
+      console.log(`removed ${stale}.webp`);
+    }
   }
 }
 
