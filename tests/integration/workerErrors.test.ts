@@ -56,6 +56,10 @@ describe('worker errors reach journald (main process stderr)', () => {
     expect(report.message).toContain('code 3');
     expect(written).toContain('[worker 0123abcd] storage failure: synthetic\n');
     expect(written.join('')).not.toContain('synthetic-token');
+    // 进程池自己的生命周期日志缺省也进 stderr：拉起一行（带耗时、存活数），不含令牌。
+    const started = JSON.parse(written.find(line => line.includes('sel_worker_start'))!);
+    expect(started).toMatchObject({ event: 'sel_worker_start', level: 'info', student: '0123abcd', live: 1 });
+    expect(typeof started.ms).toBe('number');
   });
 
   it('a custom onError still takes precedence and onStderr: null keeps stderr private to the pool', async () => {
@@ -63,8 +67,9 @@ describe('worker errors reach journald (main process stderr)', () => {
     const script = path.join(root, 'worker.mjs'); fs.writeFileSync(script, WORKER);
     const errors: string[] = [];
     const spy = vi.spyOn(process.stderr, 'write');
+    // onEvent: null 关掉进程池自己的 sel_worker_start / sel_worker_stop，这个池就完全不碰 stderr。
     const pool = new StudentWorkerPool({ dirFor: id => path.join(root, id), workerScript: script, execArgv: [], refreshIntervalMs: 0, idleMs: 0,
-      onError: (_id, message) => { errors.push(message); }, onStderr: null });
+      onError: (_id, message) => { errors.push(message); }, onStderr: null, onEvent: null });
     pools.push(pool);
     const studentId = 'feedbeef-0000-4000-8000-000000000000';
     await pool.ensure(studentId);

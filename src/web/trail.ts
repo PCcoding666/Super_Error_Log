@@ -93,7 +93,7 @@ function isPageLoad(request: Request): boolean {
 
 // 不记的请求：静态资源、图片；离线页（只有 Service Worker 预缓存时才会从服务器取，真离线时由 worker 直接给）；
 // 语音转写也不在服务器上记（转写请求不往数据目录写任何东西，见 privacy 文档），录音按钮的点按和转写失败由页面脚本当作点按 / 出错记下。
-const QUIET = /^\/(?:assets|img)\/|^\/(?:manifest\.webmanifest|sw\.js|voice|offline)$/;
+const QUIET = /^\/(?:assets|img)\/|^\/(?:manifest\.webmanifest|sw\.js|voice|offline|api\/client-log)$/;
 
 /** 页面的路由模板：匹配到路由时用路由定义；没匹配到的 404 一律 `/s/*`。 */
 function routeOf(request: Request, response: Response): string {

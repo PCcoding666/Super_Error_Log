@@ -3,7 +3,8 @@
  * 只放类型，不放实现：客户端用 Bundler 解析直接引用这个文件。
  */
 
-export interface ApiError { error: { code: string; message: string } }
+/** requestId：这次请求的编号（响应头 x-sel-request-id 同一个值）；页面上显示成「错误编号」，排查时在服务器日志里按它找。 */
+export interface ApiError { error: { code: string; message: string; requestId?: string } }
 
 /** 错题本的四档状态（见 notebook.ts）。 */
 export type NotebookStatusGroup = 'todo' | 'practicing' | 'mastered' | 'stable';

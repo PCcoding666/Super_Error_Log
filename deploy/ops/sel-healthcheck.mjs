@@ -42,6 +42,8 @@ export function config() {
       repeatMin: intEnv('SEL_ALERT_REPEAT_MIN', 60),
       rejectedStudents: intEnv('SEL_ALERT_REJECTED_STUDENTS', 1), aiWaiting: intEnv('SEL_ALERT_AI_WAITING', 10),
       liveStaleMin: intEnv('SEL_ALERT_LIVE_STALE_MIN', 3),
+      // 结构化日志（src/observability/log.ts）：5 分钟内超过这些次数就推送。0 = 一次就推。
+      requestFailures: intEnv('SEL_ALERT_REQUEST_FAILURES', 0), proxyErrors: intEnv('SEL_ALERT_PROXY_ERRORS', 2), clientErrors: intEnv('SEL_ALERT_CLIENT_ERRORS', 3),
     },
   };
 }
@@ -179,14 +181,33 @@ export function certDaysLeft(cfg, now = Date.now(), timeoutMs = 10_000) {
 }
 
 /** 数 journald 里某个事件的行数：按 JSON 的 event 字段精确匹配（worker 行带 "[worker xxxxxxxx] " 前缀）。 */
-export function countEvents(text, name) {
+export function countEvents(text, name, level = null) {
   let n = 0;
   for (const line of text.split('\n')) {
     const start = line.indexOf('{');
     if (start < 0) continue;
-    try { if (JSON.parse(line.slice(start)).event === name) n += 1; } catch { /* 不是 JSON 行 */ }
+    try {
+      const record = JSON.parse(line.slice(start));
+      if (record.event === name && (level === null || record.level === level)) n += 1;
+    } catch { /* 不是 JSON 行 */ }
   }
   return n;
+}
+
+/** 同一事件按某个字段分组计数（例如 sel_proxy_error 的 reason），用来把推送写得具体。 */
+export function groupEvents(text, name, field) {
+  const counts = {};
+  for (const line of text.split('\n')) {
+    const start = line.indexOf('{');
+    if (start < 0) continue;
+    try {
+      const record = JSON.parse(line.slice(start));
+      if (record.event !== name) continue;
+      const key = String(record[field] ?? '-');
+      counts[key] = (counts[key] ?? 0) + 1;
+    } catch { /* 不是 JSON 行 */ }
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([key, count]) => `${key} ${count}`).join('、');
 }
 
 function disk(dir) {
@@ -234,6 +255,14 @@ export async function runChecks(cfg, { now = new Date(), statsProvider = statsAs
     const workerErrors = countEvents(app5, 'sel_worker_error');
     facts.workerErrors5m = workerErrors;
     if (workerErrors > 0) add('worker', `最近 5 分钟有 ${workerErrors} 条学生进程错误（journalctl -u super-error-log | grep sel_worker_error）`);
+    // 请求层（见 deploy/ops/RUNBOOK.md「学生说出问题了怎么查」）：worker 里的 500、网关转发失败、学生手机报上来的页面错误。
+    const requestFailures = countEvents(app5, 'sel_request_failed');
+    const proxyErrors = countEvents(app5, 'sel_proxy_error', 'error');
+    const clientErrors = countEvents(app5, 'sel_client_event', 'error');
+    facts.requestFailures5m = requestFailures; facts.proxyErrors5m = proxyErrors; facts.clientErrors5m = clientErrors;
+    if (requestFailures > cfg.t.requestFailures) add('request-failed', `最近 5 分钟学生进程处理请求出错 ${requestFailures} 次（grep sel_request_failed，按 rid 对网关的 sel_http；路由：${groupEvents(app5, 'sel_request_failed', 'route')}）`);
+    if (proxyErrors > cfg.t.proxyErrors) add('proxy', `最近 5 分钟网关转发失败 ${proxyErrors} 次（grep sel_proxy_error；原因：${groupEvents(app5, 'sel_proxy_error', 'reason')}）`);
+    if (clientErrors > cfg.t.clientErrors) add('client-errors', `最近 5 分钟学生手机上报了 ${clientErrors} 条页面错误（grep sel_client_event；类别：${groupEvents(app5, 'sel_client_event', 'kind')}）`);
     const app60 = journalReader(['-u', 'super-error-log', '--since', '-60min']);
     const fallbacks = countEvents(app60, 'sel_ai_fallback');
     const blocked = countEvents(app60, 'sel_ai_fallback_blocked');

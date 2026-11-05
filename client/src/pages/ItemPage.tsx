@@ -196,7 +196,7 @@ export function ItemPage(): ReactNode {
           {data?.canDiscard ? <IonItem button detail={false} onClick={() => setSheet('confirm')}><IonLabel color="danger">不是错题，移除</IonLabel></IonItem> : null}
         </IonList>
       </IonPopover>
-      {error ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
+      {error ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
       {data && item ? <>
         <h1 className="item-title">{item.chapter}</h1>
         <p className="item-subtitle" data-testid="item-category">{[item.shortId, item.grade, item.subject].filter(Boolean).join(' · ')}</p>

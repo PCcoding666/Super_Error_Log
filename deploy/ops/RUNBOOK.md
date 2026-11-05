@@ -52,8 +52,57 @@
 | 每日备份失败 / 异地没成功 | `journalctl -u sel-backup -n 50 --no-pager`；`cat /var/backups/super-error-log-daily/last-status.json last-push.json` |
 | HTTPS 证书还有 N 天 | `journalctl -u super-error-log-caddy --since -1d \| grep -i renew`（11/16–11/18 是续期窗口，那周每天看一次） |
 | 登录页打不开 | 先看服务和 Caddy 是否 active；再从手机流量打开 `https://study.pccoding666.com/s/` |
+| 学生进程处理请求出错 N 次 | `journalctl -u super-error-log --since -15min --no-pager \| grep sel_request_failed`：看 `route`（哪个接口）、`errName` / `errMessage`；拿 `rid` 再 grep 一次就能看到网关那一行（哪个学生、耗时）。见下面「二之二」 |
+| 网关转发失败 N 次 | `grep sel_proxy_error` 看 `reason`：`worker_start`（学生进程起不来，接着看 `sel_worker_error`）、`upstream_timeout`（worker 120 秒没回，多半卡在识别或磁盘）、`upstream_error`（worker 半路断了）、`capacity`（名额满，同「名额满进不去」） |
+| 学生手机上报页面错误 N 条 | `grep sel_client_event` 看 `kind`：`script_error` / `render_error` 是前端代码问题（带 `build` 版本、`ua` 浏览器家族），`upload_failed` 看 `code`，`chooser_blocked` 是安卓桌面壳不弹相册 |
 
 **真要从备份恢复线上数据**（会覆盖当前数据，先跟老师说好）：`systemctl stop super-error-log` → `sel-restore.mjs --from <快照目录> --target /var/lib/super-error-log --live --confirm-service-stopped`（现有目录会整体改名为 `*.before-restore-<时间>` 保留，不删）→ `systemctl start super-error-log` → 后台核对错题数。env 和证书不在备份里，从密码管理器 / 证书目录恢复。
+
+## 二之二、学生说「出问题了」怎么查
+
+所有日志都在 `journalctl -u super-error-log`，一行一条 JSON，`event` 字段说明是什么事；学生进程（worker）的行前面带 `[worker 学生ID前8位]`。字段里只有元数据：请求 ID、路由模板、状态码、耗时、学生 ID 前 8 位、浏览器家族、错误类别——没有题目、照片、姓名、邀请码、令牌。
+
+1. **先要「错误编号」。** 页面红字下面那行、上传失败提示括号里的、或「这一页没显示出来」下面的，12 位小写字母数字。
+
+   ```sh
+   journalctl -u super-error-log --since -2d --no-pager | grep <编号>
+   ```
+
+   能看到网关的 `sel_http`（哪个接口、状态码、耗时、学生前 8 位、拒绝原因 `reason`、worker 给的错误码 `code`）和 worker 的 `sel_request_failed`（错误类名、消息、栈前三帧）。浏览器上报的错误编号对应 `sel_client_event` 的 `cid`。
+2. **没有编号、只知道是谁。** `sel-admin list` 找到学生 ID，取前 8 位：
+
+   ```sh
+   journalctl -u super-error-log --since -1d --no-pager | grep '"student":"xxxxxxxx"'
+   ```
+
+   这是这个学生最近经过网关的全部请求（成功的图片和静态资源不记）。再看 `/var/lib/super-error-log/student-host/students/<学生ID>/events.log`，这是互动记录：看了哪页、提交了什么、哪里出错（`web_error 路由#状态码:原因`，浏览器报的是 `#client:类别:错误码`），按时间倒推最后停在哪一步。
+3. **页面空白、点了没反应、上传一直失败。** `grep sel_client_event`：这是学生手机自己报上来的。`kind` 是类别（`script_error` 脚本错误、`unhandled_rejection`、`render_error` 页面白屏、`upload_failed` 上传失败及其 `code`、`api_network` 请求根本没发出去、`api_not_json` 接口回了页面而不是数据、`chooser_blocked` 安卓壳不弹相册），`build` 是学生手里的前端版本，`ua` 是浏览器家族（`ios-safari` / `wechat` / `android-webview` …）。
+4. **「暂时进不去」「暂时连不上」。** `grep sel_proxy_error` 看 `reason`（见上表）。`worker_start` 接着看同一时间的 `sel_worker_error`（启动失败的原因、崩溃时的信号）；`sel_worker_start` 的 `ms` 是拉起耗时、`live` 是当时同时存活数。
+5. **登录不上。** `grep sel_login` 看 `outcome`：`invalid_code`（码不对或过期）、`rate_limited`（同一个码或同一 IP 试太多次，`ip` 字段能看出是不是同一所学校的网络）。`sel_http` 里 `reason=session_invalid` 是会话过期或被撤销，`no_session` 是浏览器没带 cookie（微信、QQ 内置浏览器和部分安卓壳常见）。
+6. **扫一眼整体。**
+
+   ```sh
+   journalctl -u super-error-log --since -1h -o cat --no-pager | grep -o '"event":"[a-z_]*"' | sort | uniq -c
+   ```
+
+   ```sh
+   journalctl -u super-error-log --since -1h -o cat --no-pager | grep '"level":"error"' | tail -n 30
+   ```
+
+事件一览（`src/observability/log.ts`）：
+
+| event | 谁写 | 什么时候 | 看什么字段 |
+|---|---|---|---|
+| `sel_http` | 网关 | 每个请求结束（成功的静态资源、图片、上报不记） | `rid` `method` `route` `status` `ms` `student` `reason` `code` `ua` `native` `aborted` |
+| `sel_login` | 网关 | 邀请码登录 | `outcome`（ok / invalid_code / rate_limited）`ip` `ua` `student` |
+| `sel_proxy_error` | 网关 | 转发到学生进程失败 | `reason` `ms` `errMessage` |
+| `sel_worker_start` / `sel_worker_stop` | 网关 | 学生进程拉起 / 按预期退出 | `ms` `live` / `reason`（idle / evicted / shutdown）`uptimeMs` |
+| `sel_worker_error` | 网关 | 学生进程崩溃或启动失败 | `message`（信号、启动期 stderr 尾巴） |
+| `sel_request_failed` | worker | 处理请求抛了没预期的错误（500） | `rid` `route` `errName` `errMessage` `errStack` |
+| `sel_client_event` | worker | 浏览器上报 | `kind` `cid` `code` `message` `route` `rid` `build` `ua` `online` |
+| `sel_ai_fallback` / `sel_ai_fallback_blocked` | worker | AI 备用通道（原有） | 见 deploy/README.md §5 |
+
+巡检（每 5 分钟）会在 `sel_request_failed` 出现、`sel_proxy_error`（error 级）超过 2 次、`sel_client_event`（error 级）超过 3 次时推送，阈值 `SEL_ALERT_REQUEST_FAILURES` / `SEL_ALERT_PROXY_ERRORS` / `SEL_ALERT_CLIENT_ERRORS`。日志量：一个活跃学生一天大约几百行、不到 100 KB；`journald.conf` 的 `SystemMaxUse=500M`（Day 0 第 4 步）够放几个月。
 
 ## 三、每天 / 每周
 

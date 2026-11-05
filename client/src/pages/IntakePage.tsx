@@ -125,7 +125,7 @@ export function IntakePage(): ReactNode {
         </IonItem>)}
         {pendingUploads.some(entry => entry.state === 'failed' && entry.retryable) ? <IonItem lines="none"><IonButton slot="end" fill="clear" onClick={() => uploader.retry()} data-testid="upload-retry">再试一次</IonButton></IonItem> : null}
       </IonList> : null}
-      {error ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
+      {error ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
       {filter.enabled && listReady && !busy && !photos.length && !error ? <div className="intake-day-empty" data-testid="day-filter-empty">
         <b>这一天没有上传的材料</b>
         <p>换一天看看，或关掉筛选看全部。</p>
