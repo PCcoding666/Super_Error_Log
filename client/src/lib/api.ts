@@ -42,7 +42,10 @@ export const api = {
   category: (id: string, values: { grade: string; subject: string; chapter: string }) => call<{ ok: true }>(`/s/api/items/${encodeURIComponent(id)}/category`, { method: 'POST', body: JSON.stringify(values) }),
   settings: () => call<SettingsResponse>('/s/api/settings'),
   grade: (grade: string) => call<{ ok: true }>('/s/api/settings/grade', { method: 'POST', body: JSON.stringify({ grade }) }),
-  intake: () => call<IntakeResponse>('/s/api/intake'),
+  intake: (query: Record<string, string> = {}) => {
+    const text = new URLSearchParams(query).toString();
+    return call<IntakeResponse>(text ? `/s/api/intake?${text}` : '/s/api/intake');
+  },
   uploadMode: () => call<UploadModeResponse>('/s/api/upload'),
   select: (photoId: string, ids: string[]) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/select`, { method: 'POST', body: JSON.stringify({ ids }) }),
   retry: (photoId: string) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/retry`, { method: 'POST', body: '{}' }),

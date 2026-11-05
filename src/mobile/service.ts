@@ -524,7 +524,7 @@ export class MobileRecognitionService {
         current.questions = result.candidates.map(candidate => {
         const id = crypto.randomUUID(); current.inventoryCandidates[id] = structuredClone(candidate);
         // v2.1a 分流：有批改痕迹（marked_wrong/corrected）的题照旧排队精读；
-        // 无痕迹/看不清的题标 unselected——不建精读工作单元、不占预算、不发模型请求，等学生勾选。
+        // 只有勾/无痕迹/看不清的题标 unselected——不建精读工作单元、不占预算、不发模型请求，等学生勾选。
         const automatic = candidate.selectionEvidence === 'marked_wrong' || candidate.selectionEvidence === 'corrected';
         if (automatic) this.newRound(current, id);
         return { id, number: candidate.number, revision: 1, status: automatic ? 'queued' as const : 'unselected' as const, selectionEvidence: candidate.selectionEvidence,

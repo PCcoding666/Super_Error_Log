@@ -12,9 +12,11 @@ import { newId } from '../db/connection.js';
 import type { MaterialStore } from '../materials/store.js';
 import type { MaterialUploads } from '../materials/uploads.js';
 import type { MaterialJobs } from '../materials/jobs.js';
+import { readCaptureSet } from '../materials/captureHints.js';
 import type { CaptureHints, MaterialRole } from '../materials/contracts.js';
 import { assignDocument, assetLinkRevision, linkRevision, relink, relinkNewAttempt, undoLink } from '../materials/links.js';
 import { answerHistory, latestFragments, linkedFragments } from '../materials/queries.js';
+import { assetPageQuery, createdAtRangeSql, DayFilterError, parseAssetDayFilter, type AssetDayFilter } from '../materials/dayFilter.js';
 import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
@@ -51,9 +53,16 @@ function hints(value: unknown): CaptureHints {
                 bad();
             result[k] = v[k];
         }
-    return result;
+    return { ...result, ...readCaptureSet(v) };
 }
 function pageNumber(value: unknown): number { const n = Number(value ?? 0); return Number.isSafeInteger(n) && n >= 0 ? Math.min(n, 100000) : 0; }
+function readDayFilter(query: Request['query']): AssetDayFilter | null {
+    try { return parseAssetDayFilter(query); }
+    catch (error) {
+        if (error instanceof DayFilterError) throw new MobileRequestError(400, 'invalid_request', error.message);
+        throw error;
+    }
+}
 function revision(value: unknown): number {
     if (!/^[0-9]+$/.test(String(value)))
         bad();
@@ -75,13 +84,21 @@ export function createMaterialsRouter(options: {
     const assetCount = (): number => (store.db.prepare('SELECT count(*) n FROM material_asset WHERE owner_id=?').get(store.studentId) as {
         n: number;
     }).n;
-    const assets = (page = 0, exclude = ''): MaterialAssetView[] => (store.db.prepare('SELECT id,hints_json,document_id,status,link_revision FROM material_asset WHERE owner_id=? AND id!=? ORDER BY created_at,rowid LIMIT 8 OFFSET ?').all(store.studentId, exclude, page * 8) as {
-        id: string;
-        hints_json: string;
-        document_id: string | null;
-        status: string;
-        link_revision: number;
-    }[]).map(a => ({ ...a, hints: JSON.parse(a.hints_json), fragments: latestFragments(store, a.id) }));
+    // 无筛选时 SQL 与原来一致（owner + 可选排除 + created_at,rowid + 每页 8 条）。date/from/to 只加 UTC 区间。
+    const assets = (page = 0, exclude = '', filter: AssetDayFilter | null = null): MaterialAssetView[] => {
+        const range = createdAtRangeSql(filter);
+        return (store.db.prepare(`SELECT id,hints_json,document_id,status,link_revision FROM material_asset WHERE owner_id=? AND id!=?${range.sql} ORDER BY created_at,rowid LIMIT 8 OFFSET ?`).all(store.studentId, exclude, ...range.params, page * 8) as {
+            id: string;
+            hints_json: string;
+            document_id: string | null;
+            status: string;
+            link_revision: number;
+        }[]).map(a => ({ ...a, hints: JSON.parse(a.hints_json), fragments: latestFragments(store, a.id) }));
+    };
+    const listedCount = (exclude = '', filter: AssetDayFilter | null = null): number => {
+        const range = createdAtRangeSql(filter);
+        return (store.db.prepare(`SELECT count(*) n FROM material_asset WHERE owner_id=? AND id!=?${range.sql}`).get(store.studentId, exclude, ...range.params) as { n: number }).n;
+    };
     /** Latest extraction job per photo: failed ones are summarized at the top, separate from photos still in progress. */
     const extractJobs = (): { failed: MaterialJobView[]; processing: number } => {
         const rows = store.db.prepare(`SELECT j.id,j.state,j.asset_id,j.error FROM material_job j WHERE j.owner_id=? AND j.kind='extract'
@@ -177,6 +194,22 @@ export function createMaterialsRouter(options: {
             bad();
         res.json(store.createCapture(req.body.requestId));
     });
+    const captureOwned = (id: string): void => {
+        if (!store.db.prepare('SELECT 1 FROM material_capture WHERE owner_id=? AND id=?').get(store.studentId, id))
+            throw new MobileRequestError(404, 'not_found', '拍摄批次不存在。');
+    };
+    r.post('/materials/captures/:id/abandon', (req, res, next) => {
+        try { const id = text(req.params.id); captureOwned(id); res.json({ ok: true, abandoned: jobs.abandonCapture(id) }); }
+        catch (error) { next(error); }
+    });
+    r.post('/materials/captures/:id/complete', (req, res, next) => {
+        try {
+            const id = text(req.params.id); captureOwned(id);
+            const release = jobs.releaseCapture(id);
+            res.json({ ok: release.accepted, accepted: release.accepted, queued: release.queued });
+        }
+        catch (error) { next(error); }
+    });
     const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 2, fields: 12, parts: 16 } }).single('photo');
     r.post('/materials/uploads', async (req, res, next) => {
         const reserve = admission ? trackUploadAdmission(admission, res) : undefined;
@@ -215,7 +248,9 @@ export function createMaterialsRouter(options: {
                 releaseUploadAdmission(admission, reserve);
         }
     });
-    r.get('/materials', (req, res) => {
+    r.get('/materials', (req, res, next) => {
+        try {
+        const filter = readDayFilter(req.query);
         const page = pageNumber(req.query.page);
         const documents = store.db.prepare('SELECT id,label FROM material_document WHERE owner_id=? ORDER BY created_at,id').all(store.studentId) as {
             id: string;
@@ -242,7 +277,8 @@ export function createMaterialsRouter(options: {
         const unplaced = [...unplacedByPhoto.values()].sort((a, b) => a.photo - b.photo).map(g => ({ ...g, items: g.items.sort((x, y) => (x.fragment.page ?? 0) - (y.fragment.page ?? 0) || x.fragment.order - y.fragment.order) }));
         const included = Number(req.query.included), skipped = Number(req.query.skipped) || 0, retried = Number(req.query.retried);
         const notice = Number.isSafeInteger(retried) && retried >= 0 && req.query.retried !== undefined ? { included: 0, skipped: 0, retried } : Number.isSafeInteger(included) && included >= 0 && req.query.included !== undefined ? { included, skipped: Number.isSafeInteger(skipped) && skipped >= 0 ? skipped : 0 } : null;
-        sendHtml(res, MaterialsPage({ namespace: draftNamespace, questions, assets: assets(page), page, hasMore: (page + 1) * 8 < assetCount(), documents, changes, jobs: extractJobs().failed, processing: extractJobs().processing, assetCount: allAssets.length, photoNumbers, unsupported, pending, unplaced, marks, notice, revision: linkRevision(store) }));
+        sendHtml(res, MaterialsPage({ namespace: draftNamespace, questions, assets: assets(page, '', filter), page, hasMore: (page + 1) * 8 < listedCount('', filter), assetPageQuery: assetPageQuery(filter), documents, changes, jobs: extractJobs().failed, processing: extractJobs().processing, assetCount: allAssets.length, photoNumbers, unsupported, pending, unplaced, marks, notice, revision: linkRevision(store) }));
+        } catch (error) { next(error); }
     });
     r.get('/materials/assets/:id/match', (req, res) => {
         const id = text(req.params.id);
@@ -284,8 +320,13 @@ export function createMaterialsRouter(options: {
         if (ids.length > 100)
             bad();
         // Hints edit display/role suggestions only. Association has separate checked actions.
+        // Capture mode is fixed when the photo is uploaded; a later label edit must not rewrite it.
         if (selected.documentId || selected.questionId || selected.attemptId)
             bad();
+        delete selected.captureMode;
+        delete selected.pageIndex;
+        delete selected.pageCount;
+        delete selected.pageKind;
         store.transaction(() => {
             for (const id of ids) {
                 assetLinkRevision(store, id);
@@ -293,10 +334,15 @@ export function createMaterialsRouter(options: {
                     hints_json: string;
                 };
                 const old = JSON.parse(row.hints_json) as CaptureHints;
+                const set: CaptureHints = {};
+                if (old.captureMode) set.captureMode = old.captureMode;
+                if (old.pageIndex) set.pageIndex = old.pageIndex;
+                if (old.pageCount) set.pageCount = old.pageCount;
+                if (old.pageKind) set.pageKind = old.pageKind;
                 delete old.roles;
                 delete old.marking;
                 delete old.label;
-                store.db.prepare('UPDATE material_asset SET hints_json=? WHERE owner_id=? AND id=?').run(JSON.stringify({ ...old, ...selected }), store.studentId, id);
+                store.db.prepare('UPDATE material_asset SET hints_json=? WHERE owner_id=? AND id=?').run(JSON.stringify({ ...old, ...selected, ...set }), store.studentId, id);
             }
         });
         result(req, res, { ok: true });
