@@ -18,6 +18,15 @@ function documentFor(store:MaterialStore,asset:Asset,clues:DocumentClues,hints:C
     if (!store.db.prepare('SELECT 1 FROM material_document WHERE owner_id=? AND id=?').get(store.studentId,explicit)) throw new Error('document not found');
     return explicit;
   }
+  // The student grouped these pages as one submission (试卷 + 答题卡). That is the document,
+  // even when the pages have no shared printed code.
+  if (hints.captureMode === 'multi') {
+    const capture = store.db.prepare('SELECT capture_id FROM material_asset WHERE owner_id=? AND id=?').get(store.studentId, asset.id) as { capture_id: string } | undefined;
+    if (!capture) throw new Error('asset not found');
+    const id = `set_${capture.capture_id}`;
+    store.db.prepare('INSERT OR IGNORE INTO material_document(id,owner_id,clues_json) VALUES (?,?,?)').run(id, store.studentId, JSON.stringify({ ...clues, setCaptureId: capture.capture_id }));
+    return id;
+  }
   // A title, label, timestamp, batch, or model confidence never proves document identity.
   const code=clues.printedCode?.trim(); if (!code) return null;
   const matches=(store.db.prepare('SELECT id,clues_json FROM material_document WHERE owner_id=?').all(store.studentId) as {id:string;clues_json:string}[])
