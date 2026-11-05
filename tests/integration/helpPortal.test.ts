@@ -101,6 +101,36 @@ describe('产品说明页文案', () => {
     for (const name of images) expect(readHelpImage(name!)?.length ?? 0).toBeGreaterThan(1000);
     expect(images.some(name => name?.startsWith('practice-'))).toBe(false);
   });
+
+  it('版式跟随学生端主题，注册与登录排在各步骤之前，窄屏目录可收起', () => {
+    expect(html).toContain('--ion-color-primary: #0066d6');
+    expect(html).toContain('--ion-font-family: -apple-system, BlinkMacSystemFont, "PingFang SC"');
+    expect(html).toContain('--ion-background-color: #f2f2f7');
+    expect(html).toContain('--ion-item-background: #ffffff');
+    expect(html).toContain('--ion-text-color: #1c1c1e');
+    expect(html).toContain('--sel-muted: #6e6e73');
+    expect(html).toContain('--sel-line: #e5e5ea');
+    expect(html).toContain('prefers-color-scheme: dark');
+    expect(html).toContain('--ion-background-color: #000000');
+    expect(html).toContain('--ion-item-background: #1c1c1e');
+    expect(html).toContain('--ion-text-color: #f5f5f7');
+    expect(html).toContain('border-radius: 22px');
+    expect(html).toContain('class="device"');
+    expect(html).toContain('class="sidenav toc"');
+    expect(html).toContain('<details class="toc-disclosure">');
+    expect(html).toContain('<summary>目录</summary>');
+    expect(html).toContain('color-scheme');
+    const at = (id: string) => html.indexOf(`id="${id}"`);
+    const order = ['product', 'start', 'home', 'capture', 'pick', 'practice', 'faq', 'contact'];
+    const positions = order.map(at);
+    for (const pos of positions) expect(pos).toBeGreaterThan(0);
+    for (let index = 1; index < positions.length; index += 1) {
+      expect(positions[index], order[index]).toBeGreaterThan(positions[index - 1] ?? -1);
+    }
+    expect(html.indexOf('href="#start"')).toBeLessThan(html.indexOf('href="#home"'));
+    expect(html.indexOf('kicker">开始使用')).toBeGreaterThan(at('product'));
+    expect(html.indexOf('kicker">开始使用')).toBeLessThan(at('home'));
+  });
 });
 
 describe('说明页在 /help/，不占用学生学习站，也不看 Host', () => {

@@ -55,9 +55,12 @@ export function readHelpImage(name: string): Buffer | null {
   return null;
 }
 
-function shot(file: string, alt: string, caption: string): string {
-  return `<figure class="shot"><img src="/help/img/${file}" width="390" height="844" alt="${alt}" loading="lazy" decoding="async"><figcaption>${caption}</figcaption></figure>`;
+/** 一步一张卡：手机框里的合成示例图，配一两句说明。 */
+function card(file: string, alt: string, title: string, text: string): string {
+  return `<article class="card"><figure class="device"><img src="/help/img/${file}" width="390" height="844" alt="${alt}" loading="lazy" decoding="async"></figure><div class="card-copy"><h3>${title}</h3><p>${text}</p></div></article>`;
 }
+
+const TOC_LINKS = `<a href="#product">产品是什么</a><a href="#start">注册与登录</a><a href="#home">添加到手机桌面</a><a href="#capture">怎么拍照</a><a href="#pick">怎么选错题</a><a href="#practice">练习</a><a href="#faq">常见问题</a><a href="#contact">联系方式</a>`;
 
 const ANDROID_DIAGRAM = `<figure class="diagram">
 <svg viewBox="0 0 640 300" role="img" aria-labelledby="android-diagram-title">
@@ -67,18 +70,18 @@ const ANDROID_DIAGRAM = `<figure class="diagram">
   <text x="32" y="43" font-size="13" fill="#171717">错题本</text>
   <circle cx="148" cy="38" r="2.4" fill="#171717"/><circle cx="156" cy="38" r="2.4" fill="#171717"/><circle cx="164" cy="38" r="2.4" fill="#171717"/>
   <text x="32" y="90" font-size="12" fill="#4d4d4d">学习页已打开</text>
-  <path d="M188 38h36" stroke="#0070f3" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M188 38h36" stroke="#0066d6" stroke-width="1.5" marker-end="url(#arrow)"/>
   <rect x="240" y="48" width="220" height="168" rx="14" fill="#fff" stroke="#eaeaea"/>
   <text x="258" y="84" font-size="16" fill="#171717">添加到桌面</text>
   <line x1="258" y1="100" x2="442" y2="100" stroke="#eaeaea"/>
   <text x="258" y="132" font-size="16" fill="#171717">安装应用</text>
   <line x1="258" y1="148" x2="442" y2="148" stroke="#eaeaea"/>
-  <text x="258" y="180" font-size="16" fill="#888">刷新</text>
+  <text x="258" y="180" font-size="16" fill="#6e6e73">刷新</text>
   <text x="480" y="92" font-size="14" fill="#4d4d4d">菜单</text>
   <text x="480" y="116" font-size="13" fill="#666">字可能是</text>
   <text x="480" y="136" font-size="13" fill="#666">上面两种</text>
   <text x="480" y="156" font-size="13" fill="#666">里的一种</text>
-  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill="#0070f3"/></marker></defs>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill="#0066d6"/></marker></defs>
 </svg>
 <figcaption>示意图。小米、红米自带浏览器和 Chrome 的菜单位置不一样，不是真机截图。</figcaption>
 </figure>`;
@@ -89,11 +92,11 @@ const IPHONE_DIAGRAM = `<figure class="diagram">
   <rect x="8" y="8" width="176" height="284" rx="22" fill="#fff" stroke="#eaeaea"/>
   <text x="32" y="40" font-size="13" fill="#171717">Safari</text>
   <rect x="20" y="250" width="152" height="28" rx="8" fill="#f6f6f6"/>
-  <path d="M96 258 v12 M90 264 h12" stroke="#0070f3" stroke-width="1.6" fill="none"/>
-  <rect x="70" y="266" width="14" height="12" rx="2" fill="none" stroke="#0070f3" stroke-width="1.6"/>
-  <path d="M188 268h36" stroke="#0070f3" stroke-width="1.5"/>
+  <path d="M96 258 v12 M90 264 h12" stroke="#0066d6" stroke-width="1.6" fill="none"/>
+  <rect x="70" y="266" width="14" height="12" rx="2" fill="none" stroke="#0066d6" stroke-width="1.6"/>
+  <path d="M188 268h36" stroke="#0066d6" stroke-width="1.5"/>
   <rect x="240" y="36" width="230" height="220" rx="16" fill="#fff" stroke="#eaeaea"/>
-  <text x="258" y="68" font-size="14" fill="#888">分享</text>
+  <text x="258" y="68" font-size="14" fill="#6e6e73">分享</text>
   <rect x="256" y="84" width="198" height="40" rx="8" fill="#f3f8ff" stroke="#c5ddff"/>
   <text x="270" y="109" font-size="16" fill="#171717">添加到主屏幕</text>
   <text x="258" y="156" font-size="15" fill="#4d4d4d">拷贝</text>
@@ -110,193 +113,445 @@ export function helpPortalHtml(): string {
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <meta name="description" content="超级错题本使用说明：注册登录、拍照收错题、查看详情。">
 <link rel="canonical" href="${PORTAL_URL}">
 <title>超级错题本</title>
 <style>
-:root{--ink:#171717;--muted:#4d4d4d;--faint:#666;--line:#eaeaea;--link:#0070f3;--bg:#fff;--sidebar:240px}
-*{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Hiragino Sans GB","Noto Sans SC","Noto Sans CJK SC","Source Han Sans SC","WenQuanYi Micro Hei","Microsoft YaHei",sans-serif;font-size:16px;line-height:1.7;letter-spacing:-.011em}
-a{color:var(--link);text-decoration:none}
-a:hover{text-decoration:underline}
-a:focus-visible{outline:2px solid var(--link);outline-offset:3px}
-.top{position:sticky;top:0;z-index:2;display:flex;align-items:baseline;gap:12px;height:64px;padding:0 28px;background:rgba(255,255,255,.92);border-bottom:1px solid var(--line);backdrop-filter:saturate(180%) blur(8px)}
-.brand{color:var(--ink);font-weight:600;font-size:15px;letter-spacing:-.02em}
-.brand:hover{text-decoration:none}
-.brand-mark{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--faint);letter-spacing:.04em}
-.layout{display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr);align-items:start}
-aside{position:sticky;top:64px;height:calc(100vh - 64px);padding:32px 24px 48px 28px;border-right:1px solid var(--line);overflow:auto}
-.side-label{margin:0 0 10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--faint);letter-spacing:.06em}
-aside a{display:block;padding:7px 0;color:var(--muted);font-size:14px}
-aside a:hover{color:var(--ink);text-decoration:none}
-body:has(#product:target) a[href="#product"],
-body:has(#home:target) a[href="#home"],
-body:has(#start:target) a[href="#start"],
-body:has(#capture:target) a[href="#capture"],
-body:has(#pick:target) a[href="#pick"],
-body:has(#practice:target) a[href="#practice"],
-body:has(#faq:target) a[href="#faq"],
-body:has(#contact:target) a[href="#contact"]{color:var(--ink);font-weight:600}
-main{max-width:760px;padding:72px 56px 96px}
-h1{margin:0 0 16px;font-size:44px;line-height:1.15;font-weight:600;letter-spacing:-.04em}
-.lede{margin:0;max-width:38em;color:var(--muted);font-size:20px;line-height:1.6}
-h2{margin:72px 0 16px;font-size:28px;line-height:1.3;font-weight:600;letter-spacing:-.03em;scroll-margin-top:88px}
-h2 .num{margin-right:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;font-weight:400;color:var(--faint);letter-spacing:0}
-h3{margin:28px 0 8px;font-size:18px;font-weight:600;letter-spacing:-.02em}
-p{margin:0 0 16px}
-.quiet{color:var(--muted)}
-ol.steps{list-style:none;margin:8px 0 0;padding:0}
-ol.steps li{padding:22px 0;border-top:1px solid var(--line)}
-ol.steps strong{display:block;margin-bottom:4px;font-size:18px;font-weight:600;letter-spacing:-.02em}
-ol.steps strong span{margin-right:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;font-weight:400;color:var(--faint)}
-.cta{display:inline-flex;align-items:center;min-height:44px;margin:8px 0 16px;padding:0 18px;border-radius:8px;background:#000;color:#fff;font-weight:500}
-.cta:hover{background:#333;text-decoration:none}
-.url{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px}
-dl.contact,dl.faq{margin:8px 0 0;border-top:1px solid var(--line)}
-dl.contact div,dl.faq div{display:grid;grid-template-columns:8em 1fr;gap:16px;padding:14px 0;border-bottom:1px solid var(--line)}
-dl.contact dt,dl.faq dt{margin:0;color:var(--muted)}
-dl.contact dd,dl.faq dd{margin:0}
-dl.contact dd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px}
-figure.shot,figure.diagram{margin:8px 0 22px}
-figure.shot img{display:block;width:min(100%,280px);height:auto;border:1px solid var(--line);border-radius:28px;background:#f6f6f6}
-figure.diagram svg{display:block;width:min(100%,560px);height:auto}
-figcaption{margin-top:8px;color:var(--faint);font-size:13px;line-height:1.5}
-footer{margin-top:80px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
-footer p{margin:0 0 6px}
-@media (max-width:800px){
-  .top{padding:0 20px}
-  .layout{grid-template-columns:1fr}
-  aside{position:static;height:auto;padding:8px 20px 12px;border-right:0;border-bottom:1px solid var(--line)}
-  .side-label{margin-top:12px}
-  aside nav{display:flex;flex-wrap:wrap;gap:4px 18px}
-  aside a{padding:8px 0}
-  main{padding:40px 20px 72px}
-  h1{font-size:36px}
-  h2{margin-top:48px;font-size:24px}
-  dl.contact div,dl.faq div{grid-template-columns:6.5em 1fr}
+/* 色值、字体、圆角与 client/src/theme.css 的 Ionic 学生端一致。 */
+:root {
+  color-scheme: light dark;
+  --ion-color-primary: #0066d6;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-shade: #005abc;
+  --ion-font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --ion-background-color: #f2f2f7;
+  --ion-item-background: #ffffff;
+  --ion-text-color: #1c1c1e;
+  --sel-muted: #6e6e73;
+  --sel-line: #e5e5ea;
+  --link: #0066d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ion-background-color: #000000;
+    --ion-item-background: #1c1c1e;
+    --ion-text-color: #f5f5f7;
+    --sel-muted: #aeaeb5;
+    --sel-line: #38383d;
+    --link: #64b5ff;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--ion-background-color);
+  color: var(--ion-text-color);
+  font-family: var(--ion-font-family);
+  font-size: 17px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--link); text-decoration: none; overflow-wrap: anywhere; }
+a:hover { text-decoration: underline; }
+a:focus-visible, summary:focus-visible, .cta:focus-visible {
+  outline: 3px solid var(--ion-color-primary);
+  outline-offset: 3px;
+}
+.skip {
+  position: absolute;
+  left: 12px;
+  top: 8px;
+  z-index: 10;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--ion-item-background);
+  transform: translateY(-160%);
+}
+.skip:focus { transform: none; }
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding: max(8px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 8px max(16px, env(safe-area-inset-left, 0px));
+  background: var(--ion-background-color);
+  background: color-mix(in srgb, var(--ion-background-color) 86%, transparent);
+  border-bottom: 1px solid var(--sel-line);
+  backdrop-filter: saturate(180%) blur(16px);
+}
+.brand { color: var(--ion-text-color); font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+.brand:hover { text-decoration: none; }
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: var(--ion-color-primary);
+  color: var(--ion-color-primary-contrast);
+  font-weight: 600;
+  font-size: 16px;
+}
+.cta:hover { background: var(--ion-color-primary-shade); text-decoration: none; }
+.layout {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 36px;
+  width: min(1120px, calc(100% - 40px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  margin: 0 auto;
+  padding-bottom: max(72px, env(safe-area-inset-bottom, 0px));
+}
+main { min-width: 0; }
+.sidenav {
+  position: sticky;
+  top: 72px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: calc(100vh - 88px);
+  overflow: auto;
+  padding: 12px 0 32px;
+}
+.toc-disclosure { display: none; }
+.toc a {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 12px;
+  color: var(--ion-text-color);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+.toc a:hover { color: var(--ion-text-color); background: rgba(120, 120, 128, .12); text-decoration: none; }
+body:has(#product:target) .toc a[href="#product"],
+body:has(#start:target) .toc a[href="#start"],
+body:has(#home:target) .toc a[href="#home"],
+body:has(#capture:target) .toc a[href="#capture"],
+body:has(#pick:target) .toc a[href="#pick"],
+body:has(#practice:target) .toc a[href="#practice"],
+body:has(#faq:target) .toc a[href="#faq"],
+body:has(#contact:target) .toc a[href="#contact"] {
+  color: var(--ion-text-color);
+  background: rgba(0, 102, 214, .12);
+}
+.kicker { margin: 0 0 8px; color: var(--link); font-size: 13px; font-weight: 600; }
+h1 {
+  margin: 0 0 12px;
+  font-size: clamp(40px, 5vw, 56px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+}
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 400px);
+  gap: 28px 40px;
+  align-items: center;
+  padding: 28px 0 8px;
+  scroll-margin-top: 72px;
+}
+.lede { margin: 0; max-width: 22em; font-size: 20px; line-height: 1.45; }
+.quiet, .note { margin: 12px 0 0; color: var(--sel-muted); font-size: 15px; line-height: 1.5; }
+.hero-actions { margin: 22px 0 0; }
+.shot-note { margin: 10px 0 0; color: var(--sel-muted); font-size: 14px; line-height: 1.4; text-align: center; }
+.cards + .group { margin-top: 14px; }
+.device {
+  margin: 0;
+  padding: 8px;
+  border-radius: 36px;
+  background: linear-gradient(180deg, #3a3a3c 0%, #1c1c1e 30%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16), 0 18px 44px rgba(0, 0, 0, .2);
+}
+.device img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 28px;
+  background: #f2f2f7;
+}
+section { scroll-margin-top: 72px; }
+.section-head { margin: 64px 0 16px; }
+.section-head h2 {
+  margin: 0 0 8px;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+.section-head p { margin: 0; max-width: 40em; }
+.url { margin-top: 8px; font-size: 15px; }
+.cards { display: flex; flex-direction: column; gap: 36px; }
+.card {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 20px 28px;
+  align-items: start;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 22px;
+}
+.card-copy {
+  align-self: start;
+  padding: 22px 24px;
+  background: var(--ion-item-background);
+  border-radius: 22px;
+}
+.cards > .card:nth-child(even):not(.card-wide):not(.card-note) {
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+}
+.cards > .card:nth-child(even):not(.card-wide):not(.card-note) .device { order: 2; }
+.card-wide { grid-template-columns: minmax(0, 1.15fr) minmax(220px, .85fr); }
+.card-note {
+  grid-template-columns: 1fr;
+  padding: 22px 24px;
+  background: var(--ion-item-background);
+}
+.card-note .card-copy { padding: 0; background: transparent; }
+.card-copy h3 { margin: 0 0 6px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
+.card-copy p { margin: 0; }
+.soon {
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 102, 214, .12);
+  color: var(--link);
+  font-size: 13px;
+  font-weight: 600;
+}
+.diagram { margin: 0; padding: 8px; border-radius: 16px; background: #f2f2f7; color: #1c1c1e; }
+.diagram svg { display: block; width: 100%; height: auto; }
+.diagram figcaption { margin: 8px 4px 0; color: #3a3a3c; font-size: 13px; line-height: 1.45; }
+.group { margin: 0; background: var(--ion-item-background); border-radius: 16px; overflow: hidden; }
+.group > div { padding: 14px 16px; }
+.group > div + div { border-top: 1px solid var(--sel-line); }
+.group dt { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
+.group dd { margin: 0; color: var(--sel-muted); font-size: 15px; line-height: 1.5; }
+footer { margin-top: 56px; color: var(--sel-muted); font-size: 15px; }
+footer p { margin: 0 0 6px; }
+@media (max-width: 860px) {
+  .layout {
+    grid-template-columns: 1fr;
+    gap: 0;
+    width: min(720px, calc(100% - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  }
+  .sidenav { display: none; }
+  .toc-disclosure { display: block; margin-top: 12px; }
+  .toc-disclosure summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 14px;
+    background: var(--ion-item-background);
+    color: var(--ion-text-color);
+    font-weight: 600;
+    font-size: 16px;
+    list-style: none;
+    cursor: pointer;
+  }
+  .toc-disclosure summary::-webkit-details-marker { display: none; }
+  .toc-disclosure summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--sel-muted);
+    border-bottom: 2px solid var(--sel-muted);
+    transform: rotate(45deg) translateY(-2px);
+  }
+  .toc-disclosure[open] summary::after { transform: rotate(225deg) translateY(-2px); }
+  .toc-disclosure .toc {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 8px;
+    padding: 6px;
+    background: var(--ion-item-background);
+    border-radius: 16px;
+  }
+  .toc-disclosure .toc a { min-height: 44px; }
+  .hero { grid-template-columns: 1fr; gap: 18px; padding-top: 18px; }
+  .device-hero { max-width: 340px; margin: 0 auto; }
+  .section-head { margin-top: 40px; }
+  .section-head h2 { font-size: 28px; }
+  .cards { gap: 28px; }
+  .card-copy { order: -1; padding: 18px; }
+  .card,
+  .card-wide,
+  .cards > .card:nth-child(even):not(.card-wide):not(.card-note) { grid-template-columns: 1fr; }
+  .cards > .card:nth-child(even):not(.card-wide):not(.card-note) .device { order: 0; }
+  .card .device { order: 0; max-width: 340px; margin: 0 auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
 }
 </style>
 </head>
 <body>
+<a class="skip" href="#product">跳到正文</a>
 <header class="top">
   <a class="brand" href="/help/">超级错题本</a>
-  <span class="brand-mark">说明</span>
+  <a class="cta" href="${STUDY_URL}">开始使用</a>
 </header>
 <div class="layout">
-  <aside>
-    <p class="side-label">目录</p>
-    <nav aria-label="目录">
-      <a href="#product">产品是什么</a>
-      <a href="#home">添加到手机桌面</a>
-      <a href="#start">注册与登录</a>
-      <a href="#capture">怎么拍照</a>
-      <a href="#pick">怎么选错题</a>
-      <a href="#practice">练习</a>
-      <a href="#faq">常见问题</a>
-      <a href="#contact">联系方式</a>
-    </nav>
-  </aside>
+  <nav class="sidenav toc" aria-label="目录">${TOC_LINKS}</nav>
   <main>
-    <h1>超级错题本</h1>
-    <p class="lede">把卷子上做错的题收进错题本，需要时再拿出来看。</p>
+    <details class="toc-disclosure">
+      <summary>目录</summary>
+      <nav class="toc" aria-label="目录">${TOC_LINKS}</nav>
+    </details>
 
-    <h2 id="product"><span class="num">01</span>产品是什么</h2>
-    <p>超级错题本帮你把卷子上做错的题收进错题本，需要时再拿出来看。</p>
-    <p class="quiet">照片里的题目由 AI 抽出，建议也由 AI 给出，最后保存什么由你决定。家长只看到完成情况和掌握程度这些汇总，看不到题目，也看不到错因。</p>
-    <p>用手机浏览器打开学习页。目前支持数学、物理、化学。第一次进入会问你读初中还是高中，以后可以在设置里改。练习功能即将推出。</p>
+    <section class="hero" id="product">
+      <div class="hero-copy">
+        <p class="kicker">产品是什么</p>
+        <h1>超级错题本</h1>
+        <p class="lede">把卷子上做错的题收进错题本，需要时再拿出来看。照片里的题目由 AI 抽出，建议也由 AI 给出，最后保存什么由你决定。</p>
+        <p class="quiet">家长只看到完成情况和掌握程度这些汇总，看不到题目，也看不到错因。目前支持数学、物理、化学。</p>
+        <p class="hero-actions"><a class="cta" href="${STUDY_URL}">开始使用</a></p>
+      </div>
+      <div class="hero-visual">
+        <figure class="device device-hero">
+          <img src="/help/img/notebook-list.webp" width="390" height="844" alt="合成示例。错题本按学科列出收进来的题，右上角可以筛选，左下角可以搜索。" loading="eager" fetchpriority="high" decoding="async">
+        </figure>
+        <p class="shot-note">合成示例。题按学科列在错题本里，右上角可以筛选，左下角可以搜索。</p>
+      </div>
+    </section>
 
-    <h2 id="home"><span class="num">02</span>添加到手机桌面</h2>
-    <p>错题本是网页，同时带了主屏幕用的清单（Web App Manifest）、图标和离线壳。学习页地址：</p>
-    <p class="url"><a href="${STUDY_URL}">${STUDY_URL}</a></p>
-    <p>请用系统浏览器打开，不要在微信里添加。微信里先点右上角「…」，选「在浏览器打开」或「在 Safari 中打开」。设置里也有一页「添加到主屏幕」，写的是 iPhone 的步骤。</p>
-    ${shot('install.webp', '设置里的添加到主屏幕说明，只写了 Safari', '合成示例。这是应用里「设置 → 添加到主屏幕」打开的页面，目前只写了 iPhone Safari。')}
+    <section id="start">
+      <div class="section-head">
+        <p class="kicker">开始使用</p>
+        <h2>注册与登录</h2>
+        <p>用邀请码进入自己的错题本。没有密码，也不发短信。</p>
+      </div>
+      <div class="cards">
+        ${card('register.webp', '合成示例。注册页：姓名、手机号和 4 位找回码', '注册', '打开 <a href="' + STUDY_URL + 'register">注册页</a>，填姓名和手机号，自己设一个 4 位数字找回码（不要用 1234、0000 这种）。老师给了班级注册码才会多出这一格；不用密码，也不发短信，姓名可以写化名，手机号可以填家长的。')}
+        ${card('register-done.webp', '合成示例。注册成功页，邀请码只完整显示这一次', '保存邀请码', '注册成功后会显示你的 12 位邀请码，只在这一页完整显示一次。请截图或点「复制邀请码」，不要发给别人；邀请码 60 天内可以反复登录。')}
+        ${card('stage.webp', '合成示例。第一次选择初中或高中', '选学段', '第一次进入会问初中还是高中，以后可以在设置里改。错题按这个学段整理章节，目前只支持数学、物理、化学。')}
+        ${card('login.webp', '合成示例。输入 12 位邀请码的登录页', '登录', '打开 <a href="' + STUDY_URL + '">学习页</a>，输入邀请码，点「进入我的错题本」。短横线、空格、大小写都不用管，登录后常用的话不用每次输。')}
+        ${card('settings.webp', '合成示例。设置页：学段、练习即将推出、添加到主屏幕、我的邀请码', '设置', '登录后打开设置，可以改学段，也能进入「我的邀请码」。练习一行写着「即将推出」。')}
+        ${card('account.webp', '合成示例。我的邀请码页面，可以复制或重新生成', '查看或换邀请码', '在「设置 → 我的邀请码」可以查看、复制，或重新生成。重新生成后旧码立刻作废，其他设备要用新码登录，学习记录都在；快到期时设置页会提醒你换码。')}
+      </div>
+    </section>
 
-    <h3>安卓（小米、红米浏览器和 Chrome）</h3>
-    <ol class="steps">
-      <li><strong><span>01</span>用浏览器打开</strong>小米、红米用自带浏览器或 Chrome，打开上面的学习页并登录。</li>
-      <li><strong><span>02</span>打开菜单</strong>自带浏览器一般在菜单里找「添加到桌面」。Chrome 点右上角「⋮」，找「添加到主屏幕」；如果写成「安装应用」，点它也行。</li>
-      <li><strong><span>03</span>从桌面图标打开</strong>图标名是「错题本」。安卓上的清单故意用浏览器方式打开（manifest 的 display 是 browser），桌面图标会进浏览器标签，不会变成一个单独的全屏壳。这样点相册和拍照时，系统选择器才能弹出来。如果某个「添加到桌面」的壳打不开相册，改用 Chrome 或系统浏览器打开学习页，再添加一次。</li>
-    </ol>
-    ${ANDROID_DIAGRAM}
+    <section id="home">
+      <div class="section-head">
+        <p class="kicker">放到桌面</p>
+        <h2>添加到手机桌面</h2>
+        <p>错题本是网页，带了主屏幕清单、图标和离线壳。请用系统浏览器打开，不要在微信里添加：微信里先点右上角「…」，选「在浏览器打开」或「在 Safari 中打开」。</p>
+        <p class="url"><a href="${STUDY_URL}">${STUDY_URL}</a></p>
+      </div>
+      <div class="cards">
+        ${card('install.webp', '合成示例。设置里的添加到主屏幕说明，只写了 Safari', '应用里的说明', '设置里也有一页「添加到主屏幕」，目前只写了 iPhone Safari 的步骤。')}
+        <article class="card card-wide">
+          ${ANDROID_DIAGRAM}
+          <div class="card-copy">
+            <h3>安卓（小米、红米浏览器和 Chrome）</h3>
+            <p>用自带浏览器或 Chrome 打开学习页并登录，在菜单里点「添加到桌面」或「安装应用」，图标名是「错题本」。安卓上的清单故意用浏览器方式打开（manifest 的 display 是 browser），桌面图标会进浏览器标签，这样点相册和拍照时系统选择器才能弹出来；如果某个壳打不开相册，改用 Chrome 或系统浏览器再添加一次。</p>
+          </div>
+        </article>
+        <article class="card card-wide">
+          ${IPHONE_DIAGRAM}
+          <div class="card-copy">
+            <h3>iPhone（Safari）</h3>
+            <p>必须用 Safari：点屏幕下方的「分享」（方框加向上箭头），往下找「添加到主屏幕」，再点右上角「添加」，图标名是「错题本」。iPhone 上清单是独立应用方式（display 为 standalone，页面也标记了可添加到主屏幕），从主屏幕打开是全屏；如果又要你登录，输入自己的邀请码，学习记录都在。</p>
+          </div>
+        </article>
+      </div>
+      <p class="note">清单地址是 /s/manifest.webmanifest，图标和名称都是「错题本」。Service Worker 只缓存页面外壳，不缓存你的错题和照片；没网时打不开新内容，已经传上去的都在服务器上。</p>
+    </section>
 
-    <h3>iPhone（Safari）</h3>
-    <ol class="steps">
-      <li><strong><span>01</span>用 Safari 打开</strong>必须是 Safari。微信里先点右上角「…」→「在 Safari 中打开」。</li>
-      <li><strong><span>02</span>分享</strong>点屏幕下方的「分享」（方框里一个向上的箭头）。</li>
-      <li><strong><span>03</span>添加到主屏幕</strong>往下找「添加到主屏幕」，点它，再点右上角「添加」。图标名是「错题本」。</li>
-      <li><strong><span>04</span>以后从图标打开</strong>iPhone 上清单是独立应用方式（display 为 standalone，页面也标记了可添加到主屏幕）。从主屏幕打开是全屏，像一个 App。如果又要你登录，输入自己的邀请码，学习记录都在。</li>
-    </ol>
-    ${IPHONE_DIAGRAM}
-    <p class="quiet">清单地址是 /s/manifest.webmanifest，图标和名称都是「错题本」。Service Worker 只缓存页面外壳，不缓存你的错题和照片。没网时打不开新内容；已经传上去的都在服务器上。</p>
+    <section id="capture">
+      <div class="section-head">
+        <p class="kicker">拍照</p>
+        <h2>怎么拍照</h2>
+        <p>登录后的错题本右下角有两个圆钮：上面是拍照，下面是相册，上方还有「单页 / 多页」。还没有错题时，中间也有「去拍照」和「从相册选择」。录入页底部同样有拍照、相册和模式条。</p>
+      </div>
+      <div class="cards">
+        ${card('notebook-empty.webp', '合成示例。空错题本，底部有单页 / 多页和拍照圆钮', '选拍摄模式', '「单页」拍一张或从相册选图后立刻上传；相册仍可一次选多张，每张按单独一页处理。「多页」适合一套卷子有好几页：先留在预览条里，可标「试卷」或「答题卡」，可删掉某一张，点「完成」后整组一起上传，一次最多 8 页；点「放弃这组」会清空还没传的预览。')}
+        ${card('intake-auto.webp', '合成示例。录入页，底部有单页 / 多页、拍照和从相册选择', '拍卷子', '拍题目、你的作答、老师的批改和答案页，放平、拍全、光线均匀，顺序不限，之后还能补拍。选好后进入「录入」，AI 在后台找题，不用一直停在这一页；传完点「完成」回到错题本，录入页还可以按上传日筛选。')}
+      </div>
+      <p class="note">同一张图只保存一次。微信里如果选不了相册，先换到系统浏览器或 Safari 再拍。小米、红米手机点相册圆钮或「从相册选择」即可选图。</p>
+    </section>
 
-    <h2 id="start"><span class="num">03</span>注册与登录</h2>
-    <ol class="steps">
-      <li><strong><span>01</span>注册</strong>用手机浏览器打开 <a href="${STUDY_URL}register">${STUDY_URL}register</a>，填姓名和手机号，自己设一个 4 位数字找回码（不要用 1234、0000 这种）。老师给了班级注册码的，页面上会出现这一格，一并填上；没给就没有这一格，不用找。不用密码，也不发短信。姓名可以写化名，手机号可以填家长的。</li>
-      <li><strong><span>02</span>保存邀请码</strong>注册成功后会显示你的 12 位邀请码，只在这一页完整显示一次，请截图或点「复制邀请码」，不要发给别人。邀请码 60 天内可以反复登录。</li>
-      <li><strong><span>03</span>选学段</strong>第一次进入会问初中还是高中。错题按这个学段整理章节。目前只支持数学、物理、化学。</li>
-      <li><strong><span>04</span>登录</strong>打开 <a href="${STUDY_URL}">${STUDY_URL}</a>，输入邀请码，点「进入我的错题本」。短横线、空格、大小写都不用管。登录后常用的话不用每次输。</li>
-      <li><strong><span>05</span>查看或换邀请码</strong>登录后打开「设置 → 我的邀请码」，可以查看、复制，或重新生成。重新生成后旧码立刻作废，其他设备要再用新码登录，学习记录都在。快到期时设置页会提醒你换码。</li>
-    </ol>
-    ${shot('register.webp', '注册页：姓名、手机号、4 位找回码', '合成示例。注册页。老师发了班级注册码时，姓名上面会多出一格。')}
-    ${shot('register-done.webp', '注册成功页，邀请码只显示这一次', '合成示例。图里的邀请码是临时编出来的，不能用来登录。请保存你自己的那一串。')}
-    ${shot('stage.webp', '第一次选择初中或高中', '合成示例。第一次进入时选学段。')}
-    ${shot('login.webp', '输入 12 位邀请码的登录页', '合成示例。登录页。短横线和空格可以保留。')}
-    ${shot('settings.webp', '设置页：学段、练习即将推出、添加到主屏幕、我的邀请码', '合成示例。登录后的设置。练习一行写着「即将推出」，账号一节里有「我的邀请码」。')}
-    ${shot('account.webp', '我的邀请码页面，可以复制或重新生成', '合成示例。图里的邀请码不能用来登录。重新生成后旧码作废。')}
-    <p><a class="cta" href="${STUDY_URL}">开始使用</a></p>
-    <p class="url"><a href="${STUDY_URL}">${STUDY_URL}</a></p>
+    <section id="pick">
+      <div class="section-head">
+        <p class="kicker">收题</p>
+        <h2>怎么选错题</h2>
+        <p>收进来的题按学科列在错题本里，右上角可以筛选，左下角可以搜索。</p>
+      </div>
+      <div class="cards">
+        ${card('intake-pick.webp', '合成示例。录入页：勾出没有批改痕迹的题', '收进错题本', '老师打了叉、或能看出批改痕迹的题会自动收进来，录入页写着「已加入错题本」；不相关的，在那一行上左滑，点「删除」。这页没有批改痕迹时，页面写「勾出做错的题」，做错或没把握的勾上，再点「加入 N 道」，做对的不用勾。')}
+        ${card('item-detail.webp', '合成示例。题目详情，上面是整张原图', '看整张原图', '在错题本点进题目，最上面是你拍的整张照片，点开可以放大，下面是识别出的题目文字。字认错了，点「识别错了？改」，以照片为准。')}
+        ${card('item-menu.webp', '合成示例。题目详情右上角菜单：改题目文字、不是错题', '改错字或移出', '右上角「…」里可以修改分类，或改题目文字。这道不该在错题本里，点「不是错题，移除」。')}
+        ${card('item-answer.webp', '合成示例。详情下半：章节、正确答案、错因备注', '答案和备注', '详情往下还有你写的、批改痕迹、章节与知识点、正确答案和错因备注。可以拍照录入答案，也可以打字或按一下说；AI 给出的答案和解题过程标为仅供参考。')}
+      </div>
+    </section>
 
-    <h2 id="capture"><span class="num">04</span>怎么拍照</h2>
-    <p>登录后的错题本右下角有两个圆钮：上面是拍照，下面是相册。圆钮上方还有「单页 / 多页」拍摄模式条。还没有错题时，中间也有「去拍照」和「从相册选择」。录入页底部同样有拍照、相册和模式条。</p>
-    <ol class="steps">
-      <li><strong><span>01</span>选拍摄模式</strong>「单页」：拍一张或从相册选图后立刻上传。相册仍可一次选多张，每张按单独一页处理。「多页」：适合一套卷子有好几页；每拍一张先留在本页的预览条里，可标「试卷」或「答题卡」，可删掉某一张；点「完成」后整组一起上传，一次最多 8 页。点「放弃这组」会清空还没传的预览。</li>
-      <li><strong><span>02</span>拍卷子</strong>拍题目、你的作答、老师的批改和答案页，顺序不限，之后还能补拍。放平、拍全、光线均匀。小米、红米手机点相册圆钮或「从相册选择」即可选图。</li>
-      <li><strong><span>03</span>等它找题</strong>选好后会进入「录入」。照片已经在传，AI 在后台找题，不用一直停在这一页。传完点「完成」回到错题本。录入页还可以按上传日筛选，只看某一天传的材料。</li>
-    </ol>
-    ${shot('notebook-empty.webp', '空错题本，底部有单页 / 多页和拍照圆钮', '合成示例。还没有错题时的错题本。右下角圆钮上方是「单页 / 多页」模式条。')}
-    ${shot('intake-auto.webp', '录入页，底部有单页 / 多页、拍照和从相册选择', '合成示例。录入页可按上传日筛选；底部有「单页 / 多页」、拍照和从相册选择。')}
-    <p class="quiet">同一张图只保存一次。微信里如果选不了相册，先换到系统浏览器或 Safari 再拍。</p>
+    <section id="practice">
+      <div class="section-head">
+        <p class="kicker">还没开放</p>
+        <h2>练习</h2>
+      </div>
+      <article class="card card-note">
+        <div class="card-copy">
+          <p class="soon">即将推出</p>
+          <p>设置里的「练习」一行写着「即将推出」。当前学生端没有练习入口，也不提供打印练习、纸上记结果或拍照交练习。注册与登录里的设置截图可以看到这一行。</p>
+        </div>
+      </article>
+    </section>
 
-    <h2 id="pick"><span class="num">05</span>怎么选错题</h2>
-    <ol class="steps">
-      <li><strong><span>01</span>收进错题本</strong>老师打了叉、或能看出批改痕迹的题，会自动收进来。录入页写着「已加入错题本」。不相关的，在那一行上左滑，点「删除」。</li>
-      <li><strong><span>02</span>自己勾</strong>这页没有批改痕迹时，页面写「勾出做错的题」。做错或没把握的勾上，再点「加入 N 道」。做对的不用勾。</li>
-      <li><strong><span>03</span>看整张原图</strong>在错题本点进题目。详情最上面是你拍的整张照片，点开可以放大。下面是识别出的题目文字。</li>
-      <li><strong><span>04</span>改错字或移出</strong>字认错了，点「识别错了？改」，或右上角「…」里的「改题目文字」。以照片为准。这道不该在错题本里，点「…」里的「不是错题，移除」。详情往下还有你写的、批改痕迹、章节与知识点、正确答案（可拍照录入答案）和错因备注（可以打字，也可以按一下说）。</li>
-    </ol>
-    ${shot('intake-pick.webp', '录入页：勾出没有批改痕迹的题', '合成示例。这页没有批改痕迹时，勾上做错的题，再点「加入」。')}
-    ${shot('notebook-list.webp', '错题本列表', '合成示例。收进来的题按学科列在错题本里。右上角可以筛选，左下角可以搜索。')}
-    ${shot('item-detail.webp', '题目详情，上面是整张原图', '合成示例。详情页展示整张原图，题干旁边可以改识别结果。')}
-    ${shot('item-menu.webp', '题目详情右上角菜单：改题目文字、不是错题', '合成示例。右上角「…」：修改分类、改题目文字、不是错题就移除。')}
-    ${shot('item-answer.webp', '详情下半：章节、正确答案、错因备注', '合成示例。可以拍照录入答案，也可以自己写或说出备注。AI 给出的答案和解题过程标为仅供参考。')}
+    <section id="faq">
+      <div class="section-head">
+        <p class="kicker">答疑</p>
+        <h2>常见问题</h2>
+      </div>
+      <div class="cards">
+        ${card('recover.webp', '合成示例。用姓名、手机号和找回码找回邀请码', '忘了邀请码', '打开 <a href="' + STUDY_URL + 'recover">找回页</a>，用注册时的姓名、手机号和找回码换一个新码，学习记录都在，旧码作废。对不上时页面不会告诉你是哪一项错了；没设过找回码，或找回码也忘了，找老师重发。')}
+      </div>
+      <dl class="group">
+        <div><dt>换手机</dt><dd>用同一个邀请码在新手机登录，学习记录都在。</dd></div>
+        <div><dt>忘了邀请码</dt><dd>打开 <a href="${STUDY_URL}recover">${STUDY_URL}recover</a>，用注册时的姓名、手机号和找回码换一个新码，记录都在，旧码作废。没设过找回码，或找回码也忘了，找老师重发。</dd></div>
+        <div><dt>打不开相册</dt><dd>安卓上如果桌面图标打开的是一个没有文件选择器的壳，点相册没反应。改用 Chrome 或系统浏览器打开学习页再拍。小米、红米请点页面上的相册入口。</dd></div>
+        <div><dt>AI 认错字</dt><dd>题目详情里点「识别错了？改」，或右上角「…」→「改题目文字」。以照片为准。</dd></div>
+        <div><dt>不是错题</dt><dd>题目详情右上角「…」→「不是错题，移除」。录入页里不相关的题可以左滑删除。</dd></div>
+        <div><dt>重复照片</dt><dd>同一张图只保存一次。</dd></div>
+        <div><dt>微信里打开</dt><dd>可以先看，但添加到桌面和相册都更稳妥的做法是：点右上角「…」，在系统浏览器或 Safari 里打开，再用邀请码登录一次。</dd></div>
+      </dl>
+    </section>
 
-    <h2 id="practice"><span class="num">06</span>练习</h2>
-    <p>设置里的「练习」一行写着「即将推出」。当前学生端没有练习入口，也不提供打印练习、纸上记结果或拍照交练习。上面注册与登录一节的设置截图里可以看到这一行。</p>
-
-    <h2 id="faq"><span class="num">07</span>常见问题</h2>
-    <dl class="faq">
-      <div><dt>换手机</dt><dd>用同一个邀请码在新手机登录，学习记录都在。</dd></div>
-      <div><dt>忘了邀请码</dt><dd>打开 <a href="${STUDY_URL}recover">${STUDY_URL}recover</a>，用注册时的姓名、手机号和找回码换一个新码，记录都在，旧码作废。没设过找回码，或找回码也忘了，找老师重发。</dd></div>
-      <div><dt>打不开相册</dt><dd>安卓上如果桌面图标打开的是一个没有文件选择器的壳，点相册没反应。改用 Chrome 或系统浏览器打开学习页再拍。小米、红米请点页面上的相册入口。</dd></div>
-      <div><dt>AI 认错字</dt><dd>题目详情里点「识别错了？改」，或右上角「…」→「改题目文字」。以照片为准。</dd></div>
-      <div><dt>不是错题</dt><dd>题目详情右上角「…」→「不是错题，移除」。录入页里不相关的题可以左滑删除。</dd></div>
-      <div><dt>重复照片</dt><dd>同一张图只保存一次。</dd></div>
-      <div><dt>微信里打开</dt><dd>可以先看，但添加到桌面和相册都更稳妥的做法是：点右上角「…」，在系统浏览器或 Safari 里打开，再用邀请码登录一次。</dd></div>
-    </dl>
-    ${shot('recover.webp', '用姓名、手机号和找回码找回邀请码', '合成示例。找回页。对不上时页面不会告诉你是哪一项错了。')}
-
-    <h2 id="contact"><span class="num">08</span>联系方式</h2>
-    <dl class="contact">
-      <div><dt>邮箱</dt><dd>待补充</dd></div>
-      <div><dt>微信</dt><dd>待补充</dd></div>
-    </dl>
+    <section id="contact">
+      <div class="section-head">
+        <p class="kicker">联系</p>
+        <h2>联系方式</h2>
+      </div>
+      <dl class="group">
+        <div><dt>邮箱</dt><dd>待补充</dd></div>
+        <div><dt>微信</dt><dd>待补充</dd></div>
+      </dl>
+    </section>
 
     <footer>
       <p><a href="${GITHUB_URL}">GitHub</a></p>
       <p class="url"><a href="${GITHUB_URL}">${GITHUB_URL}</a></p>
       <p>超级错题本 · Super Error Log</p>
+      <p>配图为合成示例，不含学生数据。</p>
     </footer>
   </main>
 </div>
@@ -304,7 +559,6 @@ footer p{margin:0 0 6px}
 </html>
 `;
 }
-
 function pathnameOf(originalUrl: string): string {
   const queryAt = originalUrl.indexOf('?');
   return queryAt >= 0 ? originalUrl.slice(0, queryAt) : originalUrl;
