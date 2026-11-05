@@ -61,6 +61,64 @@ describe('stemBlocks', () => {
   });
 });
 
+describe('pipe rows without a delimiter row (what the model wrote on a real photo)', () => {
+  const REAL = [
+    '(II)水电站希望安装的发电机尽可能运行，但每年发电机最多可运行台数受年入流量X限制，并有如下关系：',
+    '年入流量X | 40 < X < 80 | 80 ≤ X < 120 | X > 120',
+    '发电机最多可运行台数 | 1 | 2 | 3',
+    '若某台发电机运行，则该台年利润为5000万元；若某台发电机未运行，则该台年亏损800万元。',
+  ].join('\n');
+
+  it('draws them as a table, first row as the header', () => {
+    const blocks = stemBlocks(REAL);
+    expect(blocks.map(block => block.kind)).toEqual(['text', 'table', 'text']);
+    expect(blocks[1]).toEqual({
+      kind: 'table',
+      head: ['年入流量X', '40 < X < 80', '80 ≤ X < 120', 'X > 120'],
+      align: [null, null, null, null],
+      rows: [['发电机最多可运行台数', '1', '2', '3']],
+    });
+    expect(blocks[2]).toEqual({ kind: 'text', text: '若某台发电机运行，则该台年利润为5000万元；若某台发电机未运行，则该台年亏损800万元。' });
+  });
+
+  it('also accepts outer pipes and more rows', () => {
+    const [table] = stemBlocks('| x | 1 | 2 |\n| y | 3 | 4 |\n| z | 5 | 6 |');
+    expect(table).toMatchObject({ kind: 'table', head: ['x', '1', '2'], rows: [['y', '3', '4'], ['z', '5', '6']] });
+  });
+
+  it('stays text for divisibility, absolute values, two-column lists and a single row', () => {
+    for (const text of [
+      '(1) 若 2 | a\n(2) 若 3 | b',
+      '求 |x-1|+|y| 的最小值。\n|x-1| = |y+2|',
+      'a | b\nc | d',
+      '年入流量X | 40 | 80 | 120',
+      '年入流量X | 40 | 80\n没有第二行',
+      '行一 | 1 | 2\n行二 | 3',
+      '(1) 求 | x | + | y | 的最小值。\n(2) 求 | x | - | y | 的最大值。',
+      '求 | x - 1 | 的最小值。\n求 | y + 1 | 的最大值。',
+      '① 若 | a | = | b |\n② 若 | c | = | d |',
+    ]) {
+      expect(stemBlocks(text), text).toEqual([{ kind: 'text', text }]);
+    }
+  });
+
+  it('keeps spaced absolute-value sub-questions, and their excerpt, intact', () => {
+    const text = '(1) 求 | x | + | y | 的最小值。\n(2) 求 | x | - | y | 的最大值。';
+    expect(withoutTableRows(text)).toBe(text);
+    expect(questionExcerpt(text)).toBe(text);
+  });
+
+  it('still draws a data row whose first cell is a decimal or starts with a digit', () => {
+    const [table] = stemBlocks('x | 1 | 2.5 | 3\n3.5 | 4 | 5 | 6');
+    expect(table).toMatchObject({ kind: 'table', rows: [['3.5', '4', '5', '6']] });
+  });
+
+  it('keeps the table out of list excerpts', () => {
+    expect(withoutTableRows(REAL)).not.toContain('|');
+    expect(withoutTableRows(REAL)).toContain('若某台发电机运行');
+  });
+});
+
 describe('withoutTableRows / questionExcerpt', () => {
   it('drops the whole table, including header and delimiter, but keeps prose', () => {
     expect(withoutTableRows(QUESTION_10).split('\n')).toEqual([
