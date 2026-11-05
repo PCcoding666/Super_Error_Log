@@ -57,3 +57,20 @@ describe('/admin/ per-provider columns', () => {
     expect(html).toContain('今天的备用额度已用完');
   });
 });
+
+describe('/admin/ live panel', () => {
+  it('shows people active now, open notebooks, AI in use and queued, and who is waiting outside; absent without a gateway', async () => {
+    const report = await readAdminReport(registry, parseAdminFilters({}));
+    const peaks = { peakLive: 3, peakActive: 9, peakAiInUse: 1, peakAiWaiting: 7, capacityRejections: 4, rejectedStudents: 2 };
+    const html = renderToStaticMarkup(AdminDashboard(report, { at: '2026-10-24T02:00:00.000Z', activeStudents: 5, live: 3, maxLive: 3, aiLimit: 1, aiInUse: 1, aiWaiting: 2,
+      aiAverageMs: 20_000, waitingOutside: 1, last5m: peaks, today: { ...peaks, day: '2026-10-24', since: '2026-10-24T00:00:00.000Z' } }) as React.ReactElement);
+    expect(html).toContain('<h2>现在</h2>');
+    expect(html).toMatch(/data-testid="live-active">5</);
+    expect(html).toMatch(/data-testid="live-workers">3 \/ 3</);
+    expect(html).toMatch(/data-testid="live-ai">1 \/ 1</);
+    expect(html).toMatch(/data-testid="live-ai-waiting">2</);
+    expect(html).toContain('名额满被挡：最近 5 分钟 2 人，今天 2 人');
+    expect(html).toContain('今天最多 9');
+    expect(renderToStaticMarkup(AdminDashboard(report) as React.ReactElement)).not.toContain('data-testid="live-now"');
+  });
+});

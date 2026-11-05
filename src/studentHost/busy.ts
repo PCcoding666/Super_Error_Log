@@ -25,6 +25,11 @@ export class CapacityWaitlist {
     return this.seen.size - 1;
   }
   admitted(studentId: string): void { this.seen.delete(studentId); }
+  /** 现在还在等的人数（实时状态用）。 */
+  waiting(): number {
+    this.prune();
+    return this.seen.size;
+  }
 }
 
 export interface CapacityFacts { snapshot: CapacitySnapshot; othersWaiting: number }

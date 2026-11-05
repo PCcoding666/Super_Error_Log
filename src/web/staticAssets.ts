@@ -8,6 +8,7 @@ import { CAPTURE_EXAMPLE_PAGE, CAPTURE_EXAMPLE_QUESTION } from './captureExample
 import { OfflinePage } from './views/today.js';
 import { sendHtml } from '../views/render.js';
 import { sendClientAsset } from './clientApp.js';
+import { isAndroidAgent } from './inAppBrowser.js';
 
 function cacheFor(response: Response, value: string): void {
   response.setHeader('cache-control', value);
@@ -18,9 +19,11 @@ function cacheFor(response: Response, value: string): void {
 export function registerStaticAssets(router: Router): void {
   // 学生端单页应用的指纹资源（Ionic React 构建产物），网关和 worker 都公开下发。
   router.get('/app/assets/:file', sendClientAsset);
-  router.get('/manifest.webmanifest', (_request, response) => {
+  // 安卓拿到的 display 是 browser（桌面图标壳没有文件选择器，见 assets.ts manifest）；按 UA 分发，所以要 Vary。
+  router.get('/manifest.webmanifest', (request, response) => {
     cacheFor(response, 'no-cache');
-    response.type('application/manifest+json').send(JSON.stringify(manifest()));
+    response.vary('user-agent');
+    response.type('application/manifest+json').send(JSON.stringify(manifest(isAndroidAgent(request.headers['user-agent']) ? 'browser' : 'standalone')));
   });
   router.get('/sw.js', (_request, response) => {
     cacheFor(response, 'no-cache');

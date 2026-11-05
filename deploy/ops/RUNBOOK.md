@@ -23,12 +23,29 @@
 | 15 | AI 按量付费熔断（应用内） | 在 `/etc/super-error-log/env` 加 `SEL_AI_FALLBACK_DAILY_CALLS=200`、`SEL_AI_FALLBACK_DAILY_TOKENS=2000000`（缺省就是这两个值；`0` = 完全不用备用）。改完要重启服务：`systemctl restart super-error-log`。效果看 `/admin/` →「调用性能 → 按调用线路」 |
 | 16 | 首批规模 | 首批 ≤ 8 人；你预先 `sel-admin create` 发码给老师，不让全班当场注册；错峰使用 |
 
+## 一之二、只先开手机告警（备份以后再装）
+
+不装每日备份时，按下面做，手机能收到告警、日报和实时人数；以后装备份时删掉 `SEL_OPS_SKIP=backup`，再从第一节第 7 步做起。
+
+1. 安装脚本和定时器（不启用）：`bash /opt/super-error-log/current/deploy/ops/install.sh --dry-run` → 看计划 → 去掉 `--dry-run` 再跑一次。
+2. `/etc/super-error-log/ops.env` 加一行 `SEL_OPS_SKIP=backup`（不然每小时提醒「还没有任何每日备份记录」）。
+3. `/etc/super-error-log/alert.env`（0600）写 `SEL_ALERT_BARK_KEY=<key>`。key 在 Bark App「服务」页的推送链接 `https://api.day.app/<key>/` 里；**不是**设置页的 Device Token。
+4. 先演练：`set -a; . /etc/super-error-log/ops.env; . /etc/super-error-log/alert.env; set +a; /opt/super-error-log/node-v24/bin/node /usr/local/lib/sel-ops/sel-healthcheck.mjs check --dry-run`；再真发一次日报：`systemctl start sel-daily-report.service`，手机应收到「错题本日报」。
+5. 只启用巡检和日报：`systemctl enable --now sel-healthcheck.timer sel-daily-report.timer`（**不要**启用 `sel-backup.timer`）；`systemctl list-timers 'sel-*'`。
+
+实时人数和 AI 并发：
+- `/admin/` 顶部「现在」：在用的人（最近 5 分钟打开过页面）、打开的错题本 x/上限、AI 正在做 x/上限、AI 排队、在门外等的人，以及今天的最高值。刷新页面更新。
+- 每 5 分钟巡检：最近 5 分钟有同学因为名额满进不去（`SEL_ALERT_REJECTED_STUDENTS`，缺省 1 人）或 AI 排队到 10 件（`SEL_ALERT_AI_WAITING`）就推送；每条推送末尾带一行「现在：在用 N 人，错题本 x/3，AI 在做 x/1、排队 y」。
+- 22:30 日报多一行「今天高峰」。数字只在内存里，服务重启后「今天」从重启时算起。
+
 ## 二、出事了怎么办
 
 | 推送里写的 | 先做 |
 |---|---|
 | 服务没有在运行 / 刚自动重启 | `systemctl status super-error-log`；`journalctl -u super-error-log -n 100 --no-pager \| grep -E 'sel_worker_error\|Error'` |
 | 学生进程错误 | `journalctl -u super-error-log --since -30min --no-pager \| grep sel_worker_error`（只有学生 ID 前 8 位，`sel-admin list` 对照） |
+| 有同学因为名额满进不去 / AI 排队 | 先看 `/admin/`「现在」。偶尔一下是正常高峰；连续出现说明同时用的人超过了 `SEL_MAX_LIVE_WORKERS`，等首批跑一周看日报高峰再决定要不要加机器或调上限 |
+| 实时人数没有更新 | 同「服务没有在运行」；服务在跑却不更新，`ls -l /var/lib/super-error-log/student-host/live-status.json` 看时间 |
 | 改走按量付费 N 次 / 备用通道已到上限 | Token Plan 在出问题：看 `/admin/` 按调用线路的失败率；百炼控制台看 Token Plan 额度。确需放宽，改 env 里的两个上限后重启服务（会短暂停服）；上限到了学生会看到「AI 服务今天有点忙…最晚明天恢复」，照片不丢 |
 | AI 失败率高 / 队列积压 | `/admin/` 失败原因；排队多是正常高峰就等；持续 30 分钟不降再查日志 |
 | 磁盘只剩 N GiB | `du -sh /var/backups/* /opt/super-error-log/releases /var/lib/super-error-log`；低于 3 GiB 会拒收上传，低于 2 GiB 不能发布 |

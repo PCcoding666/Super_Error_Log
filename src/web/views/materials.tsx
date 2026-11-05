@@ -280,6 +280,8 @@ export function MaterialsPage(props: {
   assets: MaterialAssetView[];
   page: number;
   hasMore: boolean;
+  /** 原图分页链接上要保留的筛选（`&date=` 或 `&from=&to=`）。没有筛选时不传，链接仍是 `?page=`。 */
+  assetPageQuery?: string;
   documents: { id: string; label: string | null }[];
   changes: { id: string }[];
   jobs: MaterialJobView[];
@@ -344,8 +346,8 @@ export function MaterialsPage(props: {
             state={unsupported.find(u => u.assetId === a.id) ? `${unsupported.find(u => u.assetId === a.id)!.subject} · ${UNSUPPORTED_SUBJECT_MESSAGE}` : failedAssets.has(a.id) ? '没整理成功，可在页首重新整理' : undefined} />)}
           {props.page > 0 || props.hasMore ? (
             <div className="inset-group">
-              {props.page > 0 ? <NavRow href={`/s/materials?page=${props.page - 1}`}>上一页原图</NavRow> : null}
-              {props.hasMore ? <NavRow href={`/s/materials?page=${props.page + 1}`}>下一页原图</NavRow> : null}
+              {props.page > 0 ? <NavRow href={`/s/materials?page=${props.page - 1}${props.assetPageQuery ?? ''}`}>上一页原图</NavRow> : null}
+              {props.hasMore ? <NavRow href={`/s/materials?page=${props.page + 1}${props.assetPageQuery ?? ''}`}>下一页原图</NavRow> : null}
             </div>
           ) : null}
           {props.changes.length ? (

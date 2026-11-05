@@ -40,6 +40,8 @@ export function config() {
       fallbackPerHour: intEnv('SEL_ALERT_FALLBACK_PER_HOUR', 10), certDays: intEnv('SEL_ALERT_CERT_DAYS', 20),
       backupMaxAgeH: intEnv('SEL_ALERT_BACKUP_MAX_AGE_H', 26), upstreamErrors: intEnv('SEL_ALERT_UPSTREAM_ERRORS', 0),
       repeatMin: intEnv('SEL_ALERT_REPEAT_MIN', 60),
+      rejectedStudents: intEnv('SEL_ALERT_REJECTED_STUDENTS', 1), aiWaiting: intEnv('SEL_ALERT_AI_WAITING', 10),
+      liveStaleMin: intEnv('SEL_ALERT_LIVE_STALE_MIN', 3),
     },
   };
 }
@@ -68,7 +70,9 @@ export function collectStats(hostDir, now = new Date()) {
   const dayStart = new Date(`${day}T00:00:00+08:00`).toISOString();
   const stats = { students: 0, registeredToday: 0, queue: { queued: 0, running: 0, failedToday: 0 }, legacyJobs: 0,
     aiHour: { calls: 0, failed: 0, byProvider: {} }, aiToday: { calls: 0, failed: 0, durationSum: 0, timed: 0, byProvider: {} },
-    fallbackToday: null, unreadable: 0 };
+    fallbackToday: null, unreadable: 0,
+    // 网关每 15 秒写一次的实时人数与 AI 并发（src/studentHost/liveStats.ts）；没开学生网关时没有。
+    live: readJson(path.join(hostDir, 'live-status.json')) };
   const bump = (bucket, provider, failed, duration) => {
     bucket.calls += 1; if (failed) bucket.failed += 1;
     const p = bucket.byProvider[provider] ??= { calls: 0, failed: 0 };
@@ -254,6 +258,17 @@ export async function runChecks(cfg, { now = new Date(), statsProvider = statsAs
     const { calls, failed } = stats.aiHour;
     if (calls >= cfg.t.aiMinCalls && pct(failed, calls) > cfg.t.aiFailPct) add('ai-fail', `最近 1 小时 AI 调用失败率 ${pct(failed, calls)}%（${failed}/${calls}）`);
     if (stats.unreadable > 0) add('stats-unreadable', `有 ${stats.unreadable} 个数据库读不了（统计不完整）`);
+    const live = stats.live;
+    if (live?.at) {
+      facts.live = liveLine(live);
+      const ageMin = (now.getTime() - Date.parse(live.at)) / 60_000;
+      if (!(ageMin <= cfg.t.liveStaleMin)) add('live-stale', `实时人数已经 ${Math.round(ageMin)} 分钟没有更新（服务可能卡住或没在运行）`);
+      else {
+        const m = live.last5m ?? {};
+        if (cfg.t.rejectedStudents > 0 && (m.rejectedStudents ?? 0) >= cfg.t.rejectedStudents) add('capacity', `最近 5 分钟有 ${m.rejectedStudents} 位同学因为错题本名额满（${live.live}/${live.maxLive}）进不去，被挡 ${m.capacityRejections} 次`);
+        if (cfg.t.aiWaiting > 0 && (m.peakAiWaiting ?? 0) >= cfg.t.aiWaiting) add('ai-waiting', `最近 5 分钟 AI 排队最多 ${m.peakAiWaiting} 件（同时最多做 ${live.aiLimit} 件）`);
+      }
+    }
   });
 
   if (!cfg.skip.has('cert')) await guard('证书', async () => {
@@ -263,7 +278,7 @@ export async function runChecks(cfg, { now = new Date(), statsProvider = statsAs
     else if (days < cfg.t.certDays) add('cert', `HTTPS 证书还有 ${days} 天过期（自动续期可能失败，查 journalctl -u super-error-log-caddy）`);
   });
 
-  await guard('备份', () => {
+  if (!cfg.skip.has('backup')) await guard('备份', () => {
     const last = readJson(path.join(cfg.backupDir, 'last-status.json'));
     const ageH = last?.finishedAt ? (now.getTime() - Date.parse(last.finishedAt)) / 3_600_000 : Infinity;
     facts.backup = last ? `${last.day} ${last.ok ? '成功' : '失败'}` : '没有记录';
@@ -274,6 +289,18 @@ export async function runChecks(cfg, { now = new Date(), statsProvider = statsAs
     else if (!pushed?.ok && last?.ok) add('offsite', `异地备份没有成功（${pushed?.reason ?? '没有记录'}）`);
   });
   return { alerts, facts };
+}
+
+// ---------- 实时人数 ----------
+
+export function liveLine(live) {
+  const avg = live.aiAverageMs ? `，平均 ${(live.aiAverageMs / 1000).toFixed(0)} s` : '';
+  return `在用 ${live.activeStudents} 人，错题本 ${live.live}/${live.maxLive}，AI 在做 ${live.aiInUse}/${live.aiLimit}、排队 ${live.aiWaiting}${avg}${live.waitingOutside ? `，门外等 ${live.waitingOutside} 人` : ''}`;
+}
+
+export function todayLine(live) {
+  const t = live.today;
+  return `今天高峰：在用 ${t.peakActive} 人，错题本 ${t.peakLive}/${live.maxLive}，AI 同时 ${t.peakAiInUse}/${live.aiLimit}、排队最多 ${t.peakAiWaiting}；名额满被挡 ${t.rejectedStudents} 人（${t.capacityRejections} 次）`;
 }
 
 // ---------- 推送 ----------
@@ -327,7 +354,7 @@ export async function check(cfg = config(), { dryRun = false, now = new Date(), 
   let sent = decided.sent;
   let delivered = true;
   if (fresh.length || recovered.length) {
-    const lines = [...fresh.map(a => `• ${a.text}`), ...(recovered.length ? [`已恢复：${recovered.join('、')}`] : [])];
+    const lines = [...fresh.map(a => `• ${a.text}`), ...(recovered.length ? [`已恢复：${recovered.join('、')}`] : []), ...(facts.live ? [`现在：${facts.live}`] : [])];
     const title = fresh.length ? `错题本告警（${fresh.length} 项）` : '错题本已恢复';
     delivered = await notify(cfg, title, lines.join('\n'), { dryRun, sender });
     // 一个目标都没送到：不记成“已推送”，下次巡检重试；从没送到的告警以后也不会冒出“已恢复”。
@@ -352,8 +379,9 @@ export async function report(cfg = config(), { dryRun = false, now = new Date(),
     `分线路：${providers}`,
     `按量付费备用：${stats.fallbackToday ? `${stats.fallbackToday.calls} 次，被上限拒绝 ${stats.fallbackToday.blocked} 次` : '今天没有'}`,
     `队列：排队 ${stats.queue.queued}、处理中 ${stats.queue.running}；今天失败 ${stats.queue.failedToday}`,
+    ...(stats.live?.today ? [todayLine(stats.live)] : []),
     ...Object.entries(facts).filter(([key]) => key.startsWith('disk:')).map(([key, value]) => `磁盘 ${key.slice(5)}：${value}`),
-    `每日备份：${facts.backup ?? '—'}；异地：${facts.offsite ?? '—'}`,
+    ...(cfg.skip.has('backup') ? [] : [`每日备份：${facts.backup ?? '—'}；异地：${facts.offsite ?? '—'}`]),
     alerts.length ? `当前问题：${alerts.map(a => a.text).join('；')}` : '当前没有告警',
   ];
   await notify(cfg, `错题本日报 ${shanghaiDay(now)}`, lines.join('\n'), { dryRun, sender });

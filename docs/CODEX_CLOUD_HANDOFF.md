@@ -6,7 +6,9 @@
 
 ## 0. 2026-10-23：学生端换成 Ionic React 单页应用
 
-产品决定这一轮做减法：只保留错题本和录入，练习「即将推出」，没有底部标签栏，界面照 iOS Siri 对话列表的一屏结构。为此学生端界面改成 `client/` 里的 Ionic React 单页应用，由同一个服务器在 `/s/` 下发，数据走 `/s/api`（`src/web/api.ts`）。结构、接口、迁移状态和未搬完的部分见 [学生端单页应用](CLIENT_APP.md)。旧的服务端渲染页面保留在原路径上，没有入口，等练习模块的去留定了再清理。
+产品决定这一轮做减法：只保留错题本和录入，练习「即将推出」，没有底部标签栏，界面照 iOS Siri 对话列表的一屏结构。为此学生端界面改成 `client/` 里的 Ionic React 单页应用，由同一个服务器在 `/s/` 下发，数据走 `/s/native`（`src/web/api.ts`）。结构、接口、迁移状态和未搬完的部分见 [学生端单页应用](CLIENT_APP.md)。旧的服务端渲染页面保留在原路径上，没有入口，等练习模块的去留定了再清理。
+
+2026-10-24：详情页改成五块（你写的、批改痕迹、章节与知识点、正确答案、错因备注），AI 解答（qwen3.8-max、看图、交互图）在后台排队生成，识别结果可改、可拍照录入答案、备注可语音输入。新增三张表，需人工发布；取舍、证据和给服务器 agent 的发布提示词见 [详情页解答验收](quality/2026-10-24-item-detail-insight.md)。
 
 ## 1. 从哪个版本继续
 
@@ -16,6 +18,7 @@
 - 最近人工发布基线：**0.5.0-r2**，2026-10-15 13:48 UTC+8发布；运行代码提交`a006f0a`，随后`602323a`补充发布记录。自动发布启用后，当前版本以 [Actions 发布摘要](https://github.com/PCcoding666/Super_Error_Log/actions) 和服务器 `current/deploy/ci-release.json` 为准，不要把这条历史基线当成实时版本。
 - 学生入口：https://study.pccoding666.com/s/ 。生产资料/凭证不在仓库；不要为开发去创建或清空真实学生数据。
 - 发布授权（2026-10-15）：用户选择“合并后自动上线”，并授权主分支整理。只有 `main` push 的 CI 全绿才会调用 production；PR 和其他分支不发布。发布规则见 [自动发布说明](../deploy/ci/README.md)。
+- 2026-11-01：main 4806d18（#88 + #85）已人工发布上线（`releases/manual-4806d18`）。此前 #88 被后续提交取代而跳过，#85 因 `dist/db` 改表被自动发布拒绝。方案、脚本、演练与发布证据见 [人工发布 4806d18](quality/2026-11-01-manual-release-4806d18.md)。线上 `dist/db` 现与 main 一致，之后合并到 main 的提交可以恢复自动发布。
 - R2 的 27 条提交在 PR #13 中逐项审查整合，取舍和验收见 [审查记录](quality/2026-10-15-pr13-review.md)；实际合并/发布状态查看 PR 和 Actions。历史界面设计已存入 docs，详见 [分支说明](BRANCHES.md)。
 
 ## 2. 生产 0.5.0-r2 实际做到哪里
@@ -77,7 +80,7 @@
 | `src/ai/asr.ts` | Qwen ASR；密钥留在服务端，转写结果可编辑再提交 |
 | `src/domain/stateMachine.ts` | 延迟重做/掌握规则 |
 | `src/server.ts` / `src/app.ts` | 旧本地Web演示入口；`npm start`仍指向它，不是生产入口 |
-| `iOS/` | 保留的原生客户端，本轮主交付不要求修改它 |
+| `iOS/` | 原生客户端，长期在 `ios/main` 分支维护；2026-10-23 起用邀请码登录（网关 `/s/native`，见 `ios-native-invitation-login.md`） |
 
 学生空间通过独立进程隔离现有全局db/config/provider；不要改成共享进程后仅在少数查询加studentId过滤。`SEL_STUDENT_HOST_ENABLED=1`才启用网关。注册人数和同时存活的进程是两件事：`SEL_MAX_STUDENTS` 缺省 100（注册表打开时读取，见注册说明），同时只留有限个 worker，空闲就退出。视觉调用和重图片处理由父进程排队。其他开关见`.env.example`和`deploy/README.md`。容量改动碰了 `src/studentHost/registry.ts` 和 `src/db/`，自动发布会因迁移保护拒绝，不能绕过；当前生产还是常驻 worker，直到按 [容量说明](quality/2026-10-20-fifty-students.md) 人工发布。
 

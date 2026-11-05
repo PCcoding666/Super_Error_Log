@@ -131,7 +131,8 @@ async function main(): Promise<void> {
   // printService 会连带加载 config（import 时读环境变量），必须等数据目录固定后再动态引入。
   const busy = async (): Promise<boolean> => {
     const { printWorkPending } = await import('../v2/printService.js');
-    return running.recognition.hasPendingRecognition() || printWorkPending();
+    const { insightWorkPending } = await import('../v2/insightService.js');
+    return running.recognition.hasPendingRecognition() || printWorkPending() || insightWorkPending();
   };
   send({ type: 'ready', port, token });
 
