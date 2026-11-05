@@ -132,11 +132,11 @@ final class CloudIPEntryTests: XCTestCase {
     // 非服务器信任质询不由这里处理。
     XCTAssertEqual(pinning.disposition(for: Self.challenge(host: "8.163.96.197",
       method: NSURLAuthenticationMethodHTTPBasic)).0, .performDefaultHandling)
-    // 两个客户端的会话代理都走同一判定。
+    // 两个客户端的会话代理（登录用的 RecognitionClient 与网页接口的 WebClient）都走同一判定。
     let configuration = try PairingConfiguration.cloud(baseURL: Self.ipURL, serviceId: Self.serviceId,
       token: Self.token, deviceId: Self.deviceId, expiresAt: nil)
     let recognition = RecognitionClient(configuration: configuration, pinning: pinning)
-    let v2 = V2Client(configuration: configuration, pinning: pinning)
+    let v2 = WebClient(configuration: configuration, pinning: pinning)
     defer { recognition.close(); v2.close() }
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
@@ -170,7 +170,7 @@ final class CloudIPEntryTests: XCTestCase {
     defer { mismatched.close() }
     await Self.assertRefused(url, delegate: mismatched, code: .cancelled)
     // App 里没有证书：拒绝。
-    let missing = V2Client(configuration: configuration, pinning: CloudTLSPinning(host: "127.0.0.1", certificate: nil))
+    let missing = WebClient(configuration: configuration, pinning: CloudTLSPinning(host: "127.0.0.1", certificate: nil))
     defer { missing.close() }
     await Self.assertRefused(url, delegate: missing, code: .cancelled)
     // 对照：该主机不在固定范围内时走系统默认校验，系统同样不信任这张自签证书。
@@ -179,10 +179,10 @@ final class CloudIPEntryTests: XCTestCase {
     defer { unpinned.close() }
     await Self.assertRefused(url, delegate: unpinned, code: .serverCertificateUntrusted)
 
-    // 固定证书与服务器证书一致：连接成功（两个客户端的会话代理）。
+    // 固定证书与服务器证书一致：连接成功（两个客户端的会话代理（登录用的 RecognitionClient 与网页接口的 WebClient））。
     let matching = CloudTLSPinning(host: "127.0.0.1", certificate: served.der)
     let recognition = RecognitionClient(configuration: configuration, pinning: matching)
-    let v2 = V2Client(configuration: configuration, pinning: matching)
+    let v2 = WebClient(configuration: configuration, pinning: matching)
     defer { recognition.close(); v2.close() }
     let recognitionStatus = try await Self.fetch(url, delegate: recognition)
     XCTAssertEqual(recognitionStatus, 200)

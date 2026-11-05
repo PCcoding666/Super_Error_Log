@@ -196,65 +196,6 @@ struct RecognitionJob: Codable, Equatable, Identifiable, Sendable {
   }
 }
 
-struct LocalRecognitionTask: Codable, Equatable, Identifiable, Sendable {
-  let id: UUID
-  let photoName: String
-  let uploadName: String
-  var consentedAt: Date?
-  var job: RecognitionJob?
-  var lastError: String?
-  /// Task 4 review R2：归属服务（云端提交时随任务持久化；nil = 回环来源或旧文档）。
-  /// 重启后凭此字段判断任务是否可向当前配对的服务自动刷新。
-  var ownedServiceId: String?
-  /// M1：最近一次刷新失败的分类（nil = 无失败或旧文档）。lastError 文案之外的结构化区分：
-  /// 离线/服务暂不可用/配对失效/未知，驱动卡片显示「进度暂未更新」而非误报任务失败。
-  var lastIssueKind: RefreshIssue?
-  /// T6b：上传后是否已成功登记进 /v2 学习闭环（旧存档解码为 nil = 未登记）。
-  /// 登记失败不影响上传结果；nil/false 的任务在 refreshJobs 时补登记，404 记 false 后不再重试。
-  var v2Registered: Bool?
-  /// T6k：学生把这张失败/部分失败的照片从「照片进度」里移除（旧存档解码为 nil = 未移除）。
-  /// 只是不再显示：本机照片文件、识别任务、已进错题本的题都不动。
-  var dismissedFromProgress: Bool?
-  /// S2：学生对这张「无批改痕迹」照片已完成勾选（勾过题或点了「这页没有错题」）。
-  /// 旧存档解码为 nil = 未处理，仍提示勾出错题。
-  var pickDone: Bool?
-
-  init(id: UUID, photoName: String, uploadName: String, consentedAt: Date? = nil,
-    job: RecognitionJob? = nil, lastError: String? = nil, ownedServiceId: String? = nil,
-    lastIssueKind: RefreshIssue? = nil, v2Registered: Bool? = nil,
-    dismissedFromProgress: Bool? = nil, pickDone: Bool? = nil) {
-    self.id = id; self.photoName = photoName; self.uploadName = uploadName
-    self.consentedAt = consentedAt; self.job = job; self.lastError = lastError
-    self.ownedServiceId = ownedServiceId; self.lastIssueKind = lastIssueKind
-    self.v2Registered = v2Registered
-    self.dismissedFromProgress = dismissedFromProgress
-    self.pickDone = pickDone
-  }
-
-  private enum CodingKeys: String, CodingKey {
-    case id, photoName, uploadName, consentedAt, job, lastError, ownedServiceId, lastIssueKind, v2Registered, dismissedFromProgress, pickDone
-  }
-  init(from decoder: Decoder) throws {
-    let values = try decoder.container(keyedBy: CodingKeys.self)
-    id = try values.decode(UUID.self, forKey: .id)
-    photoName = try values.decode(String.self, forKey: .photoName)
-    uploadName = try values.decode(String.self, forKey: .uploadName)
-    consentedAt = try values.decodeIfPresent(Date.self, forKey: .consentedAt)
-    job = try values.decodeIfPresent(RecognitionJob.self, forKey: .job)
-    lastError = try values.decodeIfPresent(String.self, forKey: .lastError)
-    // 旧文档无归属字段：解码为 nil（回环语义），不拒绝加载。
-    ownedServiceId = try values.decodeIfPresent(String.self, forKey: .ownedServiceId)
-    // 旧文档无分类字段：解码为 nil，不拒绝加载。
-    lastIssueKind = try values.decodeIfPresent(RefreshIssue.self, forKey: .lastIssueKind)
-    // 旧文档无登记字段：解码为 nil（未登记），不拒绝加载。
-    v2Registered = try values.decodeIfPresent(Bool.self, forKey: .v2Registered)
-    // 旧文档无移除字段：解码为 nil（未移除，照常显示），不拒绝加载。
-    dismissedFromProgress = try values.decodeIfPresent(Bool.self, forKey: .dismissedFromProgress)
-    // S2：旧文档无勾选字段：解码为 nil（未处理），不拒绝加载。
-    pickDone = try values.decodeIfPresent(Bool.self, forKey: .pickDone)
-  }
-}
-
 /// 双模式配对（Task 4）：
 /// - loopback：现有回环校验不变（http + 127.0.0.1/localhost/[::1] + 16 位口令）。
 /// - cloud：白名单入口 HTTPS（IP 直连或域名，取自配对二维码）+ 设备令牌 + deviceId（UUID）+ 可选到期。

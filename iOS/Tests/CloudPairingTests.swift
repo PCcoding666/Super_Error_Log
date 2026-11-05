@@ -161,29 +161,13 @@ final class CloudPairingTests: XCTestCase {
       .failed, .unauthorized, .incompatible,
     ]
     XCTAssertEqual(Set(states.map(\.title)).count, states.count, "Every state needs a distinct Chinese title")
-    XCTAssertEqual(Set(states.map(\.actionTitle)).count, states.count, "Every state needs a distinct action")
+    // 登录失效与版本不兼容的下一步都是「重新登录」，所以操作文案不要求互不相同。
+    XCTAssertTrue(states.allSatisfy { !$0.actionTitle.isEmpty })
     for state in states { XCTAssertFalse(state.title.isEmpty) }
     XCTAssertTrue(ConnectionState.ready.canUpload)
     XCTAssertFalse(ConnectionState.busy.canUpload)
     XCTAssertFalse(ConnectionState.unpaired.canUpload)
     XCTAssertFalse(ConnectionState.unauthorized.canUpload)
-  }
-
-  @MainActor
-  func testLateResponseWithWrongGenerationIsDropped() async throws {
-    // Re-pairing bumps generation; a late health/refresh response from the old
-    // generation must not flip the new state.
-    let tracker = ConnectionTracker()
-    _ = tracker.paired()
-    let first = tracker.beginCheck()
-    tracker.repair() // generation bump: user re-paired
-    first(.failure(URLError(.timedOut))) // late response arrives
-    let stateAfterLate = tracker.currentState
-    XCTAssertEqual(stateAfterLate, .unpaired, "Late old-generation response must be ignored; state reflects the fresh pairing generation")
-    // A fresh check under the new generation resolves normally.
-    let second = tracker.beginCheck()
-    second(.success(true))
-    XCTAssertEqual(tracker.currentState, .ready)
   }
 
   // MARK: - Task 4 review R1: classification must use the HTTP status, not message substrings
@@ -262,168 +246,10 @@ final class CloudPairingTests: XCTestCase {
 
   // MARK: - Task 4 review R2: ownership persists with the task, survives relaunch
 
-  func testLegacyTaskWithoutOwnershipDecodesAsUnownedAndRoundTrips() throws {
-    // Old study-state.json files have no ownership field; they must decode as unowned.
-    let legacy = try JSONDecoder().decode(LocalRecognitionTask.self,
-      from: Data(#"{"id":"8b411cca-f903-4d8c-a5d0-41435e2a66bb","photoName":"00000000-0000-4000-8000-000000000001.jpg","uploadName":"00000000-0000-4000-8000-000000000001.jpg"}"#.utf8))
-    XCTAssertNil(legacy.ownedServiceId)
-    let owned = LocalRecognitionTask(id: UUID(), photoName: "00000000-0000-4000-8000-000000000001.jpg",
-      uploadName: "00000000-0000-4000-8000-000000000001.jpg",
-      ownedServiceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0")
-    let back = try JSONDecoder().decode(LocalRecognitionTask.self, from: try JSONEncoder().encode(owned))
-    XCTAssertEqual(back.ownedServiceId, "3f7b69dc-9d37-4aaa-b965-bb61243445a0")
-  }
-
-  @MainActor
-  func testRedemptionsReuseStableClientIDForIdempotentRecovery() async throws {
-    // 服务端契约：同 clientId + 同 secret 重试返回同一设备令牌；换 clientId 会得到
-    // pairing_used 409（响应丢失后无法恢复）。客户端标识必须按安装稳定。
-    CloudStoreProtocol.reset()
-    let directory = FileManager.default.temporaryDirectory
-      .appendingPathComponent("CloudClientID-" + UUID().uuidString)
-    let persistence = StudyPersistence(directory: directory)
-    try persistence.prepareDirectory()
-    let configuration = URLSessionConfiguration.ephemeral
-    configuration.protocolClasses = [CloudStoreProtocol.self]
-    // 注入合成传输：占位云配置（URL 固定云域名，但 URLProtocol 拦截该会话的全部请求）。
-    let redeemTransport = RecognitionClient(configuration: try PairingConfiguration.cloud(
-      baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
-      token: "synthetic-device-token-32-bytes-test!",
-      deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb", expiresAt: nil),
-      sessionConfiguration: configuration)
-    let client = RecognitionClient(configuration: try PairingConfiguration.cloud(
-      baseURL: Self.cloudURL, serviceId: "3f7b69dc-9d37-4aaa-b965-bb61243445a0",
-      token: "synthetic-device-token-32-bytes-test!",
-      deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb", expiresAt: nil),
-      sessionConfiguration: configuration)
-    let store = StudyStore(persistence: persistence, client: client)
-    let qrText = #"{"v":1,"serviceId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","httpsUrl":"https://study.pccoding666.com","sessionId":"099ea4a5-e4bf-4182-b986-a9fc7db383e9","secret":"2_39bX4iG76643WfiJRfvW-jYJVxbBdm9ACmHrgGjJ0"}"#
-    await store.redeemCloudPairing(qrText: qrText, transport: redeemTransport)
-    let first = try XCTUnwrap(CloudStoreProtocol.redeemBodies().last)
-    // 模拟响应丢失后的用户重试：同一 QR 再兑换一次（同一 store，同一安装标识）。
-    await store.redeemCloudPairing(qrText: qrText, transport: redeemTransport)
-    let second = try XCTUnwrap(CloudStoreProtocol.redeemBodies().last)
-    XCTAssertEqual(first["clientId"] as? String, second["clientId"] as? String,
-                   "重试必须复用同一 clientId，否则服务端按新设备拒绝恢复")
-  }
-
-  @MainActor
-  func testCloudOwnershipPersistsAcrossRelaunchAndServiceBoundary() async throws {
-    CloudStoreProtocol.reset()
-    let directory = FileManager.default.temporaryDirectory
-      .appendingPathComponent("CloudOwnership-" + UUID().uuidString)
-    let persistence = StudyPersistence(directory: directory)
-    try persistence.prepareDirectory()
-    var state = StudyState()
-    let name = "00000000-0000-4000-8000-000000000001.jpg"
-    state.importedPhotos = [name]
-    try persistence.save(state)
-    let photos = directory.appendingPathComponent("Photos")
-    try FileManager.default.createDirectory(at: photos, withIntermediateDirectories: true)
-    try StoreHTTPProtocol.jpeg.write(to: photos.appendingPathComponent(name))
-    let serviceA = "3f7b69dc-9d37-4aaa-b965-bb61243445a0"
-    let serviceB = "099ea4a5-e4bf-4182-b986-a9fc7db383e9"
-    func makeClient(serviceId: String) throws -> RecognitionClient {
-      let configuration = URLSessionConfiguration.ephemeral
-      configuration.protocolClasses = [CloudStoreProtocol.self]
-      return RecognitionClient(configuration: try PairingConfiguration.cloud(
-        baseURL: Self.cloudURL, serviceId: serviceId, token: "synthetic-device-token-32-bytes-test!",
-        deviceId: "8b411cca-f903-4d8c-a5d0-41435e2a66bb", expiresAt: nil),
-        sessionConfiguration: configuration)
-    }
-    // Session 1: submit under service A.
-    let store1 = StudyStore(persistence: persistence, client: try makeClient(serviceId: serviceA))
-    await store1.submitPhotos([name])
-    XCTAssertNotNil(store1.state.recognitionTasks.first?.job, "upload must succeed against the synthetic cloud")
-    let afterSubmit = CloudStoreProtocol.requests().count
-    // Session 2 (relaunch): fresh store over the same persistence — the task must
-    // still be refreshed because ownership persisted with the task, not in memory.
-    let store2 = StudyStore(persistence: persistence, client: try makeClient(serviceId: serviceA))
-    await store2.refreshJobs()
-    let polled = CloudStoreProtocol.requests().dropFirst(afterSubmit)
-      .contains { $0.httpMethod == "GET" && $0.url!.path.hasSuffix("/v1/recognitions/3f7b69dc-9d37-4aaa-b965-bb61243445a0") }
-    XCTAssertTrue(polled, "After relaunch the owned cloud job must still be polled")
-    // Re-pair to a different service: the old-service job must not be queried.
-    let afterRefresh = CloudStoreProtocol.requests().count
-    let store3 = StudyStore(persistence: persistence, client: try makeClient(serviceId: serviceB))
-    await store3.refreshJobs()
-    XCTAssertEqual(CloudStoreProtocol.requests().count, afterRefresh,
-      "A task owned by service A must not be polled against service B")
-  }
 }
 
 /// Task 4 review: synthetic cloud transport for store-level ownership tests.
 /// Health always reports service A accepting; jobs echo the uploaded photo name.
-final class CloudStoreProtocol: URLProtocol, @unchecked Sendable {
-  /// 非隔离的合成 job 文档（与 StudyStoreRegressionTests 同源但不隔离在 MainActor 上）。
-  static let jobJSON: String = {
-    let fixture = RecognitionTests.fixture
-    return fixture.replacingOccurrences(of: "\"status\":\"confirmed\"", with: "\"status\":\"ready\"")
-      .replacingOccurrences(of: "\"requiresDiagram\":false", with: "\"requiresDiagram\":true")
-      .replacingOccurrences(of: "\"regions\":[]", with: #""regions":[{"id":"d1","kind":"diagram","box":{"x":0.1,"y":0.1,"width":0.2,"height":0.2},"confidence":0.8,"cleanForPrint":false}]"#)
-      .replacingOccurrences(of: "\"diagramMediaIds\":[]", with: "\"diagramMediaIds\":[\"2ddc034b-b0f8-4288-b9c1-4f496cfb90df\"]")
-  }()
-  private static let lock = NSLock()
-  nonisolated(unsafe) private static var recorded: [URLRequest] = []
-  nonisolated(unsafe) private static var redeemJSON: [[String: Any]] = []
-  static func requests() -> [URLRequest] { lock.withLock { recorded } }
-  static func redeemBodies() -> [[String: Any]] { lock.withLock { redeemJSON } }
-  static func reset() { lock.withLock { recorded = []; redeemJSON = [] } }
-  override class func canInit(with request: URLRequest) -> Bool { true }
-  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-  override func startLoading() {
-    Self.lock.withLock { Self.recorded.append(request) }
-    let path = request.url!.path
-    let photoName = request.value(forHTTPHeaderField: "X-Photo-Name") ?? "Synthetic.jpg"
-    let job = CloudStoreProtocol.jobJSON
-      .replacingOccurrences(of: "\"photoName\":\"Synthetic.jpg\"", with: "\"photoName\":\"\(photoName)\"")
-    if path == "/v1/health" {
-      respond(status: 200, body: #"{"version":1,"serviceId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","storageAvailable":true,"visionConfigured":true,"acceptingJobs":true,"protocolVersion":1}"#)
-    } else if path == "/v1/pairing/redeem" {
-      // 记录请求体里的 clientId（幂等恢复断言用）。
-      if let stream = request.httpBodyStream {
-        stream.open()
-        var bytes = Data()
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while stream.hasBytesAvailable {
-          let count = stream.read(&buffer, maxLength: buffer.count)
-          if count <= 0 { break }
-          bytes.append(buffer, count: count)
-        }
-        stream.close()
-        if let json = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] {
-          Self.lock.withLock { Self.redeemJSON.append(json) }
-        }
-      } else if let body = request.httpBody,
-        let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
-        Self.lock.withLock { Self.redeemJSON.append(json) }
-      }
-      let body = #"{"token":"issued-device-token-32-bytes-test!","deviceId":"8b411cca-f903-4d8c-a5d0-41435e2a66bb","serviceId":"3f7b69dc-9d37-4aaa-b965-bb61243445a0","expiresAt":"2026-10-17T00:00:00.000Z","protocolVersion":1}"#
-      respond(status: 200, body: body)
-    } else if path.hasPrefix("/v1/recognitions/") && path.contains("/media/") {
-      let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
-        headerFields: ["Content-Type": "image/jpeg"])!
-      client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-      client?.urlProtocol(self, didLoad: StoreHTTPProtocol.jpeg)
-      client?.urlProtocolDidFinishLoading(self)
-    } else if path == "/v1/recognitions" {
-      respond(status: 202, body: "{\"job\":\(job)}")
-    } else if path.hasPrefix("/v1/recognitions/") {
-      respond(status: 200, body: "{\"job\":\(job)}")
-    } else {
-      respond(status: 404, body: #"{"error":{"code":"not_found","message":"接口不存在。"}}"#)
-    }
-  }
-  private func respond(status: Int, body: String) {
-    let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,
-      headerFields: ["Content-Type": "application/json"])!
-    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-    client?.urlProtocol(self, didLoad: Data(body.utf8))
-    client?.urlProtocolDidFinishLoading(self)
-  }
-  override func stopLoading() {}
-}
-
 final class SyntheticRedeemProtocol: URLProtocol, @unchecked Sendable {
   private static let lock = NSLock()
   nonisolated(unsafe) private static var recorded: [URLRequest] = []

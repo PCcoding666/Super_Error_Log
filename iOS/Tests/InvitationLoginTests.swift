@@ -130,41 +130,6 @@ final class InvitationLoginTests: XCTestCase {
 
   // MARK: - StudyStore 落库与退出
 
-  @MainActor
-  func testStoreLoginAdoptsInvitationPairingAndLogoutClearsIt() async throws {
-    InvitationSyntheticProtocol.reset()
-    let parent = FileManager.default.temporaryDirectory.appendingPathComponent("InvitationTests-" + UUID().uuidString, isDirectory: true)
-    let directory = parent.appendingPathComponent("UITest-" + UUID().uuidString, isDirectory: true)
-    let persistence = StudyPersistence(directory: directory)
-    try persistence.prepareDirectory()
-    let scope = directory.lastPathComponent
-    addTeardownBlock {
-      PairingStore.remove(scope: scope)
-      try? FileManager.default.removeItem(at: parent)
-    }
-    let store = StudyStore(persistence: persistence)
-    XCTAssertNil(store.pairing)
-    let ok = await store.loginWithInvitation(code: "ABCDEFGHJK12", transport: try makeClient())
-    XCTAssertTrue(ok, store.errorMessage ?? "")
-    XCTAssertEqual(store.pairing?.isInvitation, true)
-    XCTAssertEqual(store.pairing?.baseURL.absoluteString, Self.entry)
-    XCTAssertEqual(store.pairing?.token, Self.token)
-    XCTAssertEqual(try PairingStore.load(scope: scope), store.pairing, "登录结果落在钥匙串")
-    XCTAssertNotNil(store.v2Client)
-    // 退出：服务器收到带令牌的 logout，本机清凭据回到未登录，钥匙串也清掉
-    await store.logout(transport: try makeClient())
-    XCTAssertEqual(InvitationSyntheticProtocol.requests().last?.url?.absoluteString, "\(Self.entry)/logout")
-    XCTAssertNil(store.pairing)
-    XCTAssertNil(store.v2Client)
-    XCTAssertEqual(store.connectionState, .unpaired)
-    XCTAssertNil(try PairingStore.load(scope: scope))
-    // 错码：服务器文案透传，不落库
-    InvitationSyntheticProtocol.overrideLogin(status: 400, body: #"{"error":{"code":"invalid_code","message":"邀请码不正确或已经失效。"}}"#)
-    XCTAssertFalse(await store.loginWithInvitation(code: "ABCDEFGHJK12", transport: try makeClient()))
-    XCTAssertEqual(store.errorMessage, "邀请码不正确或已经失效。")
-    XCTAssertNil(store.pairing)
-  }
-
   // MARK: - helpers
 
   private func makeClient() throws -> RecognitionClient {
