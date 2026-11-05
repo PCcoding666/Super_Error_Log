@@ -1,6 +1,7 @@
 import { ATTEMPT_STATES, CAUSES } from '../../src/domain/types.js';
 import { describe, expect, it } from 'vitest';
 import { getDb, newId, now } from '../../src/db/connection.js';
+import { localDayText } from '../../src/domain/calendarDay.js';
 import { ensureStudentProfile } from '../../src/services/studentService.js';
 import { MaterialStore } from '../../src/materials/store.js';
 import { setQuestionIncluded, syncMaterialLearning } from '../../src/materials/learning.js';
@@ -172,7 +173,7 @@ it('keeps delayed independent return rules for material practice',()=>{
  const packet=createLearningPractice({itemIds:[item]});expect(packet.ok).toBe(true);if(!packet.ok)return;
  db.prepare("UPDATE review_packet SET status='generated',generated_at=? WHERE id=?").run(now(),packet.detail.id);
  db.prepare("UPDATE error_item SET status='packet_generated' WHERE id=?").run(item);
- const response=submitLearningReturns(packet.detail.id,{results:[{itemId:item,completion:'independent',correct:true,performedOn:now().slice(0,10)}]});expect(response.ok).toBe(true);
+ const response=submitLearningReturns(packet.detail.id,{results:[{itemId:item,completion:'independent',correct:true,performedOn:localDayText(new Date())}]});expect(response.ok).toBe(true);
  expect(db.prepare('SELECT status FROM error_item WHERE id=?').get(item)).toEqual({status:'attempted'});
 });
 

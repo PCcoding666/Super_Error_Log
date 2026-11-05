@@ -277,10 +277,15 @@ test('详情页：立体图由程序画，能拖动旋转', async ({ page }) => 
   await expect(figure.locator('#s line')).not.toHaveCount(0);
   await expect(figure.locator('#cap')).toHaveText('【mock】红线是 BD');
   const before = await figure.locator('#s circle').first().getAttribute('cx');
-  const box = (await page.getByTestId('solution-figure').boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + 100);
+  // 交互图在解答弹层的下半截，mac 上的字体更高，iframe 可能整个落在视口外；boundingBox 不会滚动，
+  // 按它算出的坐标去按鼠标，事件落在屏幕外，iframe 里什么都收不到。hover 会把图滚到看得见并等它停稳，再从图中心按住拖。
+  const solid = figure.locator('#s');
+  await solid.hover();
+  const box = (await solid.boundingBox())!;
+  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  expect(centre.y).toBeLessThan(page.viewportSize()!.height);
   await page.mouse.down();
-  for (let step = 1; step <= 8; step += 1) await page.mouse.move(box.x + box.width / 2 + step * 10, box.y + 100);
+  for (let step = 1; step <= 8; step += 1) await page.mouse.move(centre.x + step * 10, centre.y);
   await page.mouse.up();
   await expect.poll(() => figure.locator('#s circle').first().getAttribute('cx')).not.toBe(before);
 });
