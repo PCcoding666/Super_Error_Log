@@ -276,6 +276,31 @@ export class StudentWorkerPool {
     child.on('error', error => {
       this.options.onError?.(studentId, `worker 进程错误：${error.message}`);
     });
+    // 名额申请（acquire / release）必须在 ready 握手之前就有人接：worker 一启动就会跑后台队列（详情页解答预生成）、
+    // 续做打印快照、恢复识别扫描，这些都在 send(ready) 之前向父进程借名额。握手监听器只认 ready / error，
+    // 晚挂处理器会把这些申请静默丢掉，worker 永远等不到 permit（2026-11-01 生产：item_insight 永远为空）。
+    let live: WorkerEntry | null = null;
+    child.on('message', (message: unknown) => {
+      if (!message || typeof message !== 'object') return;
+      const type = (message as { type?: unknown }).type;
+      if (type === 'token' && typeof (message as { token?: unknown }).token === 'string') {
+        if (live) live.endpoint = { ...live.endpoint, token: (message as { token: string }).token };
+        return;
+      }
+      if (type !== 'acquire' && type !== 'release') return;
+      const kind = (message as { kind?: unknown }).kind;
+      const id = (message as { id?: unknown }).id;
+      if ((kind !== 'ai' && kind !== 'image') || typeof id !== 'string' || !id) return;
+      const pool = kind === 'ai' ? this.aiPermits : this.imagePermits;
+      if (type === 'release') { pool.release(studentId, id); return; }
+      const background = (message as { background?: unknown }).background === true;
+      pool.acquire(studentId, id, () => {
+        if (!child.connected) { pool.release(studentId, id); return; }
+        child.send({ type: 'permit', id }, error => { if (error) pool.release(studentId, id); });
+      }, background, background ? () => { if (child.connected) child.send({ type: 'preempt', id }, () => undefined); } : undefined);
+    });
+    // 启动失败被杀也要归还握手前拿到的名额（正常退出路径下面还会再归还一次，幂等）。
+    child.once('exit', () => { this.aiPermits.dropOwner(studentId); this.imagePermits.dropOwner(studentId); });
 
     const endpoint = await new Promise<WorkerEndpoint>((resolve, reject) => {
       const fail = (reason: string, kill: boolean): void => {
@@ -325,25 +350,7 @@ export class StudentWorkerPool {
       this.imagePermits.dropOwner(studentId);
       if (!this.stopping && !entry.expectedExit) this.options.onError?.(studentId, `worker 退出（code ${code ?? 'null'} ${signal ?? ''}）`);
     });
-    child.on('message', (message: unknown) => {
-      if (!message || typeof message !== 'object') return;
-      const type = (message as { type?: unknown }).type;
-      if (type === 'token' && typeof (message as { token?: unknown }).token === 'string') {
-        entry.endpoint = { ...entry.endpoint, token: (message as { token: string }).token };
-        return;
-      }
-      if (type !== 'acquire' && type !== 'release') return;
-      const kind = (message as { kind?: unknown }).kind;
-      const id = (message as { id?: unknown }).id;
-      if ((kind !== 'ai' && kind !== 'image') || typeof id !== 'string' || !id) return;
-      const pool = kind === 'ai' ? this.aiPermits : this.imagePermits;
-      if (type === 'release') { pool.release(studentId, id); return; }
-      const background = (message as { background?: unknown }).background === true;
-      pool.acquire(studentId, id, () => {
-        if (!child.connected) { pool.release(studentId, id); return; }
-        child.send({ type: 'permit', id }, error => { if (error) pool.release(studentId, id); });
-      }, background, background ? () => { if (child.connected) child.send({ type: 'preempt', id }, () => undefined); } : undefined);
-    });
+    live = entry;
     if (this.refreshIntervalMs > 0) {
       entry.refreshTimer = setInterval(() => {
         // send 回调吞掉「通道已关闭」竞态（worker 刚退出时 connected 可能还亮着）。
