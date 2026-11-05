@@ -6,7 +6,9 @@ export const MOBILE_CONTRACT_VERSION = 1 as const;
 export type RecognitionJobStatus = 'queued' | 'processing' | 'completed' | 'partial' | 'failed' | 'interrupted';
 export type RecognitionPhase = 'inventory' | 'questions' | 'complete';
 export type RecognitionQuestionStatus = 'queued' | 'processing' | 'needs_check' | 'ready' | 'failed' | 'confirmed' | 'skipped' | 'unselected';
-export type SelectionEvidence = 'marked_wrong' | 'corrected' | 'unmarked' | 'unclear';
+/** 题上可见的批改/订正痕迹；只有 marked_wrong/corrected 自动精读，其余进 unselected 等学生勾选。marked_right（只有勾）2026-11-01 起新增。 */
+export const SELECTION_EVIDENCE = ['marked_wrong', 'corrected', 'marked_right', 'unmarked', 'unclear'] as const;
+export type SelectionEvidence = typeof SELECTION_EVIDENCE[number];
 
 export interface RecognitionFailure {
   code: string;

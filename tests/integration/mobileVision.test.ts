@@ -9,10 +9,13 @@ import { BailianMobileVision, MobileVisionError, type VisionAttempt } from '../.
 
 describe('mobile vision adapter over a real local HTTP boundary', () => {
   let server: http.Server; let baseUrl = ''; let source: Buffer; const requests: any[] = [];
-  let mode: 'pass' | 'inventory-warning' | 'invalid' | 'bare-array' | 'verify-array' | 'bad-schema' | 'bad-question-format' | 'currency' | 'currency-english' | 'currency-inline' | 'truncated' | 'oversized' | 'ground' | 'ground-crop-fail' | 'transient' | 'auth' | 'verify-auth' | 'capacity' | 'echo-key' | 'partial-variant' = 'pass'; let transientCalls = 0;
+  let mode: 'pass' | 'inventory-warning' | 'invalid' | 'bare-array' | 'verify-array' | 'bad-schema' | 'bad-question-format' | 'currency' | 'currency-english' | 'currency-inline' | 'truncated' | 'oversized' | 'ground' | 'ground-crop-fail' | 'transient' | 'auth' | 'verify-auth' | 'capacity' | 'echo-key' | 'partial-variant' | 'selection-variant' | 'collapsed' = 'pass'; let transientCalls = 0;
   let optionalWarning: unknown;
   const PARTIAL_ABSENT = Symbol('partial-absent');
   let partialOverride: unknown;
+  const SELECTION_ABSENT = Symbol('selection-absent');
+  let selectionOverride: unknown;
+  let collapsedContent = '';
   const evidence = (box = { x: .1, y: .1, width: .8, height: .7 }) => ({ version: 1, questionNumber: '4', questionText: '求 x 的值。', subject: '数学', chapter: '', knowledgeTags: [], questionType: '计算', questionRegion: box,
     requiresDiagram: true, regions: [{ id: 'd1', kind: 'diagram', box: { x: .2, y: .2, width: .2, height: .2 }, confidence: .9, cleanForPrint: true }], observations: [], uncertainties: [] });
   beforeAll(async () => {
@@ -30,6 +33,11 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
               const { partial: _omitted, ...rest } = candidate;
               return partialOverride === PARTIAL_ABSENT ? rest : { ...rest, partial: partialOverride };
             }) }
+          : mode === 'selection-variant' ? { ...normalInventory, candidates: normalInventory.candidates.map((candidate, index) => {
+              if (index === 0) return candidate;
+              const { selectionEvidence: _omitted, ...rest } = candidate;
+              return selectionOverride === SELECTION_ABSENT ? rest : { ...rest, selectionEvidence: selectionOverride };
+            }) }
           : mode === 'capacity' ? { candidates: Array.from({ length: 31 }, (_, index) => ({ number: String(index), box: { x: 0, y: 0, width: 1, height: 1 }, confidence: .8, selectionEvidence: 'unmarked', partial: false })), warnings: [], capacityReached: true }
           : normalInventory
         : body.model === 'transcribe-model' ? { ...evidence(), ...(mode === 'bad-question-format' ? { questionText: '计算 $\\frac{1}{2}$。' }
@@ -40,7 +48,7 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
         : { textComplete: true, questionCropComplete: !['ground', 'ground-crop-fail'].includes(mode) || requests.filter(request => request.model === 'verify-model').length >= (mode === 'ground' ? 3 : 2),
             questionCropPure: true, transcriptionMatches: true, diagramSafe: true,
             issues: ['ground', 'ground-crop-fail'].includes(mode) && requests.filter(request => request.model === 'verify-model').length < (mode === 'ground' ? 3 : 2) ? ['题框缺少条件'] : [] };
-      const content = mode === 'invalid' ? '{not-json' : JSON.stringify(mode === 'bare-array' ? [{ number: '4', box: [0, 0, 1, 1] }] : mode === 'verify-array' && body.model === 'verify-model' ? [value] : value);
+      const content = mode === 'invalid' ? '{not-json' : mode === 'collapsed' && body.model === 'inventory-model' ? collapsedContent : JSON.stringify(mode === 'bare-array' ? [{ number: '4', box: [0, 0, 1, 1] }] : mode === 'verify-array' && body.model === 'verify-model' ? [value] : value);
       res.setHeader('content-type', 'application/json');
       if (mode === 'oversized') { res.end('x'.repeat(2_100_000)); return; }
       if (mode === 'ground-crop-fail' && body.model === 'ground-model') source.fill(0);
@@ -125,6 +133,53 @@ describe('mobile vision adapter over a real local HTTP boundary', () => {
     expect(requests).toHaveLength(1);
     expect(attempts).toHaveLength(1);
     expect(attempts[0]?.error).toBeNull();
+  });
+
+  // 2026-11-01：真实找题（qwen3.8-27b，合成页）把老师的绿勾标成 corrected，对的题被自动记成错题。
+  // 新增 marked_right，并在提示里写明每个取值的判定依据。
+  it('accepts marked_right as its own selection evidence and defines every value in the inventory prompt', async () => {
+    mode = 'selection-variant'; selectionOverride = 'marked_right'; requests.length = 0;
+    const result = await make([]).inventory(source, context);
+    expect(result.candidates.map(candidate => candidate.selectionEvidence)).toEqual(['marked_wrong', 'marked_right']);
+    expect(result.warnings).toEqual(['页面右缘残缺', '右侧被截断']);
+    const system = requests[0].messages[0].content as string;
+    for (const value of ['marked_wrong=', 'corrected=', 'marked_right=', 'unmarked=', 'unclear=']) expect(system).toContain(value);
+    expect(system).toContain('老师的勾或对号不是订正');
+  });
+
+  it.each(['correct', 'checked', 'MARKED_WRONG', ''])('maps unknown selection evidence %j to unclear for that candidate only and warns the page', async value => {
+    mode = 'selection-variant'; selectionOverride = value; requests.length = 0; const attempts: VisionAttempt[] = [];
+    const result = await make(attempts).inventory(source, context);
+    expect(result.candidates.map(candidate => candidate.selectionEvidence)).toEqual(['marked_wrong', 'unclear']);
+    expect(result.warnings).toContain('第4题的批改痕迹没能识别，已按看不清处理，不会自动精读；需要时请手动选入。');
+    expect(requests).toHaveLength(1);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.error).toBeNull();
+  });
+
+  it.each([
+    { label: 'missing', value: SELECTION_ABSENT },
+    { label: 'null', value: null },
+    { label: 'a number', value: 1 },
+    { label: 'an object', value: {} },
+  ])('still rejects the whole page when selection evidence is $label', async ({ value }) => {
+    mode = 'selection-variant'; selectionOverride = value; requests.length = 0; const attempts: VisionAttempt[] = [];
+    await expect(make(attempts).inventory(source, context)).rejects.toMatchObject({ code: 'invalid_output', stage: 'inventory', retryable: false });
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.error?.code).toBe('invalid_output');
+  });
+
+  // 2026-11-01 真实输出（基线 30 次里 5 次）：整页候选挤进一个对象，number/box 重复出现。JSON.parse 只留最后一题，
+  // 若字段恰好都在顶层就会被当成"这页只有一道题"。重复字段必须整页判不合法。
+  it.each([
+    { label: 'fields nested in box (observed)', content: '{"candidates":[{"number":"1","box":{"x1":80,"y1":172,"x2":465,"y2":342,"confidence":0.95,"selectionEvidence":"marked_wrong","partial":false},"number":"2","box":{"x1":80,"y1":377,"x2":385,"y2":452,"confidence":0.95,"selectionEvidence":"corrected","partial":false}}],"warnings":[],"capacityReached":false}' },
+    { label: 'otherwise well-formed fields', content: '{"candidates":[{"number":"1","selectionEvidence":"marked_wrong","confidence":0.9,"partial":false,"box":{"x1":80,"y1":172,"x2":465,"y2":342},"number":"2","selectionEvidence":"marked_right","confidence":0.9,"partial":false,"box":{"x1":80,"y1":377,"x2":385,"y2":452}}],"warnings":[],"capacityReached":false}' },
+  ])('rejects a collapsed inventory with duplicate keys ($label) instead of keeping only the last candidate', async ({ content }) => {
+    mode = 'collapsed'; collapsedContent = content; requests.length = 0; const attempts: VisionAttempt[] = [];
+    await expect(make(attempts).inventory(source, context)).rejects.toMatchObject({ code: 'invalid_output', stage: 'inventory', retryable: false });
+    expect(requests).toHaveLength(1);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({ responseRaw: expect.stringContaining('"number\\":\\"2'), error: { code: 'invalid_output' } });
   });
 
   it.each(['false', 'true', 0, 1])('still rejects a nonboolean inventory partial flag %j without retry', async value => {
