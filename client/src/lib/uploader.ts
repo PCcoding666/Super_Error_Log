@@ -155,6 +155,8 @@ class Uploader {
   }
   /** 拍摄条据此决定要不要显示「多页」。生产邀请码空间是 materials；旧单学生演示才是 legacy。 */
   route(): Promise<UploadMode> { return this.resolveMode(); }
+  /** Null until the first successful answer. A later mount can skip the pending frame. */
+  knownRoute(): UploadMode | null { return this.mode; }
   /** 首次上传前向服务器确认该走哪套端点；网络失败按可重试处理，照片留在队列里。 */
   private resolveMode(): Promise<UploadMode> {
     if (this.mode) return Promise.resolve(this.mode);

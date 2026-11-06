@@ -75,6 +75,7 @@ ion-list-header.group-label { --background: transparent; margin-left: 4px; }
 .pick-text { flex: 1; background: transparent; color: var(--ion-color-primary); white-space: nowrap; }
 .pick-button:focus-within, .fab-circle:focus-within { outline: 3px solid var(--ion-color-primary); outline-offset: 3px; }
 button.pick-button, button.fab-circle { appearance: none; border: 0; font: inherit; cursor: pointer; }
+button.is-held { opacity: .45; cursor: not-allowed; }
 button.fab-circle { padding: 0; }
 /* 和左下角小圆钮同一外沿：ion-fab 底边 10px，small 按钮再缩进 8px。 */
 .capture-corner, .capture-dock { position: absolute; z-index: 10; top: auto; left: auto; right: calc(18px + var(--ion-safe-area-right, 0px)); bottom: calc(18px + max(var(--ion-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px))); display: flex; flex-direction: column; align-items: flex-end; gap: 10px; width: max-content; max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); height: max-content; }

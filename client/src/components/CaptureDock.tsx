@@ -3,19 +3,25 @@ import { albumsOutline, cameraOutline } from 'ionicons/icons';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { captureChoice, captureEntryAction, showCaptureModeBar, type CaptureChoiceKind, type CaptureRouteKind } from '../lib/captureEntry';
+import { captureChoice, captureEntryAction, pickerLease, showCaptureModeBar, type CaptureChoiceKind, type CaptureRouteKind } from '../lib/captureEntry';
 import { MAX_SET_PAGES, captureSession, hintsForPages, useCaptureSession, type CaptureMode } from '../lib/captureSession';
 import { uploader } from '../lib/uploader';
 import { PickLabel } from './CaptureInput';
 
 function useCaptureRoute(): CaptureRouteKind | null {
-  const [route, setRoute] = useState<CaptureRouteKind | null>(null);
+  const [route, setRoute] = useState<CaptureRouteKind | null>(() => uploader.knownRoute()?.kind ?? null);
   useEffect(() => {
     let live = true;
     void uploader.route().then(mode => { if (live) setRoute(mode.kind); }).catch(() => { if (live) setRoute('legacy'); });
     return () => { live = false; };
   }, []);
   return route;
+}
+
+function usePickerOpen(): boolean {
+  const [open, setOpen] = useState(pickerLease.open);
+  useEffect(() => pickerLease.subscribe(() => setOpen(pickerLease.open)), []);
+  return open;
 }
 
 function useChoiceKind(): CaptureChoiceKind | null {
@@ -33,6 +39,9 @@ function ModeBar(props: { mode: CaptureMode }): ReactNode {
 
 function CaptureChoiceSheet(props: { kind: CaptureChoiceKind }): ReactNode {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const leaseEnd = useRef<(() => void) | null>(null);
+  const arm = (): void => { if (!leaseEnd.current) leaseEnd.current = pickerLease.begin(); };
+  const disarm = (): void => { leaseEnd.current?.(); leaseEnd.current = null; };
   useEffect(() => {
     const dialog = dialogRef.current;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -59,9 +68,12 @@ function CaptureChoiceSheet(props: { kind: CaptureChoiceKind }): ReactNode {
     kind={props.kind}
     className="capture-choice-option"
     testId={testId}
+    route="materials"
     mode={mode}
     inputLabel={camera ? `${title}拍照` : `${title}从相册选择`}
-    onPicked={() => captureChoice.close()}
+    onArm={arm}
+    onPicked={() => { disarm(); captureChoice.close(); }}
+    onCancel={disarm}
   >
     <span><b>{title}</b><small>{detail}</small></span>
   </PickLabel>;
@@ -102,8 +114,39 @@ export function CaptureEntry(props: {
   const route = useCaptureRoute();
   const choice = useChoiceKind();
   const { mode, pages } = useCaptureSession();
+  const leased = useRef(false);
+  const pinSingle = useRef(false);
+  const leaseEnd = useRef<(() => void) | null>(null);
+  const [, bump] = useState(0);
   const action = captureEntryAction(route, pages.length, mode);
-  if (action === 'choice') {
+  const disarm = (): void => {
+    if (!leased.current) return;
+    leased.current = false;
+    pinSingle.current = false;
+    leaseEnd.current?.();
+    leaseEnd.current = null;
+    bump(value => value + 1);
+  };
+  const arm = (): void => {
+    if (leased.current) return;
+    // A picker opened before materials is known must stay 单页, even if the route arrives as materials
+    // and localStorage still says 多页.
+    pinSingle.current = route !== 'materials';
+    leased.current = true;
+    leaseEnd.current = pickerLease.begin();
+    bump(value => value + 1);
+  };
+  if (action === 'held') {
+    return <button
+      type="button"
+      className={`${props.className ?? ''} is-held`}
+      data-testid={props.testId}
+      aria-label={props.label}
+      aria-disabled="true"
+      aria-describedby="capture-mode-hold"
+    >{props.children}</button>;
+  }
+  if (action === 'choice' && !leased.current) {
     const open = choice === props.kind;
     return <button
       type="button"
@@ -115,10 +158,18 @@ export function CaptureEntry(props: {
       onClick={() => captureChoice.open(props.kind)}
     >{props.children}</button>;
   }
-  if (action === 'held') {
-    return <button type="button" className={props.className} data-testid={props.testId} aria-label={props.label} aria-describedby="capture-mode-hold">{props.children}</button>;
-  }
-  return <PickLabel kind={props.kind} className={props.className} testId={props.testId} inputId={props.inputId} inputLabel={props.label}>{props.children}</PickLabel>;
+  return <PickLabel
+    kind={props.kind}
+    className={props.className}
+    testId={props.testId}
+    inputId={props.inputId}
+    inputLabel={props.label}
+    route={route}
+    mode={pinSingle.current || route !== 'materials' ? 'single' : undefined}
+    onArm={arm}
+    onPicked={disarm}
+    onCancel={disarm}
+  >{props.children}</PickLabel>;
 }
 
 /**
@@ -139,13 +190,22 @@ export function CaptureDock(props: {
   const [active, setActive] = useState(true);
   const route = useCaptureRoute();
   const choice = useChoiceKind();
+  const pickerOpen = usePickerOpen();
   useIonViewWillEnter(() => setActive(true));
   useIonViewWillLeave(() => setActive(false));
-  useEffect(() => { if (route === 'legacy') captureSession.setMode('single'); }, [route]);
-  useEffect(() => { if (!active) captureChoice.close(); }, [active]);
+  useEffect(() => {
+    if (!active || route !== 'legacy') return;
+    captureSession.setMode('single');
+    if (captureSession.pages.length === 0) return;
+    // A tray staged before we knew this server is legacy must not sit here as 多页. Upload the photos as single pages.
+    const staged = captureSession.take();
+    uploader.add(staged.map(page => page.file));
+    navigate('/new');
+  }, [active, route, navigate]);
+  useEffect(() => { if (!active && !pickerLease.open) captureChoice.close(); }, [active]);
   const action = captureEntryAction(route, pages.length, mode);
-  // Only the visible dock may dismiss the sheet. A page Ionic kept mounted would otherwise close it while its own route is still loading.
-  useEffect(() => { if (active && choice && action !== 'choice') captureChoice.close(); }, [active, choice, action]);
+  // Only the visible dock may dismiss the sheet. Leave it up while its file picker can still deliver a change.
+  useEffect(() => { if (active && choice && action !== 'choice' && !pickerOpen) captureChoice.close(); }, [active, choice, action, pickerOpen]);
   if (!active) return null;
   const tray = pages.length > 0;
   const finish = (): void => {

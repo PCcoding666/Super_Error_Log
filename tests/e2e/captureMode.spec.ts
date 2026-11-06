@@ -56,3 +56,33 @@ test('旧流程只保留单页，拍一张就上传', async ({ page }) => {
   await expect(page.locator('.capture-inline').getByTestId('capture-mode-bar')).toHaveCount(0);
   await expect(page.getByTestId('capture-mode-multi')).toHaveCount(0);
 });
+
+test('旧流程路由返回前打开的选择器按单页上传，不会留下多页托盘', async ({ page }) => {
+  test.setTimeout(90_000);
+  const posts: string[] = [];
+  await page.addInitScript(() => localStorage.setItem('sel-capture-mode', 'multi'));
+  let release = (): void => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/s/api/upload', async route => { await gate; await route.continue(); });
+  await page.route('**/s/capture', async route => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    posts.push(route.request().postDataBuffer()?.toString('latin1') ?? '');
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, jobId: crypto.randomUUID(), next: '/s/capture' }) });
+  });
+  await pair(page);
+  await expect(dock(page)).toHaveAttribute('data-capture-route', 'pending');
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.locator('#camera-input').click(),
+  ]);
+  release();
+  await expect(dock(page)).toHaveAttribute('data-capture-route', 'legacy');
+  await expect(page.locator('#camera-input')).toBeAttached();
+  expect(await page.evaluate(() => localStorage.getItem('sel-capture-mode'))).toBe('single');
+  await chooser.setFiles(await synthetic('#89b7ef'));
+  await expect.poll(() => posts.length, { timeout: 20_000 }).toBe(1);
+  expect(posts[0]).toContain('"captureMode":"single"');
+  expect(posts[0]).not.toContain('"captureMode":"multi"');
+  await expect(page.getByTestId('capture-tray')).toHaveCount(0);
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
+});

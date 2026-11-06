@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import type { ChangeEvent, ReactNode } from 'react';
-import { keepsPickedFilesInTray } from '../lib/captureEntry';
+import { pickedFileDestination, type CaptureRouteKind } from '../lib/captureEntry';
 import { captureSession, type CaptureMode } from '../lib/captureSession';
 import { watchChooser } from '../lib/chooserWatch';
 import { uploader } from '../lib/uploader';
@@ -19,15 +19,20 @@ import { uploader } from '../lib/uploader';
  */
 const ACCEPT = 'image/*';
 
-function usePickFiles(): (event: ChangeEvent<HTMLInputElement>) => void {
+function usePickFiles(route: CaptureRouteKind | null, explicit: CaptureMode | undefined): (event: ChangeEvent<HTMLInputElement>) => void {
   const navigate = useNavigate();
   return event => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     if (!files.length) return;
-    // 多页先留在本页：连拍、删一张、标试卷或答题卡，点「完成」再一次提交。
-    // 托盘还在时，即使模式条被改回单页，新照片也并进这一组，不另开一次上传。
-    if (keepsPickedFilesInTray(captureSession.pages.length, captureSession.mode)) { captureSession.add(files); return; }
+    // 多页先留在本页。还没确认是材料流程时，不按 localStorage 里的多页进托盘。
+    // 材料流程里已经有一组时，新照片并进这一组，不另开一次上传。
+    if (pickedFileDestination(route, explicit, captureSession.pages.length) === 'tray') {
+      if (captureSession.mode !== 'multi') captureSession.setMode('multi');
+      captureSession.add(files);
+      return;
+    }
+    if (captureSession.mode !== 'single') captureSession.setMode('single');
     uploader.add(files);
     navigate('/new');
   };
@@ -41,17 +46,21 @@ export function PickLabel(props: {
   inputId?: string;
   /** Spoken name for this file control. Defaults to 拍照 / 从相册选择. */
   inputLabel?: string;
+  /** Route known when this label was rendered. Unknown and legacy commits are 单页. */
+  route?: CaptureRouteKind | null;
   /**
-   * Set on the input's own click, and again on change before files are read.
-   * The click is the user gesture that opens the picker. Do not script a second click on a hidden input.
+   * Set only when this label itself is the mode choice (the sheet). Omitted labels follow the open tray.
+   * Written when a file arrives, not when the picker merely opens, so cancelling does not persist 多页.
    */
   mode?: CaptureMode;
+  /** The student tapped this input. Keep it mounted until the picker finishes. */
+  onArm?: () => void;
   onPicked?: () => void;
+  onCancel?: () => void;
   children: ReactNode;
 }): ReactNode {
-  const onChange = usePickFiles();
+  const onChange = usePickFiles(props.route ?? null, props.mode);
   const album = props.kind === 'album';
-  const activate = (): void => { if (props.mode) captureSession.setMode(props.mode); };
   return <label className={props.className} data-testid={props.testId}>
     {props.children}
     <input
@@ -64,12 +73,48 @@ export function PickLabel(props: {
       multiple={album}
       capture={album ? undefined : 'environment'}
       aria-label={props.inputLabel ?? (album ? '从相册选择' : '拍照')}
-      onClick={event => { activate(); watchChooser(event.currentTarget); }}
+      onClick={event => {
+        props.onArm?.();
+        watchChooser(event.currentTarget);
+        const input = event.currentTarget;
+        let covered = false;
+        let settled = false;
+        const cleanup = (): void => {
+          input.removeEventListener('change', onFile);
+          window.removeEventListener('blur', markCovered);
+          window.removeEventListener('pagehide', markCovered);
+          window.removeEventListener('focus', maybeCancel);
+          document.removeEventListener('visibilitychange', onVisible);
+        };
+        const finish = (cancel: boolean): void => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (cancel) props.onCancel?.();
+        };
+        const onFile = (): void => finish(false);
+        const markCovered = (): void => { covered = true; };
+        const maybeCancel = (): void => {
+          if (!covered) return;
+          window.setTimeout(() => finish((input.files?.length ?? 0) === 0), 0);
+        };
+        const onVisible = (): void => {
+          if (document.visibilityState === 'hidden') covered = true;
+          else maybeCancel();
+        };
+        // Only a picker that actually covered the page can cancel. A click that never leaves
+        // the document must not drop the input before change arrives.
+        input.addEventListener('change', onFile);
+        window.addEventListener('blur', markCovered);
+        window.addEventListener('pagehide', markCovered);
+        window.addEventListener('focus', maybeCancel);
+        document.addEventListener('visibilitychange', onVisible);
+      }}
       onChange={event => {
         const picked = (event.target.files?.length ?? 0) > 0;
-        activate();
         onChange(event);
         if (picked) props.onPicked?.();
+        else props.onCancel?.();
       }}
     />
   </label>;

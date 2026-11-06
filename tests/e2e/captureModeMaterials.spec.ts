@@ -175,9 +175,11 @@ test('单页和相册都先选模式，录入页同样不常驻模式条，托�
   await expect(uploads).toHaveLength(1);
   await inline.getByTestId('capture-mode-single').click();
   await expect(page.getByTestId('capture-mode-hold')).toBeVisible();
+  await expect(page.getByTestId('intake-camera')).toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByTestId('intake-album')).toHaveAttribute('aria-disabled', 'true');
   await expect(page.getByTestId('intake-camera').locator('input')).toHaveCount(0);
   await expect(page.locator('#camera-input')).toHaveCount(0);
-  await page.getByTestId('intake-camera').click();
+  await page.getByTestId('intake-camera').click({ force: true });
   await expect(page.getByTestId('capture-count')).toHaveText('已拍 1 张');
   await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
   await inline.getByTestId('capture-mode-multi').click();
@@ -189,4 +191,60 @@ test('单页和相册都先选模式，录入页同样不常驻模式条，托�
   await expect(inline).toHaveAttribute('data-capture-choice', 'choice');
   await expect(inline.getByTestId('capture-mode-bar')).toHaveCount(0);
   expect(uploads).toHaveLength(1);
+});
+
+test('打开选择器之后材料路由才返回：文件不丢，存储的多页也不会先塞进托盘', async ({ page, gateway }) => {
+  test.setTimeout(90_000);
+  const uploads: string[] = [];
+  await page.addInitScript(() => localStorage.setItem('sel-capture-mode', 'multi'));
+  let release = (): void => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/s/api/upload', async route => { await gate; await route.continue(); });
+  await page.route('**/s/materials/uploads', async route => {
+    uploads.push(route.request().postDataBuffer()?.toString('latin1') ?? '');
+    await route.continue();
+  });
+  await page.goto(gateway.base + '/s/');
+  await page.getByLabel('12 位邀请码').fill(gateway.codes[0]!);
+  await page.getByRole('button', { name: '进入我的错题本' }).click();
+  await page.getByRole('button', { name: '初中', exact: true }).click();
+  await expect(page.getByTestId('empty-notebook')).toBeVisible();
+  // Do not wait for data-capture-choice=choice. That wait hides this race.
+  await expect(dock(page)).toHaveAttribute('data-capture-route', 'pending');
+  await expect(page.locator('#camera-input')).toBeAttached();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.locator('#camera-input').click(),
+  ]);
+  release();
+  await expect(dock(page)).toHaveAttribute('data-capture-route', 'materials');
+  await expect(dock(page)).toHaveAttribute('data-capture-choice', 'choice');
+  await expect(page.locator('#camera-input')).toBeAttached();
+  await chooser.setFiles(await jpeg());
+  await expect.poll(() => uploads.length, { timeout: 20_000 }).toBe(1);
+  expect(uploads[0]).toContain('"captureMode":"single"');
+  expect(uploads[0]).not.toContain('"pageIndex"');
+  await expect(page.getByTestId('capture-tray')).toHaveCount(0);
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
+  expect(await page.evaluate(() => localStorage.getItem('sel-capture-mode'))).toBe('single');
+});
+
+test('取消多页选择器不会把多页写进本地，刷新后也不会出现托盘', async ({ page, gateway }) => {
+  test.setTimeout(90_000);
+  await page.goto(gateway.base + '/s/');
+  await page.getByLabel('12 位邀请码').fill(gateway.codes[0]!);
+  await page.getByRole('button', { name: '进入我的错题本' }).click();
+  await page.getByRole('button', { name: '初中', exact: true }).click();
+  await expect(dock(page)).toHaveAttribute('data-capture-choice', 'choice');
+  await openChoice(page, 'camera');
+  await Promise.all([
+    page.waitForEvent('filechooser'),
+    choiceInput(page, 'multi').click(),
+  ]);
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => localStorage.getItem('sel-capture-mode'))).not.toBe('multi');
+  await page.reload();
+  await expect(dock(page)).toHaveAttribute('data-capture-choice', 'choice');
+  await expect(page.getByTestId('capture-tray')).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('sel-capture-mode'))).not.toBe('multi');
 });
