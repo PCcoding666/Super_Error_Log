@@ -68,9 +68,9 @@
 
 选好后进入「录入」。照片在后台上传，AI 在找题。同一张图只保存一次。录入页还可以按上传日筛选，只看某一天传的材料。录入页空着的时候也不常驻「单页 / 多页」，点拍照或相册后再选。
 
-![空的错题本，右下角是拍照和相册](../../src/portal/help-img/notebook-empty.webp)
+![空的错题本](../../src/portal/help-img/notebook-empty.webp)
 
-![录入页可以继续拍照或从相册选择](../../src/portal/help-img/intake-auto.webp)
+![录入页可以继续拍照](../../src/portal/help-img/intake-auto.webp)
 
 ## 怎么选错题
 
