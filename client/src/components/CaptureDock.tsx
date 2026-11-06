@@ -42,12 +42,14 @@ function CaptureChoiceSheet(props: { kind: CaptureChoiceKind }): ReactNode {
   const leaseEnd = useRef<(() => void) | null>(null);
   const arm = (): void => { if (!leaseEnd.current) leaseEnd.current = pickerLease.begin(); };
   const disarm = (): void => { leaseEnd.current?.(); leaseEnd.current = null; };
+  const closeSheet = (): void => { disarm(); captureChoice.close(); };
+  useEffect(() => () => { disarm(); }, []);
   useEffect(() => {
     const dialog = dialogRef.current;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialog?.focus();
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') { event.preventDefault(); captureChoice.close(); return; }
+      if (event.key === 'Escape') { event.preventDefault(); closeSheet(); return; }
       if (event.key !== 'Tab' || !dialog) return;
       const focusable = [...dialog.querySelectorAll<HTMLElement>('button, input')].filter(element => !element.hasAttribute('disabled'));
       if (!focusable.length) return;
@@ -77,7 +79,7 @@ function CaptureChoiceSheet(props: { kind: CaptureChoiceKind }): ReactNode {
   >
     <span><b>{title}</b><small>{detail}</small></span>
   </PickLabel>;
-  return createPortal(<div className="capture-choice-backdrop" data-testid="capture-mode-sheet" onClick={() => captureChoice.close()}>
+  return createPortal(<div className="capture-choice-backdrop" data-testid="capture-mode-sheet" onClick={closeSheet}>
     <div
       className="capture-choice-sheet"
       role="dialog"
@@ -93,7 +95,7 @@ function CaptureChoiceSheet(props: { kind: CaptureChoiceKind }): ReactNode {
         {option('single', '单页', '选好就上传', 'capture-mode-single')}
         {option('multi', '多页', '先留在本页，拍完再一起上传', 'capture-mode-multi')}
       </div>
-      <button type="button" className="capture-choice-cancel" data-testid="capture-mode-cancel" onClick={() => captureChoice.close()}>取消</button>
+      <button type="button" className="capture-choice-cancel" data-testid="capture-mode-cancel" onClick={closeSheet}>取消</button>
     </div>
   </div>, document.body);
 }
@@ -136,7 +138,13 @@ export function CaptureEntry(props: {
     leaseEnd.current = pickerLease.begin();
     bump(value => value + 1);
   };
-  if (action === 'held') {
+  useEffect(() => () => {
+    leaseEnd.current?.();
+    leaseEnd.current = null;
+    leased.current = false;
+  }, []);
+  // An in-flight picker keeps its input. Held and the idle chooser only replace it after the picker ends.
+  if (!leased.current && action === 'held') {
     return <button
       type="button"
       className={`${props.className ?? ''} is-held`}
@@ -202,7 +210,7 @@ export function CaptureDock(props: {
     uploader.add(staged.map(page => page.file));
     navigate('/new');
   }, [active, route, navigate]);
-  useEffect(() => { if (!active && !pickerLease.open) captureChoice.close(); }, [active]);
+  useEffect(() => { if (!active) captureChoice.close(); }, [active]);
   const action = captureEntryAction(route, pages.length, mode);
   // Only the visible dock may dismiss the sheet. Leave it up while its file picker can still deliver a change.
   useEffect(() => { if (active && choice && action !== 'choice' && !pickerOpen) captureChoice.close(); }, [active, choice, action, pickerOpen]);

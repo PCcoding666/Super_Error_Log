@@ -248,3 +248,140 @@ test('取消多页选择器不会把多页写进本地，刷新后也不会出�
   await expect(page.getByTestId('capture-tray')).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('sel-capture-mode'))).not.toBe('multi');
 });
+
+const ANDROID_SHELL = 'Mozilla/5.0 (Linux; U; Android 14; zh-cn; 23013RK75C Build/UKQ1.230804.001) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/118.0.0.0 Mobile Safari/537.36 XiaoMi/MiuiBrowser/18.4.30';
+/** Matches client/src/lib/chooserWatch.ts. Android with no cover ends the lease after this. */
+const NO_COVER_MS = 2000;
+/** Matches PICKER_RETURN_GRACE_MS. A late change inside this window must beat focus/visibility. */
+const RETURN_GRACE_MS = 1000;
+
+async function enterMaterials(page: Page, gateway: { base: string; codes: string[] }): Promise<void> {
+  await page.goto(gateway.base + '/s/');
+  await page.getByLabel('12 位邀请码').fill(gateway.codes[0]!);
+  await page.getByRole('button', { name: '进入我的错题本' }).click();
+  await page.getByRole('button', { name: '初中', exact: true }).click();
+  await expect(page.getByTestId('empty-notebook')).toBeVisible();
+}
+
+/** Real tap on the file input. Playwright holds the dialog open until setFiles or Escape. */
+async function openChooser(page: Page, selector: string) {
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.locator(selector).click(),
+  ]);
+  return chooser;
+}
+
+async function setCovered(page: Page, hidden: boolean): Promise<void> {
+  await page.evaluate(isHidden => {
+    const doc = document as Document & { __selVis?: string };
+    doc.__selVis = isHidden ? 'hidden' : 'visible';
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => doc.__selVis ?? 'visible' });
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => (doc.__selVis ?? 'visible') === 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event(isHidden ? 'blur' : 'focus'));
+  }, hidden);
+}
+
+test('页面重新可见后，迟到的 change 仍能送出照片，空等超过宽限才算取消', async ({ page, gateway }) => {
+  test.setTimeout(90_000);
+  let release = (): void => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/s/api/upload', async route => { await gate; await route.continue(); });
+  await enterMaterials(page, gateway);
+  await expect(dock(page)).toHaveAttribute('data-capture-route', 'pending');
+  const chooser = await openChooser(page, '#camera-input');
+  release();
+  await expect(dock(page)).toHaveAttribute('data-capture-route', 'materials');
+  await expect(page.locator('#camera-input')).toBeAttached();
+  await setCovered(page, true);
+  await setCovered(page, false);
+  await page.waitForTimeout(250);
+  await expect(page.locator('#camera-input')).toBeAttached();
+  await chooser.setFiles(await jpeg());
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
+});
+
+test('选择器盖住页面后又露出、且没有文件，宽限结束后才松开输入框', async ({ page, gateway }) => {
+  test.setTimeout(90_000);
+  let release = (): void => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/s/api/upload', async route => { await gate; await route.continue(); });
+  await enterMaterials(page, gateway);
+  const chooser = await openChooser(page, '#camera-input');
+  release();
+  await expect(dock(page)).toHaveAttribute('data-capture-route', 'materials');
+  await setCovered(page, true);
+  await setCovered(page, false);
+  await page.waitForTimeout(250);
+  await expect(page.locator('#camera-input')).toBeAttached();
+  await expect(page.locator('#camera-input')).toHaveCount(0, { timeout: RETURN_GRACE_MS + 800 });
+  await expect.poll(() => new URL(page.url()).pathname).not.toBe('/s/new');
+  await chooser.setFiles([]).catch(() => {});
+});
+
+test('非安卓页面一直可见时，两秒内不会放开租约；cancel 事件会放开', async ({ page, gateway }) => {
+  test.setTimeout(90_000);
+  let release = (): void => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/s/api/upload', async route => { await gate; await route.continue(); });
+  await enterMaterials(page, gateway);
+  const chooser = await openChooser(page, '#camera-input');
+  release();
+  await expect(dock(page)).toHaveAttribute('data-capture-route', 'materials');
+  await page.waitForTimeout(NO_COVER_MS + 400);
+  await expect(page.locator('#camera-input')).toBeAttached();
+  await page.locator('#camera-input').evaluate((input: HTMLInputElement) => input.dispatchEvent(new Event('cancel', { bubbles: true })));
+  await expect(page.locator('#camera-input')).toHaveCount(0);
+  await chooser.setFiles([]).catch(() => {});
+});
+
+test.describe('安卓壳没有盖住页面', () => {
+  test.use({ userAgent: ANDROID_SHELL });
+  test('点了输入框但页面从未被盖住，宽限后放开租约，不把没打开的选择器一直占着', async ({ page, gateway }) => {
+    test.setTimeout(90_000);
+    let release = (): void => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/s/api/upload', async route => { await gate; await route.continue(); });
+    await enterMaterials(page, gateway);
+    await expect(dock(page)).toHaveAttribute('data-capture-route', 'pending');
+    const chooser = await openChooser(page, '#camera-input');
+    release();
+    await expect(dock(page)).toHaveAttribute('data-capture-route', 'materials');
+    await expect(page.locator('#camera-input')).toBeAttached();
+    await expect(page.locator('#camera-input')).toHaveCount(0, { timeout: NO_COVER_MS + 1500 });
+    await expect.poll(() => new URL(page.url()).pathname).not.toBe('/s/new');
+    await chooser.setFiles([]).catch(() => {});
+  });
+});
+
+test('关掉模式层会清掉租约，离开再回来不会把层重新打开', async ({ page, gateway }) => {
+  test.setTimeout(90_000);
+  await enterMaterials(page, gateway);
+  await expect(dock(page)).toHaveAttribute('data-capture-choice', 'choice');
+  await openChoice(page, 'camera');
+  const chooser = await openChooser(page, '[data-testid="capture-mode-sheet"] [data-testid="capture-mode-multi"] input');
+  await page.getByTestId('capture-mode-cancel').click();
+  await chooser.setFiles([]).catch(() => {});
+  await expect(page.getByTestId('capture-mode-sheet')).toHaveCount(0);
+  await page.getByTestId('settings-link').click();
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/s/me');
+  await page.goBack();
+  await expect(dock(page)).toBeVisible();
+  await expect(page.getByTestId('capture-mode-sheet')).toHaveCount(0);
+});
+
+test('托盘改成单页时，已经点开的输入框要留到这次选择结束', async ({ page, gateway }) => {
+  test.setTimeout(90_000);
+  await enterMaterials(page, gateway);
+  await expect(dock(page)).toHaveAttribute('data-capture-choice', 'choice');
+  await openChoice(page, 'camera');
+  await choiceInput(page, 'multi').setInputFiles(await jpeg());
+  await expect(page.getByTestId('capture-count')).toHaveText('已拍 1 张');
+  const chooser = await openChooser(page, '#camera-input');
+  await dock(page).getByTestId('capture-mode-single').click();
+  await expect(page.locator('#camera-input')).toBeAttached();
+  await chooser.setFiles(await jpeg());
+  await expect(page.getByTestId('capture-count')).toHaveText('已拍 2 张');
+  await expect.poll(() => new URL(page.url()).pathname).not.toBe('/s/new');
+});

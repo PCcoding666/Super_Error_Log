@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router-dom';
-import type { ChangeEvent, ReactNode } from 'react';
+import { useEffect, useRef, type ChangeEvent, type ReactNode } from 'react';
 import { pickedFileDestination, type CaptureRouteKind } from '../lib/captureEntry';
 import { captureSession, type CaptureMode } from '../lib/captureSession';
-import { watchChooser } from '../lib/chooserWatch';
+import { bindPickerSession, watchChooser } from '../lib/chooserWatch';
 import { uploader } from '../lib/uploader';
 
 /**
@@ -60,6 +60,8 @@ export function PickLabel(props: {
   children: ReactNode;
 }): ReactNode {
   const onChange = usePickFiles(props.route ?? null, props.mode);
+  const stopSession = useRef<(() => void) | null>(null);
+  useEffect(() => () => { stopSession.current?.(); stopSession.current = null; }, []);
   const album = props.kind === 'album';
   return <label className={props.className} data-testid={props.testId}>
     {props.children}
@@ -76,39 +78,8 @@ export function PickLabel(props: {
       onClick={event => {
         props.onArm?.();
         watchChooser(event.currentTarget);
-        const input = event.currentTarget;
-        let covered = false;
-        let settled = false;
-        const cleanup = (): void => {
-          input.removeEventListener('change', onFile);
-          window.removeEventListener('blur', markCovered);
-          window.removeEventListener('pagehide', markCovered);
-          window.removeEventListener('focus', maybeCancel);
-          document.removeEventListener('visibilitychange', onVisible);
-        };
-        const finish = (cancel: boolean): void => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          if (cancel) props.onCancel?.();
-        };
-        const onFile = (): void => finish(false);
-        const markCovered = (): void => { covered = true; };
-        const maybeCancel = (): void => {
-          if (!covered) return;
-          window.setTimeout(() => finish((input.files?.length ?? 0) === 0), 0);
-        };
-        const onVisible = (): void => {
-          if (document.visibilityState === 'hidden') covered = true;
-          else maybeCancel();
-        };
-        // Only a picker that actually covered the page can cancel. A click that never leaves
-        // the document must not drop the input before change arrives.
-        input.addEventListener('change', onFile);
-        window.addEventListener('blur', markCovered);
-        window.addEventListener('pagehide', markCovered);
-        window.addEventListener('focus', maybeCancel);
-        document.addEventListener('visibilitychange', onVisible);
+        stopSession.current?.();
+        stopSession.current = bindPickerSession(event.currentTarget, { onCancel: () => props.onCancel?.() });
       }}
       onChange={event => {
         const picked = (event.target.files?.length ?? 0) > 0;
