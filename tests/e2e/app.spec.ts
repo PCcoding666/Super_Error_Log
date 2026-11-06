@@ -277,16 +277,29 @@ test('详情页：立体图由程序画，能拖动旋转', async ({ page }) => 
   await expect(figure.locator('#s line')).not.toHaveCount(0);
   await expect(figure.locator('#cap')).toHaveText('【mock】红线是 BD');
   const before = await figure.locator('#s circle').first().getAttribute('cx');
-  // 交互图在解答弹层的下半截，mac 上的字体更高，iframe 可能整个落在视口外；boundingBox 不会滚动，
-  // 按它算出的坐标去按鼠标，事件落在屏幕外，iframe 里什么都收不到。hover 会把图滚到看得见并等它停稳，再从图中心按住拖。
+  // svg 默认只在画出来的面上接指针。外接矩形中心是空白，按在那里不会开始拖动。
+  // 按下落在面上，松手落在图下方的说明上：这段位移不在图上，要靠 setPointerCapture 送回 svg。
   const solid = figure.locator('#s');
+  const face = figure.locator('#s polygon').first();
+  const hint = figure.locator('.hint').first();
   await solid.hover();
-  const box = (await solid.boundingBox())!;
-  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  expect(centre.y).toBeLessThan(page.viewportSize()!.height);
-  await page.mouse.down();
-  for (let step = 1; step <= 8; step += 1) await page.mouse.move(centre.x + step * 10, centre.y);
-  await page.mouse.up();
+  const svgBox = await solid.boundingBox();
+  const faceBox = await face.boundingBox();
+  const hintBox = await hint.boundingBox();
+  expect(svgBox).toBeTruthy();
+  expect(faceBox).toBeTruthy();
+  expect(hintBox).toBeTruthy();
+  const viewport = page.viewportSize()!;
+  expect(svgBox!.y).toBeGreaterThanOrEqual(0);
+  expect(svgBox!.y + svgBox!.height).toBeLessThanOrEqual(viewport.height);
+  const source = { x: faceBox!.x + faceBox!.width / 2 - svgBox!.x, y: faceBox!.y + faceBox!.height / 2 - svgBox!.y };
+  const faceCenterX = svgBox!.x + source.x;
+  const releaseX = Math.min(hintBox!.x + hintBox!.width - 4, Math.max(hintBox!.x + 4, faceCenterX + 64));
+  expect(Math.abs(releaseX - faceCenterX)).toBeGreaterThan(24);
+  await solid.dragTo(hint, {
+    sourcePosition: source,
+    targetPosition: { x: releaseX - hintBox!.x, y: hintBox!.height / 2 },
+  });
   await expect.poll(() => figure.locator('#s circle').first().getAttribute('cx')).not.toBe(before);
 });
 

@@ -48,9 +48,14 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await page.getByRole('button', { name: '初中', exact: true }).click();
   await expect(page.getByTestId('empty-notebook')).toBeVisible();
   // 首次从首页选照片：上传队列先问 /s/api/upload，材料空间不接受旧的 /s/capture。
+  // 材料首页不常驻模式条。点相册后再选单页，文件框就是这一下点到的那一个。
   const legacyUploads: string[] = [];
   page.on('request', request => { if (request.method() === 'POST' && /\/s\/capture$/.test(request.url())) legacyUploads.push(request.url()); });
-  await page.locator('#library-input').setInputFiles([await jpeg()]);
+  const dock = page.locator('[data-testid="capture-dock"]:visible');
+  await expect(dock).toHaveAttribute('data-capture-choice', 'choice');
+  await expect(page.getByTestId('capture-mode-bar')).toHaveCount(0);
+  await page.getByTestId('next-step-primary').click();
+  await page.getByTestId('capture-mode-single').locator('input').setInputFiles([await jpeg()]);
   await expect.poll(() => url(page)).toBe('/s/new');
   // 合成提取：一道题「1 + 1 = ?」带作答和参考答案，没有老师批改痕迹 → 等学生勾选。
   const photo = page.locator('section.intake-photo[data-state="needsPick"]');
