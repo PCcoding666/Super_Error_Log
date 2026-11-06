@@ -1,4 +1,4 @@
-import type { ApiError, DiscardResponse, IntakeResponse, ItemAnswerPhoto, ItemDetailResponse, ItemInsight, ItemRemark, NotebookResponse, SettingsResponse, UploadModeResponse } from '../../../src/web/apiTypes';
+import type { ApiError, DiscardResponse, IntakeCandidateDetail, IntakeResponse, ItemAnswerPhoto, ItemDetailResponse, ItemInsight, ItemRemark, NotebookResponse, SettingsResponse, UploadModeResponse } from '../../../src/web/apiTypes';
 import { report } from './report';
 
 export class RequestError extends Error {
@@ -61,6 +61,8 @@ export const api = {
   },
   uploadMode: () => call<UploadModeResponse>('/s/api/upload'),
   select: (photoId: string, ids: string[]) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/select`, { method: 'POST', body: JSON.stringify({ ids }) }),
+  /** Read a materials candidate. Legacy candidates have no text endpoint; the page shows the crop it already has. */
+  candidateDetail: (questionId: string, revision: number) => call<IntakeCandidateDetail>(`/s/api/intake/candidates/${encodeURIComponent(questionId)}?revision=${revision}`),
   retry: (photoId: string) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/retry`, { method: 'POST', body: '{}' }),
   dismiss: (photoId: string) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/dismiss`, { method: 'POST', body: '{}' }),
 };

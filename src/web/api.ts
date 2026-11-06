@@ -40,6 +40,8 @@ import { matchesNotebook, NOTEBOOK_STATUS_GROUPS, notebookStatusFilter, notebook
 import { loadPhotos, type PhotoView, type WebContext } from './state.js';
 import { detailPhotos } from './detailPhotos.js';
 import { stemFirstSentence } from './views/materials.js';
+import { readIntakeCandidateDetail } from './intakeCandidateDetail.js';
+import { INTAKE_SELECT_LIMIT } from './intakeSelection.js';
 import type {
   DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemAnswerPhoto, ItemDetailResponse, ItemInsight, ItemTrace,
   NotebookGroup, NotebookItem, NotebookResponse, SettingsResponse, UploadModeResponse,
@@ -508,12 +510,25 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const page = pageIndex(request.query.page);
     return ctx.materials ? materialsIntake(filter, page) : legacyIntake(request, filter, page);
   }));
+  // 候选题详情：只读已经识别并保存的文字、裁图和已有答案/判断。不排队、不写库、不编造缺的内容。
+  r.get('/intake/candidates/:questionId', handler((request) => {
+    const materials = ctx.materials;
+    if (!materials) fail(404, 'not_found', '这道题没有可查看的识别详情。');
+    else {
+      const revisionText = str(request.query.revision);
+      const revision = /^[0-9]{1,9}$/.test(revisionText) ? Number(revisionText) : Number.NaN;
+      const result = readIntakeCandidateDetail(materials, String(request.params.questionId), revision);
+      if (result.ok) return result.detail;
+      fail(result.status, result.code, result.message);
+    }
+  }));
   // 上传队列在发第一张之前先问这个：材料流程的学生空间不接受旧的 /s/capture。
   r.get('/upload', handler((): UploadModeResponse => (ctx.materials ? { mode: 'materials', draftNamespace: ctx.materials.getWorkspace().draftNamespace } : { mode: 'legacy', draftNamespace: null })));
 
   r.post('/intake/photos/:id/select', handler(async (request) => {
     const photoId = String(request.params.id);
-    const ids = [...new Set(list(request.body?.ids))].slice(0, 120);
+    const cap = ctx.materials ? INTAKE_SELECT_LIMIT.materials : INTAKE_SELECT_LIMIT.legacy;
+    const ids = [...new Set(list(request.body?.ids))].slice(0, cap);
     if (!ids.length) fail(400, 'invalid_request', '先勾出做错的题。');
     if (ctx.materials) {
       const picks = ids.map(value => { const m = /^([A-Za-z0-9_-]{1,80}):([0-9]{1,9})$/.exec(value); if (!m) fail(400, 'invalid_request', '勾选信息不可用，请刷新后再试。'); return { questionId: m![1]!, revision: Number(m![2]) }; });
@@ -521,7 +536,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       return { ok: true, ...saved };
     }
     if (!UUID.test(photoId) || !ids.every(id => UUID.test(id))) fail(400, 'invalid_request', '勾选信息不可用，请刷新后再试。');
-    try { await options.service.select(photoId, ids.slice(0, 30)); }
+    try { await options.service.select(photoId, ids); }
     catch (error) { if (error instanceof MobileRequestError) fail(error.status, error.code, error.message); throw error; }
     return { ok: true, included: ids.length, skipped: 0 };
   }));

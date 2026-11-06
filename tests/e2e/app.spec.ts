@@ -80,7 +80,7 @@ test('配对后看到错题本，拍照进入录入态，自动收录的题左�
   await expect(unmarked).toHaveCount(1);
   await expect(unmarked.getByTestId('pick-candidate')).toHaveCount(3);
   await expect(unmarked.getByTestId('pick-submit')).toHaveAttribute('aria-disabled', 'true');
-  await unmarked.getByTestId('pick-candidate').first().click();
+  await unmarked.getByTestId('pick-checkbox').first().click();
   await expect(unmarked.getByTestId('pick-submit')).toHaveText('加入 1 道');
   await unmarked.getByTestId('pick-submit').click();
   await expect(page.locator('section.intake-photo[data-state="done"]')).toHaveCount(2, { timeout: 40_000 });
