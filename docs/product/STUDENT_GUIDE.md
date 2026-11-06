@@ -4,7 +4,7 @@
 
 照片里的题目由 AI 抽出，建议也由 AI 给出，最后保存什么由你决定。家长只看到完成情况和掌握程度这些汇总，看不到题目，也看不到错因。
 
-目前支持数学、物理、化学。文中的界面图都是合成示例，不是真实学生的卷子或邀请码。
+目前支持数学、物理、化学。文中的界面图都是浏览器里的合成示例，不是真实学生的卷子或邀请码，也不是手机系统相机或相册的截图。
 
 ## 添加到手机桌面
 
@@ -68,9 +68,9 @@
 
 选好后进入「录入」。照片在后台上传，AI 在找题。同一张图只保存一次。录入页还可以按上传日筛选，只看某一天传的材料。录入页空着的时候也不常驻「单页 / 多页」，点拍照或相册后再选。
 
-![空的错题本](../../src/portal/help-img/notebook-empty.webp)
+![合成浏览器示例：空的错题本只有拍照和相册，不是系统相机](../../src/portal/help-img/notebook-empty.webp)
 
-![录入页可以继续拍照](../../src/portal/help-img/intake-auto.webp)
+![合成浏览器示例：录入页底部是拍照和从相册选择，不是系统相册](../../src/portal/help-img/intake-auto.webp)
 
 ## 怎么选错题
 
@@ -83,9 +83,9 @@
 
 错题本右上角可以按章节、知识点筛选，也可以切换网格和列表。左下角可以搜索。
 
-![勾选没有批改痕迹的题](../../src/portal/help-img/intake-pick.webp)
+![合成浏览器示例：勾选没有批改痕迹的题，底部是拍照和从相册选择](../../src/portal/help-img/intake-pick.webp)
 
-![错题本列表](../../src/portal/help-img/notebook-list.webp)
+![合成浏览器示例：错题本列表，右下角只有拍照和相册](../../src/portal/help-img/notebook-list.webp)
 
 ![题目详情上的整张原图](../../src/portal/help-img/item-detail.webp)
 
