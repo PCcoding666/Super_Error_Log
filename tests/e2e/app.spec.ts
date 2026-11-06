@@ -277,16 +277,31 @@ test('详情页：立体图由程序画，能拖动旋转', async ({ page }) => 
   await expect(figure.locator('#s line')).not.toHaveCount(0);
   await expect(figure.locator('#cap')).toHaveText('【mock】红线是 BD');
   const before = await figure.locator('#s circle').first().getAttribute('cx');
-  // 交互图在解答弹层的下半截，mac 上的字体更高，iframe 可能整个落在视口外；boundingBox 不会滚动，
-  // 按它算出的坐标去按鼠标，事件落在屏幕外，iframe 里什么都收不到。hover 会把图滚到看得见并等它停稳，再从图中心按住拖。
+  // 交互图在解答弹层的下半截。先 hover，确认整张图在视口里。
+  // 图在 sandbox="allow-scripts" 的不透明 iframe 里。CI 的 Chromium 经常不把 page.mouse
+  // 送进这个跨源 frame：trace 里鼠标从 x=195 拖到 275、y=509.36，圆的 cx 仍是拖之前的值。
+  // 在图自己的文档里发 pointer 事件，走的是立体图脚本实际监听的那条路径。
   const solid = figure.locator('#s');
   await solid.hover();
-  const box = (await solid.boundingBox())!;
-  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  expect(centre.y).toBeLessThan(page.viewportSize()!.height);
-  await page.mouse.down();
-  for (let step = 1; step <= 8; step += 1) await page.mouse.move(centre.x + step * 10, centre.y);
-  await page.mouse.up();
+  const box = await solid.boundingBox();
+  expect(box).toBeTruthy();
+  const viewport = page.viewportSize()!;
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+  await solid.evaluate((svg: SVGSVGElement) => {
+    const rect = svg.getBoundingClientRect();
+    const x0 = rect.left + rect.width / 2;
+    const y0 = rect.top + rect.height / 2;
+    const send = (type: string, x: number, y: number, buttons: number): void => {
+      svg.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons,
+      }));
+    };
+    send('pointerdown', x0, y0, 1);
+    for (let step = 1; step <= 8; step += 1) send('pointermove', x0 + step * 18, y0, 1);
+    send('pointerup', x0 + 144, y0, 0);
+  });
   await expect.poll(() => figure.locator('#s circle').first().getAttribute('cx')).not.toBe(before);
 });
 
