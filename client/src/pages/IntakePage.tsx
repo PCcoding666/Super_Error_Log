@@ -51,6 +51,7 @@ export function IntakePage(): ReactNode {
   const scrollerRef = useRef<HTMLElement | null>(null);
   const liveScroll = useRef(0);
   const savedScroll = useRef(0);
+  // Freeze only while the sheet is open. A press that turns into a scroll must keep updating.
   const scrollFrozen = useRef(false);
   const detailToken = useRef(0);
   const setContent = useCallback((node: HTMLIonContentElement | null) => {
@@ -147,13 +148,10 @@ export function IntakePage(): ReactNode {
     if (result.truncated) setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
     setPicked(currentPicks => ({ ...currentPicks, [photo.id]: new Set(result.ids) }));
   };
-  const rememberScroll = (): void => {
+  const openDetail = (photo: IntakePhoto, candidate: IntakeCandidate): void => {
     if (scrollerRef.current) liveScroll.current = scrollerRef.current.scrollTop;
     savedScroll.current = liveScroll.current;
     scrollFrozen.current = true;
-  };
-  const openDetail = (photo: IntakePhoto, candidate: IntakeCandidate): void => {
-    if (!scrollFrozen.current) rememberScroll();
     const token = ++detailToken.current;
     const mode = data?.mode === 'legacy' ? 'legacy' : 'materials';
     setDetailRequest({ photoId: photo.id, candidateId: candidate.id, label: candidate.label, mode, crop: candidate.crop, source: photo.full });
@@ -239,8 +237,6 @@ export function IntakePage(): ReactNode {
                 className="intake-detail-button"
                 data-testid="candidate-detail"
                 aria-label={`查看${candidate.label}的详情`}
-                onPointerDown={rememberScroll}
-                onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') rememberScroll(); }}
                 onClick={() => openDetail(photo, candidate)}
               >查看详情</button>
             </div>)}
