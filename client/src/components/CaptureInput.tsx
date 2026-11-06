@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import type { ChangeEvent, ReactNode } from 'react';
-import { captureSession } from '../lib/captureSession';
+import { keepsPickedFilesInTray } from '../lib/captureEntry';
+import { captureSession, type CaptureMode } from '../lib/captureSession';
 import { watchChooser } from '../lib/chooserWatch';
 import { uploader } from '../lib/uploader';
 
@@ -25,7 +26,8 @@ function usePickFiles(): (event: ChangeEvent<HTMLInputElement>) => void {
     event.target.value = '';
     if (!files.length) return;
     // 多页先留在本页：连拍、删一张、标试卷或答题卡，点「完成」再一次提交。
-    if (captureSession.mode === 'multi') { captureSession.add(files); return; }
+    // 托盘还在时，即使模式条被改回单页，新照片也并进这一组，不另开一次上传。
+    if (keepsPickedFilesInTray(captureSession.pages.length, captureSession.mode)) { captureSession.add(files); return; }
     uploader.add(files);
     navigate('/new');
   };
@@ -37,10 +39,19 @@ export function PickLabel(props: {
   testId?: string;
   /** 整页只放一个，给还在用 #library-input / #camera-input 的测试。 */
   inputId?: string;
+  /** Spoken name for this file control. Defaults to 拍照 / 从相册选择. */
+  inputLabel?: string;
+  /**
+   * Set on the input's own click, and again on change before files are read.
+   * The click is the user gesture that opens the picker. Do not script a second click on a hidden input.
+   */
+  mode?: CaptureMode;
+  onPicked?: () => void;
   children: ReactNode;
 }): ReactNode {
   const onChange = usePickFiles();
   const album = props.kind === 'album';
+  const activate = (): void => { if (props.mode) captureSession.setMode(props.mode); };
   return <label className={props.className} data-testid={props.testId}>
     {props.children}
     <input
@@ -52,9 +63,14 @@ export function PickLabel(props: {
       accept={ACCEPT}
       multiple={album}
       capture={album ? undefined : 'environment'}
-      aria-label={album ? '从相册选择' : '拍照'}
-      onClick={event => watchChooser(event.currentTarget)}
-      onChange={onChange}
+      aria-label={props.inputLabel ?? (album ? '从相册选择' : '拍照')}
+      onClick={event => { activate(); watchChooser(event.currentTarget); }}
+      onChange={event => {
+        const picked = (event.target.files?.length ?? 0) > 0;
+        activate();
+        onChange(event);
+        if (picked) props.onPicked?.();
+      }}
     />
   </label>;
 }

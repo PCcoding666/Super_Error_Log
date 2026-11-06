@@ -2,7 +2,7 @@
  * 给公开说明页拍合成示例图。只启动本机临时服务器，照片和账号都是编的，退出即删。
  * 运行：npx tsx scripts/capture-help-guide.ts
  *
- * 错题本 / 录入 / 详情走邀请码网关 + 材料流程，这样能拍到生产上的「单页 / 多页」模式条。
+ * 错题本 / 录入 / 详情走邀请码网关 + 材料流程。空闲首页只有拍照和相册；单页 / 多页在点开之后的选择层里。
  * 注册 / 登录 / 找回等仍用同一网关。练习截图不再拍：设置里写着即将推出，学生端没有入口。
  */
 import { fork, type ChildProcess } from 'node:child_process';
@@ -109,14 +109,15 @@ async function main(): Promise<void> {
     }
 
     await page.getByTestId('empty-notebook').waitFor();
-    await page.getByTestId('capture-mode-bar').waitFor();
-    await page.getByTestId('capture-mode-multi').waitFor();
+    await page.locator('[data-testid="capture-dock"]:visible').waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-testid="capture-dock"]')?.getAttribute('data-capture-choice') === 'choice');
     await page.waitForTimeout(400);
     await save(page, 'notebook-empty');
 
+    await page.getByTestId('next-step-primary').click();
     const [chooser] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.locator('#library-input').click(),
+      page.getByTestId('capture-mode-single').locator('input').click(),
     ]);
     // 材料合成提取默认给出没有批改痕迹、需要勾选的题；再传一张同批照片只为占位。
     await chooser.setFiles([
@@ -124,8 +125,12 @@ async function main(): Promise<void> {
       { name: 'marked.jpg', mimeType: 'image/jpeg', buffer: await jpeg('marked') },
     ]);
     await page.waitForURL(/\/s\/new$/);
-    // Ionic keeps the previous page mounted; only the inline dock on 录入 is this page's bar.
-    await page.locator('.capture-inline [data-testid="capture-mode-multi"]').waitFor();
+    // Ionic keeps the previous page mounted. Idle 录入 has no mode bar; the choice sheet opens from the inline buttons.
+    await page.locator('.capture-inline').waitFor();
+    await page.waitForFunction(() => {
+      const dock = document.querySelector('.capture-inline');
+      return dock?.getAttribute('data-capture-choice') === 'choice' && !dock.querySelector('[data-testid="capture-mode-bar"]');
+    });
     const pick = page.locator('section.intake-photo[data-state="needsPick"]').first();
     await pick.waitFor({ timeout: 60_000 });
     await page.waitForTimeout(500);

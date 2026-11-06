@@ -2,7 +2,6 @@
  * 旧单学生演示服务器走 /s/capture，不会把多页合成一份。多页入口只在材料流程里出现。
  * 多页提交的端到端见 captureModeMaterials.spec.ts。
  */
-import { mkdirSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
@@ -36,22 +35,24 @@ test('旧流程只保留单页，拍一张就上传', async ({ page }) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, jobId: id, next: '/s/capture' }) });
   });
   await pair(page);
-  const bar = dock(page).getByTestId('capture-mode-bar');
-  await expect(bar).toBeVisible();
-  await expect(bar.getByTestId('capture-mode-single')).toHaveAttribute('aria-checked', 'true');
-  await expect(bar.getByTestId('capture-mode-multi')).toHaveCount(0);
+  await expect(dock(page)).toHaveAttribute('data-capture-route', 'legacy');
+  await expect(dock(page)).toHaveAttribute('data-capture-choice', 'direct');
+  await expect(page.getByTestId('capture-mode-bar')).toHaveCount(0);
+  await expect(page.getByTestId('capture-mode-sheet')).toHaveCount(0);
+  await expect(page.getByTestId('capture-mode-multi')).toHaveCount(0);
   await expect(page.locator('#camera-input')).toHaveAttribute('capture', 'environment');
   await expect(page.locator('#camera-input')).not.toHaveAttribute('multiple');
   await expect(page.locator('#library-input')).toHaveAttribute('multiple', '');
   await expect(page.locator('#library-input')).not.toHaveAttribute('capture');
-  const shot = '/opt/cursor/artifacts/capture-mode-bar.png';
-  mkdirSync('/opt/cursor/artifacts', { recursive: true });
-  await page.screenshot({ path: shot });
-  await page.screenshot({ path: test.info().outputPath('capture-mode-bar.png') });
+  const cameraBox = await page.locator('#camera-input').boundingBox();
+  expect(cameraBox?.width ?? 0).toBeGreaterThan(40);
+  expect(cameraBox?.height ?? 0).toBeGreaterThan(40);
 
   await page.locator('#camera-input').setInputFiles(await synthetic('#efb7b2'));
   await expect.poll(() => posts.length, { timeout: 20_000 }).toBe(1);
   expect(posts[0]).toContain('"captureMode":"single"');
   await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
+  await expect(page.locator('.capture-inline')).toHaveAttribute('data-capture-choice', 'direct');
+  await expect(page.locator('.capture-inline').getByTestId('capture-mode-bar')).toHaveCount(0);
   await expect(page.getByTestId('capture-mode-multi')).toHaveCount(0);
 });
