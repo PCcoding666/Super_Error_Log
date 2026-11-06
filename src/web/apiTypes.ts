@@ -153,6 +153,48 @@ export interface IntakeCandidate {
   crop: string | null;
 }
 
+/** 候选详情里的一段题干或图。只描述已经识别出来的内容。 */
+export interface IntakeCandidateFragment {
+  role: 'question' | 'diagram';
+  text: string;
+  number: string | null;
+  check: 'passed' | 'low' | 'failed' | 'unchecked';
+  uncertainties: string[];
+  requiresDiagram: boolean;
+}
+
+/**
+ * 还没收入错题本的候选题，只读。
+ * answers / grades 为空就是还没有，不是占位。这个接口不触发生成。
+ */
+export interface IntakeCandidateDetail {
+  id: string;
+  revision: number;
+  label: string;
+  subject: string | null;
+  stem: IntakeCandidateFragment[];
+  /** 题目区域裁图；没有时为 null。 */
+  crop: string | null;
+  /** 来源整页；没有时为 null。 */
+  source: string | null;
+  work: { text: string; label: string | null }[];
+  marks: { text: string }[];
+  answers: {
+    text: string;
+    source: 'imported' | 'manual' | 'ai';
+    stale: boolean;
+    claimedSource: string | null;
+    /** 文字来自照片上的参考答案区域。 */
+    fromPhoto: boolean;
+  }[];
+  grades: {
+    result: 'correct' | 'partial' | 'incorrect' | 'uncertain';
+    findings: string[];
+    score: { earned: number; total: number } | null;
+    stale: boolean;
+  }[];
+}
+
 export interface IntakePhoto {
   id: string;
   number: number;

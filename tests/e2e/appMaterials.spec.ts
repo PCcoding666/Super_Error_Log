@@ -61,7 +61,7 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   const photo = page.locator('section.intake-photo[data-state="needsPick"]');
   await expect(photo).toHaveCount(1, { timeout: 30_000 });
   await expect(photo.getByTestId('pick-candidate')).toHaveCount(1);
-  await photo.getByTestId('pick-candidate').first().click();
+  await photo.getByTestId('pick-checkbox').first().click();
   await photo.getByTestId('pick-submit').click();
   await expect(page.locator('section.intake-photo[data-state="done"]')).toHaveCount(1, { timeout: 30_000 });
   await expect(page.locator('.intake-top p')).toContainText('找到 1 道');
