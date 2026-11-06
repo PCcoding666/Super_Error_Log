@@ -226,6 +226,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
       if (typeof keyHeader === 'string' && UUID.test(keyHeader) && (await service.hasJob(keyHeader))) {
         const replaySlot = admission.tryAcquireUploadSlot('upload');
         if (!replaySlot.accepted) {
+          response.setHeader('x-sel-error-code', 'busy');
           response.setHeader('retry-after', String(replaySlot.retryAfterSeconds));
           response.status(429).json({ error: { code: 'busy', message: '服务器正在处理另一个上传，请稍后重试。' } });
           return;
@@ -236,6 +237,7 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
       }
       const rejection = await acquireUploadAdmission(admission, reserve);
       if (rejection) {
+        response.setHeader('x-sel-error-code', rejection.code);
         if (rejection.retryAfterSeconds !== undefined) response.setHeader('retry-after', String(rejection.retryAfterSeconds));
         response.status(rejection.status).json({ error: { code: rejection.code, message: rejection.message } });
         return;
@@ -306,7 +308,12 @@ export async function createMobileApp(options: CreateMobileAppOptions): Promise<
   const errors: ErrorRequestHandler = (error, request, response, _next) => {
     if (response.headersSent) return;
     if (error instanceof IdempotencyConflictError) { response.status(409).json({ error: { code: 'idempotency_conflict', message: error.message } }); return; }
-    if (error instanceof MobileRequestError) { response.status(error.status).json({ error: { code: error.code, message: error.message } }); return; }
+    if (error instanceof MobileRequestError) {
+      response.setHeader('x-sel-error-code', error.code);
+      if (error.retryAfterSeconds !== undefined && error.retryAfterSeconds > 0) response.setHeader('retry-after', String(error.retryAfterSeconds));
+      response.status(error.status).json({ error: { code: error.code, message: error.message } });
+      return;
+    }
     if ((error as { type?: string }).type === 'entity.too.large') {
       // 按入口区分超限文案：照片上传 vs 配对兑换（16kb JSON）。
       const message = request.path === '/v1/pairing/redeem' ? '配对请求超过16 KB限制。'

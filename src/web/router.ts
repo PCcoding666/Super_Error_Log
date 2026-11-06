@@ -494,7 +494,11 @@ export function createWebClientRouter(options: WebClientOptions): Router {
         if (submitted.created && reserve?.capacity) reserve.handoff = true;
         jobId = submitted.job.id;
       } catch (error) {
-        if (error instanceof MobileRequestError) { fail(error.status === 503 ? 'paused' : error.status === 429 ? 'busy' : 'submit_failed', error.status); return; }
+        if (error instanceof MobileRequestError) {
+          if (error.retryAfterSeconds !== undefined && error.retryAfterSeconds > 0 && !response.getHeader('retry-after')) response.setHeader('retry-after', String(error.retryAfterSeconds));
+          fail(error.status === 503 ? 'paused' : error.status === 429 ? 'busy' : 'submit_failed', error.status);
+          return;
+        }
         throw error;
       }
       registerV2Photo(jobId);
