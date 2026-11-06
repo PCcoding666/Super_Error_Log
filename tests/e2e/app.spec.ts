@@ -277,30 +277,28 @@ test('详情页：立体图由程序画，能拖动旋转', async ({ page }) => 
   await expect(figure.locator('#s line')).not.toHaveCount(0);
   await expect(figure.locator('#cap')).toHaveText('【mock】红线是 BD');
   const before = await figure.locator('#s circle').first().getAttribute('cx');
-  // 交互图在解答弹层的下半截。先 hover，确认整张图在视口里。
-  // 图在 sandbox="allow-scripts" 的不透明 iframe 里。CI 的 Chromium 经常不把 page.mouse
-  // 送进这个跨源 frame：trace 里鼠标从 x=195 拖到 275、y=509.36，圆的 cx 仍是拖之前的值。
-  // 在图自己的文档里发 pointer 事件，走的是立体图脚本实际监听的那条路径。
+  // svg 默认只在画出来的面上接指针。外接矩形中心是空白，按在那里不会开始拖动。
+  // 按下落在面上，松手落在图下方的说明上：这段位移不在图上，要靠 setPointerCapture 送回 svg。
   const solid = figure.locator('#s');
+  const face = figure.locator('#s polygon').first();
+  const hint = figure.locator('.hint').first();
   await solid.hover();
-  const box = await solid.boundingBox();
-  expect(box).toBeTruthy();
+  const svgBox = await solid.boundingBox();
+  const faceBox = await face.boundingBox();
+  const hintBox = await hint.boundingBox();
+  expect(svgBox).toBeTruthy();
+  expect(faceBox).toBeTruthy();
+  expect(hintBox).toBeTruthy();
   const viewport = page.viewportSize()!;
-  expect(box!.y).toBeGreaterThanOrEqual(0);
-  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
-  await solid.evaluate((svg: SVGSVGElement) => {
-    const rect = svg.getBoundingClientRect();
-    const x0 = rect.left + rect.width / 2;
-    const y0 = rect.top + rect.height / 2;
-    const send = (type: string, x: number, y: number, buttons: number): void => {
-      svg.dispatchEvent(new PointerEvent(type, {
-        bubbles: true, cancelable: true, composed: true,
-        clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons,
-      }));
-    };
-    send('pointerdown', x0, y0, 1);
-    for (let step = 1; step <= 8; step += 1) send('pointermove', x0 + step * 18, y0, 1);
-    send('pointerup', x0 + 144, y0, 0);
+  expect(svgBox!.y).toBeGreaterThanOrEqual(0);
+  expect(svgBox!.y + svgBox!.height).toBeLessThanOrEqual(viewport.height);
+  const source = { x: faceBox!.x + faceBox!.width / 2 - svgBox!.x, y: faceBox!.y + faceBox!.height / 2 - svgBox!.y };
+  const faceCenterX = svgBox!.x + source.x;
+  const releaseX = Math.min(hintBox!.x + hintBox!.width - 4, Math.max(hintBox!.x + 4, faceCenterX + 64));
+  expect(Math.abs(releaseX - faceCenterX)).toBeGreaterThan(24);
+  await solid.dragTo(hint, {
+    sourcePosition: source,
+    targetPosition: { x: releaseX - hintBox!.x, y: hintBox!.height / 2 },
   });
   await expect.poll(() => figure.locator('#s circle').first().getAttribute('cx')).not.toBe(before);
 });
