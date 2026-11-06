@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -197,7 +197,34 @@ it('question details retain raw reference-answer evidence without presenting a v
     expect(f.db.prepare('SELECT source FROM material_answer').get()).toEqual({ source: 'imported' });
 });
 
-it('known-upload replay still reserves a multipart parsing slot before reading the body',async()=>{const f=await fixture();const c=await(await f.post('/materials/captures',{requestId:randomUUID()})).json();const uploadId=randomUUID();expect((await f.upload(c.id,uploadId)).status).toBe(200);expect(f.admission.tryAcquireUploadSlot('upload').accepted).toBe(true);try{expect((await f.upload(c.id,uploadId)).status).toBe(429)}finally{f.admission.releaseUploadSlot('upload')}expect((await f.upload(c.id,uploadId)).status).toBe(200);});
+it('known-upload replay still reserves a multipart parsing slot before reading the body',async()=>{const f=await fixture();const c=await(await f.post('/materials/captures',{requestId:randomUUID()})).json();const uploadId=randomUUID();expect((await f.upload(c.id,uploadId)).status).toBe(200);expect(f.admission.tryAcquireUploadSlot('upload').accepted).toBe(true);try{const blocked=await f.upload(c.id,uploadId);expect(blocked.status).toBe(429);expect(blocked.headers.get('x-sel-error-code')).toBe('busy');expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThanOrEqual(8);}finally{f.admission.releaseUploadSlot('upload')}expect((await f.upload(c.id,uploadId)).status).toBe(200);});
+
+it('rejects a second materials photo with capacity_full, Retry-After, and x-sel-error-code', async () => {
+    const f = await fixture();
+    const capture = await (await f.post('/materials/captures', { requestId: randomUUID() })).json();
+    expect((await f.upload(capture.id)).status).toBe(200);
+    const blocked = await f.upload(capture.id);
+    expect(blocked.status).toBe(429);
+    expect(await blocked.json()).toMatchObject({ error: { code: 'capacity_full' } });
+    expect(blocked.headers.get('x-sel-error-code')).toBe('capacity_full');
+    expect(blocked.headers.get('retry-after')).toBe('30');
+});
+
+it('pauses a materials upload with service_paused, Retry-After, and x-sel-error-code when jobs are not accepted', async () => {
+    const f = await fixture();
+    const spy = vi.spyOn(MobileRecognitionService.prototype, 'acceptingJobs').mockReturnValue(false);
+    try {
+        const capture = await (await f.post('/materials/captures', { requestId: randomUUID() })).json();
+        const response = await f.upload(capture.id);
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ error: { code: 'service_paused' } });
+        expect(response.headers.get('x-sel-error-code')).toBe('service_paused');
+        const retryAfter = Number(response.headers.get('retry-after'));
+        expect(retryAfter).toBeGreaterThanOrEqual(15);
+        expect(retryAfter).toBeLessThanOrEqual(30);
+        expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 0 });
+    } finally { spy.mockRestore(); }
+});
 
 it('keeps original replay identity through hint edits, clearing and whole-page document assignment', async () => {
     const f = await fixture();

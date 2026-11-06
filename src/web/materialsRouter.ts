@@ -17,7 +17,7 @@ import type { CaptureHints, MaterialRole } from '../materials/contracts.js';
 import { assignDocument, assetLinkRevision, linkRevision, relink, relinkNewAttempt, undoLink } from '../materials/links.js';
 import { answerHistory, latestFragments, linkedFragments } from '../materials/queries.js';
 import { assetPageQuery, createdAtRangeSql, DayFilterError, parseAssetDayFilter, type AssetDayFilter } from '../materials/dayFilter.js';
-import type { AdmissionController } from '../mobile/admission.js';
+import { CAPACITY_FULL_RETRY_SECONDS, SERVICE_PAUSED_RETRY_SECONDS, UPLOAD_SLOT_RETRY_FLOOR_SECONDS, type AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
 import { sendHtml } from '../views/render.js';
@@ -222,13 +222,13 @@ export function createMaterialsRouter(options: {
             if (admission && reserve && uploads.hasUpload(uploadId)) {
                 // Replay bypasses job capacity, never the bounded multipart parsing slot.
                 const slot = admission.tryAcquireUploadSlot('upload');
-                if (!slot.accepted) { res.setHeader('retry-after', String(slot.retryAfterSeconds)); throw new MobileRequestError(429, 'busy', '服务器正在处理另一个上传，请稍后再试。'); }
+                if (!slot.accepted) { res.setHeader('retry-after', String(slot.retryAfterSeconds)); throw new MobileRequestError(429, 'busy', '服务器正在处理另一个上传，请稍后再试。', slot.retryAfterSeconds); }
                 reserve.slot = true;
             } else if (admission && reserve) {
                 const rejection = await acquireUploadAdmission(admission, reserve);
                 if (rejection) {
                     res.setHeader('retry-after', String(rejection.retryAfterSeconds ?? 5));
-                    throw new MobileRequestError(rejection.status, rejection.code, rejection.message);
+                    throw new MobileRequestError(rejection.status, rejection.code, rejection.message, rejection.retryAfterSeconds);
                 }
             }
             await new Promise<void>((resolve, reject) => upload(req, res, e => e ? reject(e) : resolve()));
@@ -421,7 +421,17 @@ export function createMaterialsRouter(options: {
         const requestId = String(res.locals.requestId ?? '-');
         const code = err instanceof MobileRequestError ? err.code : status === 500 ? 'internal' : 'invalid_request';
         if (status === 500) logEvent('sel_request_failed', 'error', { rid: requestId, method: req.method, route: routeTemplate(`/s${req.path}`), status, ...errorSummary(err) });
-        if (!res.headersSent) res.setHeader('x-sel-error-code', code);
+        if (!res.headersSent) {
+            res.setHeader('x-sel-error-code', code);
+            if (!res.getHeader('retry-after')) {
+                const seconds = err instanceof MobileRequestError && err.retryAfterSeconds && err.retryAfterSeconds > 0 ? err.retryAfterSeconds
+                    : code === 'service_paused' ? SERVICE_PAUSED_RETRY_SECONDS
+                    : code === 'capacity_full' ? CAPACITY_FULL_RETRY_SECONDS
+                    : code === 'busy' ? UPLOAD_SLOT_RETRY_FLOOR_SECONDS
+                    : undefined;
+                if (seconds !== undefined) res.setHeader('retry-after', String(seconds));
+            }
+        }
         res.status(status);
         if (json(req))
             res.json({ error: { code, message, requestId } });

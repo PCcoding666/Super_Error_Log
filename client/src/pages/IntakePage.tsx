@@ -274,7 +274,7 @@ export function IntakePage(): ReactNode {
         {pendingUploads.map(entry => <IonItem key={entry.key} className="intake-head" detail={false} data-upload-state={entry.state}>
           {entry.previewUrl ? <img slot="start" className="intake-thumb" src={entry.previewUrl} alt="" /> : null}
           <IonLabel><h2>{entry.name}</h2><p className={entry.state === 'failed' ? 'tone-red' : undefined}>{entry.message}</p></IonLabel>
-          {entry.state === 'preparing' || entry.state === 'uploading' ? <IonSpinner slot="end" name="lines-small" /> : null}
+          {entry.state === 'preparing' || entry.state === 'uploading' || entry.state === 'backoff' ? <IonSpinner slot="end" name="lines-small" /> : null}
         </IonItem>)}
         {pendingUploads.some(entry => entry.state === 'failed' && entry.retryable) ? <IonItem lines="none"><IonButton slot="end" fill="clear" onClick={() => uploader.retry()} data-testid="upload-retry">再试一次</IonButton></IonItem> : null}
       </IonList> : null}

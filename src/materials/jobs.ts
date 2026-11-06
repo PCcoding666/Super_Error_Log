@@ -1,6 +1,6 @@
 import { newId } from '../db/connection.js';
 import { canRecover } from '../mobile/contracts.js';
-import type { AdmissionController } from '../mobile/admission.js';
+import { CAPACITY_FULL_RETRY_SECONDS, SERVICE_PAUSED_RETRY_SECONDS, type AdmissionController } from '../mobile/admission.js';
 import type { AdmissionReserve } from '../mobile/router.js';
 import { MobileRecognitionService, MobileRequestError } from '../mobile/service.js';
 import { SET_HOLD_MS, SET_PAGE_MISSING } from './captureHints.js';
@@ -20,7 +20,7 @@ function failure(error: unknown): Failure {
   const code = typeof candidate?.code === 'string' ? candidate.code : 'internal';
   return { code: typeof candidate?.code === 'string' ? candidate.code : 'internal', message: typeof candidate?.message === 'string' ? candidate.message : '处理暂未完成。', retryable: candidate?.retryable === true && !['internal', 'storage_unavailable', 'invalid_image'].includes(code) };
 }
-function paused(): MobileRequestError { return new MobileRequestError(503, 'service_paused', '处理服务已暂停，请稍后重试。'); }
+function paused(): MobileRequestError { return new MobileRequestError(503, 'service_paused', '处理服务已暂停，请稍后重试。', SERVICE_PAUSED_RETRY_SECONDS); }
 
 /** All external calls must use request(), once per validated request/chunk, to persist budgets and reusable results. */
 export class MaterialJobs {
@@ -66,7 +66,7 @@ export class MaterialJobs {
     const deferred = this.deferred({ input_json: JSON.stringify(options.input ?? {}) });
     const follower = this.follower({ input_json: JSON.stringify(options.input ?? {}) });
     // A page joining a set that already has a lead does not take a second slot and does not start its own extract.
-    if (!deferred && !follower && this.admission && !supplied && !this.admission.tryAcquireJobCapacity().accepted) throw new MobileRequestError(429, 'capacity_full', '处理队列已满，请稍后重试。');
+    if (!deferred && !follower && this.admission && !supplied && !this.admission.tryAcquireJobCapacity().accepted) throw new MobileRequestError(429, 'capacity_full', '处理队列已满，请稍后重试。', CAPACITY_FULL_RETRY_SECONDS);
     const id = newId('mjob');
     try {
       this.store.transaction(() => {
@@ -160,7 +160,7 @@ export class MaterialJobs {
     if (!['failed', 'interrupted'].includes(row.state) || (row.error && !canRecover({ ...JSON.parse(row.error), stage: 'transcribe' }))) throw new MobileRequestError(409, 'not_retryable', '这份材料无法重试，请补拍或重新提交。');
     if (this.stopped || !this.scheduler.acceptingJobs()) throw paused();
     const acquired = !this.occupancy.has(jobId);
-    if (acquired && this.admission && !this.admission.tryAcquireJobCapacity().accepted) throw new MobileRequestError(429, 'capacity_full', '处理队列已满，请稍后重试。');
+    if (acquired && this.admission && !this.admission.tryAcquireJobCapacity().accepted) throw new MobileRequestError(429, 'capacity_full', '处理队列已满，请稍后重试。', CAPACITY_FULL_RETRY_SECONDS);
     try {
       for (const stage of Object.values(execution.stages)) {
         if (stage.state !== 'succeeded') { stage.round++; stage.attempts = 0; delete stage.error; delete stage.nextAttemptAt; stage.state = 'running'; }

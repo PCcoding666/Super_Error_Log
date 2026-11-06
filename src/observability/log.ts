@@ -17,6 +17,7 @@
  *   sel_worker_stop     worker 按预期退出（空闲 / 腾位置 / 关闭）
  *   sel_worker_error    worker 崩溃 / 启动失败（workers.ts 原有）
  *   sel_request_failed  worker 内处理请求抛了未预期的错误（500）
+ *   sel_admission       单进程 RSS 超过准入阈值，暂停接收新任务（code=service_paused，rssMiB，limitMiB）
  *   sel_client_event    浏览器上报的脚本错误 / 上传失败 / 接口失败（src/web/api.ts /client-log）
  */
 import crypto from 'node:crypto';
