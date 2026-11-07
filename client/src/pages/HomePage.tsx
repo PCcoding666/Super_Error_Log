@@ -6,7 +6,8 @@ import { albumsOutline, cameraOutline, checkmark, checkmarkCircleOutline, chevro
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { NotebookItem, NotebookResponse } from '../../../src/web/apiTypes';
-import { PickLabel } from '../components/CaptureInput';
+import { CaptureDock, CaptureEntry } from '../components/CaptureDock';
+import { useCaptureSession } from '../lib/captureSession';
 import { Problem } from '../components/Problem';
 import { StageGate } from '../components/StageGate';
 import { api } from '../lib/api';
@@ -35,6 +36,7 @@ export function HomePage(): ReactNode {
   const [toast, setToast] = useState<{ message: string; undo?: string[] } | null>(null);
   const [connected, setConnected] = useState(params.get('paired') === '1' || params.get('login') === '1');
   const [menuEvent, setMenuEvent] = useState<Event | null>(null);
+  const capture = useCaptureSession();
 
   const patch = useCallback((changes: Record<string, string>) => {
     const next = new URLSearchParams(params);
@@ -137,14 +139,14 @@ export function HomePage(): ReactNode {
       {data && (data.finding || data.pendingIntake) ? <IonList inset lines="none" className="intake-hint">
         <IonItem routerLink="/new" detail data-testid="intake-hint"><IonLabel>{data.finding ? `AI 正在找题（${data.finding} 张照片）` : `照片里还有 ${data.pendingIntake} 道没收进错题本`}</IonLabel></IonItem>
       </IonList> : null}
-      {error && error.code !== 'stage_required' ? <Problem message={error.message} onRetry={() => void reload()} /> : null}
+      {error && error.code !== 'stage_required' ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
       {data && !items.length && !loading ? <div className="empty" data-testid="empty-notebook">
         <IonIcon icon={cameraOutline} />
         <b>{data.total ? '没有符合筛选的题' : '拍一张批改过的卷子'}</b>
         <p>{data.total ? '换个章节或状态试试。' : 'AI 会找出错题，放进这里。相册可以一次选多张。'}</p>
-        {data.total ? <IonButton fill="clear" onClick={() => patch({ chapter: '', tag: '', q: '' })}>清除筛选</IonButton> : <div className="empty-actions">
-          <PickLabel kind="camera" className="pick-button pick-solid" testId="capture-camera"><IonIcon icon={cameraOutline} aria-hidden="true" />去拍照</PickLabel>
-          <PickLabel kind="album" className="pick-button pick-plain" testId="capture-album"><IonIcon icon={albumsOutline} aria-hidden="true" />从相册选择</PickLabel>
+        {data.total ? <IonButton fill="clear" onClick={() => patch({ chapter: '', tag: '', q: '' })}>清除筛选</IonButton> : capture.pages.length ? null : <div className="empty-actions">
+          <CaptureEntry kind="camera" className="pick-button pick-solid" testId="capture-camera"><IonIcon icon={cameraOutline} aria-hidden="true" />去拍照</CaptureEntry>
+          <CaptureEntry kind="album" className="pick-button pick-plain" testId="capture-album"><IonIcon icon={albumsOutline} aria-hidden="true" />从相册选择</CaptureEntry>
         </div>}
       </div> : null}
       {data?.groups.map(group => <section key={group.key} className="group">
@@ -153,13 +155,10 @@ export function HomePage(): ReactNode {
           ? <div className="notebook-grid">{group.items.map(item => renderCard(item, group.key))}</div>
           : <IonList lines="full" className="notebook-list">{group.items.map(renderRow)}</IonList>}
       </section>)}
-      <div className="bottom-space" />
+      <div className={capture.pages.length ? 'bottom-space tall' : 'bottom-space'} />
       {!selecting ? <>
         <IonFab vertical="bottom" horizontal="start" slot="fixed"><IonFabButton color="light" size="small" className="corner corner-search" aria-label="搜索" data-testid="corner-search" onClick={() => setSearchOpen(open => !open)}><IonIcon icon={searchOutline} /></IonFabButton></IonFab>
-        <div className="capture-corner" slot="fixed">
-          <PickLabel kind="camera" className="fab-circle fab-camera" inputId="camera-input"><IonIcon icon={cameraOutline} aria-hidden="true" /></PickLabel>
-          <PickLabel kind="album" className="fab-circle fab-album" inputId="library-input" testId="next-step-primary"><IonIcon icon={albumsOutline} aria-hidden="true" /></PickLabel>
-        </div>
+        <CaptureDock placement="corner" cameraInputId="camera-input" albumInputId="library-input" cameraTestId="capture-fab-camera" albumTestId="next-step-primary" />
       </> : <IonFab vertical="bottom" horizontal="end" slot="fixed"><IonFabButton color="danger" className="corner" aria-label="移除所选" data-testid="discard-selected" disabled={!selected.size} onClick={() => setConfirming(true)}><IonIcon icon={trashOutline} /></IonFabButton></IonFab>}
       <IonActionSheet isOpen={confirming} onDidDismiss={() => setConfirming(false)} header={`把这 ${selected.size} 道移出错题本？`} subHeader="原图保留，移出后可以撤销。"
         buttons={[{ text: '移除', role: 'destructive', handler: () => { void discard([...selected]); } }, { text: '取消', role: 'cancel' }]} />

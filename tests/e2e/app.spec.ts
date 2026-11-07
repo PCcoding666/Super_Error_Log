@@ -80,7 +80,7 @@ test('配对后看到错题本，拍照进入录入态，自动收录的题左�
   await expect(unmarked).toHaveCount(1);
   await expect(unmarked.getByTestId('pick-candidate')).toHaveCount(3);
   await expect(unmarked.getByTestId('pick-submit')).toHaveAttribute('aria-disabled', 'true');
-  await unmarked.getByTestId('pick-candidate').first().click();
+  await unmarked.getByTestId('pick-checkbox').first().click();
   await expect(unmarked.getByTestId('pick-submit')).toHaveText('加入 1 道');
   await unmarked.getByTestId('pick-submit').click();
   await expect(page.locator('section.intake-photo[data-state="done"]')).toHaveCount(2, { timeout: 40_000 });
@@ -277,11 +277,29 @@ test('详情页：立体图由程序画，能拖动旋转', async ({ page }) => 
   await expect(figure.locator('#s line')).not.toHaveCount(0);
   await expect(figure.locator('#cap')).toHaveText('【mock】红线是 BD');
   const before = await figure.locator('#s circle').first().getAttribute('cx');
-  const box = (await page.getByTestId('solution-figure').boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + 100);
-  await page.mouse.down();
-  for (let step = 1; step <= 8; step += 1) await page.mouse.move(box.x + box.width / 2 + step * 10, box.y + 100);
-  await page.mouse.up();
+  // svg 默认只在画出来的面上接指针。外接矩形中心是空白，按在那里不会开始拖动。
+  // 按下落在面上，松手落在图下方的说明上：这段位移不在图上，要靠 setPointerCapture 送回 svg。
+  const solid = figure.locator('#s');
+  const face = figure.locator('#s polygon').first();
+  const hint = figure.locator('.hint').first();
+  await solid.hover();
+  const svgBox = await solid.boundingBox();
+  const faceBox = await face.boundingBox();
+  const hintBox = await hint.boundingBox();
+  expect(svgBox).toBeTruthy();
+  expect(faceBox).toBeTruthy();
+  expect(hintBox).toBeTruthy();
+  const viewport = page.viewportSize()!;
+  expect(svgBox!.y).toBeGreaterThanOrEqual(0);
+  expect(svgBox!.y + svgBox!.height).toBeLessThanOrEqual(viewport.height);
+  const source = { x: faceBox!.x + faceBox!.width / 2 - svgBox!.x, y: faceBox!.y + faceBox!.height / 2 - svgBox!.y };
+  const faceCenterX = svgBox!.x + source.x;
+  const releaseX = Math.min(hintBox!.x + hintBox!.width - 4, Math.max(hintBox!.x + 4, faceCenterX + 64));
+  expect(Math.abs(releaseX - faceCenterX)).toBeGreaterThan(24);
+  await solid.dragTo(hint, {
+    sourcePosition: source,
+    targetPosition: { x: releaseX - hintBox!.x, y: hintBox!.height / 2 },
+  });
   await expect.poll(() => figure.locator('#s circle').first().getAttribute('cx')).not.toBe(before);
 });
 

@@ -1,16 +1,23 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 import sharp from 'sharp';
 import { cropPhoto, normalizePhoto } from '../media/images.js';
+import { logEvent } from '../observability/log.js';
 import { canRecover, publicJob, type RecognitionAttemptRound, type RecognitionFailure, type RecognitionJob, type RecognitionQuestion, type StoredRecognitionJob } from './contracts.js';
 import type { Box } from '../media/images.js';
 import { IdempotencyConflictError, MobileRecognitionStore, UnknownMediaError } from './store.js';
 import { MobileVisionError, type InventoryCandidate, type MobileVisionBoundary } from './vision.js';
 import { expandCropMargin } from './modelBox.js';
-import type { AdmissionController } from './admission.js';
+import { CAPACITY_FULL_RETRY_SECONDS, SERVICE_PAUSED_RETRY_SECONDS, type AdmissionController } from './admission.js';
 import { rssAdmissionThresholdBytes, studentAiConcurrency } from '../studentHost/limits.js';
 
 export class MobileRequestError extends Error {
-  constructor(public readonly status: number, public readonly code: string, message: string) { super(message); this.name = 'MobileRequestError'; }
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    message: string,
+    public readonly retryAfterSeconds?: number,
+  ) { super(message); this.name = 'MobileRequestError'; }
 }
 class MobileStorageError extends Error {
   constructor(cause: unknown) { super('mobile recognition storage unavailable', { cause }); this.name = 'MobileStorageError'; }
@@ -142,8 +149,12 @@ export class MobileRecognitionService {
     // 单进程 RSS 观测：超过本进程份额时停止接收新任务（可恢复：内存回落后恢复）。不是内核节流。
     const rss = process.memoryUsage.rss();
     if (rss > this.rssAdmissionBytes) {
-      const limit = Math.round(this.rssAdmissionBytes / 1024 / 1024);
-      console.warn(`[admission] 单进程 RSS ${Math.round(rss / 1024 / 1024)}MiB 超过 ${limit}MiB 准入阈值，暂停接收新任务。`);
+      const rssMiB = Math.round(rss / 1024 / 1024);
+      const limitMiB = Math.round(this.rssAdmissionBytes / 1024 / 1024);
+      console.warn(`[admission] 单进程 RSS ${rssMiB}MiB 超过 ${limitMiB}MiB 准入阈值，暂停接收新任务。`);
+      const studentDir = path.basename(this.store.dataDir);
+      const student = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(studentDir) ? studentDir.slice(0, 8) : undefined;
+      logEvent('sel_admission', 'warn', { code: 'service_paused', rssMiB, limitMiB, student });
       return false;
     }
     return true;
@@ -159,7 +170,7 @@ export class MobileRecognitionService {
   async submit(input: { idempotencyKey: string; photoName: string; sourceBytes: Buffer }): Promise<{ job: RecognitionJob; created: boolean }> {
     this.assertStorageAvailable();
     // 非接收状态（停服/存储故障恢复中）明确拒绝，不产出 queued 僵尸任务。
-    if (!this.accepting) throw new MobileRequestError(503, 'service_paused', '识别服务暂时不可用（正在恢复），请稍后再试。照片仍保存在本机。');
+    if (!this.accepting) throw new MobileRequestError(503, 'service_paused', '识别服务暂时不可用（正在恢复），请稍后再试。照片仍保存在本机。', SERVICE_PAUSED_RETRY_SECONDS);
     let normalized: Buffer | undefined;
     try {
       // 共享图像信号量：metadata 检查与归一化在互斥内执行（sharp.concurrency(1) 不保证跨请求串行）。
@@ -174,7 +185,7 @@ export class MobileRecognitionService {
     catch { throw new MobileRequestError(400, 'invalid_image', '照片无法读取、已损坏或超过大小限制。'); }
     if (!normalized) throw new MobileRequestError(400, 'invalid_image', '照片无法读取、已损坏或超过大小限制。');
     this.assertStorageAvailable();
-    if (!this.accepting) throw new MobileRequestError(503, 'service_paused', '识别服务暂时不可用（正在恢复），请稍后再试。照片仍保存在本机。');
+    if (!this.accepting) throw new MobileRequestError(503, 'service_paused', '识别服务暂时不可用（正在恢复），请稍后再试。照片仍保存在本机。', SERVICE_PAUSED_RETRY_SECONDS);
     let result;
     try { result = await this.store.createJob({ idempotencyKey: input.idempotencyKey, photoName: input.photoName, sourceBytes: input.sourceBytes, normalizedBytes: normalized }); }
     catch (error) {
@@ -292,7 +303,7 @@ export class MobileRecognitionService {
     if (!this.admission) return false;
     if (this.activeCapacityJobs.has(jobId)) return false;
     const capacity = this.admission.tryAcquireJobCapacity();
-    if (!capacity.accepted) throw new MobileRequestError(429, 'capacity_full', '识别队列已满，请稍后再试。');
+    if (!capacity.accepted) throw new MobileRequestError(429, 'capacity_full', '识别队列已满，请稍后再试。', CAPACITY_FULL_RETRY_SECONDS);
     this.activeCapacityJobs.add(jobId);
     return true;
   }
@@ -524,7 +535,7 @@ export class MobileRecognitionService {
         current.questions = result.candidates.map(candidate => {
         const id = crypto.randomUUID(); current.inventoryCandidates[id] = structuredClone(candidate);
         // v2.1a 分流：有批改痕迹（marked_wrong/corrected）的题照旧排队精读；
-        // 无痕迹/看不清的题标 unselected——不建精读工作单元、不占预算、不发模型请求，等学生勾选。
+        // 只有勾/无痕迹/看不清的题标 unselected——不建精读工作单元、不占预算、不发模型请求，等学生勾选。
         const automatic = candidate.selectionEvidence === 'marked_wrong' || candidate.selectionEvidence === 'corrected';
         if (automatic) this.newRound(current, id);
         return { id, number: candidate.number, revision: 1, status: automatic ? 'queued' as const : 'unselected' as const, selectionEvidence: candidate.selectionEvidence,

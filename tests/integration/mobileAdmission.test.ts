@@ -159,6 +159,10 @@ describe('upload slot admission', () => {
     expect(second.status).toBe(429);
     const body = await second.json() as { error: { code: string } };
     expect(['busy', 'capacity_full']).toContain(body.error.code);
+    const retryAfter = Number(second.headers.get('retry-after'));
+    expect(retryAfter).toBeGreaterThanOrEqual(8);
+    expect(retryAfter).toBeLessThanOrEqual(30);
+    expect(second.headers.get('x-sel-error-code')).toBe(body.error.code);
     const firstDone = await first;
     expect(firstDone.status).toBe(202);
     vision.finish();

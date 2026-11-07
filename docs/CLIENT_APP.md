@@ -20,8 +20,9 @@
 | `client/src/components/StemText.tsx`、`src/text/stemBlocks.ts` | 题干渲染：只把 GFM 管道表格画成真表格（窄屏可横滑），其余文字原样保留换行，不做完整 Markdown（题号「10.」、负号、`x_1`、绝对值 `|x-1|` 会被误解析）。表头 + 分隔行才算表格，表体行格数须与表头一致，不符的行留作文字。识别提示词（`src/mobile/vision.ts`）要求模型把题干表格写成管道表格；写入 `text_excerpt` 时先去掉表格再截 80 字（`questionExcerpt`）。已识别的旧题目文字是压平的，需重新识别才有表格 |
 | `client/src/components/Markdown.tsx`、`SolutionModal.tsx`、`FigureFrame.tsx` | 详情页「正确答案」：AI 解答用 `react-markdown` + GFM（列表、加粗、表格）+ `remark-math` 渲染，公式用 KaTeX 只输出 MathML（不要字体和样式表），按需加载（单独一个约 130 KB gzip 的包）。模型输出不可信：不渲染 HTML，链接只留文字、图片只留替代文字，拒绝 `\href` 等命令。交互图在 `sandbox="allow-scripts"` 的 iframe 里，页面由服务器单独下发（见下方 `/figure`） |
 | `client/src/components/TextEditModal.tsx`、`VoiceButton.tsx`、`lib/voice.ts` | 改识别出的文字（题干、你写的、批改痕迹、参考答案、拍的答案）；备注的语音输入（浏览器录音 → 已有的 `POST /s/voice` 转写，最长 59 秒） |
-| `client/src/components/CaptureInput.tsx` | 拍照和相册两个文件框，铺在按钮上由手指直接点开（不靠脚本 `click()`）。相册不带 `capture`、可多选；拍照带 `capture="environment"`。选好就进录入态 |
+| `client/src/components/CaptureInput.tsx`、`CaptureDock.tsx` | 拍照和相册两个文件框，铺在按钮上由手指直接点开（不靠脚本 `click()`）。相册不带 `capture`、可多选；拍照带 `capture="environment"`。材料流程在首页和录入页空闲时不常驻「单页 / 多页」；点拍照或相册后，在底部选择层里用同样的文件框选单页或多页。多页托盘还在时，模式条回到托盘旁边。旧流程没有多页，点了直接拍。选好单页就进录入态 |
 | `client/src/lib/chooserWatch.ts` · `components/ChooserBlockedToast.tsx` | 安卓「添加到桌面」的壳（小米浏览器等）不实现文件选择器：文件框有焦点、相册相机都不弹。点文件框后两秒内页面没被盖住也没 change，就提示换手机浏览器打开。服务端另对安卓的 manifest 发 `display: browser`（`src/web/staticAssets.ts`），以后桌面图标在浏览器标签里打开 |
+| `client/src/lib/report.ts` · `components/ErrorBoundary.tsx` | 出错上报（2026-11-01）：没被接住的脚本错误 / Promise 拒绝、渲染白屏、fetch 没发出去、接口回 5xx 或回了页面、上传失败、安卓壳吞选择器，攒一小批 POST 到 `/s/api/client-log`。只报类别、固定错误码、截短文案、路由模板、服务器请求 ID、客户端构建号（vite `define` 注入的 `__SEL_CLIENT_BUILD__`）。同一类别 + 错误码 + 路由 60 秒只报一次，一次打开最多 40 条。ErrorBoundary 代替白屏，给出「错误编号」。接口失败时 `RequestError.requestId`（响应头 `x-sel-request-id`）由 `Problem` 组件显示成「错误编号」，学生反馈时报这个，服务器日志按它查（`deploy/ops/RUNBOOK.md`「二之二」） |
 | `src/web/apiTypes.ts` | 客户端与服务器共用的类型 |
 | `src/web/api.ts` | JSON 接口，挂在 `/s/api`，和旧页面同一套鉴权、限流、学段门槛 |
 | `src/web/clientApp.ts` | 找到 `dist/client`，下发页面壳与指纹资源 |
@@ -48,6 +49,7 @@
 | GET `/intake` | 录入态：每张照片的状态、已收录的题、等勾选的候选题；旧流程和材料流程同一形状 |
 | POST `/intake/photos/:id/select` `{ids}` | 勾选加入（旧流程题 id；材料流程 `questionId:revision`） |
 | POST `/intake/photos/:id/retry` / `/dismiss` | 重试识别 / 不要这张（后者仅旧流程） |
+| POST `/client-log` `{events:[{kind,code,message,route,rid,cid,status,retryable,build,online,visible,component}]}` | 浏览器端出错上报；最多 20 条，只收白名单字段并截短，每条写一行 `sel_client_event` 日志并记进互动记录 `web_error …#client:类别:错误码`。新账号没选学段也放行 |
 
 上传仍用现有端点：旧流程 `POST /s/capture`（JSON 模式）；材料流程 `/s/materials/session`、`/s/materials/captures`、`/s/materials/uploads`。
 

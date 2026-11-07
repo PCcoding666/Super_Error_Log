@@ -12,13 +12,17 @@ import { newId } from '../db/connection.js';
 import type { MaterialStore } from '../materials/store.js';
 import type { MaterialUploads } from '../materials/uploads.js';
 import type { MaterialJobs } from '../materials/jobs.js';
+import { readCaptureSet } from '../materials/captureHints.js';
 import type { CaptureHints, MaterialRole } from '../materials/contracts.js';
 import { assignDocument, assetLinkRevision, linkRevision, relink, relinkNewAttempt, undoLink } from '../materials/links.js';
 import { answerHistory, latestFragments, linkedFragments } from '../materials/queries.js';
-import type { AdmissionController } from '../mobile/admission.js';
+import { assetPageQuery, createdAtRangeSql, DayFilterError, parseAssetDayFilter, type AssetDayFilter } from '../materials/dayFilter.js';
+import { CAPACITY_FULL_RETRY_SECONDS, SERVICE_PAUSED_RETRY_SECONDS, UPLOAD_SLOT_RETRY_FLOOR_SECONDS, type AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, trackUploadAdmission } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
 import { sendHtml } from '../views/render.js';
+import { errorSummary, logEvent } from '../observability/log.js';
+import { routeTemplate } from './trail.js';
 import { type MaterialInclusionMark, type MaterialJobView, type MaterialUnplacedGroup, MaterialGradeActionPage, MaterialAnswerHistoryPage, MaterialImportHistoryPage, MaterialAnswerActionPage, MaterialCapturePage, MaterialsPage, MaterialQuestionPage, MaterialMatchPage, type MaterialAssetView } from './views/materials.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const roles: MaterialRole[] = ['question', 'diagram', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown'];
@@ -51,9 +55,16 @@ function hints(value: unknown): CaptureHints {
                 bad();
             result[k] = v[k];
         }
-    return result;
+    return { ...result, ...readCaptureSet(v) };
 }
 function pageNumber(value: unknown): number { const n = Number(value ?? 0); return Number.isSafeInteger(n) && n >= 0 ? Math.min(n, 100000) : 0; }
+function readDayFilter(query: Request['query']): AssetDayFilter | null {
+    try { return parseAssetDayFilter(query); }
+    catch (error) {
+        if (error instanceof DayFilterError) throw new MobileRequestError(400, 'invalid_request', error.message);
+        throw error;
+    }
+}
 function revision(value: unknown): number {
     if (!/^[0-9]+$/.test(String(value)))
         bad();
@@ -75,13 +86,21 @@ export function createMaterialsRouter(options: {
     const assetCount = (): number => (store.db.prepare('SELECT count(*) n FROM material_asset WHERE owner_id=?').get(store.studentId) as {
         n: number;
     }).n;
-    const assets = (page = 0, exclude = ''): MaterialAssetView[] => (store.db.prepare('SELECT id,hints_json,document_id,status,link_revision FROM material_asset WHERE owner_id=? AND id!=? ORDER BY created_at,rowid LIMIT 8 OFFSET ?').all(store.studentId, exclude, page * 8) as {
-        id: string;
-        hints_json: string;
-        document_id: string | null;
-        status: string;
-        link_revision: number;
-    }[]).map(a => ({ ...a, hints: JSON.parse(a.hints_json), fragments: latestFragments(store, a.id) }));
+    // 无筛选时 SQL 与原来一致（owner + 可选排除 + created_at,rowid + 每页 8 条）。date/from/to 只加 UTC 区间。
+    const assets = (page = 0, exclude = '', filter: AssetDayFilter | null = null): MaterialAssetView[] => {
+        const range = createdAtRangeSql(filter);
+        return (store.db.prepare(`SELECT id,hints_json,document_id,status,link_revision FROM material_asset WHERE owner_id=? AND id!=?${range.sql} ORDER BY created_at,rowid LIMIT 8 OFFSET ?`).all(store.studentId, exclude, ...range.params, page * 8) as {
+            id: string;
+            hints_json: string;
+            document_id: string | null;
+            status: string;
+            link_revision: number;
+        }[]).map(a => ({ ...a, hints: JSON.parse(a.hints_json), fragments: latestFragments(store, a.id) }));
+    };
+    const listedCount = (exclude = '', filter: AssetDayFilter | null = null): number => {
+        const range = createdAtRangeSql(filter);
+        return (store.db.prepare(`SELECT count(*) n FROM material_asset WHERE owner_id=? AND id!=?${range.sql}`).get(store.studentId, exclude, ...range.params) as { n: number }).n;
+    };
     /** Latest extraction job per photo: failed ones are summarized at the top, separate from photos still in progress. */
     const extractJobs = (): { failed: MaterialJobView[]; processing: number } => {
         const rows = store.db.prepare(`SELECT j.id,j.state,j.asset_id,j.error FROM material_job j WHERE j.owner_id=? AND j.kind='extract'
@@ -177,6 +196,22 @@ export function createMaterialsRouter(options: {
             bad();
         res.json(store.createCapture(req.body.requestId));
     });
+    const captureOwned = (id: string): void => {
+        if (!store.db.prepare('SELECT 1 FROM material_capture WHERE owner_id=? AND id=?').get(store.studentId, id))
+            throw new MobileRequestError(404, 'not_found', '拍摄批次不存在。');
+    };
+    r.post('/materials/captures/:id/abandon', (req, res, next) => {
+        try { const id = text(req.params.id); captureOwned(id); res.json({ ok: true, abandoned: jobs.abandonCapture(id) }); }
+        catch (error) { next(error); }
+    });
+    r.post('/materials/captures/:id/complete', (req, res, next) => {
+        try {
+            const id = text(req.params.id); captureOwned(id);
+            const release = jobs.releaseCapture(id);
+            res.json({ ok: release.accepted, accepted: release.accepted, queued: release.queued });
+        }
+        catch (error) { next(error); }
+    });
     const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 2, fields: 12, parts: 16 } }).single('photo');
     r.post('/materials/uploads', async (req, res, next) => {
         const reserve = admission ? trackUploadAdmission(admission, res) : undefined;
@@ -187,13 +222,13 @@ export function createMaterialsRouter(options: {
             if (admission && reserve && uploads.hasUpload(uploadId)) {
                 // Replay bypasses job capacity, never the bounded multipart parsing slot.
                 const slot = admission.tryAcquireUploadSlot('upload');
-                if (!slot.accepted) { res.setHeader('retry-after', String(slot.retryAfterSeconds)); throw new MobileRequestError(429, 'busy', '服务器正在处理另一个上传，请稍后再试。'); }
+                if (!slot.accepted) { res.setHeader('retry-after', String(slot.retryAfterSeconds)); throw new MobileRequestError(429, 'busy', '服务器正在处理另一个上传，请稍后再试。', slot.retryAfterSeconds); }
                 reserve.slot = true;
             } else if (admission && reserve) {
                 const rejection = await acquireUploadAdmission(admission, reserve);
                 if (rejection) {
                     res.setHeader('retry-after', String(rejection.retryAfterSeconds ?? 5));
-                    throw new MobileRequestError(rejection.status, rejection.code, rejection.message);
+                    throw new MobileRequestError(rejection.status, rejection.code, rejection.message, rejection.retryAfterSeconds);
                 }
             }
             await new Promise<void>((resolve, reject) => upload(req, res, e => e ? reject(e) : resolve()));
@@ -215,7 +250,9 @@ export function createMaterialsRouter(options: {
                 releaseUploadAdmission(admission, reserve);
         }
     });
-    r.get('/materials', (req, res) => {
+    r.get('/materials', (req, res, next) => {
+        try {
+        const filter = readDayFilter(req.query);
         const page = pageNumber(req.query.page);
         const documents = store.db.prepare('SELECT id,label FROM material_document WHERE owner_id=? ORDER BY created_at,id').all(store.studentId) as {
             id: string;
@@ -242,7 +279,8 @@ export function createMaterialsRouter(options: {
         const unplaced = [...unplacedByPhoto.values()].sort((a, b) => a.photo - b.photo).map(g => ({ ...g, items: g.items.sort((x, y) => (x.fragment.page ?? 0) - (y.fragment.page ?? 0) || x.fragment.order - y.fragment.order) }));
         const included = Number(req.query.included), skipped = Number(req.query.skipped) || 0, retried = Number(req.query.retried);
         const notice = Number.isSafeInteger(retried) && retried >= 0 && req.query.retried !== undefined ? { included: 0, skipped: 0, retried } : Number.isSafeInteger(included) && included >= 0 && req.query.included !== undefined ? { included, skipped: Number.isSafeInteger(skipped) && skipped >= 0 ? skipped : 0 } : null;
-        sendHtml(res, MaterialsPage({ namespace: draftNamespace, questions, assets: assets(page), page, hasMore: (page + 1) * 8 < assetCount(), documents, changes, jobs: extractJobs().failed, processing: extractJobs().processing, assetCount: allAssets.length, photoNumbers, unsupported, pending, unplaced, marks, notice, revision: linkRevision(store) }));
+        sendHtml(res, MaterialsPage({ namespace: draftNamespace, questions, assets: assets(page, '', filter), page, hasMore: (page + 1) * 8 < listedCount('', filter), assetPageQuery: assetPageQuery(filter), documents, changes, jobs: extractJobs().failed, processing: extractJobs().processing, assetCount: allAssets.length, photoNumbers, unsupported, pending, unplaced, marks, notice, revision: linkRevision(store) }));
+        } catch (error) { next(error); }
     });
     r.get('/materials/assets/:id/match', (req, res) => {
         const id = text(req.params.id);
@@ -284,8 +322,13 @@ export function createMaterialsRouter(options: {
         if (ids.length > 100)
             bad();
         // Hints edit display/role suggestions only. Association has separate checked actions.
+        // Capture mode is fixed when the photo is uploaded; a later label edit must not rewrite it.
         if (selected.documentId || selected.questionId || selected.attemptId)
             bad();
+        delete selected.captureMode;
+        delete selected.pageIndex;
+        delete selected.pageCount;
+        delete selected.pageKind;
         store.transaction(() => {
             for (const id of ids) {
                 assetLinkRevision(store, id);
@@ -293,10 +336,15 @@ export function createMaterialsRouter(options: {
                     hints_json: string;
                 };
                 const old = JSON.parse(row.hints_json) as CaptureHints;
+                const set: CaptureHints = {};
+                if (old.captureMode) set.captureMode = old.captureMode;
+                if (old.pageIndex) set.pageIndex = old.pageIndex;
+                if (old.pageCount) set.pageCount = old.pageCount;
+                if (old.pageKind) set.pageKind = old.pageKind;
                 delete old.roles;
                 delete old.marking;
                 delete old.label;
-                store.db.prepare('UPDATE material_asset SET hints_json=? WHERE owner_id=? AND id=?').run(JSON.stringify({ ...old, ...selected }), store.studentId, id);
+                store.db.prepare('UPDATE material_asset SET hints_json=? WHERE owner_id=? AND id=?').run(JSON.stringify({ ...old, ...selected, ...set }), store.studentId, id);
             }
         });
         result(req, res, { ok: true });
@@ -370,9 +418,23 @@ export function createMaterialsRouter(options: {
     r.use(((err: unknown, req: Request, res: Response, _next: express.NextFunction) => {
         const status = err instanceof MobileRequestError ? err.status : (err as {type?:string})?.type === 'entity.too.large' ? 413 : err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE' ? 413 : err instanceof SyntaxError || err instanceof multer.MulterError ? 400 : 500;
         const message = err instanceof MobileRequestError ? err.message : status === 413 ? '照片超过 15 MB，请换一张。' : status === 400 ? '照片或填写的内容不完整，请重选后再试。' : '暂时没保存好，请稍后再试。';
+        const requestId = String(res.locals.requestId ?? '-');
+        const code = err instanceof MobileRequestError ? err.code : status === 500 ? 'internal' : 'invalid_request';
+        if (status === 500) logEvent('sel_request_failed', 'error', { rid: requestId, method: req.method, route: routeTemplate(`/s${req.path}`), status, ...errorSummary(err) });
+        if (!res.headersSent) {
+            res.setHeader('x-sel-error-code', code);
+            if (!res.getHeader('retry-after')) {
+                const seconds = err instanceof MobileRequestError && err.retryAfterSeconds && err.retryAfterSeconds > 0 ? err.retryAfterSeconds
+                    : code === 'service_paused' ? SERVICE_PAUSED_RETRY_SECONDS
+                    : code === 'capacity_full' ? CAPACITY_FULL_RETRY_SECONDS
+                    : code === 'busy' ? UPLOAD_SLOT_RETRY_FLOOR_SECONDS
+                    : undefined;
+                if (seconds !== undefined) res.setHeader('retry-after', String(seconds));
+            }
+        }
         res.status(status);
         if (json(req))
-            res.json({ error: { code: err instanceof MobileRequestError ? err.code : 'invalid_request', message } });
+            res.json({ error: { code, message, requestId } });
         else
             res.type('html').send(`<!doctype html><html lang="zh"><meta name="viewport" content="width=device-width,initial-scale=1"><p>${message}</p><a href="/s/capture">返回拍照</a> · <a href="/s/materials">刷新材料</a></html>`);
     }) as express.ErrorRequestHandler);

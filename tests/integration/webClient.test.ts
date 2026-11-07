@@ -1,4 +1,5 @@
 import { resetMaterials } from '../helpers/resetMaterials.js';
+import { localDayText } from '../../src/domain/calendarDay.js';
 /**
  * 学生网页版（/s/）路由集成测试：真实 HTTP（云端装配：设备令牌 + PairingManager），合成识别、mock 语音转写，
  * /v2 的追问 / 打印辅导走 mock 模式的确定性实现。不调真实模型、不读 .env 与 data/，所有照片与录音都是合成的。
@@ -741,7 +742,7 @@ describe('一周的闭环：选题 → 说说为什么错（学生自己提交�
     expect(feedback).toContain('还没确定题号');expect(feedback).toContain('还没有收到这道题的可用作答');expect(feedback).toContain('（补充这道题）');
     expect(getDb().prepare('SELECT COUNT(*) n FROM review_attempt WHERE packet_id=?').get(packetId)).toEqual({n:0});
     const revision=/name="revision" value="(\d+)"/.exec(feedback)![1]!;
-    const fields={revision,performedOn:new Date().toISOString().slice(0,10),help:'independent',[`outcome_${itemIds[0]}`]:'correct'};
+    const fields={revision,performedOn:localDayText(new Date()),help:'independent',[`outcome_${itemIds[0]}`]:'correct'};
     expect((await browser.post(`${url}/confirm`,{...fields,help:''})).status).toBe(400);
     expect((await browser.post(`${url}/confirm`,fields)).status).toBe(303);
     expect((await browser.post(`${url}/confirm`,fields)).status).toBe(303);

@@ -114,6 +114,7 @@ describe('T3 桥：v2 识别任务 → 错题记录', () => {
       question({ number: '2', status: 'needs_check', selectionEvidence: 'corrected', evidence: evidence('2', '订正题。', true) }),
       question({ number: '3', status: 'ready', selectionEvidence: 'unmarked' }),
       question({ number: '4', status: 'failed', selectionEvidence: 'marked_wrong', evidence: null, verification: null }),
+      question({ number: '5', status: 'ready', selectionEvidence: 'marked_right' }),
     ];
     const jobId = await makeJob(dir, j => { j.questions = questions; });
     registerV2Photo(jobId);

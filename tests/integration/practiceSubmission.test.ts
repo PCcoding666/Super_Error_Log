@@ -20,6 +20,7 @@ vi.mock('sharp', async (importOriginal) => {
   return { ...actual, default: wrapped };
 });
 import { getDb, now } from '../../src/db/connection.js';
+import { localDayText } from '../../src/domain/calendarDay.js';
 import { createPractice } from '../../src/v2/practiceService.js';
 import { revealPracticeHint } from '../../src/v2/practiceProgress.js';
 import { attachWork } from '../../src/v2/practiceWork.js';
@@ -65,7 +66,7 @@ describe('durable whole-task paper submission',()=>{
    let state=submissionState(p.id); expect(state.status).toBe('ready');expect(state.findings[1]?.itemId).toBeNull();
    assignFinding(p.id,state.revision,1,ids[1]!);
    state=submissionState(p.id); expect(state.findings[1]).toMatchObject({itemId:ids[1],suggestedCorrect:null,uncertain:true});
-   const confirm={revision:state.revision,performedOn:now().slice(0,10),help:'independent',results:[{itemId:ids[0],outcome:'correct'}]};
+   const confirm={revision:state.revision,performedOn:localDayText(new Date()),help:'independent',results:[{itemId:ids[0],outcome:'correct'}]};
    expect(confirmSubmission(p.id,confirm)).toMatchObject({ok:true});
    expect(confirmSubmission(p.id,confirm)).toMatchObject({ok:true}); expect(attempts()).toEqual({n:1});
    expect(getDb().prepare('SELECT status FROM error_item WHERE id=?').get(ids[0]!)).toEqual({status:'attempted'});
@@ -86,7 +87,7 @@ describe('durable whole-task paper submission',()=>{
  });
  it('rejects missing help, stale revisions and foreign item IDs without recording',async()=>{
    const {p,ids}=prepared(), foreign=prepared(1).ids[0]; await attachSubmission(p.id,crypto.randomUUID(),await photo()); await reviewSubmission(p.id,reviewer);
-   const input={revision:1,performedOn:now().slice(0,10),help:'independent',results:[{itemId:ids[0],outcome:'correct'}]};
+   const input={revision:1,performedOn:localDayText(new Date()),help:'independent',results:[{itemId:ids[0],outcome:'correct'}]};
    expect(()=>confirmSubmission(p.id,{...input,help:''})).toThrow();
    expect(()=>confirmSubmission(p.id,{...input,results:[{itemId:foreign,outcome:'correct'}]})).toThrow();
    await attachSubmission(p.id,crypto.randomUUID(),await photo());
@@ -161,7 +162,7 @@ describe('durable whole-task paper submission',()=>{
  it('uses student help overrides and persisted hints instead of inferring independent work',async()=>{
    const {p,ids}=prepared(2);await attachSubmission(p.id,crypto.randomUUID(),await photo());await reviewSubmission(p.id,reviewer);
    revealPracticeHint(p.id,ids[0]!,2);
-   expect(confirmSubmission(p.id,{revision:1,performedOn:now().slice(0,10),help:'independent',results:[{itemId:ids[0],outcome:'correct'},{itemId:ids[1],outcome:'correct',help:'helped'}]})).toMatchObject({ok:true});
+   expect(confirmSubmission(p.id,{revision:1,performedOn:localDayText(new Date()),help:'independent',results:[{itemId:ids[0],outcome:'correct'},{itemId:ids[1],outcome:'correct',help:'helped'}]})).toMatchObject({ok:true});
    const rows=getDb().prepare('SELECT item_id,completion,hint_level FROM review_attempt WHERE packet_id=?').all(p.id);
    expect(rows).toEqual(expect.arrayContaining([{item_id:ids[0],completion:'hint_used',hint_level:2},{item_id:ids[1],completion:'hint_used',hint_level:1}]));
  });

@@ -3,7 +3,8 @@
  * 只放类型，不放实现：客户端用 Bundler 解析直接引用这个文件。
  */
 
-export interface ApiError { error: { code: string; message: string } }
+/** requestId：这次请求的编号（响应头 x-sel-request-id 同一个值）；页面上显示成「错误编号」，排查时在服务器日志里按它找。 */
+export interface ApiError { error: { code: string; message: string; requestId?: string } }
 
 /** 错题本的四档状态（见 notebook.ts）。 */
 export type NotebookStatusGroup = 'todo' | 'practicing' | 'mastered' | 'stable';
@@ -152,6 +153,48 @@ export interface IntakeCandidate {
   crop: string | null;
 }
 
+/** 候选详情里的一段题干或图。只描述已经识别出来的内容。 */
+export interface IntakeCandidateFragment {
+  role: 'question' | 'diagram';
+  text: string;
+  number: string | null;
+  check: 'passed' | 'low' | 'failed' | 'unchecked';
+  uncertainties: string[];
+  requiresDiagram: boolean;
+}
+
+/**
+ * 还没收入错题本的候选题，只读。
+ * answers / grades 为空就是还没有，不是占位。这个接口不触发生成。
+ */
+export interface IntakeCandidateDetail {
+  id: string;
+  revision: number;
+  label: string;
+  subject: string | null;
+  stem: IntakeCandidateFragment[];
+  /** 题目区域裁图；没有时为 null。 */
+  crop: string | null;
+  /** 来源整页；没有时为 null。 */
+  source: string | null;
+  work: { text: string; label: string | null }[];
+  marks: { text: string }[];
+  answers: {
+    text: string;
+    source: 'imported' | 'manual' | 'ai';
+    stale: boolean;
+    claimedSource: string | null;
+    /** 文字来自照片上的参考答案区域。 */
+    fromPhoto: boolean;
+  }[];
+  grades: {
+    result: 'correct' | 'partial' | 'incorrect' | 'uncertain';
+    findings: string[];
+    score: { earned: number; total: number } | null;
+    stale: boolean;
+  }[];
+}
+
 export interface IntakePhoto {
   id: string;
   number: number;
@@ -174,4 +217,13 @@ export interface IntakeResponse {
   photos: IntakePhoto[];
   /** 还有照片在找题：客户端据此轮询。 */
   busy: boolean;
+  /**
+   * 按上传日筛选时才有。没有这些字段就是全部材料，顺序和分页与以前一样。
+   * date 是新加坡自然日；from/to 是含当天的起止日。page 从 0 起，每页 8 张。
+   */
+  filter?: { date: string | null; from: string | null; to: string | null };
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  hasMore?: boolean;
 }

@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router-dom';
-import type { ChangeEvent, ReactNode } from 'react';
-import { watchChooser } from '../lib/chooserWatch';
+import { useEffect, useRef, type ChangeEvent, type ReactNode } from 'react';
+import { pickedFileDestination, type CaptureRouteKind } from '../lib/captureEntry';
+import { captureSession, type CaptureMode } from '../lib/captureSession';
+import { bindPickerSession, watchChooser } from '../lib/chooserWatch';
 import { uploader } from '../lib/uploader';
 
 /**
@@ -17,12 +19,20 @@ import { uploader } from '../lib/uploader';
  */
 const ACCEPT = 'image/*';
 
-function usePickFiles(): (event: ChangeEvent<HTMLInputElement>) => void {
+function usePickFiles(route: CaptureRouteKind | null, explicit: CaptureMode | undefined): (event: ChangeEvent<HTMLInputElement>) => void {
   const navigate = useNavigate();
   return event => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     if (!files.length) return;
+    // 多页先留在本页。还没确认是材料流程时，不按 localStorage 里的多页进托盘。
+    // 材料流程里已经有一组时，新照片并进这一组，不另开一次上传。
+    if (pickedFileDestination(route, explicit, captureSession.pages.length) === 'tray') {
+      if (captureSession.mode !== 'multi') captureSession.setMode('multi');
+      captureSession.add(files);
+      return;
+    }
+    if (captureSession.mode !== 'single') captureSession.setMode('single');
     uploader.add(files);
     navigate('/new');
   };
@@ -34,9 +44,24 @@ export function PickLabel(props: {
   testId?: string;
   /** 整页只放一个，给还在用 #library-input / #camera-input 的测试。 */
   inputId?: string;
+  /** Spoken name for this file control. Defaults to 拍照 / 从相册选择. */
+  inputLabel?: string;
+  /** Route known when this label was rendered. Unknown and legacy commits are 单页. */
+  route?: CaptureRouteKind | null;
+  /**
+   * Set only when this label itself is the mode choice (the sheet). Omitted labels follow the open tray.
+   * Written when a file arrives, not when the picker merely opens, so cancelling does not persist 多页.
+   */
+  mode?: CaptureMode;
+  /** The student tapped this input. Keep it mounted until the picker finishes. */
+  onArm?: () => void;
+  onPicked?: () => void;
+  onCancel?: () => void;
   children: ReactNode;
 }): ReactNode {
-  const onChange = usePickFiles();
+  const onChange = usePickFiles(props.route ?? null, props.mode);
+  const stopSession = useRef<(() => void) | null>(null);
+  useEffect(() => () => { stopSession.current?.(); stopSession.current = null; }, []);
   const album = props.kind === 'album';
   return <label className={props.className} data-testid={props.testId}>
     {props.children}
@@ -49,9 +74,19 @@ export function PickLabel(props: {
       accept={ACCEPT}
       multiple={album}
       capture={album ? undefined : 'environment'}
-      aria-label={album ? '从相册选择' : '拍照'}
-      onClick={event => watchChooser(event.currentTarget)}
-      onChange={onChange}
+      aria-label={props.inputLabel ?? (album ? '从相册选择' : '拍照')}
+      onClick={event => {
+        props.onArm?.();
+        watchChooser(event.currentTarget);
+        stopSession.current?.();
+        stopSession.current = bindPickerSession(event.currentTarget, { onCancel: () => props.onCancel?.() });
+      }}
+      onChange={event => {
+        const picked = (event.target.files?.length ?? 0) > 0;
+        onChange(event);
+        if (picked) props.onPicked?.();
+        else props.onCancel?.();
+      }}
     />
   </label>;
 }
