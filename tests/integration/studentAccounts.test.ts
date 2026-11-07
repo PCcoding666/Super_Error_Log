@@ -17,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { createStudentHostGateway, SESSION_COOKIE, type StudentHostGateway } from '../../src/studentHost/router.js';
 import { AttemptGuard, codeKey, LOGIN_LIMITS, REGISTRATION_LIMITS } from '../../src/studentHost/attemptGuard.js';
 import { runAdminCli } from '../../src/studentHost/admin-cli.js';
+import { encodeQr, qrSvg, qrTerminalLines } from '../../src/studentHost/qr.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
 import { accountLabel, parseAdminFilters, readAdminReport } from '../../src/admin/report.js';
 import { SettingsPage } from '../../src/web/views/practice.js';
@@ -635,6 +636,199 @@ describe('会话续期与我的邀请码（P0-11）', () => {
   });
 });
 
+// ---------- 2026-11-01 预填邀请码的登录链接与二维码 ----------
+
+describe('预填邀请码的登录链接（/s/?code=…）', () => {
+  it('打开带码链接只把码填进输入框：不建会话、不发会话 cookie；/s/login?code= 跳到同一页；坏码不回显；别的路径不预填', async () => {
+    const env = await setup();
+    const { studentId } = env.registry.createStudent();
+    const { code } = env.registry.issueInvitation(studentId);
+    const sessions = (): number => env.registry.listStudents().find(student => student.studentId === studentId)!.activeSessions;
+    // 小写、空格、重复打开（链接预览、误点）都只是看页面
+    for (const query of [code, code.toLowerCase(), encodeURIComponent(code.replace(/-/g, ' ')), code.replace(/-/g, '')]) {
+      const page = await env.get(`/s/?code=${query}`);
+      expect(page.status).toBe(200);
+      expect(page.headers.get('cache-control')).toContain('no-store');
+      expect(page.headers.getSetCookie().some(line => line.startsWith(`${SESSION_COOKIE}=`))).toBe(false);
+      const html = await page.text();
+      expect(html).toContain('data-testid="login-title"');
+      expect(html).toContain(`value="${code}"`);
+      expect(html).toContain('data-testid="prefill-lead"');
+      expect(html).toContain('action="/s/login"');
+      expect(html).toContain('content="same-origin"');
+    }
+    expect(sessions()).toBe(0);
+    const redirect = await env.get(`/s/login?code=${code.toLowerCase()}`);
+    expect(redirect.status).toBe(303);
+    expect(redirect.headers.get('location')).toBe(`/s/?code=${code}`);
+    expect((await env.get('/s/login?code=nonsense')).headers.get('location')).toBe('/s/');
+    const junk = await env.get(`/s/?code=${encodeURIComponent('<script>alert(1)</script>')}`);
+    expect(junk.status).toBe(200);
+    const junkHtml = await junk.text();
+    expect(junkHtml).toContain('data-testid="prefill-invalid"');
+    expect(junkHtml).not.toContain('alert(1)');
+    expect(junkHtml).not.toContain('data-testid="prefill-lead"');
+    expect((await (await env.get('/s/?code=ABCD-EFGH')).text())).toContain('data-testid="prefill-invalid"');
+    const other = await (await env.get(`/s/settings?code=${code}`)).text();
+    expect(other).toContain('data-testid="login-title"');
+    expect(other).not.toContain(`value="${code}"`);
+    expect(sessions()).toBe(0);
+    // 点按钮才兑换
+    const login = await env.post('/s/login', { code });
+    expect(login.status).toBe(303);
+    expect(sessions()).toBe(1);
+  });
+
+  it('已登录的手机打开带码链接：仍是填好码的登录页并说明会换账号，码不转发给学生空间；点进入才换会话', async () => {
+    const env = await setup();
+    const a = env.registry.createStudent();
+    const codeA = env.registry.issueInvitation(a.studentId).code;
+    const b = env.registry.createStudent();
+    const codeB = env.registry.issueInvitation(b.studentId).code;
+    const sessions = (studentId: string): number => env.registry.listStudents().find(student => student.studentId === studentId)!.activeSessions;
+    const cookie = sessionCookie(await env.post('/s/login', { code: codeA }));
+    const page = await env.get(`/s/?code=${codeB}`, { cookie });
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain('data-testid="login-title"');
+    expect(html).toContain(`value="${codeB}"`);
+    expect(html).toContain('原来的账号在这台手机上退出');
+    expect(page.headers.getSetCookie().some(line => line.startsWith(`${SESSION_COOKIE}=`))).toBe(false);
+    expect(sessions(a.studentId)).toBe(1);
+    expect(sessions(b.studentId)).toBe(0);
+    // 乙的空间没有被碰过（带码的 GET 不会走到转发，也不记活跃）
+    expect(env.registry.listStudents().find(student => student.studentId === b.studentId)!.lastActiveAt).toBeNull();
+    const switched = await env.post('/s/login', { code: codeB }, { cookie });
+    expect(switched.status).toBe(303);
+    expect(sessions(a.studentId)).toBe(0);
+    expect(sessions(b.studentId)).toBe(1);
+  });
+
+  it('码不进日志：带码打开、跳转、微信版、输错、输对，进程的 stdout / stderr / console 里都不出现这枚码；Set-Cookie 里也没有', async () => {
+    const env = await setup({ failureDelayMs: 0 });
+    const { studentId } = env.registry.createStudent();
+    const { code } = env.registry.issueInvitation(studentId);
+    const captured: string[] = [];
+    const grab = (chunk: unknown): boolean => { captured.push(typeof chunk === 'string' ? chunk : String(chunk)); return true; };
+    const say = (...args: unknown[]): void => { captured.push(args.map(String).join(' ')); };
+    const spies = [
+      vi.spyOn(process.stdout, 'write').mockImplementation(grab as typeof process.stdout.write),
+      vi.spyOn(process.stderr, 'write').mockImplementation(grab as typeof process.stderr.write),
+      vi.spyOn(console, 'log').mockImplementation(say),
+      vi.spyOn(console, 'info').mockImplementation(say),
+      vi.spyOn(console, 'warn').mockImplementation(say),
+      vi.spyOn(console, 'error').mockImplementation(say),
+      vi.spyOn(console, 'debug').mockImplementation(say),
+    ];
+    try {
+      const responses = [
+        await env.get(`/s/?code=${code}`),
+        await env.get(`/s/login?code=${code}`),
+        await env.get(`/s/?code=${code}`, { 'user-agent': WECHAT_UA }),
+        await env.post('/s/login', { code: 'AAAA-BBBB-CCCC' }),
+        await env.post('/s/login', { code: code.slice(0, -1) + (code.endsWith('A') ? 'B' : 'A') }),
+        await env.post('/s/login', { code }),
+      ];
+      for (const response of responses) {
+        await response.text();
+        for (const line of response.headers.getSetCookie()) {
+          expect(line).not.toContain(code);
+          expect(line).not.toContain(code.replace(/-/g, ''));
+        }
+      }
+      expect(responses[5]!.status).toBe(303);
+    } finally {
+      spies.forEach(spy => spy.mockRestore());
+    }
+    const output = captured.join('\n');
+    expect(output).not.toContain(code);
+    expect(output).not.toContain(code.replace(/-/g, ''));
+    expect(output).not.toContain(code.toLowerCase());
+  });
+
+  it('带码打开登录页不计限速；错码仍按原规则限速（同一错码连错后 429 并带 retry-after），正确的码照样进', async () => {
+    const env = await setup({ failureDelayMs: 0 });
+    const { studentId } = env.registry.createStudent();
+    const { code } = env.registry.issueInvitation(studentId);
+    const wrong = 'AAAA-BBBB-CCCC';
+    // 预览、误点、刷新带码链接 30 次：GET 不兑换也不算失败
+    for (let i = 0; i < 30; i += 1) await (await env.get(`/s/?code=${wrong}`)).text();
+    const statuses: number[] = [];
+    for (let i = 0; i < LOGIN_LIMITS.perCode; i += 1) {
+      const response = await env.post('/s/login', { code: wrong });
+      statuses.push(response.status);
+      await response.text();
+    }
+    expect(statuses.slice(0, LOGIN_LIMITS.perCode - 1).every(status => status === 400)).toBe(true);
+    const blocked = await env.post('/s/login', { code: wrong });
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
+    const blockedHtml = await blocked.text();
+    expect(blockedHtml).toContain('试得太频繁了');
+    expect(blockedHtml).not.toContain(wrong);
+    // 带着这枚错码的链接照样只是登录页（GET 不受限速影响），正确的码照样能进
+    expect((await env.get(`/s/?code=${wrong}`)).status).toBe(200);
+    expect((await env.post('/s/login', { code })).status).toBe(303);
+  });
+
+  it('微信里打开：登录页给出右上角「…」的步骤和「复制网址」，带码进来复制的网址连码一起带上；普通浏览器没有这些', async () => {
+    const env = await setup();
+    const { studentId } = env.registry.createStudent();
+    const { code } = env.registry.issueInvitation(studentId);
+    const withCode = await (await env.get(`/s/?code=${code}`, { 'user-agent': WECHAT_UA })).text();
+    expect(withCode).toContain('data-testid="in-app-browser-notice"');
+    expect(withCode).toContain('data-testid="in-app-browser-steps"');
+    expect(withCode).toContain('点右上角「…」');
+    expect(withCode).toContain('在浏览器打开');
+    expect(withCode).toContain('在 Safari 中打开');
+    expect(withCode).toContain(`data-copy-text="${env.base}/s/?code=${code}"`);
+    expect(withCode).toContain('网址里已经带着你的邀请码');
+    expect(withCode).toContain('src="/s/account-copy.js"');
+    const plain = await (await env.get('/s/', { 'user-agent': WECHAT_UA })).text();
+    expect(plain).toContain(`data-copy-text="${env.base}/s/"`);
+    expect(plain).not.toContain('网址里已经带着你的邀请码');
+    const safari = await (await env.get(`/s/?code=${code}`, { 'user-agent': SAFARI_UA })).text();
+    expect(safari).not.toContain('in-app-browser-notice');
+    expect(safari).not.toContain('data-copy-text');
+    const script = await env.get('/s/account-copy.js');
+    expect(script.status).toBe(200);
+    const js = await script.text();
+    expect(js).toContain('data-copy-text');
+    expect(js).toContain('data-copy-target');
+    expect(js).toContain('clipboard');
+  });
+
+  it('「我的邀请码」页给出带码的登录链接和二维码（换手机扫一下就行）；看不到码的旧会话也没有链接', async () => {
+    const env = await setup();
+    const registered = await env.post('/s/register', { name: '测试学生甲', phone: '+6581234567', ...pinField });
+    const code = codeFrom(await registered.text());
+    const cookie = sessionCookie(await env.post('/s/login', { code }));
+    const page = await env.get('/s/account', { cookie });
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    const link = `${env.base}/s/?code=${code}`;
+    expect(html).toContain('data-testid="my-invite-link-block"');
+    expect(html).toContain(`data-testid="my-invite-link"`);
+    expect(html).toContain(`>${link}<`);
+    expect(html).toContain('data-testid="my-invite-qr"');
+    expect(html).toContain('data-copy-target="my-invite-link-value"');
+    // 二维码里编的就是这条链接（同一个编码器，输出确定）
+    const qr = qrSvg(encodeQr(link).modules);
+    expect(html).toContain(`viewBox="0 0 ${qr.side} ${qr.side}"`);
+    expect(html).toContain(`d="${qr.path}"`);
+    // 链接能直接用：打开是填好码的登录页
+    expect(await (await env.get(`/s/?code=${code}`)).text()).toContain(`value="${code}"`);
+    // 迁移前的旧会话看不到码：也没有链接和二维码
+    const db = new DatabaseSync(path.join(env.dir, 'registry.db'));
+    db.exec('UPDATE sessions SET invitation_hash = NULL, code_box = NULL');
+    db.close();
+    const hidden = await (await env.get('/s/account', { cookie })).text();
+    expect(hidden).toContain('data-testid="invite-code-unavailable"');
+    expect(hidden).not.toContain('my-invite-link');
+    expect(hidden).not.toContain('my-invite-qr');
+  });
+});
+
 // ---------- P1-5 后台显示谁是谁 ----------
 
 describe('后台账号列表（P1-5）', () => {
@@ -722,6 +916,54 @@ describe('管理 CLI（P1-5、P1-6）', () => {
     expect(registry.listRegistrationCodes()[0]!.status).toBe('revoked');
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(runAdminCli(['registration-code', 'create', '--uses', 'many'], () => undefined)).toBe(2);
+  });
+
+  it('发码命令同时打印预填码的登录链接；--qr 在终端画二维码；入口来自 --origin / SEL_PUBLIC_ORIGIN，缺省 study 域名；入口不合法就不发码', () => {
+    const dir = root();
+    const registry = openRegistry(dir);
+    vi.stubEnv('SEL_STUDENT_HOST_DIR', dir);
+    vi.stubEnv('SEL_PUBLIC_ORIGIN', '');
+    const { studentId } = registry.createStudent();
+    const pending = (): number => registry.listStudents().find(student => student.studentId === studentId)!.pendingInvitations;
+    const codeIn = (lines: string[]): string => /）：([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})$/m.exec(lines.join('\n'))![1]!;
+
+    const lines: string[] = [];
+    expect(runAdminCli(['invite', studentId], line => lines.push(line))).toBe(0);
+    const code = codeIn(lines);
+    expect(lines.join('\n')).toContain(`登录链接`);
+    expect(lines.join('\n')).toContain(`https://study.pccoding666.com/s/?code=${code}`);
+    expect(lines.join('\n')).toContain('--qr');
+    expect(lines.some(line => /[▀▄█]/.test(line))).toBe(false);
+    expect(registry.redeem(code).studentId).toBe(studentId);
+
+    const qrLines: string[] = [];
+    expect(runAdminCli(['invite', studentId, '--qr', '--origin', 'http://127.0.0.1:3100'], line => qrLines.push(line))).toBe(0);
+    const second = codeIn(qrLines);
+    const link = `http://127.0.0.1:3100/s/?code=${second}`;
+    expect(qrLines.join('\n')).toContain(link);
+    const drawn = qrLines.filter(line => /[▀▄█]/.test(line));
+    expect(drawn.length).toBeGreaterThanOrEqual(15);
+    expect(drawn.every(line => line.startsWith('\u001b[0;30;47m') && line.endsWith('\u001b[0m'))).toBe(true);
+    expect(drawn.map(line => line.replace(/\u001b\[[0-9;]*m/g, ''))).toEqual(qrTerminalLines(encodeQr(link).modules, { ansi: false }).filter(line => /[▀▄█]/.test(line)));
+    expect(registry.redeem(second).studentId).toBe(studentId);
+
+    vi.stubEnv('SEL_PUBLIC_ORIGIN', 'https://study.example.com/');
+    const created: string[] = [];
+    expect(runAdminCli(['create', 'student', '--qr'], line => created.push(line))).toBe(0);
+    expect(created.join('\n')).toContain(`https://study.example.com/s/?code=${codeIn(created)}`);
+    expect(created.some(line => /[▀▄█]/.test(line))).toBe(true);
+    const reset: string[] = [];
+    expect(runAdminCli(['reset-invitation', studentId], line => reset.push(line))).toBe(0);
+    expect(reset.join('\n')).toContain(`https://study.example.com/s/?code=${codeIn(reset)}`);
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const before = pending();
+    expect(runAdminCli(['invite', studentId, '--origin'], () => undefined)).toBe(2);
+    expect(runAdminCli(['invite', studentId, '--origin', 'ftp://x'], () => undefined)).toBe(2);
+    expect(runAdminCli(['invite', studentId, '--origin', 'https://study.example.com/s/'], () => undefined)).toBe(2);
+    expect(runAdminCli(['invite', studentId, 'extra'], () => undefined)).toBe(2);
+    expect(pending()).toBe(before);
+    expect(errors.mock.calls.flat().join('\n')).toContain('公网入口');
   });
 
   it('revoke-sessions 说明不作废邀请码；disable 让码和会话都失效，reset-invitation 恢复', () => {

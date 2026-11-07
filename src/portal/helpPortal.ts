@@ -6,6 +6,7 @@
  * study.pccoding666.com 的 GET / 仍是 404；/s、/v1、/v2、/admin 不在这里处理。
  * help.pccoding666.com 子域名暂不使用（DNS 仍是 NXDOMAIN）。不要再按主机名把 GET / 换成这一页。
  * 页面是静态文案。发布包只带 dist/，HTML 随 tsc 编译进去；图片在构建时复制到 dist/portal/help-img/。
+ * 联系方式（2026-11-01）只从环境变量 SEL_HELP_CONTACT_WECHAT / SEL_HELP_CONTACT_EMAIL 读：没设就不显示那一行，代码里不写个人信息。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -53,6 +54,34 @@ export function readHelpImage(name: string): Buffer | null {
     if (existsSync(file)) return readFileSync(file);
   }
   return null;
+}
+
+export interface HelpContact { wechat?: string; email?: string }
+
+/** 从环境变量读联系方式；空白当没有，长度截到 120。 */
+export function readHelpContact(env: NodeJS.ProcessEnv = process.env): HelpContact {
+  const pick = (name: string): string | undefined => {
+    const value = env[name]?.trim();
+    return value ? value.slice(0, 120) : undefined;
+  };
+  return { wechat: pick('SEL_HELP_CONTACT_WECHAT'), email: pick('SEL_HELP_CONTACT_EMAIL') };
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
+}
+
+/** 联系方式区块：有哪一项显示哪一项；一项都没有时只说找老师。 */
+function contactHtml(contact: HelpContact): string {
+  const rows: string[] = [];
+  if (contact.email) {
+    const safe = escapeHtml(contact.email);
+    const link = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(contact.email) ? `<a href="mailto:${safe}">${safe}</a>` : safe;
+    rows.push(`<div><dt>邮箱</dt><dd data-contact="email">${link}</dd></div>`);
+  }
+  if (contact.wechat) rows.push(`<div><dt>微信</dt><dd data-contact="wechat">${escapeHtml(contact.wechat)}</dd></div>`);
+  if (rows.length === 0) return '<p class="note" data-contact="none">使用中有问题，先问给你邀请码的老师。</p>';
+  return `<dl class="group">${rows.join('')}</dl>`;
 }
 
 /** 一步一张卡：手机框里的合成示例图，配一两句说明。 */
@@ -108,7 +137,7 @@ const IPHONE_DIAGRAM = `<figure class="diagram">
 <figcaption>示意图。方框加向上箭头是 Safari 下方的「分享」。不是真机截图。</figcaption>
 </figure>`;
 
-export function helpPortalHtml(): string {
+export function helpPortalHtml(contact: HelpContact = readHelpContact()): string {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -439,14 +468,15 @@ footer p { margin: 0 0 6px; }
         <p class="kicker">开始使用</p>
         <h2>注册与登录</h2>
         <p>用邀请码进入自己的错题本。没有密码，也不发短信。</p>
+        <p data-testid="start-steps">最快的三步：老师给你一个<strong>二维码或链接</strong>，扫一下或点开，登录页里邀请码已经填好 → 点<strong>「进入我的错题本」</strong> → 点「去拍照」，<strong>拍一张批改过的卷子</strong>。只拿到 12 位邀请码的，按下面的步骤自己输入。</p>
       </div>
       <div class="cards">
         ${card('register.webp', '合成示例。注册页：姓名、手机号和 4 位找回码', '注册', '打开 <a href="' + STUDY_URL + 'register">注册页</a>，填姓名和手机号，自己设一个 4 位数字找回码（不要用 1234、0000 这种）。老师给了班级注册码才会多出这一格；不用密码，也不发短信，姓名可以写化名，手机号可以填家长的。')}
         ${card('register-done.webp', '合成示例。注册成功页，邀请码只完整显示这一次', '保存邀请码', '注册成功后会显示你的 12 位邀请码，只在这一页完整显示一次。请截图或点「复制邀请码」，不要发给别人；邀请码 60 天内可以反复登录。')}
         ${card('stage.webp', '合成示例。第一次选择初中或高中', '选学段', '第一次进入会问初中还是高中，以后可以在设置里改。错题按这个学段整理章节，目前只支持数学、物理、化学。')}
-        ${card('login.webp', '合成示例。输入 12 位邀请码的登录页', '登录', '打开 <a href="' + STUDY_URL + '">学习页</a>，输入邀请码，点「进入我的错题本」。短横线、空格、大小写都不用管，登录后常用的话不用每次输。')}
+        ${card('login.webp', '合成示例。输入 12 位邀请码的登录页', '登录', '打开 <a href="' + STUDY_URL + '">学习页</a>，输入邀请码，点「进入我的错题本」。老师发的二维码或链接打开后邀请码已经填好，直接点进入；打开链接本身不算登录，点了按钮才算。短横线、空格、大小写都不用管，登录后常用的话不用每次输。')}
         ${card('settings.webp', '合成示例。设置页：学段、练习即将推出、添加到主屏幕、我的邀请码', '设置', '登录后打开设置，可以改学段，也能进入「我的邀请码」。练习一行写着「即将推出」。')}
-        ${card('account.webp', '合成示例。我的邀请码页面，可以复制或重新生成', '查看或换邀请码', '在「设置 → 我的邀请码」可以查看、复制，或重新生成。重新生成后旧码立刻作废，其他设备要用新码登录，学习记录都在；快到期时设置页会提醒你换码。')}
+        ${card('account.webp', '合成示例。我的邀请码页面，可以复制或重新生成', '查看或换邀请码', '在「设置 → 我的邀请码」可以查看、复制，或重新生成；页面上还有这枚码的登录链接和二维码，换手机时用新手机扫一下就能登录。重新生成后旧码立刻作废，其他设备要用新码登录，学习记录都在；快到期时设置页会提醒你换码。')}
       </div>
     </section>
 
@@ -458,7 +488,7 @@ footer p { margin: 0 0 6px; }
         <p class="url"><a href="${STUDY_URL}">${STUDY_URL}</a></p>
       </div>
       <div class="cards">
-        ${card('install.webp', '合成示例。设置里的添加到主屏幕说明，只写了 Safari', '应用里的说明', '设置里也有一页「添加到主屏幕」，目前只写了 iPhone Safari 的步骤。')}
+        ${card('install.webp', '合成示例。设置里的「添加到主屏幕」说明页', '应用里的说明', '设置里也有一页「添加到主屏幕」，写了 iPhone Safari 和安卓 Chrome 的步骤，和下面两条一样。')}
         <article class="card card-wide">
           ${ANDROID_DIAGRAM}
           <div class="card-copy">
@@ -526,13 +556,13 @@ footer p { margin: 0 0 6px; }
         ${card('recover.webp', '合成示例。用姓名、手机号和找回码找回邀请码', '忘了邀请码', '打开 <a href="' + STUDY_URL + 'recover">找回页</a>，用注册时的姓名、手机号和找回码换一个新码，学习记录都在，旧码作废。对不上时页面不会告诉你是哪一项错了；没设过找回码，或找回码也忘了，找老师重发。')}
       </div>
       <dl class="group">
-        <div><dt>换手机</dt><dd>用同一个邀请码在新手机登录，学习记录都在。</dd></div>
+        <div><dt>换手机</dt><dd>旧手机「设置 → 我的邀请码」里有登录链接和二维码，用新手机的相机扫一下就能登录；或者直接在新手机输入同一个邀请码。学习记录都在。</dd></div>
         <div><dt>忘了邀请码</dt><dd>打开 <a href="${STUDY_URL}recover">${STUDY_URL}recover</a>，用注册时的姓名、手机号和找回码换一个新码，记录都在，旧码作废。没设过找回码，或找回码也忘了，找老师重发。</dd></div>
         <div><dt>打不开相册</dt><dd>安卓上如果桌面图标打开的是一个没有文件选择器的壳，点相册没反应。改用 Chrome 或系统浏览器打开学习页再拍。小米、红米请点页面上的相册入口。</dd></div>
         <div><dt>AI 认错字</dt><dd>题目详情里点「识别错了？改」，或右上角「…」→「改题目文字」。以照片为准。</dd></div>
         <div><dt>不是错题</dt><dd>题目详情右上角「…」→「不是错题，移除」。录入页里不相关的题可以左滑删除。</dd></div>
         <div><dt>重复照片</dt><dd>同一张图只保存一次。</dd></div>
-        <div><dt>微信里打开</dt><dd>可以先看，但添加到桌面和相册都更稳妥的做法是：点右上角「…」，在系统浏览器或 Safari 里打开，再用邀请码登录一次。</dd></div>
+        <div><dt>微信里打开</dt><dd>可以先看，但添加到桌面和相册都更稳妥的做法是：点右上角「…」，选「在浏览器打开」（iPhone 上叫「在 Safari 中打开」），再登录一次。登录页上有「复制网址」按钮，粘到浏览器地址栏也行；带着邀请码进来的话，网址里连码一起带着。</dd></div>
       </dl>
     </section>
 
@@ -541,10 +571,7 @@ footer p { margin: 0 0 6px; }
         <p class="kicker">联系</p>
         <h2>联系方式</h2>
       </div>
-      <dl class="group">
-        <div><dt>邮箱</dt><dd>待补充</dd></div>
-        <div><dt>微信</dt><dd>待补充</dd></div>
-      </dl>
+      ${contactHtml(contact)}
     </section>
 
     <footer>
@@ -572,7 +599,7 @@ function sendHelpPortal(response: Response): void {
   response.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
   response.setHeader('cache-control', 'public, max-age=300');
   response.removeHeader('pragma');
-  response.send(helpPortalHtml());
+  response.send(helpPortalHtml(readHelpContact()));
 }
 
 function sendHelpImage(request: Request, response: Response, next: NextFunction): void {

@@ -21,6 +21,8 @@ codes.push(registry.issueInvitation(students[0]!).code);
 // 另有一个邀请码 3 天后到期的合成学生，用来看设置页提醒。
 const expiringStudent = registry.createStudent().studentId;
 const expiringCode = registry.issueInvitation(expiringStudent).code;
+// 预填码的登录链接（/s/?code=…）用一个独立的合成学生，不和上面的登录流程抢码。
+const linkCode = registry.issueInvitation(registry.createStudent().studentId).code;
 {
   const db = new DatabaseSync(path.join(root, 'registry.db'));
   db.prepare('UPDATE invitations SET expires_at = ? WHERE student_id = ?').run(new Date(Date.now() + 3 * 86_400_000 - 60_000).toISOString(), expiringStudent);
@@ -36,7 +38,7 @@ app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: req => req.sock
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-process.send?.({ base, codes, reloginCodes, expiringCode });
+process.send?.({ base, codes, reloginCodes, expiringCode, linkCode });
 let stopping = false;
 async function stop() {
   if (stopping) return;

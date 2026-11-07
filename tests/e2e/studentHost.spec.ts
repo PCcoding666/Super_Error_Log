@@ -6,20 +6,22 @@ import { expect, test } from '@playwright/test';
 let base: string;
 let codes: string[];
 let expiringCode: string;
+let linkCode: string;
 let child: ChildProcess;
 const WECHAT_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50(0x1800322f) NetType/WIFI Language/zh_CN';
 
 test.beforeAll(async () => {
   child = fork(path.resolve('tests/e2e/studentHostServer.ts'), [], { execArgv: ['--import', 'tsx'], env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
-  const ready = await new Promise<{ base: string; codes: string[]; expiringCode: string }>((resolve, reject) => {
+  const ready = await new Promise<{ base: string; codes: string[]; expiringCode: string; linkCode: string }>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('browser fixture startup timed out')), 20000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('exit', () => { clearTimeout(timer); reject(new Error('browser fixture exited during startup')); });
-    child.once('message', message => { clearTimeout(timer); resolve(message as { base: string; codes: string[]; expiringCode: string }); });
+    child.once('message', message => { clearTimeout(timer); resolve(message as { base: string; codes: string[]; expiringCode: string; linkCode: string }); });
   });
   base = ready.base;
   codes = ready.codes;
   expiringCode = ready.expiringCode;
+  linkCode = ready.linkCode;
 });
 
 test.afterAll(async () => {
@@ -247,6 +249,53 @@ test('WeChat in-app browser sees an "open in browser" hint on login and registra
   await plain.goto(base + '/s/');
   await expect(plain.getByTestId('in-app-browser-notice')).toHaveCount(0);
   await plain.close();
+});
+
+test('a login link with ?code= prefills the code; nothing is redeemed until one tap; my invite code shows the same link as a QR', async ({ browser }, info) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  try {
+    const page = await context.newPage();
+    await page.goto(`${base}/s/?code=${linkCode}`);
+    await expect(page.getByRole('heading', { name: '输入邀请码' })).toBeVisible();
+    await expect(page.getByLabel('12 位邀请码')).toHaveValue(linkCode);
+    await expect(page.getByTestId('prefill-lead')).toContainText('已经从链接里填好');
+    // 打开链接只是预览：没有会话 cookie
+    expect((await context.cookies()).some(cookie => cookie.name === 'sel_student')).toBe(false);
+    await page.screenshot({ path: info.outputPath('invite-link-prefilled.png'), fullPage: true });
+    await page.getByRole('button', { name: '进入我的错题本' }).click();
+    await expect(page).not.toHaveURL(/code=/);
+    expect((await context.cookies()).some(cookie => cookie.name === 'sel_student')).toBe(true);
+    await page.goto(base + '/s/settings');
+    await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
+    await page.getByTestId('settings-my-invite').click();
+    await expect(page.getByRole('heading', { name: '我的邀请码' })).toBeVisible();
+    await expect(page.getByTestId('my-invite-code')).toHaveText(linkCode);
+    await expect(page.getByTestId('my-invite-link')).toHaveText(`${base}/s/?code=${linkCode}`);
+    await expect(page.getByTestId('my-invite-qr')).toBeVisible();
+    await expect(page.getByTestId('my-invite-link-copy')).toBeVisible();
+    await page.screenshot({ path: info.outputPath('my-invite-link-qr.png'), fullPage: true });
+    // 已登录的手机再打开带码链接：还是登录页（说明会换账号），没有自动换
+    await page.goto(`${base}/s/?code=${linkCode}`);
+    await expect(page.getByRole('heading', { name: '输入邀请码' })).toBeVisible();
+    await expect(page.getByTestId('prefill-lead')).toContainText('原来的账号在这台手机上退出');
+  } finally { await context.close(); }
+});
+
+test('WeChat with a code link: step-by-step guidance, and "copy URL" copies the link with the code', async ({ browser }, info) => {
+  const context = await browser.newContext({ userAgent: WECHAT_UA, viewport: { width: 390, height: 844 } });
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+  try {
+    const page = await context.newPage();
+    await page.goto(`${base}/s/?code=${linkCode}`);
+    await expect(page.getByTestId('in-app-browser-steps')).toContainText('右上角「…」');
+    await expect(page.getByTestId('in-app-browser-steps')).toContainText('在浏览器打开');
+    await expect(page.getByLabel('12 位邀请码')).toHaveValue(linkCode);
+    await page.screenshot({ path: info.outputPath('wechat-login-link.png'), fullPage: true });
+    await page.getByTestId('in-app-copy-url').click();
+    await expect(page.getByText('已复制。')).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${base}/s/?code=${linkCode}`);
+    expect((await context.cookies()).some(cookie => cookie.name === 'sel_student')).toBe(false);
+  } finally { await context.close(); }
 });
 
 test('settings warns about an expiring code; my invite code can be viewed, copied and regenerated', async ({ browser }, info) => {
