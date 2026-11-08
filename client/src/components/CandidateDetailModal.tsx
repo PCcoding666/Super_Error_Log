@@ -59,6 +59,7 @@ function Recognized(props: { detail: IntakeCandidateDetail }): ReactNode {
   const unsure = props.detail.stem.some(fragment => fragment.check !== 'passed' || fragment.uncertainties.length > 0);
   const diagram = props.detail.stem.some(fragment => fragment.role === 'diagram' || fragment.requiresDiagram);
   return <>
+    {props.detail.status && props.detail.status !== 'verified' ? <p className="item-hint tone-orange">{props.detail.status === 'needs_review' ? '识别仍有不确定处，请以原图为准。' : '题目仍在识别和校验，可以先看图勾选。'}</p> : null}
     <h3>识别出的题目</h3>
     {text ? <div className="item-stem candidate-stem" data-testid="candidate-stem"><StemText text={text} /></div> : <p className="muted" data-testid="candidate-stem-empty">还没有识别出题目文字。</p>}
     {diagram ? <p className="muted">这道题有图，请对照上面的裁图和来源页。</p> : null}
@@ -90,6 +91,8 @@ export function CandidateDetailModal(props: {
   detail: IntakeCandidateDetail | null;
   legacy: { crop: string | null; source: string | null } | null;
   selected: boolean;
+  submitted?: boolean;
+  terminal?: boolean;
   onToggleSelected: (selected: boolean) => void;
   /** Hide the sheet. Scroll is restored from `onClosed`, after the sheet has finished leaving. */
   onRequestClose: () => void;
@@ -119,13 +122,14 @@ export function CandidateDetailModal(props: {
       <div className="candidate-select">
         <IonCheckbox
           checked={props.selected}
+          disabled={props.submitted}
           aria-label="勾选这道题"
           data-testid="detail-select"
           onIonChange={event => { if (event.detail.checked !== props.selected) props.onToggleSelected(event.detail.checked); }}
         />
         <div>
           <b>勾选这道题</b>
-          <p className="muted">只是勾选，还不会加入错题本。</p>
+          <p className="muted">{props.submitted ? (props.terminal && props.detail?.status !== 'verified' ? '已保存选择，但暂未收录。请重试或补拍清楚的照片。' : '已保存选择，校验通过后会加入错题本。') : '只是勾选，还不会加入错题本。'}</p>
         </div>
       </div>
     </div></IonContent>

@@ -22,6 +22,7 @@ function timeLabel(iso: string): string {
   return sameDay ? `今天 ${time}` : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
 }
 
+const CANDIDATE_STATUS = { preliminary: '待识别 · 可先看图勾选', verifying: '校验中', verified: '已校验', needs_review: '识别仍有不确定处' };
 const MATERIALS_CANDIDATE = /^([A-Za-z0-9_-]{1,80}):([0-9]{1,9})$/;
 
 type DetailRequest = {
@@ -96,7 +97,9 @@ export function IntakePage(): ReactNode {
   const selectLimit = data?.mode === 'legacy' ? INTAKE_SELECT_LIMIT.legacy : INTAKE_SELECT_LIMIT.materials;
   const renderedPhotos = listReady ? (filter.enabled ? current : [...current, ...earlier]) : [];
   const visibleKeys = new Set(renderedPhotos.flatMap(photo => photo.candidates.map(candidate => intakePickKey(photo.id, candidate.id))));
-  const totals = selectionTotals(Object.fromEntries(Object.entries(picked).map(([id, set]) => [id, [...set]])), visibleKeys);
+  const countedPicks = Object.fromEntries(Object.entries(picked).map(([id, set]) => [id, [...set]]));
+  for (const photo of renderedPhotos) countedPicks[photo.id] = [...new Set([...(countedPicks[photo.id] ?? []), ...photo.candidates.filter(c => c.submitted).map(c => c.id)])];
+  const totals = selectionTotals(countedPicks, visibleKeys);
   const selectedText = selectionCountText(totals.total, listReady ? totals.hidden : 0);
 
   // 只丢掉这份列表里已经对不上的勾选。换筛选时看不见的照片留着，避免把别的页悄悄取消。
@@ -122,7 +125,12 @@ export function IntakePage(): ReactNode {
       setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
       return;
     }
-    try { await api.select(photo.id, ids); setPicked(currentPicks => ({ ...currentPicks, [photo.id]: new Set() })); }
+    try {
+      const result = await api.select(photo.id, ids);
+      if (result.pending) setToast(photo.progress?.stage === 'done' || photo.state === 'failed' ? '已保存选择；未通过校验的题暂未收录，请重试或补拍清楚的照片。' : `已保存 ${result.pending} 道选择，校验通过后会加入错题本。`);
+      else if (result.skipped) setToast(`${result.skipped} 道未加入，请查看更新后的题目再试。`);
+      setPicked(currentPicks => ({ ...currentPicks, [photo.id]: new Set() }));
+    }
     catch (caught) { setToast(caught instanceof Error ? caught.message : '没加进去'); }
     await reload();
   };
@@ -142,7 +150,7 @@ export function IntakePage(): ReactNode {
     });
   };
   const togglePage = (photo: IntakePhoto): void => {
-    const displayed = photo.candidates.map(candidate => candidate.id);
+    const displayed = photo.candidates.filter(candidate => !candidate.submitted).map(candidate => candidate.id);
     const selected = [...(picked[photo.id] ?? [])];
     const result = selectDisplayedPage(selected, displayed, selectLimit, pagePickState(selected, displayed) === 'all' ? 'none' : 'all');
     if (result.truncated) setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
@@ -190,7 +198,7 @@ export function IntakePage(): ReactNode {
 
   const renderPhoto = (photo: IntakePhoto, index: number): ReactNode => {
     const shownNumber = filter.enabled || current.length <= 1 ? photo.number : index + 1;
-    const displayed = photo.candidates.map(candidate => candidate.id);
+    const displayed = photo.candidates.filter(candidate => !candidate.submitted).map(candidate => candidate.id);
     const selected = [...(picked[photo.id] ?? [])];
     const pickState = pagePickState(selected, displayed);
     return <section key={photo.id} className="intake-photo" data-testid={`photo-row-${photo.number}`} data-state={photo.state}>
@@ -207,7 +215,7 @@ export function IntakePage(): ReactNode {
             aria-label={pickState === 'all' ? `取消全选第 ${shownNumber} 张` : `全选第 ${shownNumber} 张`}
             onClick={() => togglePage(photo)}
           >{pickState === 'all' ? '取消全选' : '全选本页'}</button> : null}
-          {photo.state === 'finding' ? <IonSpinner slot="end" name="lines-small" /> : null}
+          {['finding', 'located', 'enriching'].includes(photo.state) ? <IonSpinner slot="end" name="lines-small" /> : null}
         </IonItem>
         {photo.questions.map(question => <IonItemSliding key={question.id}>
           <IonItem routerLink={`/q/${question.id}`} detail={false} className="intake-row" data-testid="intake-question">
@@ -217,12 +225,13 @@ export function IntakePage(): ReactNode {
           <IonItemOptions side="end"><IonItemOption color="danger" onClick={() => void remove(question.id)}>删除</IonItemOption></IonItemOptions>
         </IonItemSliding>)}
         {photo.candidates.length ? <>
-          <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p>这页没有批改痕迹，勾出做错的题</p></IonLabel></IonItem>
+          <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p>{photo.progress ? '可以先看图勾出做错的题，校验通过后加入错题本。' : '这页没有批改痕迹，勾出做错的题'}</p></IonLabel></IonItem>
           <div className="intake-candidates">
             {photo.candidates.map(candidate => <div key={candidate.id} className="intake-candidate" data-testid="pick-candidate">
               <IonCheckbox
                 className="intake-check"
-                checked={picked[photo.id]?.has(candidate.id) ?? false}
+                checked={candidate.submitted || (picked[photo.id]?.has(candidate.id) ?? false)}
+                disabled={candidate.submitted}
                 aria-label={`选择${candidate.label}`}
                 data-testid="pick-checkbox"
                 onIonChange={event => setPick(photo.id, candidate.id, event.detail.checked)}
@@ -231,6 +240,8 @@ export function IntakePage(): ReactNode {
               <div className="intake-candidate-text">
                 <h3>{candidate.excerpt || candidate.label}</h3>
                 {candidate.excerpt ? <p>{candidate.label}</p> : null}
+                {candidate.status ? <p>{CANDIDATE_STATUS[candidate.status]}</p> : null}
+                {candidate.submitted ? <p>{(photo.progress?.stage === 'done' || photo.state === 'failed') && candidate.status !== 'verified' ? '已选，暂未收录；请重试或补拍清楚的照片。' : '已选，校验通过后加入'}</p> : null}
               </div>
               <button
                 type="button"
@@ -303,7 +314,9 @@ export function IntakePage(): ReactNode {
         error={detailError}
         detail={detailBody}
         legacy={detailRequest?.mode === 'legacy' ? { crop: detailRequest.crop, source: detailRequest.source } : null}
-        selected={detailRequest ? (picked[detailRequest.photoId]?.has(detailRequest.candidateId) ?? false) : false}
+        selected={detailRequest ? (picked[detailRequest.photoId]?.has(detailRequest.candidateId) || photos.some(p => p.id === detailRequest.photoId && p.candidates.some(c => c.id === detailRequest.candidateId && c.submitted))) : false}
+        terminal={!!detailRequest && photos.some(p => p.id === detailRequest.photoId && (p.progress?.stage === 'done' || p.state === 'failed'))}
+        submitted={!!detailRequest && photos.some(p => p.id === detailRequest.photoId && p.candidates.some(c => c.id === detailRequest.candidateId && c.submitted))}
         onToggleSelected={selected => { if (detailRequest) setPick(detailRequest.photoId, detailRequest.candidateId, selected); }}
         onRequestClose={requestCloseDetail}
         onClosed={closeDetail}

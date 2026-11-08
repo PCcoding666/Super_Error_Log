@@ -1,3 +1,8 @@
+import { withProcessImage } from '../mobile/admission.js';
+import { findPreview, progressQuestion, readIntakeProgress, selectPreviewCandidates } from '../materials/intakeProgress.js';
+import { photoProgress, previewCandidates } from './intakeProgressView.js';
+import { readNormalizedSource } from '../materials/media.js';
+import { cropPhoto } from '../media/images.js';
 /**
  * 学生端单页应用（client/）用的 JSON 接口，挂在 /s/api 下，和服务端页面同一套鉴权、限流与学段门槛。
  * 只做「取数 → 整形 → 返回」，规则都在现有服务里（学习周、证据、分类、材料收录），不在这里另写一份。
@@ -455,6 +460,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
 
   const materialsIntake = (filter: AssetDayFilter | null, page: number): IntakeResponse => {
     const store = ctx.materials!;
+    const previews = readIntakeProgress(store);
     const range = createdAtRangeSql(filter);
     const total = filter ? (store.db.prepare(`SELECT count(*) n FROM material_asset WHERE owner_id=?${range.sql}`).get(store.studentId, ...range.params) as { n: number }).n : 0;
     const assets = store.db.prepare(`SELECT id, created_at, json_extract(extraction_json, '$.document.subject') AS subject FROM material_asset WHERE owner_id=?${range.sql} ORDER BY created_at DESC, rowid DESC${filter ? ` LIMIT ${ASSET_PAGE_SIZE} OFFSET ?` : ''}`).all(...(filter ? [store.studentId, ...range.params, page * ASSET_PAGE_SIZE] : [store.studentId])) as { id: string; created_at: string; subject: string | null }[];
@@ -476,20 +482,22 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const offset = filter ? page * ASSET_PAGE_SIZE : 0;
     const photos: IntakePhoto[] = assets.map((asset, index) => {
       const job = jobByAsset.get(asset.id);
+      const preview = previews.get(asset.id);
       const other = unsupportedSubject(asset.subject);
       let retryable = true;
       try { if (job?.error) retryable = canRecover({ ...JSON.parse(job.error), stage: 'transcribe' }); } catch { retryable = false; }
       const processing = job?.state === 'queued' || job?.state === 'running';
       const failed = job?.state === 'failed' || job?.state === 'interrupted';
       const questions: IntakeQuestion[] = (included.get(asset.id) ?? []).map(q => ({ id: q.itemId!, excerpt: stemFirstSentence(q, 60), chapter: (() => { try { return categoryForItem(q.itemId!).chapter || '未分类'; } catch { return q.subject ?? '未分类'; } })(), thumb: cropOf(q) ?? `/s/img/item/${q.itemId}?s=thumb` }));
-      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q) }));
-      const state = processing ? 'finding' : failed ? 'failed' : other ? 'unsupported' : candidates.length ? 'needsPick' : 'done';
+      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q) }));
+      if (preview) candidates.push(...previewCandidates(preview, all, intents));
+      const state = processing ? (preview ? (preview.phase === 'located' ? 'located' : 'enriching') : 'finding') : failed ? 'failed' : other ? 'unsupported' : candidates.length ? 'needsPick' : 'done';
       const correct = all.filter(q => assetOf(q) === asset.id && markedRight(q)).length;
-      const statusText = state === 'finding' ? 'AI 正在找题' : state === 'failed' ? '没整理成功' : state === 'unsupported' ? `${other}：${UNSUPPORTED_SUBJECT_MESSAGE}`
+      const statusText = state === 'located' ? '已找到题目 · 可以先勾选' : state === 'enriching' ? '正在识别和校验 · 可以先勾选' : state === 'finding' ? 'AI 正在找题' : state === 'failed' ? '没整理成功' : state === 'unsupported' ? `${other}：${UNSUPPORTED_SUBJECT_MESSAGE}`
         : state === 'needsPick' ? '没有批改痕迹 · 勾出做错的题' : questions.length ? `找到 ${questions.length} 道${correct ? ` · ${correct} 道打了 √` : ''}` : correct ? `${correct} 道都打了 √，没有错题` : '没有新增错题';
       return {
         id: asset.id, number: span - offset - index, takenAt: asset.created_at.includes('T') ? asset.created_at : asset.created_at.replace(' ', 'T') + 'Z',
-        thumb: `/s/materials/assets/${asset.id}/image`, full: `/s/materials/assets/${asset.id}/image`, state, statusText, questions, candidates,
+        thumb: `/s/materials/assets/${asset.id}/image`, full: `/s/materials/assets/${asset.id}/image`, state, statusText, questions, candidates, ...(preview ? { progress: photoProgress(preview) } : {}),
         failure: failed ? { title: '没整理成功', detail: retryable ? '原图已保留，可以重新整理。' : '看不清或格式不对，请重拍这张。', retryable } : null,
       };
     });
@@ -498,7 +506,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       : null;
     const busy = listedIds
       ? jobs.some(job => !!job.asset_id && listedIds.has(job.asset_id) && (job.state === 'queued' || job.state === 'running'))
-      : photos.some(photo => photo.state === 'finding');
+      : jobs.some(job => job.state === 'queued' || job.state === 'running');
     return {
       mode: 'materials', draftNamespace: store.getWorkspace().draftNamespace, photos, busy,
       ...(filter ? dayFilterBody(filter, page, total) : {}),
@@ -522,6 +530,18 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       fail(result.status, result.code, result.message);
     }
   }));
+  r.get('/intake/candidates/:fragmentId/crop', handler(async (request, response) => {
+    const store = ctx.materials;
+    const revision = Number(request.query.revision);
+    if (!store || !Number.isSafeInteger(revision) || revision < 1) fail(404, 'not_found', '题目裁图不存在。');
+    const found = findPreview(store!, String(request.params.fragmentId), revision);
+    if (!found) fail(404, 'not_found', '题目裁图不存在或已更新。');
+    const image = await withProcessImage(async () => cropPhoto(await readNormalizedSource(store!, found!.fragment), found!.fragment.box));
+    const latest = findPreview(store!, String(request.params.fragmentId), revision);
+    if (!latest || latest.fragment.sourceHash !== found!.fragment.sourceHash) fail(409, 'revision_conflict', '材料已更新。');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.type('image/jpeg').send(image);
+  }));
   // 上传队列在发第一张之前先问这个：材料流程的学生空间不接受旧的 /s/capture。
   r.get('/upload', handler((): UploadModeResponse => (ctx.materials ? { mode: 'materials', draftNamespace: ctx.materials.getWorkspace().draftNamespace } : { mode: 'legacy', draftNamespace: null })));
 
@@ -532,8 +552,14 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     if (!ids.length) fail(400, 'invalid_request', '先勾出做错的题。');
     if (ctx.materials) {
       const picks = ids.map(value => { const m = /^([A-Za-z0-9_-]{1,80}):([0-9]{1,9})$/.exec(value); if (!m) fail(400, 'invalid_request', '勾选信息不可用，请刷新后再试。'); return { questionId: m![1]!, revision: Number(m![2]) }; });
-      const saved = includeQuestions(ctx.materials, picks);
-      return { ok: true, ...saved };
+      const store = ctx.materials;
+      const previewPicks = picks.filter(p => p.questionId.startsWith('mfr_'));
+      const questions = new Map(store.listQuestions().map(q => [q.id, q]));
+      const regular = picks.filter(p => !p.questionId.startsWith('mfr_'));
+      const owned = regular.filter(p => questions.get(p.questionId)?.stem.some(f => f.role === 'question' && f.assetId === photoId));
+      const saved = includeQuestions(store, owned);
+      const early = selectPreviewCandidates(store, photoId, previewPicks);
+      return { ok: true, included: saved.included + early.included, pending: early.pending, skipped: saved.skipped + early.skipped + regular.length - owned.length };
     }
     if (!UUID.test(photoId) || !ids.every(id => UUID.test(id))) fail(400, 'invalid_request', '勾选信息不可用，请刷新后再试。');
     try { await options.service.select(photoId, ids); }

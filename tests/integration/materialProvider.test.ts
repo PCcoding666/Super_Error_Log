@@ -36,6 +36,28 @@ function response(body: Request, candidates = [candidate('q', 'question')]) {
 const direct: MaterialRequestExecutor = async (_key, invoke) => invoke(new AbortController().signal);
 
 describe('grounded material provider protocol', () => {
+  it('publishes located crops before slow read and unchecked text before verify, without extra calls', async () => {
+    let releaseRead!: () => void;
+    const f = await local((body, res) => {
+      if (context(body).operation === 'read') releaseRead = () => send(res, response(body));
+      else send(res, response(body));
+    });
+    const snapshots: any[] = [];
+    const provider = createMaterialProvider({ mode: 'openai', chat: { ...f.chat, timeoutMs: 10000 } }, { source, request: direct });
+    const running = provider.extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {},
+      onProgress: (progress: unknown) => { snapshots.push(structuredClone(progress)); },
+    } as Parameters<typeof provider.extract>[0], new AbortController().signal);
+    await expect.poll(() => !!releaseRead).toBe(true);
+    try {
+      expect(snapshots[0]).toMatchObject({ phase: 'located', extraction: { fragments: [{ role: 'question', text: '', check: 'unchecked' }] } });
+      expect(f.requests.map(body => context(body).operation)).toEqual(['locate', 'read']);
+    } finally { releaseRead(); await running; }
+    expect(snapshots.some(p => p.phase === 'enriching' && p.extraction.fragments[0].text && p.extraction.fragments[0].check === 'unchecked')).toBe(true);
+    expect(snapshots.at(-1).extraction.fragments[0].check).toBe('passed');
+    expect(new Set(snapshots.map(p => p.extraction.fragments[0].fragmentId)).size).toBe(1);
+    expect(f.requests).toHaveLength(3);
+  });
+
   it('extracts mixed roles without promoting a label to evidence', async () => {
     const roles = ['question', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'diagram'];
     const f = await local((body, res) => send(res, response(body, roles.map((r, i) => candidate(String(i), r, i)))));

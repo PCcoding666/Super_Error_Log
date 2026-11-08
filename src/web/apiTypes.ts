@@ -134,7 +134,7 @@ export interface SettingsResponse {
 /** 拍照上传该走哪套端点：旧识别流程（/s/capture）还是材料流程（/s/materials/*）。 */
 export interface UploadModeResponse { mode: 'legacy' | 'materials'; draftNamespace: string | null }
 
-export type IntakePhotoState = 'finding' | 'done' | 'needsPick' | 'failed' | 'unsupported';
+export type IntakePhotoState = 'finding' | 'located' | 'enriching' | 'done' | 'needsPick' | 'failed' | 'unsupported';
 
 export interface IntakeQuestion {
   /** 错题本里的题目 id（itm_…）。 */
@@ -145,10 +145,13 @@ export interface IntakeQuestion {
 }
 
 export interface IntakeCandidate {
-  /** 识别出的候选题 id（旧流程为识别任务里的题 id，材料流程为 questionId:revision）。 */
+  /** 识别出的候选题 id（旧流程为识别任务里的题 id，材料流程为 questionId:revision 或稳定的 fragmentId:sourceRevision）。 */
   id: string;
   label: string;
   excerpt: string;
+  status?: 'preliminary' | 'verifying' | 'verified' | 'needs_review';
+  /** Selection submitted to the server; waits for trustworthy final evidence. */
+  submitted?: boolean;
   /** 裁图；材料流程没有裁图时为 null。 */
   crop: string | null;
 }
@@ -173,6 +176,7 @@ export interface IntakeCandidateDetail {
   label: string;
   subject: string | null;
   stem: IntakeCandidateFragment[];
+  status?: IntakeCandidate['status'];
   /** 题目区域裁图；没有时为 null。 */
   crop: string | null;
   /** 来源整页；没有时为 null。 */
@@ -203,6 +207,7 @@ export interface IntakePhoto {
   full: string;
   state: IntakePhotoState;
   statusText: string;
+  progress?: { stage: 'located' | 'enriching' | 'done'; total: number; verified: number; firstBatchCount: number; tLocateDoneMs: number; tFirstSelectableMs: number | null; tFullExtractMs: number | null };
   /** 已经在错题本里的题。 */
   questions: IntakeQuestion[];
   /** 没有批改痕迹的页：等学生勾选的候选题。 */
