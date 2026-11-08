@@ -128,14 +128,19 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
     });
     if (!persisted) return;
     for (const assetId of persisted) covered.add(assetId);
-    for (const extraction of bundle) {
+    const storedBundle = bundle.map(extraction => {
       const stored = { ...extraction }; delete (stored as ExtractedMaterial).set;
-      if (stored.fragments.length) {
-        if (reconcile) await reconcile(extraction.assetId, stored);
+      return stored;
+    });
+    for (const extraction of storedBundle) {
+      if (extraction.fragments.length) {
+        if (reconcile) await reconcile(extraction.assetId, extraction);
         else reconcileAsset(store, extraction.assetId);
       }
-      completeIntakeProgress(store, jobId, stored, !!partial);
     }
+    // A later page may attach a same-question diagram or continuation. Evaluate
+    // saved selections only after every page in this result has been reconciled.
+    for (const extraction of storedBundle) completeIntakeProgress(store, jobId, extraction, !!partial);
     if (partial) throw partial.failure;
   } finally {
     if (leadRun && !signal.aborted) settleUncoveredFollowers(store, row.asset_id, covered);
