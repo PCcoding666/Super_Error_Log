@@ -44,5 +44,5 @@ Interface: stable `mfr_ID:sourceRevision` preview IDs, candidate status and subm
 Files: client/src/pages/IntakePage.tsx, components/CandidateDetailModal.tsx, lib/api.ts; new Playwright regression and quality report.
 - [x] Browser test first batch selection and stem update while job remains running; preserve same checkbox and submitted status after reload.
 - [x] Add preliminary/verifying labels, neutral instruction (marks not known yet), busy spinner and explicit pending-save feedback.
-- [ ] Run SEL_AI_MODE=mock npm run verify; record actual results and separate real-latency evidence from synthetic timing.
-- [ ] Independent whole-branch review, fixes, commit, push task branch, PR against main; no merge or deployment.
+- [x] Run SEL_AI_MODE=mock npm run verify; record actual results and separate real-latency evidence from synthetic timing.
+- [x] Independent whole-branch review, fixes, commit, push task branch, PR against main; no merge or deployment.

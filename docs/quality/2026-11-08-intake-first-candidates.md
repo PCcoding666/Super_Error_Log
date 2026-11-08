@@ -26,7 +26,8 @@ Typical real workbook `t_first_selectable` P50 ≤30s, real first-batch retentio
 - Independent API regression: 14 tests failed against base `6808d43`, then passed. Source revision/hash, student/photo isolation, read-only endpoints, deferred selection across reopened SQLite readers and retry/partial failures are covered. The image-permit test independently reproduced concurrent crop decoding before the gate was added.
 - Independent code review found four trust/lifecycle gaps: wrong-subpart diagram, omitted same-number continuation, automatic filing during intermediate fragment links, and abandoned previews. All four have reproducing tests (4 RED → 4 GREEN); combined material/progress regression passed 58 tests after fixes. The final extraction and retained locate regions now both constrain automatic filing, including providers that do not publish previews.
 - Playwright: slow background extraction and terminal uncertain-selection recovery each passed (2/2). The latter failed before correcting the misleading pending wording.
-- Final full-gate results are recorded below once complete. No deferred minor review findings.
+- Final-code full gate: typecheck and build passed; Vitest **148 files, 1718 passed / 5 skipped**. Full Playwright initially hit an existing hard-coded `/opt/cursor/artifacts` permission error in `captureModeMaterials.spec.ts`. Screenshot output now uses `test.info().outputPath`; that same failed case passed on its focused rerun (1/1). This changes test artifacts only.
+- Full-browser and Actions outcomes are kept current in [PR #123](https://github.com/PCcoding666/Super_Error_Log/pull/123). No deferred minor review findings.
 
 ## Production and acceptance
 
