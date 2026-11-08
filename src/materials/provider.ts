@@ -103,6 +103,14 @@ function documentClues(value: unknown): DocumentClues {
 }
 type Candidate = { key: string; fragmentId: string; role: MaterialRole; box: Box; number: string | null; subpart: string | null; page: number | null; order: number; requiresDiagram: boolean };
 /**
+ * Identity of the region a candidate names. Read / verify checkpoints are keyed by it as well as by the candidate key,
+ * so a later locate that reuses a key for a different box, role or number cannot inherit the old text or the old
+ * `passed` check (AGENTS.md: editing a crop invalidates its prior check).
+ */
+function regionKey(candidate: Candidate): string {
+  return createHash('sha256').update(JSON.stringify([candidate.role, candidate.box, candidate.number, candidate.subpart, candidate.page])).digest('hex').slice(0, 12);
+}
+/**
  * `pageIndex`: this page's position in a multi-page submission. Models answer a set locate with the candidate
  * `page` set to that position (1, 2, …) while `document.page` carries the printed page number; that is the same
  * page, so it is normalised to the printed number instead of being rejected as a mix-up.
@@ -275,11 +283,12 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
           signal.throwIfAborted();
           try {
             const cropped = await cropPhoto(pageBytes, candidate.box);
-            const readKey = scopedKeys ? `read:${pageSource.assetId}:${candidate.key}` : `read:${candidate.key}`;
+            const regionId = regionKey(candidate);
+            const readKey = scopedKeys ? `read:${pageSource.assetId}:${candidate.key}:${regionId}` : `read:${candidate.key}:${regionId}`;
             const read = await invoke('material_extract', readKey, 'read', { candidate, ...(pageSubmission ? { submission: pageSubmission } : {}), schema: { candidateKey: candidate.key, text: 'verbatim visible content only', uncertainties: ['string'] } }, [cropped], value => {
               const v = reference(unwrap(value, 'text'), pageSource, candidate); return { text: str(v.text), uncertainties: optionalList(v.uncertainties) };
             }, undefined, pageSource);
-            const verifyKey = scopedKeys ? `verify:${pageSource.assetId}:${candidate.key}` : `verify:${candidate.key}`;
+            const verifyKey = scopedKeys ? `verify:${pageSource.assetId}:${candidate.key}:${regionId}` : `verify:${candidate.key}:${regionId}`;
             const checked = await invoke('material_verify', verifyKey, 'verify', { candidate, fragment: read, ...(pageSubmission ? { submission: pageSubmission } : {}),
               schema: { candidateKey: candidate.key, check: 'passed|low|failed', coverage: 'complete|incomplete|uncertain', textMatches: 'boolean', roleMatches: 'boolean', uncertainties: ['string'] },
             }, [pageBytes], value => {

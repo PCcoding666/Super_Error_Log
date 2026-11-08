@@ -326,6 +326,21 @@ describe('grounded material provider protocol', () => {
     const g = await local((body, res) => send(res, response(body, [{ ...candidate('q', 'question'), box: { x: 0.5, y: 0.04, width: 0.6, height: 0.11 } }])));
     await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
   });
+  // Codex review on #122: a resumed job must not bind an old read / passed check to a region a new locate moved.
+  it('keys read and verify checkpoints by the candidate region, so a moved box cannot reuse an old check', async () => {
+    const keysFor = async (box: { x: number; y: number; width: number; height: number }) => {
+      const f = await local((body, res) => send(res, response(body, [{ ...candidate('q', 'question'), box }])));
+      const keys: string[] = [];
+      await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: async (key, invoke) => { keys.push(key); return direct(key, invoke); } }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+      return keys.filter(key => /:(read|verify):q:/.test(key));
+    };
+    const same = { x: 0, y: 0, width: 1, height: .1 };
+    const [first, again, moved] = await Promise.all([keysFor(same), keysFor(same), keysFor({ ...same, y: .5 })]);
+    expect(first).toHaveLength(2);
+    expect(again).toEqual(first);
+    expect(moved).not.toEqual(first);
+    expect(moved.every(key => !first.includes(key))).toBe(true);
+  });
 });
 function fModels() { return { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' }; }
 
