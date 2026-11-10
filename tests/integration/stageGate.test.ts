@@ -10,6 +10,9 @@ import { createStudentHostGateway, type StudentHostGateway } from '../../src/stu
 import { StudentWorkerPool } from '../../src/studentHost/workers.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
 
+/** 选学段页的标题：「初中」「高中」各包在 .q 里保持同一行（见 src/web/views/stage.tsx），所以按渲染后的 HTML 比对。 */
+const STAGE_QUESTION = '<h1>你现在读<span class="q">初中</span>还是<span class="q">高中</span>？</h1>';
+
 const roots: string[] = []; const gateways: StudentHostGateway[] = []; const servers: Server[] = [];
 afterEach(async () => {
   await Promise.all(gateways.splice(0).map(g => g.close()));
@@ -49,7 +52,7 @@ async function login(options: { materials?: boolean } = {}) {
 it('a new account must pick 初中 or 高中 before the notebook, once', async () => {
   const browser = await login();
   const gate = await (await browser.get('/s/?login=1')).text();
-  expect(gate).toContain('你现在读初中还是高中？');
+  expect(gate).toContain(STAGE_QUESTION);
   expect(gate).toContain('目前只支持数学、物理、化学。');
   expect(gate).not.toMatch(/<option[^>]*selected/);
   const bad = await browser.post('/s/stage', { grade: '高三' });
@@ -57,7 +60,7 @@ it('a new account must pick 初中 or 高中 before the notebook, once', async (
   const chosen = await browser.post('/s/stage', { grade: '高中' });
   expect(chosen.status).toBe(303); expect(chosen.headers.get('location')).toBe('/s/');
   const home = await (await browser.get('/s/')).text();
-  expect(home).not.toContain('你现在读初中还是高中？');
+  expect(home).not.toContain(STAGE_QUESTION);
   // 根地址是单页应用的壳；旧的服务端错题本页也不再被门槛拦住。
   expect(home).toContain('<div id="root"></div>');
   expect(await (await browser.get('/s/items')).text()).toContain('0 道错题');
@@ -69,7 +72,7 @@ it('deep links and uploads cannot bypass the stage choice; settings and the choi
   for (const page of ['/s/capture', '/s/items', '/s/materials', '/s/practices', '/s/choose']) {
     const response = await browser.get(page);
     expect(response.status, page).toBe(200);
-    expect(await response.text(), page).toContain('你现在读初中还是高中？');
+    expect(await response.text(), page).toContain(STAGE_QUESTION);
   }
   const upload = await browser.request('/s/materials/uploads?uploadId=' + crypto.randomUUID(), { method: 'POST', headers: { accept: 'application/json', 'x-upload-id': crypto.randomUUID() }, body: new FormData() });
   expect(upload.status).toBe(409);
@@ -78,12 +81,12 @@ it('deep links and uploads cannot bypass the stage choice; settings and the choi
   expect(legacy.status).toBe(303); expect(legacy.headers.get('location')).toBe('/s/');
   expect(await (await browser.get('/s/settings')).text()).toContain('我的学段');
   expect((await browser.post('/s/stage', { grade: '初中' })).status).toBe(303);
-  expect(await (await browser.get('/s/capture')).text()).not.toContain('你现在读初中还是高中？');
+  expect(await (await browser.get('/s/capture')).text()).not.toContain(STAGE_QUESTION);
 }, 60_000);
 
 it('a new account can still log out before choosing a stage (the logout draft check is not gated)', async () => {
   const browser = await login({ materials: true });
-  expect(await (await browser.get('/s/?login=1')).text()).toContain('你现在读初中还是高中？');
+  expect(await (await browser.get('/s/?login=1')).text()).toContain(STAGE_QUESTION);
   // 设置页的退出脚本先用这个只读接口确认本机草稿属于当前账号；以前被学段拦截成 409，点退出没反应。
   const session = await browser.request('/s/materials/session', { headers: { accept: 'application/json' } });
   expect(session.status).toBe(200);
