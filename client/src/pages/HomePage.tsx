@@ -108,7 +108,6 @@ export function HomePage(): ReactNode {
       <IonToolbar>
         <IonButtons slot="start"><IonButton onClick={leaveSelect}>取消</IonButton></IonButtons>
         <IonTitle>已选 {selected.size} 道</IonTitle>
-        <IonButtons slot="end"><IonButton className="select-done" onClick={leaveSelect} aria-label="完成选择"><IonIcon icon={checkmark} slot="icon-only" /></IonButton></IonButtons>
       </IonToolbar>
     </IonHeader> : null}
     <IonContent fullscreen className="home" scrollEvents={false}>
