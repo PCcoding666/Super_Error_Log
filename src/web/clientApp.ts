@@ -26,18 +26,54 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.json': 'application/json',
 };
 const ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/;
+/** 构建时预压缩的文本资源（client/vite.config.ts 的 precompress），压缩件放在原文件旁边。按优先级排：br 最小，gzip 兜底。 */
+const PRECOMPRESSED = [['br', '.br'], ['gzip', '.gz']] as const;
+const COMPRESSIBLE = new Set(['.js', '.css', '.svg', '.json']);
 
-/** /s/app/assets/<file>：只接受单段、字符受限的文件名；指纹文件不可变缓存。 */
+function isFile(file: string): boolean {
+  return existsSync(file) && statSync(file).isFile();
+}
+
+/** Accept-Encoding 里点名接受（q 不为 0）的编码。`*` 不算：只发浏览器明说能解的。 */
+export function acceptedEncodings(header: string | string[] | undefined): Set<string> {
+  const accepted = new Set<string>();
+  for (const part of (Array.isArray(header) ? header.join(',') : header ?? '').split(',')) {
+    const [name, ...params] = part.toLowerCase().split(';').map(piece => piece.trim());
+    if (!name || name === '*') continue;
+    const q = params.find(param => param.startsWith('q='));
+    if (q && !(Number(q.slice(2)) > 0)) continue;
+    accepted.add(name);
+  }
+  return accepted;
+}
+
+/**
+ * /s/app/assets/<file>：只接受单段、字符受限的文件名；指纹文件不可变缓存。
+ * 文本资源有预压缩件时按 Accept-Encoding 发压缩件，没有（开发时、旧构建）或浏览器不接受时发原文件。
+ * 压缩件本身不能直接请求：.br / .gz 不在 MIME 表里，仍是 404。
+ */
 export function sendClientAsset(request: Request, response: Response): void {
   const dir = clientAppDir();
   const name = String(request.params.file ?? '');
   if (!dir || !ASSET_NAME.test(name)) { response.status(404).type('text').send('not found'); return; }
   const file = path.join(dir, 'assets', name);
-  if (!existsSync(file) || !statSync(file).isFile()) { response.status(404).type('text').send('not found'); return; }
-  const type = MIME[path.extname(name).toLowerCase()];
+  if (!isFile(file)) { response.status(404).type('text').send('not found'); return; }
+  const extension = path.extname(name).toLowerCase();
+  const type = MIME[extension];
   if (!type) { response.status(404).type('text').send('not found'); return; }
   response.setHeader('cache-control', 'public, max-age=31536000, immutable');
   response.setHeader('content-type', type);
+  if (COMPRESSIBLE.has(extension)) {
+    // 同一个地址会按请求头给出不同的字节，中间缓存要按 Accept-Encoding 分开存。
+    response.vary('Accept-Encoding');
+    const accepted = acceptedEncodings(request.headers['accept-encoding']);
+    for (const [encoding, suffix] of PRECOMPRESSED) {
+      if (!accepted.has(encoding) || !isFile(file + suffix)) continue;
+      response.setHeader('content-encoding', encoding);
+      response.send(readFileSync(file + suffix));
+      return;
+    }
+  }
   response.send(readFileSync(file));
 }
 

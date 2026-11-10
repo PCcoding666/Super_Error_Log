@@ -1,6 +1,6 @@
 import {
   IonActionSheet, IonButton, IonButtons, IonCheckbox, IonContent, IonFab, IonFabButton, IonHeader, IonIcon, IonItem, IonItemOption, IonItemOptions, IonItemSliding,
-  IonLabel, IonList, IonPage, IonPopover, IonSearchbar, IonTitle, IonToast, IonToolbar, useIonViewWillEnter,
+  IonLabel, IonList, IonPage, IonPopover, IonSearchbar, IonSkeletonText, IonTitle, IonToast, IonToolbar, useIonViewWillEnter,
 } from '@ionic/react';
 import { albumsOutline, cameraOutline, checkmark, checkmarkCircleOutline, chevronDown, gridOutline, listOutline, optionsOutline, searchOutline, settingsOutline, trashOutline } from 'ionicons/icons';
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
@@ -70,6 +70,8 @@ export function HomePage(): ReactNode {
 
   if (error?.code === 'stage_required') return <StageGate onChosen={() => void reload()} />;
 
+  // 第一份数据还没回来（也没出错）：先画骨架，别让标题和列表空着。之后的刷新保留旧数据，不再闪骨架。
+  const first = !data && !error;
   const subtitle = data ? `${data.grade} · ${data.total} 道错题${data.shown !== data.total ? ` · 显示 ${data.shown} 道` : ''}` : '';
   const renderRow = (item: NotebookItem): ReactNode => {
     // 摘要不用 <p>：iOS 模式下 ion-label 自带的 p 样式会盖掉两行截断，露出第三行的半截。
@@ -130,9 +132,9 @@ export function HomePage(): ReactNode {
       </IonPopover>
       {!selecting ? <>
         <button type="button" className="home-title" onClick={showSubjectSheet} aria-label={`切换学科，当前${data?.subject ?? ''}`} data-testid="subject-switch">
-          <span>{data?.subject ?? ' '}</span><IonIcon icon={chevronDown} />
+          {first ? <IonSkeletonText animated className="sk-title" aria-hidden="true" /> : <><span>{data?.subject ?? ' '}</span><IonIcon icon={chevronDown} /></>}
         </button>
-        <p className="home-subtitle" role="status">{subtitle}</p>
+        <p className="home-subtitle" role="status" aria-busy={first}>{first ? <IonSkeletonText animated className="sk-subtitle" aria-hidden="true" /> : subtitle}</p>
       </> : null}
       {searchOpen || query.q ? <IonSearchbar value={query.q} placeholder="搜索" debounce={300} inputmode="search" showCancelButton="always" cancelButtonText="取消"
         onIonInput={event => patch({ q: String(event.detail.value ?? '') })} onIonCancel={() => { setSearchOpen(false); patch({ q: '' }); }} className="home-search" /> : null}
@@ -140,6 +142,9 @@ export function HomePage(): ReactNode {
         <IonItem routerLink="/new" detail data-testid="intake-hint"><IonLabel>{data.finding ? `AI 正在找题（${data.finding} 张照片）` : `照片里还有 ${data.pendingIntake} 道没收进错题本`}</IonLabel></IonItem>
       </IonList> : null}
       {error && error.code !== 'stage_required' ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
+      {first ? <div className="sk-list" data-testid="home-skeleton" aria-hidden="true">
+        {[0, 1, 2, 3].map(row => <div key={row} className="sk-row"><IonSkeletonText animated /><IonSkeletonText animated /></div>)}
+      </div> : null}
       {data && !items.length && !loading ? <div className="empty" data-testid="empty-notebook">
         <IonIcon icon={cameraOutline} />
         <b>{data.total ? '没有符合筛选的题' : '拍一张批改过的卷子'}</b>

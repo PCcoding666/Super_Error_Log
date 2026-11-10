@@ -1,6 +1,6 @@
 import {
   IonActionSheet, IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonModal, IonPage, IonPopover, IonSelect, IonSelectOption,
-  IonTextarea, IonTitle, IonToast, IonToolbar,
+  IonSkeletonText, IonTextarea, IonTitle, IonToast, IonToolbar,
 } from '@ionic/react';
 import { cameraOutline, chevronBack, ellipsisHorizontal } from 'ionicons/icons';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -197,6 +197,13 @@ export function ItemPage(): ReactNode {
         </IonList>
       </IonPopover>
       {error ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
+      {/* 数据返回前先画出页面的形状：标题、题目卡片、一组列表行。出错时让位给上面的 Problem。 */}
+      {!data && !error ? <div className="sk-item" data-testid="item-skeleton" aria-hidden="true">
+        <IonSkeletonText animated className="sk-item-title" />
+        <IonSkeletonText animated className="sk-item-subtitle" />
+        <div className="sk-card"><IonSkeletonText animated /><IonSkeletonText animated /><IonSkeletonText animated /></div>
+        <div className="sk-card"><IonSkeletonText animated /><IonSkeletonText animated /></div>
+      </div> : null}
       {data && item ? <>
         <h1 className="item-title">{item.chapter}</h1>
         <p className="item-subtitle" data-testid="item-category">{[item.shortId, item.grade, item.subject].filter(Boolean).join(' · ')}</p>
