@@ -1,0 +1,147 @@
+{
+  "document": {
+    "title": null,
+    "subject": null,
+    "date": null,
+    "printedCode": null,
+    "page": null
+  },
+  "candidates": [
+    {
+      "key": "q4_text",
+      "role": [
+        "question"
+      ],
+      "box": {
+        "x": 0.18,
+        "y": 0.15,
+        "width": 0.62,
+        "height": 0.13
+      },
+      "number": "4",
+      "subpart": null,
+      "page": 1,
+      "order": 0,
+      "requiresDiagram": true
+    },
+    {
+      "key": "fig1",
+      "role": [
+        "diagram"
+      ],
+      "box": {
+        "x": 0.17,
+        "y": 0.2,
+        "width": 0.22,
+        "height": 0.1
+      },
+      "number": null,
+      "subpart": null,
+      "page": 1,
+      "order": 1,
+      "requiresDiagram": false
+    },
+    {
+      "key": "fig2",
+      "role": [
+        "diagram"
+      ],
+      "box": {
+        "x": 0.38,
+        "y": 0.19,
+        "width": 0.2,
+        "height": 0.11
+      },
+      "number": null,
+      "subpart": null,
+      "page": 1,
+      "order": 2,
+      "requiresDiagram": false
+    },
+    {
+      "key": "q4_sub1",
+      "role": [
+        "question"
+      ],
+      "box": {
+        "x": 0.18,
+        "y": 0.27,
+        "width": 0.5,
+        "height": 0.03
+      },
+      "number": "4",
+      "subpart": "(1)",
+      "page": 1,
+      "order": 3,
+      "requiresDiagram": false
+    },
+    {
+      "key": "q4_sub2",
+      "role": [
+        "question"
+      ],
+      "box": {
+        "x": 0.18,
+        "y": 0.3,
+        "width": 0.62,
+        "height": 0.06
+      },
+      "number": "4",
+      "subpart": "(2)",
+      "page": 1,
+      "order": 4,
+      "requiresDiagram": false
+    },
+    {
+      "key": "q4_sub3",
+      "role": [
+        "question"
+      ],
+      "box": {
+        "x": 0.18,
+        "y": 0.35,
+        "width": 0.55,
+        "height": 0.03
+      },
+      "number": "4",
+      "subpart": "(3)",
+      "page": 1,
+      "order": 5,
+      "requiresDiagram": false
+    },
+    {
+      "key": "student_work_1",
+      "role": [
+        "student_work"
+      ],
+      "box": {
+        "x": 0.22,
+        "y": 0.37,
+        "width": 0.4,
+        "height": 0.45
+      },
+      "number": null,
+      "subpart": null,
+      "page": 1,
+      "order": 6,
+      "requiresDiagram": false
+    },
+    {
+      "key": "student_work_2",
+      "role": [
+        "student_work"
+      ],
+      "box": {
+        "x": 0.58,
+        "y": 0.18,
+        "width": 0.4,
+        "height": 0.35
+      },
+      "number": null,
+      "subpart": null,
+      "page": 1,
+      "order": 7,
+      "requiresDiagram": false
+    }
+  ]
+}
