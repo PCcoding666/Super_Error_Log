@@ -258,7 +258,7 @@ export function ItemPage(): ReactNode {
             </IonLabel>
           </IonItem>
           <IonItem lines="none">
-            <IonTextarea label="我的备注" labelPlacement="stacked" autoGrow rows={2} maxlength={1000} placeholder="自己记一下：错在哪、下次注意什么（可以直接说）" value={remark}
+            <IonTextarea label="我的备注" labelPlacement="stacked" autoGrow rows={2} maxlength={1000} placeholder="错在哪？下次注意什么？" value={remark}
               onIonInput={event => editRemark(String(event.detail.value ?? ''))} onIonBlur={() => saveRemark(remark)} data-testid="item-remark" />
           </IonItem>
         </IonList>

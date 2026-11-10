@@ -246,7 +246,7 @@ const commands = {
   },
   async settings({ page }) {
     await page.goto(BASE + '/s/me'); await sleep(2000);
-    log('settings', { grade: await text(page.getByTestId('student-grade')), role: await text(page.getByTestId('account-role')), conn: await text(page.getByTestId('connection-ok')), invite: await page.getByTestId('settings-my-invite').getAttribute('href'), body: (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 400) });
+    log('settings', { grade: await text(page.getByTestId('student-grade')), role: await text(page.getByTestId('account-role')), invite: await page.getByTestId('settings-my-invite').getAttribute('href'), body: (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 400) });
     await shot(page, 'settings');
     await page.goto(BASE + '/s/account'); await sleep(1500); await shot(page, 'account-page');
     log('account page', (await page.locator('body').innerText()).replace(/\s+/g, ' ').replace(/[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/g, '<code>').slice(0, 500));
