@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { getDb, newId, now } from '../../src/db/connection.js';
 import { ensureStudentProfile } from '../../src/services/studentService.js';
 import { MaterialStore } from '../../src/materials/store.js';
-import { fullMarksOf, includeQuestions, markedRight, materialIntakeSummary, notYetIncluded, setQuestionIncluded, sortQuestions, teacherMarkMeansRight, teacherMarkMeansWrong, unplacedMaterial, unsupportedSubject } from '../../src/materials/learning.js';
+import { excludeQuestions, fullMarksOf, includeQuestions, markedRight, materialIntakeSummary, notYetIncluded, setQuestionIncluded, sortQuestions, teacherMarkMeansRight, teacherMarkMeansWrong, unplacedMaterial, unsupportedSubject } from '../../src/materials/learning.js';
 import type { Fragment } from '../../src/materials/contracts.js';
 
 function fixture(subject: string | null = '数学') {
@@ -135,6 +135,28 @@ describe('automatic inclusion and the batch list', () => {
     expect(includeQuestions(f.store, [{ questionId: a, revision: rev(a) }])).toEqual({ included: 1, skipped: 0 });
     expect(f.db.prepare('SELECT count(*) n FROM material_item_link WHERE question_id=?').get(a)).toEqual({ n: 1 });
     expect(mine()).toEqual([b]);
+  });
+  it('excluding a candidate drops it from the intake list and does not file it', () => {
+    const f = fixture();
+    const keep = f.question('KEEP-CANDIDATE 求 a。');
+    const drop = f.question('DROP-CANDIDATE 求 b。');
+    const filed = f.question('FILED 求 c。', ['×']);
+    expect(f.store.getQuestion(filed)!.itemId).toBeTruthy();
+    const rev = (id: string) => f.store.getQuestion(id)!.revision;
+    const before = (f.db.prepare('SELECT count(*) n FROM error_item').get() as { n: number }).n;
+    expect(excludeQuestions(f.store, [
+      { questionId: drop, revision: rev(drop) },
+      { questionId: filed, revision: rev(filed) },
+      { questionId: keep, revision: rev(keep) - 1 },
+    ])).toEqual({ excluded: [drop], skipped: [filed, keep] });
+    expect(f.store.getQuestion(drop)!.itemId).toBeNull();
+    expect(f.store.getQuestion(keep)!.itemId).toBeNull();
+    expect(f.store.getQuestion(filed)!.itemId).toBeTruthy();
+    expect(notYetIncluded(f.store).filter(group => group.assetId === f.asset).flatMap(group => group.questions.map(question => question.id))).toEqual([keep]);
+    expect((f.db.prepare('SELECT count(*) n FROM error_item').get() as { n: number }).n).toBe(before);
+    expect(includeQuestions(f.store, [{ questionId: keep, revision: rev(keep) }])).toEqual({ included: 1, skipped: 0 });
+    expect(f.store.getQuestion(keep)!.itemId).toBeTruthy();
+    expect(f.store.getQuestion(drop)!.itemId).toBeNull();
   });
 });
 

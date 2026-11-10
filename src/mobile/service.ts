@@ -283,6 +283,34 @@ export class MobileRecognitionService {
     return publicJob(job);
   }
 
+  /**
+   * Drop unselected candidates without reading them. Skipped questions are not bridged
+   * into the notebook and are not queued. Any other status is left unchanged.
+   */
+  async dismissUnselected(jobId: string, questionIds: string[]): Promise<{ dismissed: string[] }> {
+    this.assertStorageAvailable();
+    const job = await this.requireStored(jobId);
+    if (job.phase === 'inventory') throw new MobileRequestError(409, 'not_selectable', '这张照片还在找题，稍后再去掉。');
+    const known = new Set(job.questions.map(item => item.id));
+    for (const questionId of questionIds) {
+      if (!known.has(questionId)) throw new MobileRequestError(404, 'not_found', '题目不存在。');
+    }
+    let dismissed: string[] = [];
+    await this.persistTransition(() => this.store.updateJob(jobId, current => {
+      dismissed = [];
+      for (const questionId of questionIds) {
+        const target = current.questions.find(item => item.id === questionId);
+        if (!target || target.status !== 'unselected') continue;
+        target.status = 'skipped';
+        target.confirmedAt = null;
+        target.revision += 1;
+        dismissed.push(questionId);
+      }
+      if (dismissed.length) this.touch(current);
+    }));
+    return { dismissed };
+  }
+
   /** 候选题缩略图：按清单候选框从任务原图现算裁出（余量与精读裁图一致），不落盘；任何题目状态都可取。 */
   async getCandidateCrop(jobId: string, questionId: string): Promise<Buffer> {
     this.assertStorageAvailable();

@@ -10,6 +10,7 @@ import { CaptureDock } from '../components/CaptureDock';
 import { useCaptureSession } from '../lib/captureSession';
 import { Problem } from '../components/Problem';
 import { api } from '../lib/api';
+import { presentActionSheet } from '../lib/sheets';
 import { useLoad, useUploads } from '../lib/hooks';
 import { uploader } from '../lib/uploader';
 
@@ -35,7 +36,11 @@ type DetailRequest = {
 };
 
 
-/** 录入态：一次上传算一个批次，按照片分段；找到的题默认已在错题本，左滑删掉不相关的；没批改痕迹的页勾出做错的题。 */
+/** 录入态：一次上传算一个批次，按照片分段；找到的题默认已在错题本，可以点删除或左滑去掉；没批改痕迹的页勾出做错的题再加入，没勾的也可以单独删掉。 */
+
+type PendingDelete =
+  | { kind: 'question'; id: string }
+  | { kind: 'candidates'; photoId: string; ids: string[] };
 export function IntakePage(): ReactNode {
   const navigate = useNavigate();
   const uploads = useUploads();
@@ -117,6 +122,34 @@ export function IntakePage(): ReactNode {
     try { const result = await api.discard([itemId]); if (result.failed[0]) setToast(result.failed[0].message); }
     catch (caught) { setToast(caught instanceof Error ? caught.message : '没有移除'); }
     await reload();
+  };
+  const commitDelete = async (pending: PendingDelete): Promise<void> => {
+    if (pending.kind === 'question') { await remove(pending.id); return; }
+    try {
+      const result = await api.dismissCandidates(pending.photoId, pending.ids);
+      if (result.failed[0]) setToast(result.failed[0].message);
+      if (result.removed.length) {
+        const gone = new Set(result.removed);
+        setPicked(currentPicks => {
+          const next = new Set(currentPicks[pending.photoId] ?? []);
+          for (const id of gone) next.delete(id);
+          return { ...currentPicks, [pending.photoId]: next };
+        });
+      }
+    } catch (caught) { setToast(caught instanceof Error ? caught.message : '没有去掉'); }
+    await reload();
+  };
+  const confirmDelete = (pending: PendingDelete): void => {
+    if (pending.kind === 'candidates' && !pending.ids.length) return;
+    const several = pending.kind === 'candidates' && pending.ids.length > 1;
+    void presentActionSheet({
+      header: pending.kind === 'question' ? '把这道题移出错题本？' : several ? `去掉这 ${pending.ids.length} 道还没加入的题？` : '去掉这道还没加入的题？',
+      subHeader: pending.kind === 'question' ? '原图保留，移出后可以在错题本撤销。' : '只从录入列表移除，不会加入错题本。',
+      buttons: [
+        { text: '删除', role: 'destructive', handler: () => { void commitDelete(pending); } },
+        { text: '取消', role: 'cancel' },
+      ],
+    });
   };
   const include = async (photo: IntakePhoto): Promise<void> => {
     const ids = [...(picked[photo.id] ?? [])];
@@ -218,11 +251,13 @@ export function IntakePage(): ReactNode {
           {['finding', 'located', 'enriching'].includes(photo.state) ? <IonSpinner slot="end" name="lines-small" /> : null}
         </IonItem>
         {photo.questions.map(question => <IonItemSliding key={question.id}>
-          <IonItem routerLink={`/q/${question.id}`} detail={false} className="intake-row" data-testid="intake-question">
+          <IonItem button detail={false} className="intake-row" data-testid="intake-question" onClick={() => navigate(`/q/${question.id}`)}>
             <img slot="start" className="row-thumb" src={question.thumb} alt="" loading="lazy" />
             <IonLabel><h3>{question.excerpt || '题目文字暂不可用'}</h3><p>{question.chapter}</p></IonLabel>
+            <button slot="end" type="button" className="intake-delete-button" data-testid="question-delete" aria-label={`删除${question.excerpt || '这道题'}`}
+              onClick={event => { event.preventDefault(); event.stopPropagation(); confirmDelete({ kind: 'question', id: question.id }); }}>删除</button>
           </IonItem>
-          <IonItemOptions side="end"><IonItemOption color="danger" onClick={() => void remove(question.id)}>删除</IonItemOption></IonItemOptions>
+          <IonItemOptions side="end"><IonItemOption color="danger" data-testid="question-swipe-delete" onClick={() => void remove(question.id)}>删除</IonItemOption></IonItemOptions>
         </IonItemSliding>)}
         {photo.candidates.length ? <>
           <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p>{photo.progress ? '可以先看图勾出做错的题，校验通过后加入错题本。' : '这页没有批改痕迹，勾出做错的题'}</p></IonLabel></IonItem>
@@ -250,9 +285,19 @@ export function IntakePage(): ReactNode {
                 aria-label={`查看${candidate.label}的详情`}
                 onClick={() => openDetail(photo, candidate)}
               >查看详情</button>
+              <button
+                type="button"
+                className="intake-delete-button"
+                data-testid="candidate-delete"
+                aria-label={`删除${candidate.label}，不加入错题本`}
+                onClick={() => confirmDelete({ kind: 'candidates', photoId: photo.id, ids: [candidate.id] })}
+              >删除</button>
             </div>)}
           </div>
-          <IonItem lines="none"><IonButton slot="end" size="default" disabled={!(picked[photo.id]?.size)} onClick={() => void include(photo)} data-testid="pick-submit">加入{picked[photo.id]?.size ? ` ${picked[photo.id]!.size} 道` : ''}</IonButton></IonItem>
+          <div className="intake-actions">
+            <IonButton fill="clear" color="danger" size="default" disabled={!(picked[photo.id]?.size)} data-testid="candidate-delete-selected" onClick={() => confirmDelete({ kind: 'candidates', photoId: photo.id, ids: [...(picked[photo.id] ?? [])] })}>删除所选</IonButton>
+            <IonButton size="default" disabled={!(picked[photo.id]?.size)} onClick={() => void include(photo)} data-testid="pick-submit">加入{picked[photo.id]?.size ? ` ${picked[photo.id]!.size} 道` : ''}</IonButton>
+          </div>
         </> : null}
         {photo.failure ? <IonItem lines="none" className="intake-failure">
           <IonLabel className="ion-text-wrap"><p className="tone-red">{photo.failure.detail}</p></IonLabel>
@@ -267,7 +312,7 @@ export function IntakePage(): ReactNode {
     <IonContent fullscreen className="intake" ref={setContent}>
       <div className="intake-top">
         <h1>录入</h1>
-        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : !listReady ? '正在查找…' : filter.enabled ? (busy ? 'AI 正在找题' : data?.total ? `这一天上传了 ${data.total} 张` : '这一天没有上传的材料') : busy ? 'AI 正在找题' : found ? `找到 ${found} 道，已加入错题本 · 不相关的左滑删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
+        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : !listReady ? '正在查找…' : filter.enabled ? (busy ? 'AI 正在找题' : data?.total ? `这一天上传了 ${data.total} 张` : '这一天没有上传的材料') : busy ? 'AI 正在找题' : found ? `找到 ${found} 道，已加入错题本 · 不相关的可以删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
       </div>
       <IonList inset lines="full" className="intake-filter">
         <IonItem>

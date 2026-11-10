@@ -6,6 +6,8 @@ export type IntakeProgress = {
   phase: 'located' | 'enriching' | 'done';
   sourceHash: string;
   selected: string[];
+  /** Fragment ids the student removed from the intake list. Never a selection, so they are not filed later. */
+  dismissed?: string[];
   locatedAt: number;
   firstSelectableAt: number | null;
   completedAt: number | null;
@@ -29,7 +31,8 @@ export function write(store: MaterialStore, job: Job, progress: IntakeProgress):
   const input = JSON.parse(job.input_json);
   input.intakeProgress ??= {};
   const { extraction, phase, sourceHash, selected, locatedAt, firstSelectableAt, completedAt } = progress;
-  input.intakeProgress[extraction.assetId] = { extraction, phase, sourceHash, selected, locatedAt, firstSelectableAt, completedAt };
+  const dismissed = progress.dismissed ?? [];
+  input.intakeProgress[extraction.assetId] = { extraction, phase, sourceHash, selected, dismissed, locatedAt, firstSelectableAt, completedAt };
   store.db.prepare('UPDATE material_job SET input_json=? WHERE owner_id=? AND id=?').run(JSON.stringify(input), store.studentId, job.id);
 }
 export function readIntakeProgress(store: MaterialStore): Map<string, SavedIntakeProgress> {

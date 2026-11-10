@@ -1,5 +1,5 @@
 import { withProcessImage } from '../mobile/admission.js';
-import { findPreview, progressQuestion, readIntakeProgress, selectPreviewCandidates } from '../materials/intakeProgress.js';
+import { dismissPreviewCandidates, findPreview, progressQuestion, readIntakeProgress, selectPreviewCandidates } from '../materials/intakeProgress.js';
 import { photoProgress, previewCandidates } from './intakeProgressView.js';
 import { readNormalizedSource } from '../materials/media.js';
 import { cropPhoto } from '../media/images.js';
@@ -34,7 +34,7 @@ import { directCorrection, getEvidenceView } from '../v2/correctionService.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
 import { canRecover } from '../mobile/contracts.js';
-import { includeQuestions, inclusionIntents, markedRight, notYetIncluded, setQuestionIncluded, sortQuestions, unplacedMaterial } from '../materials/learning.js';
+import { excludeQuestions, includeQuestions, inclusionIntents, markedRight, notYetIncluded, setQuestionIncluded, sortQuestions, unplacedMaterial } from '../materials/learning.js';
 import { ASSET_PAGE_SIZE, createdAtRangeSql, DayFilterError, instantInRange, parseAssetDayFilter, type AssetDayFilter } from '../materials/dayFilter.js';
 import { unsupportedSubject, UNSUPPORTED_SUBJECT_MESSAGE } from '../materials/subjects.js';
 import type { MaterialJobs } from '../materials/jobs.js';
@@ -439,7 +439,10 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       const candidates: IntakeCandidate[] = photo.state === 'needsPick' || (photo.job && !photo.pickDone)
         ? (photo.job?.questions ?? []).filter(q => q.status === 'unselected').map(q => ({ id: q.id, label: `第 ${q.number} 题`, excerpt: '', crop: `/s/img/cand/${photo.jobId}/${q.id}?s=list` }))
         : [];
-      const state = photo.state === 'finding' ? 'finding' : photo.state === 'needsPick' ? 'needsPick' : photo.state === 'failed' ? 'failed' : 'done';
+      // Skipping a candidate moves it off `unselected`, which used to make the whole page look finished
+      // while the other candidates were still waiting. Keep the page in the pick state when nothing was filed.
+      let state: IntakePhoto['state'] = photo.state === 'finding' ? 'finding' : photo.state === 'needsPick' ? 'needsPick' : photo.state === 'failed' ? 'failed' : 'done';
+      if (state === 'done' && !questions.length && candidates.length) state = 'needsPick';
       const statusText = state === 'finding' ? 'AI 正在找题' : state === 'needsPick' ? '没有批改痕迹 · 勾出做错的题' : state === 'failed' ? photo.failure?.title ?? '没识别成功'
         : questions.length ? `找到 ${questions.length} 道` : '没有新增错题';
       return {
@@ -566,6 +569,78 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     catch (error) { if (error instanceof MobileRequestError) fail(error.status, error.code, error.message); throw error; }
     return { ok: true, included: ids.length, skipped: 0 };
   }));
+
+  // Remove candidates from the intake list without filing them. Already-filed questions use /items/discard.
+  r.post('/intake/photos/:id/dismiss-candidates', handler(async (request) => {
+    const photoId = String(request.params.id);
+    const cap = ctx.materials ? INTAKE_SELECT_LIMIT.materials : INTAKE_SELECT_LIMIT.legacy;
+    const ids = [...new Set(list(request.body?.ids))];
+    if (!ids.length) fail(400, 'invalid_request', '先选择要去掉的题。');
+    if (ids.length > cap) fail(400, 'invalid_request', `一次最多去掉 ${cap} 道。`);
+    const body: DiscardResponse = ctx.materials ? dismissMaterialCandidates(ctx.materials, photoId, ids) : await dismissLegacyCandidates(photoId, ids);
+    if (body.removed.length) audit('web_candidates_dismissed', 'photo', photoId);
+    return body;
+  }));
+
+  const dismissMaterialCandidates = (store: NonNullable<WebContext['materials']>, photoId: string, ids: string[]): DiscardResponse => {
+    const removed: string[] = [];
+    const failed: DiscardResponse['failed'] = [];
+    const preview: { questionId: string; revision: number; clientId: string }[] = [];
+    const regular: { questionId: string; revision: number; clientId: string }[] = [];
+    for (const id of ids) {
+      const match = /^([A-Za-z0-9_-]{1,80}):([0-9]{1,9})$/.exec(id);
+      if (!match) { failed.push({ id, message: '勾选信息不可用，请刷新后再试。' }); continue; }
+      const pick = { questionId: match[1]!, revision: Number(match[2]), clientId: id };
+      if (pick.questionId.startsWith('mfr_')) preview.push(pick);
+      else regular.push(pick);
+    }
+    if (preview.length) {
+      const result = dismissPreviewCandidates(store, photoId, preview);
+      const gone = new Set(result.dismissed);
+      for (const pick of preview) {
+        if (gone.has(pick.questionId)) removed.push(pick.clientId);
+        else failed.push({ id: pick.clientId, message: '这道题已经不在待选列表里，请刷新后再试。' });
+      }
+    }
+    if (regular.length) {
+      const questions = new Map(store.listQuestions().map(question => [question.id, question]));
+      const accepted: { questionId: string; revision: number; clientId: string }[] = [];
+      for (const pick of regular) {
+        const question = questions.get(pick.questionId);
+        if (!question) { failed.push({ id: pick.clientId, message: '题目不存在。' }); continue; }
+        const asset = question.stem.find(fragment => fragment.role === 'question')?.assetId ?? question.stem[0]?.assetId ?? null;
+        if (asset !== photoId) { failed.push({ id: pick.clientId, message: '这道题不在这张照片上。' }); continue; }
+        if (question.itemId) { failed.push({ id: pick.clientId, message: '这道题已经在错题本里。' }); continue; }
+        accepted.push(pick);
+      }
+      if (accepted.length) {
+        const result = excludeQuestions(store, accepted.map(pick => ({ questionId: pick.questionId, revision: pick.revision })));
+        const gone = new Set(result.excluded);
+        for (const pick of accepted) {
+          if (gone.has(pick.questionId)) removed.push(pick.clientId);
+          else failed.push({ id: pick.clientId, message: '这道题已经不在待选列表里，请刷新后再试。' });
+        }
+      }
+    }
+    return { removed, failed };
+  };
+
+  const dismissLegacyCandidates = async (photoId: string, ids: string[]): Promise<DiscardResponse> => {
+    if (!UUID.test(photoId) || !ids.every(id => UUID.test(id))) fail(400, 'invalid_request', '勾选信息不可用，请刷新后再试。');
+    const photos = getRegisteredPhotos(ctx.mobileDataDir, true);
+    if (!photos.some(photo => photo.jobId === photoId)) fail(404, 'not_found', '照片不存在。');
+    try {
+      const result = await options.service.dismissUnselected(photoId, ids);
+      const gone = new Set(result.dismissed);
+      return {
+        removed: ids.filter(id => gone.has(id)),
+        failed: ids.filter(id => !gone.has(id)).map(id => ({ id, message: '这道题已经不在待选列表里。' })),
+      };
+    } catch (error) {
+      if (error instanceof MobileRequestError) fail(error.status, error.code, error.message);
+      throw error;
+    }
+  };
 
   r.post('/intake/photos/:id/retry', handler(async (request) => {
     const photoId = String(request.params.id);

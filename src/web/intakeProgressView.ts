@@ -14,7 +14,8 @@ export function previewStatus(progress: SavedIntakeProgress, fragment: Fragment,
 }
 export function previewCandidates(progress: SavedIntakeProgress, questions: QuestionBundle[], intents: Map<string, boolean>): IntakeCandidate[] {
   if (unsupportedSubject(progress.extraction.document.subject)) return [];
-  return progress.extraction.fragments.filter(f => f.role === 'question').flatMap(fragment => {
+  const dismissed = new Set(progress.dismissed ?? []);
+  return progress.extraction.fragments.filter(f => f.role === 'question' && !dismissed.has(f.fragmentId)).flatMap(fragment => {
     const q = questions.find(q => q.stem.some(f => f.fragmentId === fragment.fragmentId));
     if (q && (q.itemId || intents.get(q.id) === false || (!progress.selected.includes(fragment.fragmentId) && markedRight(q)))) return [];
     return [{ id: `${fragment.fragmentId}:${progress.extraction.revision}`, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',
