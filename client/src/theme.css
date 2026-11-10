@@ -277,6 +277,8 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .sk-card ion-skeleton-text { width: 94%; height: 16px; }
 .sk-card ion-skeleton-text + ion-skeleton-text { width: 80%; margin-top: 14px; }
 .sk-card ion-skeleton-text:last-child { width: 48%; }
+/* 系统开了「减弱动态效果」时不闪动，只留静止的占位。 */
+@media (prefers-reduced-motion: reduce) { .sk-title, .sk-subtitle, .sk-list ion-skeleton-text, .sk-item ion-skeleton-text { animation: none; } }
 
 /* ---------- 设置 ---------- */
 .page-title { font-size: 34px; font-weight: 700; margin: 8px 20px 16px; }

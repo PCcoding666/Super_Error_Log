@@ -197,8 +197,9 @@ export function ItemPage(): ReactNode {
         </IonList>
       </IonPopover>
       {error ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
-      {/* 数据返回前先画出页面的形状：标题、题目卡片、一组列表行。出错时让位给上面的 Problem。 */}
-      {!data && !error ? <div className="sk-item" data-testid="item-skeleton" aria-hidden="true">
+      {/* 数据返回前先画出页面的形状：标题、题目卡片、一组列表行。出错时让位给上面的 Problem。
+          这一页加载时没有别的文字，所以占位本身带一句读屏能念出来的状态。 */}
+      {!data && !error ? <div className="sk-item" data-testid="item-skeleton" role="status" aria-label="正在加载题目">
         <IonSkeletonText animated className="sk-item-title" />
         <IonSkeletonText animated className="sk-item-subtitle" />
         <div className="sk-card"><IonSkeletonText animated /><IonSkeletonText animated /><IonSkeletonText animated /></div>

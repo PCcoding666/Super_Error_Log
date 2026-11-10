@@ -62,6 +62,9 @@ export function sendClientAsset(request: Request, response: Response): void {
   const type = MIME[extension];
   if (!type) { response.status(404).type('text').send('not found'); return; }
   response.setHeader('cache-control', 'public, max-age=31536000, immutable');
+  // 外层给所有响应加了 pragma: no-cache（src/mobile/router.ts）。Safari 见到它会把这份指纹资源当成 no-cache，
+  // 每次打开都回源确认一遍，immutable 就白写了。和旧页面资源的 cacheFor() 一样，在这里去掉。
+  response.removeHeader('pragma');
   response.setHeader('content-type', type);
   if (COMPRESSIBLE.has(extension)) {
     // 同一个地址会按请求头给出不同的字节，中间缓存要按 Accept-Encoding 分开存。

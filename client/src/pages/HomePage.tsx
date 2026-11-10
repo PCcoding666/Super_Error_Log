@@ -131,7 +131,7 @@ export function HomePage(): ReactNode {
         </IonList>
       </IonPopover>
       {!selecting ? <>
-        <button type="button" className="home-title" onClick={showSubjectSheet} aria-label={`切换学科，当前${data?.subject ?? ''}`} data-testid="subject-switch">
+        <button type="button" className="home-title" onClick={showSubjectSheet} disabled={!data} aria-label={data ? `切换学科，当前${data.subject}` : '学科'} data-testid="subject-switch">
           {first ? <IonSkeletonText animated className="sk-title" aria-hidden="true" /> : <><span>{data?.subject ?? ' '}</span><IonIcon icon={chevronDown} /></>}
         </button>
         <p className="home-subtitle" role="status" aria-busy={first}>{first ? <IonSkeletonText animated className="sk-subtitle" aria-hidden="true" /> : subtitle}</p>
