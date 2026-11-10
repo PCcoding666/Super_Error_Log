@@ -5,7 +5,8 @@ import { Page, Problem } from './layout.js';
 
 /**
  * First entry of a new account: choose 初中 or 高中 before the notebook. No default is preselected.
- * 标题后半句用 .q 保持在同一行：手机宽度放不下整句时在后半句之前换行，不把「初中」拆成两行。
+ * 标题后半句用 .q 保持在同一行，「初中」不会被拆成两行。放不下整句时怎么断由浏览器定：
+ * Chromium 排成「你现在 / 读初中还是高中？」；iPhone 13 的 Safari 上整句本来就在一行。
  */
 export function StageChoicePage(props: { error?: string | null }): ReactNode {
   return (
