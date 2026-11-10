@@ -206,6 +206,25 @@ export function includeQuestions(store:MaterialStore,picks:{questionId:string;re
   return {included:already.length+landed,skipped:skipped+recorded.length-landed};
  });
 }
+/** Record that these candidates stay out of the notebook. Never creates an item.
+ * A question that already has one is skipped; use the discard path to unfile it. */
+export function excludeQuestions(store:MaterialStore,picks:{questionId:string;revision:number}[]):{excluded:string[];skipped:string[]} {
+ return store.transaction(()=>{
+  const excluded:string[]=[];const skipped:string[]=[];const seen=new Set<string>();let recorded=0;
+  for(const pick of picks){
+   const q=readQuestion(store,pick.questionId);
+   if(!q||seen.has(q.id)){skipped.push(pick.questionId);continue;}
+   seen.add(q.id);
+   if(q.itemId){skipped.push(q.id);continue;}
+   if(inclusionIntent(store,q.id)===false){excluded.push(q.id);continue;}
+   try{recordInclusion(store,q.id,false,pick.revision);recorded++;excluded.push(q.id);}
+   catch(error){if(error instanceof MobileRequestError&&[400,404,409].includes(error.status)){skipped.push(q.id);continue;}throw error;}
+  }
+  if(recorded)syncMaterialLearning(store);
+  const filed=new Set(excluded.filter(id=>readQuestion(store,id)?.itemId));
+  return {excluded:excluded.filter(id=>!filed.has(id)),skipped:[...skipped,...filed]};
+ });
+}
 
 /** Current source-backed textual observations, including imported answer and unknown fragments.
  * Generated/manual ReferenceAnswer records remain separate; they never become photographed observations. */

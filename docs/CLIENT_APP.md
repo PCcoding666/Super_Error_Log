@@ -48,6 +48,7 @@
 | GET `/settings` / POST `/settings/grade` | 学段、邀请码信息、版本；选学段（新账号的门槛也走它） |
 | GET `/intake` | 录入态：每张照片的状态、已收录的题、等勾选的候选题；旧流程和材料流程同一形状 |
 | POST `/intake/photos/:id/select` `{ids}` | 勾选加入（旧流程题 id；材料流程 `questionId:revision`） |
+| POST `/intake/photos/:id/dismiss-candidates` `{ids}` | 从录入列表去掉还没进错题本的候选题，不收录。材料流程记下「不收录」或从预选里拿掉；旧流程把仍是 `unselected` 的题标成 `skipped`，不精读、不建题。已经在错题本里的题不走这里，仍用 `/items/discard` |
 | POST `/intake/photos/:id/retry` / `/dismiss` | 重试识别 / 不要这张（后者仅旧流程） |
 | POST `/client-log` `{events:[{kind,code,message,route,rid,cid,status,retryable,build,online,visible,component}]}` | 浏览器端出错上报；最多 20 条，只收白名单字段并截短，每条写一行 `sel_client_event` 日志并记进互动记录 `web_error …#client:类别:错误码`。新账号没选学段也放行 |
 

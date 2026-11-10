@@ -13,7 +13,7 @@ import { MaterialStore } from '../../src/materials/store.js';
 import { MaterialJobs } from '../../src/materials/jobs.js';
 import { MaterialUploads } from '../../src/materials/uploads.js';
 import { extractMaterial } from '../../src/materials/extraction.js';
-import { selectPreviewCandidates } from '../../src/materials/intakeProgress.js';
+import { dismissPreviewCandidates, selectPreviewCandidates } from '../../src/materials/intakeProgress.js';
 import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
@@ -79,6 +79,24 @@ describe('multi-page capture', () => {
     const included = check === 'passed' ? 1 : 0;
     expect(f.db.prepare('SELECT count(*) n FROM material_inclusion').get()).toEqual({ n: included });
     expect(f.db.prepare('SELECT count(*) n FROM error_item').get()).toEqual({ n: included });
+  });
+
+  it('dismissing a preview selection removes it and does not file it when extraction finishes', async () => {
+    const f = await fixture();
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'single' } });
+    const lead = pageExtraction(f.uploads, paper.assetId, 'question', '1. DROP-PREVIEW 求 x。');
+    const fragmentId = lead.fragments[0]!.fragmentId;
+    await extractMaterial(f.store, { extract: async input => {
+      await input.onProgress?.({ extraction: lead, phase: 'located' });
+      expect(selectPreviewCandidates(f.store, paper.assetId, [{ questionId: fragmentId, revision: 1 }])).toEqual({ included: 0, pending: 1, skipped: 0 });
+      expect(dismissPreviewCandidates(f.store, paper.assetId, [{ questionId: fragmentId, revision: 1 }])).toEqual({ dismissed: [fragmentId], skipped: [] });
+      expect(selectPreviewCandidates(f.store, paper.assetId, [{ questionId: fragmentId, revision: 1 }])).toEqual({ included: 0, pending: 0, skipped: 1 });
+      return lead;
+    } }, paper.job.id, new AbortController().signal);
+    const questions = f.store.listQuestions();
+    expect(questions).toHaveLength(1);
+    expect(questions[0]!.itemId).toBeNull();
+    expect(f.db.prepare('SELECT count(*) n FROM error_item').get()).toEqual({ n: 0 });
   });
 
   it('holds extract until every page of the set is saved, then treats the pages as one submission', async () => {

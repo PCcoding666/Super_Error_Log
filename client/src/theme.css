@@ -158,8 +158,16 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 }
 .intake-page-toggle { min-height: 44px; padding: 0 4px; }
 .intake-detail-button { min-width: 44px; min-height: 44px; padding: 0 6px; border-radius: 8px; }
-.intake-page-toggle:focus-visible, .intake-detail-button:focus-visible, .intake-candidate ion-checkbox:focus-visible {
+.intake-delete-button {
+  flex: none; margin: 0; border: 0; background: transparent; color: var(--ion-color-danger);
+  font: inherit; font-size: 14px; font-weight: 600; min-width: 44px; min-height: 44px; padding: 0 6px; border-radius: 8px;
+}
+.intake-page-toggle:focus-visible, .intake-detail-button:focus-visible, .intake-delete-button:focus-visible, .intake-candidate ion-checkbox:focus-visible {
   outline: 3px solid var(--ion-color-primary); outline-offset: 2px;
+}
+.intake-actions {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 4px 8px 8px; background: var(--ion-item-background);
 }
 .intake-candidates { background: var(--ion-item-background); }
 .intake-candidate {
@@ -185,7 +193,7 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .candidate-select p { margin: 2px 0 0; }
 .candidate-stale { color: var(--sel-muted); }
 @media (max-width: 360px) {
-  .intake-detail-button, .intake-page-toggle { font-size: 13px; }
+  .intake-detail-button, .intake-page-toggle, .intake-delete-button { font-size: 13px; }
   .intake-candidate { gap: 4px; padding-right: 4px; }
 }
 .intake-note p { font-size: 14px; color: var(--sel-muted); }
