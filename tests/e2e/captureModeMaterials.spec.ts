@@ -2,7 +2,6 @@
  * 生产学生空间走材料上传（/s/materials/uploads），多页在这里合成一次提交。
  * 邀请码网关每个用例单独起，不碰 3196 那台共用的旧流程服务器。
  */
-import { mkdirSync } from 'node:fs';
 import { fork } from 'node:child_process';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -34,7 +33,7 @@ const test = base.extend<{ gateway: { base: string; codes: string[] } }>({
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
 
 const dock = (page: Page) => page.locator('[data-testid="capture-dock"]:visible');
-const shot = (name: string): string => `/opt/cursor/artifacts/${name}.png`;
+const shot = (name: string): string => test.info().outputPath(`${name}.png`);
 
 async function openChoice(page: Page, entry: 'camera' | 'album'): Promise<void> {
   await expect(dock(page)).toHaveAttribute('data-capture-choice', 'choice');
@@ -74,7 +73,6 @@ test('材料流程的多页一次提交，两张照片共用一个拍摄批次',
   await expect(page.locator('#library-input')).toHaveCount(0);
   await expect(page.getByTestId('capture-camera').locator('input')).toHaveCount(0);
   await expect(page.getByTestId('capture-album').locator('input')).toHaveCount(0);
-  mkdirSync('/opt/cursor/artifacts', { recursive: true });
   // Browser-test captures from Playwright Chromium, not a real Android or iOS picker.
   await page.screenshot({ path: shot('browser-test-idle-home-mobile') });
   await openChoice(page, 'camera');

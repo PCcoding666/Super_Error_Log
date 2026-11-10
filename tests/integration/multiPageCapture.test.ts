@@ -13,6 +13,7 @@ import { MaterialStore } from '../../src/materials/store.js';
 import { MaterialJobs } from '../../src/materials/jobs.js';
 import { MaterialUploads } from '../../src/materials/uploads.js';
 import { extractMaterial } from '../../src/materials/extraction.js';
+import { selectPreviewCandidates } from '../../src/materials/intakeProgress.js';
 import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
@@ -60,6 +61,26 @@ function pageExtraction(uploads: MaterialUploads, assetId: string, role: Fragmen
 }
 
 describe('multi-page capture', () => {
+  it.each(['low', 'passed'] as const)('waits for the whole bundle before filing a saved selection with a %s diagram on a later page', async check => {
+    const f = await fixture();
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2, pageKind: 'paper' } });
+    const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'diagram.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'paper' } });
+    const lead = pageExtraction(f.uploads, paper.assetId, 'question', '1. 求图中角的大小。');
+    const follow = pageExtraction(f.uploads, sheet.assetId, 'diagram', '同题的图');
+    follow.fragments[0]!.check = check;
+    await extractMaterial(f.store, { extract: async input => {
+      await input.onProgress?.({ extraction: lead, phase: 'located' });
+      expect(selectPreviewCandidates(f.store, paper.assetId, [{ questionId: lead.fragments[0]!.fragmentId, revision: 1 }])).toEqual({ included: 0, pending: 1, skipped: 0 });
+      return { ...lead, set: [lead, follow] };
+    } }, paper.job.id, new AbortController().signal);
+    const questions = f.store.listQuestions();
+    expect(questions).toHaveLength(1);
+    expect(questions[0]!.stem.map(fragment => fragment.role).sort()).toEqual(['diagram', 'question']);
+    const included = check === 'passed' ? 1 : 0;
+    expect(f.db.prepare('SELECT count(*) n FROM material_inclusion').get()).toEqual({ n: included });
+    expect(f.db.prepare('SELECT count(*) n FROM error_item').get()).toEqual({ n: included });
+  });
+
   it('holds extract until every page of the set is saved, then treats the pages as one submission', async () => {
     const f = await fixture();
     const paperHints: CaptureHints = { captureMode: 'multi', pageIndex: 1, pageCount: 2, pageKind: 'paper' };

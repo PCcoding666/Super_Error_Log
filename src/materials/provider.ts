@@ -10,8 +10,9 @@ import type { CaptureHints, CapturePageKind, DocumentClues, Extraction, Fragment
 /** One saved page of a multi-page submission. Coordinates in the model output stay on the current page. */
 export type MaterialPageImage = { assetId: string; pageIndex: number; pageKind: CapturePageKind | null; bytes: Buffer; revision?: number; sourceHash?: string };
 export type ExtractedMaterial = Extraction & { set?: Extraction[] };
+export type MaterialExtractionProgress = { extraction: Extraction; phase: 'located' | 'enriching' };
 export interface MaterialProvider {
-  extract(input: { assetId: string; revision: number; bytes: Buffer; hints: CaptureHints; pages?: MaterialPageImage[] }, signal: AbortSignal): Promise<ExtractedMaterial>;
+  extract(input: { assetId: string; revision: number; bytes: Buffer; hints: CaptureHints; pages?: MaterialPageImage[]; onProgress?: (progress: MaterialExtractionProgress) => void | Promise<void> }, signal: AbortSignal): Promise<ExtractedMaterial>;
 }
 /** Identity of the preserved original, assigned by the server, never derived from the model JPEG. */
 export type MaterialSource = { assetId: string; revision: number; sourceHash: string };
@@ -194,6 +195,15 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
           return validateMaterialExtraction({ assetId: pageSource.assetId, revision: pageSource.revision, document: located.document, fragments: [], warnings: [...located.warnings, 'unsupported_subject'], runs: [] }, pageSource);
         }
         const fragments: Fragment[] = []; const warnings = [...located.warnings]; let failure: MaterialProviderError | undefined;
+        // Preview evidence stays outside material_fragment until final reconciliation. A
+        // transcription is unchecked, even when the read request itself succeeded.
+        const preview = located.candidates.map(({ key: _key, ...region }): Fragment => ({ ...pageSource, ...region, text: '', check: 'unchecked', uncertainties: [] }));
+        const publish = async (phase: MaterialExtractionProgress['phase']) => {
+          signal.throwIfAborted();
+          await input.onProgress?.({ phase, extraction: { assetId: pageSource.assetId, revision: pageSource.revision, document: located.document, fragments: structuredClone(preview), warnings: [...warnings], runs: [] } });
+          signal.throwIfAborted();
+        };
+        await publish('located');
         const pageSubmission = pageHints.captureMode === 'multi' ? { captureMode: 'multi' as const, pageIndex: pageHints.pageIndex ?? null, pageCount: pageHints.pageCount ?? null, pageKind: pageHints.pageKind ?? null, instruction: MULTI_PAGE_READ_NOTE } : submission;
         for (const candidate of located.candidates) {
           signal.throwIfAborted();
@@ -203,6 +213,8 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
             const read = await invoke('material_extract', readKey, 'read', { candidate, ...(pageSubmission ? { submission: pageSubmission } : {}), schema: { candidateKey: candidate.key, text: 'verbatim visible content only', uncertainties: ['string'] } }, [cropped], value => {
               const v = reference(unwrap(value, 'text'), pageSource, candidate); return { text: str(v.text), uncertainties: list(v.uncertainties) };
             }, undefined, pageSource);
+            Object.assign(preview.find(f => f.fragmentId === candidate.fragmentId)!, { text: read.text, uncertainties: read.uncertainties });
+            await publish('enriching');
             const verifyKey = scopedKeys ? `verify:${pageSource.assetId}:${candidate.key}` : `verify:${candidate.key}`;
             const checked = await invoke('material_verify', verifyKey, 'verify', { candidate, fragment: read, ...(pageSubmission ? { submission: pageSubmission } : {}),
               schema: { candidateKey: candidate.key, check: 'passed|low|failed', coverage: 'complete|incomplete|uncertain', textMatches: 'boolean', roleMatches: 'boolean', uncertainties: ['string'] },
@@ -218,13 +230,17 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
               return { check: (v.check === 'failed' ? 'failed' : passed ? 'passed' : 'low') as Fragment['check'], uncertainties };
             }, undefined, pageSource);
             const { key: _key, ...region } = candidate;
-            fragments.push({ ...pageSource, ...region, text: read.text, check: checked.check, uncertainties: [...read.uncertainties, ...checked.uncertainties] });
+            const fragment: Fragment = { ...pageSource, ...region, text: read.text, check: checked.check, uncertainties: [...read.uncertainties, ...checked.uncertainties] };
+            fragments.push(fragment);
+            Object.assign(preview.find(f => f.fragmentId === candidate.fragmentId)!, fragment);
           } catch (error) {
             signal.throwIfAborted();
             const classified = classify(error);
             failure ??= classified;
             warnings.push(`fragment_unavailable:${candidate.key}:${classified.code}`);
+            Object.assign(preview.find(f => f.fragmentId === candidate.fragmentId)!, { check: 'failed' });
           }
+          await publish('enriching');
         }
         for (const fragment of fragments) if (fragment.role === 'question' && fragment.requiresDiagram) {
           const supported = fragment.number !== null && fragment.page !== null && fragments.some(f =>

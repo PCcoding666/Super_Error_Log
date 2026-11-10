@@ -60,7 +60,7 @@ export const api = {
     return call<IntakeResponse>(text ? `/s/api/intake?${text}` : '/s/api/intake');
   },
   uploadMode: () => call<UploadModeResponse>('/s/api/upload'),
-  select: (photoId: string, ids: string[]) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/select`, { method: 'POST', body: JSON.stringify({ ids }) }),
+  select: (photoId: string, ids: string[]) => call<{ ok: true; included: number; pending?: number; skipped: number }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/select`, { method: 'POST', body: JSON.stringify({ ids }) }),
   /** Read a materials candidate. Legacy candidates have no text endpoint; the page shows the crop it already has. */
   candidateDetail: (questionId: string, revision: number) => call<IntakeCandidateDetail>(`/s/api/intake/candidates/${encodeURIComponent(questionId)}?revision=${revision}`),
   retry: (photoId: string) => call<{ ok: true }>(`/s/api/intake/photos/${encodeURIComponent(photoId)}/retry`, { method: 'POST', body: '{}' }),
