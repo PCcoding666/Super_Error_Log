@@ -1,4 +1,4 @@
-import { expectedIntakeStem } from './intakeProgressState.js';
+import { expectedIntakeStem, readIntakeProgress } from './intakeProgressState.js';
 import { SUBJECTS, type Subject } from '../domain/types.js';
 import { newId, now } from '../db/connection.js';
 import { MobileRequestError } from '../mobile/service.js';
@@ -123,13 +123,26 @@ function automaticMistake(store:MaterialStore,questionId:string):boolean {
  return q.teacherMarks.some(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansWrong(f.text,full));
 }
 export function questionIncluded(store:MaterialStore,questionId:string):boolean { return inclusionIntent(store,questionId)??automaticMistake(store,questionId); }
+/** Fragment ids the student removed from a preview before that question could be filed. */
+function dismissedPreviewFragments(store:MaterialStore):Set<string> {
+ const ids=new Set<string>();
+ for(const progress of readIntakeProgress(store).values()) for(const id of progress.dismissed??[]) ids.add(id);
+ return ids;
+}
 /** Called at mutation boundaries, never by material GETs. No mastery or evidence writes. */
 export function syncMaterialLearning(store:MaterialStore):void {
  store.transaction(()=>{
+  const dismissed=dismissedPreviewFragments(store);
   for(const q of store.listQuestions()) {
    // Every migrated item retains its original learning authority, including pre-mobile records.
    if(q.itemId&&(store.db.prepare('SELECT 1 FROM mobile_item_link WHERE item_id=?').get(q.itemId)||store.db.prepare("SELECT 1 FROM material_legacy_map WHERE owner_id=? AND source_kind='error_item' AND source_key=?").get(store.studentId,q.itemId))) continue;
-   const intent=inclusionIntent(store,q.id),included=intent??automaticMistake(store,q.id);
+   const intent=inclusionIntent(store,q.id);
+   // A preview deleted before its question row existed has no inclusion row yet. Record that
+   // choice when the question appears so a later cross or grade cannot file it automatically.
+   if(intent===null&&!q.itemId&&q.stem.some(f=>f.role==='question'&&dismissed.has(f.fragmentId))){
+    recordInclusion(store,q.id,false,q.revision); continue;
+   }
+   const included=intent??automaticMistake(store,q.id);
    if(q.missing.includes('stem')) {
     // Retain the learning identity/history, but remove classification whose only
     // supporting stem was moved or undone. Legacy authority was excluded above.

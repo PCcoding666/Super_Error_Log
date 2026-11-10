@@ -87,7 +87,9 @@ export function selectPreviewCandidates(store: MaterialStore, assetId: string, p
 
 /**
  * Drop preview candidates from the intake list. Removes any pending selection so a later
- * flush cannot file them. A question that already has a notebook item is left alone.
+ * flush cannot file them. If the question row does not exist yet, only the fragment is
+ * remembered; syncMaterialLearning records the exclusion once extraction creates the question.
+ * A question that already has a notebook item is left alone.
  */
 export function dismissPreviewCandidates(store: MaterialStore, assetId: string, picks: { questionId: string; revision: number }[]): { dismissed: string[]; skipped: string[] } {
   return store.transaction(() => {

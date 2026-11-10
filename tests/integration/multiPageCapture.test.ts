@@ -13,7 +13,7 @@ import { MaterialStore } from '../../src/materials/store.js';
 import { MaterialJobs } from '../../src/materials/jobs.js';
 import { MaterialUploads } from '../../src/materials/uploads.js';
 import { extractMaterial } from '../../src/materials/extraction.js';
-import { dismissPreviewCandidates, selectPreviewCandidates } from '../../src/materials/intakeProgress.js';
+import { dismissPreviewCandidates, readIntakeProgress, selectPreviewCandidates } from '../../src/materials/intakeProgress.js';
 import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
@@ -97,6 +97,70 @@ describe('multi-page capture', () => {
     expect(questions).toHaveLength(1);
     expect(questions[0]!.itemId).toBeNull();
     expect(f.db.prepare('SELECT count(*) n FROM error_item').get()).toEqual({ n: 0 });
+  });
+
+  it('files a located question when extraction later finds a cross and the student did not dismiss it', async () => {
+    const f = await fixture();
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'single' } });
+    const lead = pageExtraction(f.uploads, paper.assetId, 'question', '1. KEEP-MARK 求 x。');
+    const marked = { ...lead, fragments: [lead.fragments[0]!, { ...lead.fragments[0]!, fragmentId: newId('mfr'), role: 'teacher_mark' as const, text: '×', order: 1 }] };
+    await extractMaterial(f.store, { extract: async input => {
+      await input.onProgress?.({ extraction: lead, phase: 'located' });
+      expect(f.store.listQuestions()).toHaveLength(0);
+      return marked;
+    } }, paper.job.id, new AbortController().signal);
+    expect(f.store.listQuestions()).toHaveLength(1);
+    expect(f.store.listQuestions()[0]!.itemId).toBeTruthy();
+    expect(f.db.prepare('SELECT count(*) n FROM error_item').get()).toEqual({ n: 1 });
+  });
+
+  it('does not auto-file a preview dismissed before its question existed, even after a later cross', async () => {
+    const f = await fixture();
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#eee'), hints: { captureMode: 'single' } });
+    const lead = pageExtraction(f.uploads, paper.assetId, 'question', '1. DROP-MARK 求 x。');
+    const fragmentId = lead.fragments[0]!.fragmentId;
+    const marked = { ...lead, fragments: [lead.fragments[0]!, { ...lead.fragments[0]!, fragmentId: newId('mfr'), role: 'teacher_mark' as const, text: '×', order: 1 }] };
+    await extractMaterial(f.store, { extract: async input => {
+      await input.onProgress?.({ extraction: lead, phase: 'located' });
+      expect(f.store.listQuestions()).toHaveLength(0);
+      expect(dismissPreviewCandidates(f.store, paper.assetId, [{ questionId: fragmentId, revision: 1 }])).toEqual({ dismissed: [fragmentId], skipped: [] });
+      expect((f.db.prepare('SELECT count(*) n FROM material_inclusion').get() as { n: number }).n).toBe(0);
+      return marked;
+    } }, paper.job.id, new AbortController().signal);
+    const questions = f.store.listQuestions();
+    expect(questions).toHaveLength(1);
+    expect(questions[0]!.teacherMarks.map(mark => mark.text)).toEqual(['×']);
+    expect(questions[0]!.itemId).toBeNull();
+    expect(f.db.prepare('SELECT count(*) n FROM error_item').get()).toEqual({ n: 0 });
+    expect(f.db.prepare('SELECT included FROM material_inclusion WHERE owner_id=? AND question_id=?').get(f.store.studentId, questions[0]!.id)).toEqual({ included: 0 });
+    expect(readIntakeProgress(f.store).get(paper.assetId)?.dismissed).toContain(fragmentId);
+    expect(f.store.getQuestion(questions[0]!.id)!.itemId).toBeNull();
+  });
+
+  it('records exclusion when the question already exists, and does not remove one that is already filed', async () => {
+    const f = await fixture();
+    const openCapture = f.store.createCapture(randomUUID()).id;
+    const filedCapture = f.store.createCapture(randomUUID()).id;
+    const openPaper = await f.uploads.save({ captureId: openCapture, uploadId: randomUUID(), filename: 'open.jpg', bytes: await f.jpeg('#abc'), hints: { captureMode: 'single' } });
+    const filedPaper = await f.uploads.save({ captureId: filedCapture, uploadId: randomUUID(), filename: 'filed.jpg', bytes: await f.jpeg('#cba'), hints: { captureMode: 'single' } });
+    const openLead = pageExtraction(f.uploads, openPaper.assetId, 'question', '1. OPEN-Q 求 a。');
+    const filedLead = pageExtraction(f.uploads, filedPaper.assetId, 'question', '1. FILED-Q 求 b。');
+    const filedMarked = { ...filedLead, fragments: [filedLead.fragments[0]!, { ...filedLead.fragments[0]!, fragmentId: newId('mfr'), role: 'teacher_mark' as const, text: '×', order: 1 }] };
+    await extractMaterial(f.store, { extract: async input => { await input.onProgress?.({ extraction: openLead, phase: 'located' }); return openLead; } }, openPaper.job.id, new AbortController().signal);
+    await extractMaterial(f.store, { extract: async input => { await input.onProgress?.({ extraction: filedLead, phase: 'located' }); return filedMarked; } }, filedPaper.job.id, new AbortController().signal);
+    const openQuestion = f.store.listQuestions().find(question => question.stem.some(fragment => fragment.text.includes('OPEN-Q')))!;
+    const filedQuestion = f.store.listQuestions().find(question => question.stem.some(fragment => fragment.text.includes('FILED-Q')))!;
+    expect(openQuestion.itemId).toBeNull();
+    expect(filedQuestion.itemId).toBeTruthy();
+    const openFragment = openQuestion.stem.find(fragment => fragment.role === 'question')!.fragmentId;
+    const filedFragment = filedQuestion.stem.find(fragment => fragment.role === 'question')!.fragmentId;
+    expect(dismissPreviewCandidates(f.store, openPaper.assetId, [{ questionId: openFragment, revision: 1 }])).toEqual({ dismissed: [openFragment], skipped: [] });
+    expect(f.db.prepare('SELECT included FROM material_inclusion WHERE owner_id=? AND question_id=?').get(f.store.studentId, openQuestion.id)).toEqual({ included: 0 });
+    expect(f.store.getQuestion(openQuestion.id)!.itemId).toBeNull();
+    const kept = filedQuestion.itemId;
+    expect(dismissPreviewCandidates(f.store, filedPaper.assetId, [{ questionId: filedFragment, revision: 1 }])).toEqual({ dismissed: [], skipped: [filedFragment] });
+    expect(f.store.getQuestion(filedQuestion.id)!.itemId).toBe(kept);
+    expect(f.db.prepare('SELECT count(*) n FROM error_item').get()).toEqual({ n: 1 });
   });
 
   it('holds extract until every page of the set is saved, then treats the pages as one submission', async () => {
