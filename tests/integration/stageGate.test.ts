@@ -10,8 +10,8 @@ import { createStudentHostGateway, type StudentHostGateway } from '../../src/stu
 import { StudentWorkerPool } from '../../src/studentHost/workers.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
 
-/** 选学段页的标题：后半句包在 .q 里保持同一行（见 src/web/views/stage.tsx），所以按渲染后的 HTML 比对。 */
-const STAGE_QUESTION = '<h1>你现在读<span class="q">初中还是高中？</span></h1>';
+/** 选学段页的标题：「初中」「高中」各包在 .q 里保持同一行（见 src/web/views/stage.tsx），所以按渲染后的 HTML 比对。 */
+const STAGE_QUESTION = '<h1>你现在读<span class="q">初中</span>还是<span class="q">高中</span>？</h1>';
 
 const roots: string[] = []; const gateways: StudentHostGateway[] = []; const servers: Server[] = [];
 afterEach(async () => {

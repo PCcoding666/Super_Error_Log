@@ -47,8 +47,9 @@
 @media (prefers-color-scheme: dark) { .home-search { --background: #1c1c1e; } }
 .intake-hint { margin-top: 12px; }
 .group-label { margin: 24px 20px 6px; font-size: 14px; font-weight: 600; color: var(--sel-muted); padding: 0; min-height: 0; }
-/* 设置页的分组标题和下面卡片里的文字左对齐：inset 列表外边距 16px + 行内边距 16px。 */
-ion-list-header.group-label { --background: transparent; margin-left: 32px; }
+/* 设置页的分组标题和下面卡片里的文字左对齐：inset 列表外边距 16px + 行内边距 16px；
+   行内边距含横屏时的安全区，这里也带上。 */
+ion-list-header.group-label { --background: transparent; margin-left: calc(32px + var(--ion-safe-area-left, 0px)); }
 .notebook-list { background: transparent; padding: 0 4px; }
 .notebook-list ion-item.notebook-row { --background: transparent; --padding-start: 16px; --inner-padding-end: 12px; --min-height: 64px; --border-color: var(--sel-line); }
 .notebook-row h2 { font-size: 20px; font-weight: 600; line-height: 1.3; margin: 10px 0 4px; }
@@ -117,6 +118,12 @@ button.fab-circle { padding: 0; }
 .capture-choice-option b { font-size: 17px; }
 .capture-choice-option small { color: var(--sel-muted); font-size: 13px; font-weight: 400; }
 .capture-choice-option:has(:focus-visible) { outline: 3px solid var(--ion-color-primary); outline-offset: 2px; }
+/* 不认识 :has() 的旧内核（Chrome 105、Safari 15.4 之前）退回原来的 :focus-within：
+   触屏后框会留着，但键盘用户始终看得到焦点在哪。 */
+@supports not selector(:has(*)) {
+  .pick-button:focus-within, .fab-circle:focus-within { outline: 3px solid var(--ion-color-primary); outline-offset: 3px; }
+  .capture-choice-option:focus-within { outline: 3px solid var(--ion-color-primary); outline-offset: 2px; }
+}
 .capture-choice-cancel { display: block; width: 100%; margin-top: 8px; min-height: 48px; border: 0; background: transparent; color: var(--ion-color-primary); font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; }
 @media (prefers-color-scheme: dark) {
   .capture-mode-bar { background: rgba(255, 255, 255, .18); }

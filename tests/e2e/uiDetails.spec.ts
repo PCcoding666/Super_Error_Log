@@ -172,11 +172,17 @@ test('选学段页的标题在窄屏上不把「初中」「高中」拆成两�
     for (const word of ['初中', '高中']) {
       if (!layout.lines.some(line => line.includes(word))) problems.push(`${seen}，「${word}」被拆开了`);
     }
-    // 不换行的后半句不能把标题顶出屏幕。
+    // 不换行的词不能把标题顶出屏幕。
     if (layout.right > width || layout.pageWidth > width) problems.push(`${seen}，标题右边到 ${layout.right}，页面宽 ${layout.pageWidth}`);
   }
   // 每个宽度都量完再报，一次能看到哪些宽度有问题。
   expect(problems).toEqual([]);
+  // 服务端页面一直按「320 宽 + 字号放大到 200%」验收不横向溢出（rootPageLayout.spec.ts）。
+  // 不换行的片段只能是两个字的词；包住半句话的话，这里会多出一百多像素的横向滚动。
+  await page.setViewportSize({ width: 320, height: 760 });
+  await page.evaluate(() => document.documentElement.style.setProperty('font-size', '200%'));
+  await expect(heading).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), '320 宽、字号 200% 时页面不该横向溢出').toBeLessThanOrEqual(1);
 });
 
 test('设置页的分组标题和下面卡片里的文字左对齐', async ({ page, gateway }) => {
