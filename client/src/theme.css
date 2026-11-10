@@ -270,6 +270,26 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .md-math-block { margin: 8px 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .md-math math { font-size: 1.05em; }
 
+/* ---------- 骨架：数据返回前的占位，形状跟真实内容对应 ---------- */
+.sk-title, .sk-subtitle, .sk-list ion-skeleton-text, .sk-item ion-skeleton-text { display: block; margin: 0; --border-radius: 6px; }
+.sk-title { width: 92px; height: 40px; margin: 4px 0; }
+.sk-subtitle { width: 136px; height: 15px; margin: 3px 0; }
+.sk-list { margin-top: 30px; padding: 0 20px; }
+.sk-row { padding: 14px 0; border-bottom: 1px solid var(--sel-line); }
+.sk-row ion-skeleton-text { width: 58%; height: 17px; }
+.sk-row ion-skeleton-text + ion-skeleton-text { width: 86%; height: 13px; margin-top: 10px; }
+.sk-row:nth-child(2) ion-skeleton-text:first-child { width: 42%; }
+.sk-row:nth-child(3) ion-skeleton-text:first-child { width: 66%; }
+.sk-row:nth-child(4) ion-skeleton-text:first-child { width: 36%; }
+.sk-item .sk-item-title { width: 112px; height: 28px; margin: 12px 20px 8px; }
+.sk-item .sk-item-subtitle { width: 176px; height: 15px; margin: 0 20px 16px; }
+.sk-card { margin: 0 20px 16px; padding: 20px; border-radius: 16px; background: var(--ion-item-background); }
+.sk-card ion-skeleton-text { width: 94%; height: 16px; }
+.sk-card ion-skeleton-text + ion-skeleton-text { width: 80%; margin-top: 14px; }
+.sk-card ion-skeleton-text:last-child { width: 48%; }
+/* 系统开了「减弱动态效果」时不闪动，只留静止的占位。 */
+@media (prefers-reduced-motion: reduce) { .sk-title, .sk-subtitle, .sk-list ion-skeleton-text, .sk-item ion-skeleton-text { animation: none; } }
+
 /* ---------- 设置 ---------- */
 .page-title { font-size: 34px; font-weight: 700; margin: 8px 20px 16px; }
 .version { text-align: center; color: var(--sel-muted); font-size: 13px; margin: 28px 0; }
