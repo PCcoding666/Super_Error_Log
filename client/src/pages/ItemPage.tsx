@@ -1,6 +1,6 @@
 import {
   IonActionSheet, IonBackButton, IonButton, IonButtons, IonContent, IonHeader, IonIcon, IonInput, IonItem, IonLabel, IonList, IonModal, IonPage, IonPopover, IonSelect, IonSelectOption,
-  IonTextarea, IonTitle, IonToast, IonToolbar,
+  IonSkeletonText, IonTextarea, IonTitle, IonToast, IonToolbar,
 } from '@ionic/react';
 import { cameraOutline, chevronBack, ellipsisHorizontal } from 'ionicons/icons';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -197,6 +197,14 @@ export function ItemPage(): ReactNode {
         </IonList>
       </IonPopover>
       {error ? <Problem message={error.message} requestId={error.requestId} onRetry={() => void reload()} /> : null}
+      {/* 数据返回前先画出页面的形状：标题、题目卡片、一组列表行。出错时让位给上面的 Problem。
+          这一页加载时没有别的文字，所以占位本身带一句读屏能念出来的状态。 */}
+      {!data && !error ? <div className="sk-item" data-testid="item-skeleton" role="status" aria-label="正在加载题目">
+        <IonSkeletonText animated className="sk-item-title" />
+        <IonSkeletonText animated className="sk-item-subtitle" />
+        <div className="sk-card"><IonSkeletonText animated /><IonSkeletonText animated /><IonSkeletonText animated /></div>
+        <div className="sk-card"><IonSkeletonText animated /><IonSkeletonText animated /></div>
+      </div> : null}
       {data && item ? <>
         <h1 className="item-title">{item.chapter}</h1>
         <p className="item-subtitle" data-testid="item-category">{[item.shortId, item.grade, item.subject].filter(Boolean).join(' · ')}</p>
@@ -250,7 +258,7 @@ export function ItemPage(): ReactNode {
             </IonLabel>
           </IonItem>
           <IonItem lines="none">
-            <IonTextarea label="我的备注" labelPlacement="stacked" autoGrow rows={2} maxlength={1000} placeholder="自己记一下：错在哪、下次注意什么（可以直接说）" value={remark}
+            <IonTextarea label="我的备注" labelPlacement="stacked" autoGrow rows={2} maxlength={1000} placeholder="错在哪？下次注意什么？" value={remark}
               onIonInput={event => editRemark(String(event.detail.value ?? ''))} onIonBlur={() => saveRemark(remark)} data-testid="item-remark" />
           </IonItem>
         </IonList>

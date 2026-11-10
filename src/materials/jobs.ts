@@ -8,7 +8,8 @@ import type { CaptureHints, JobTicket, MaterialJobKind } from './contracts.js';
 import { MaterialStore } from './store.js';
 
 type JobRow = JobTicket & { request_id: string; question_id: string | null; asset_id: string | null; basis_key: string; input_json: string; error: string | null };
-type Failure = { code: string; message: string; retryable: boolean };
+/** `detail`: head of a model body that failed validation (invalid_output); stays in this student's job record, never in logs or responses. */
+type Failure = { code: string; message: string; retryable: boolean; detail?: string };
 export type MaterialStage = { round: number; attempts: number; state: 'running' | 'succeeded' | 'failed'; result?: unknown; error?: Failure; nextAttemptAt?: number };
 export type MaterialExecution = { stages: Record<string, MaterialStage>; retryRequestIds: string[] };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -18,7 +19,8 @@ const ticket = (row: JobTicket): JobTicket => ({ id: row.id, kind: row.kind, sta
 function failure(error: unknown): Failure {
   const candidate = error as Partial<Failure> | null;
   const code = typeof candidate?.code === 'string' ? candidate.code : 'internal';
-  return { code: typeof candidate?.code === 'string' ? candidate.code : 'internal', message: typeof candidate?.message === 'string' ? candidate.message : '处理暂未完成。', retryable: candidate?.retryable === true && !['internal', 'storage_unavailable', 'invalid_image'].includes(code) };
+  const detail = typeof candidate?.detail === 'string' && candidate.detail ? candidate.detail.slice(0, 4000) : undefined;
+  return { code: typeof candidate?.code === 'string' ? candidate.code : 'internal', message: typeof candidate?.message === 'string' ? candidate.message : '处理暂未完成。', retryable: candidate?.retryable === true && !['internal', 'storage_unavailable', 'invalid_image'].includes(code), ...(detail ? { detail } : {}) };
 }
 function paused(): MobileRequestError { return new MobileRequestError(503, 'service_paused', '处理服务已暂停，请稍后重试。', SERVICE_PAUSED_RETRY_SECONDS); }
 

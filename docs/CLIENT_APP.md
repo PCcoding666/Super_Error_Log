@@ -31,6 +31,10 @@
 
 下发：worker 在 `/s/`、`/s/new`、`/s/me`、`/s/q/:id` 返回页面壳（登录之后）；网关和 worker 共用的公开静态路由 `/s/app/assets/<file>` 返回指纹资源，长期缓存。
 
+压缩：`vite build` 结束时把 `assets/` 里 1 KB 以上的 `.js`、`.css`、`.svg`、`.json` 预先压好，`.br` 和 `.gz` 放在原文件旁边（`client/vite.config.ts` 的 `precompress`；watch 模式不压）。`sendClientAsset` 按请求的 `Accept-Encoding` 选 br 或 gzip，回 `content-encoding` 和 `vary: accept-encoding`；没有压缩件或浏览器不接受时发原文件。压缩件本身不能直接请求（404）。主脚本约 1.5 MB，gzip 后约 340 KB，br 后约 260 KB。Caddy 没有开 `encode`，接口的 JSON 仍然不压缩。
+
+骨架：首页和详情页在第一份数据返回前先画占位（`home-skeleton`、`item-skeleton`，样式是 `theme.css` 的 `.sk-*`）；数据到了换成内容，出错时让位给 `Problem`。之后的刷新保留旧数据，不再显示骨架。
+
 ## 接口（/s/api）
 
 | 方法 路径 | 说明 |
