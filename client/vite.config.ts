@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { env } from 'node:process';
@@ -23,8 +23,10 @@ function precompress(): Plugin {
         const file = path.join(options.dir, fileName);
         const source = readFileSync(file);
         if (source.length < 1024) continue;
-        writeFileSync(`${file}.br`, brotliCompressSync(source, { params: { [zlib.BROTLI_PARAM_QUALITY]: zlib.BROTLI_MAX_QUALITY, [zlib.BROTLI_PARAM_SIZE_HINT]: source.length } }));
-        writeFileSync(`${file}.gz`, gzipSync(source, { level: 9 }));
+        // 先写到临时名再改名：构建中途被打断时，不会留下一份写了一半却叫 .br 的文件被当成完整的发出去。
+        const write = (target: string, bytes: Buffer): void => { writeFileSync(`${target}.tmp`, bytes); renameSync(`${target}.tmp`, target); };
+        write(`${file}.br`, brotliCompressSync(source, { params: { [zlib.BROTLI_PARAM_QUALITY]: zlib.BROTLI_MAX_QUALITY, [zlib.BROTLI_PARAM_SIZE_HINT]: source.length } }));
+        write(`${file}.gz`, gzipSync(source, { level: 9 }));
       }
     },
   };

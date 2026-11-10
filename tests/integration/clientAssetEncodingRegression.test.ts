@@ -113,6 +113,8 @@ beforeAll(async () => {
   const shell = fs.readFileSync(path.join(clientDir, 'index.html'), 'utf8');
   script = /\/s\/app\/assets\/(index-[\w-]+\.js)/.exec(shell)![1]!;
   style = /\/s\/app\/assets\/(index-[\w-]+\.css)/.exec(shell)![1]!;
+  // client:watch 不压缩，旧的 dist/client 也没有压缩件：这时直接说清楚要做什么。
+  expect(fs.existsSync(path.join(assets, `${script}.br`)), '没有预压缩件：先做一次完整构建 npm run build（client:watch 不压缩）').toBe(true);
 
   // 网关：没有学生、没有会话，worker 进程一个也不会起。
   const hostDir = tmp('sel-asset-host-');
@@ -493,6 +495,13 @@ describe('合成目录：构建产物里没有的情况', () => {
     write('dir-br-00000001.js', body('dir-br'));
     fs.mkdirSync(path.join(dir, 'dir-br-00000001.js.br'));
     write('dir-br-00000001.js.gz', gzipSync(body('dir-br')));
+    // 读不到的文件（权限被收走）。独立审查指出：先写缓存头再读文件的话，读失败的 500 会带着「缓存一年」和 content-encoding 发出去。
+    write('locked-br-00000001.js', body('locked-br'));
+    write('locked-br-00000001.js.br', brotliCompressSync(body('locked-br')));
+    fs.chmodSync(path.join(dir, 'locked-br-00000001.js.br'), 0o000);
+    write('locked-br-00000001.js.gz', gzipSync(body('locked-br')));
+    write('locked-all-00000001.js', body('locked-all'));
+    fs.chmodSync(path.join(dir, 'locked-all-00000001.js'), 0o000);
     // svg 和 json：真实构建里暂时没有。
     for (const name of ['icon-00000001.svg', 'data-00000001.json']) {
       write(name, body(name));
@@ -508,6 +517,27 @@ describe('合成目录：构建产物里没有的情况', () => {
     const app = express();
     app.get('/s/app/assets/:file', fresh.sendClientAsset);
     port = await listen(app);
+  });
+
+  // root 读文件不看权限位，这两种情况造不出来。
+  it.skipIf(process.getuid?.() === 0)('压缩件读不到时换下一份；原文件也读不到时是 404，不带缓存一年和 content-encoding', async () => {
+    const fallback = await send(port, asset('locked-br-00000001.js'), { 'accept-encoding': 'br, gzip' });
+    expect(fallback.status).toBe(200);
+    expect(fallback.headers['content-encoding']).toBe('gzip');
+    expect(fallback.headers['cache-control']).toBe(IMMUTABLE);
+    expect(gunzipSync(fallback.body).equals(body('locked-br'))).toBe(true);
+    // 只认 br 的浏览器：br 读不到，退到原文件，不能声明 content-encoding。
+    const identity = await send(port, asset('locked-br-00000001.js'), { 'accept-encoding': 'br' });
+    expect(identity.status).toBe(200);
+    expect(identity.headers['content-encoding']).toBeUndefined();
+    expect(identity.body.equals(body('locked-br'))).toBe(true);
+    for (const header of ['br, gzip', undefined]) {
+      const missing = await send(port, asset('locked-all-00000001.js'), header ? { 'accept-encoding': header } : {});
+      expect(missing.status, String(header)).toBe(404);
+      expect(missing.headers['cache-control'], String(header)).not.toBe(IMMUTABLE);
+      expect(missing.headers['content-encoding'], String(header)).toBeUndefined();
+      expect(missing.body.toString(), String(header)).toBe('not found');
+    }
   });
 
   it('png / woff2 / woff / map：旁边就算有压缩件也发原文件，不带 Vary 和 content-encoding', async () => {

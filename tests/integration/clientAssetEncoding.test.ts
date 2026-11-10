@@ -26,6 +26,8 @@ beforeAll(async () => {
   const shell = fs.readFileSync(path.join(dir!, 'index.html'), 'utf8');
   script = /\/s\/app\/assets\/(index-[\w-]+\.js)/.exec(shell)![1]!;
   style = /\/s\/app\/assets\/(index-[\w-]+\.css)/.exec(shell)![1]!;
+  // client:watch 不压缩，旧的 dist/client 也没有压缩件：这时直接说清楚要做什么，而不是让下面的用例一条条红。
+  expect(fs.existsSync(path.join(assets, `${script}.br`)), '没有预压缩件：先做一次完整构建 npm run build（client:watch 不压缩）').toBe(true);
   const app = express();
   app.get('/s/app/assets/:file', sendClientAsset);
   server = app.listen(0, '127.0.0.1');

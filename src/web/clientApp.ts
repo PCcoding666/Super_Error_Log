@@ -34,6 +34,11 @@ function isFile(file: string): boolean {
   return existsSync(file) && statSync(file).isFile();
 }
 
+/** 读得到就给字节；读不到（不存在、是目录、没权限、正被构建清空）给 null，由调用方换下一份。 */
+function readFileOrNull(file: string): Buffer | null {
+  try { return statSync(file).isFile() ? readFileSync(file) : null; } catch { return null; }
+}
+
 /** Accept-Encoding 里点名接受（q 不为 0）的编码。`*` 不算：只发浏览器明说能解的。 */
 export function acceptedEncodings(header: string | string[] | undefined): Set<string> {
   const accepted = new Set<string>();
@@ -61,23 +66,30 @@ export function sendClientAsset(request: Request, response: Response): void {
   const extension = path.extname(name).toLowerCase();
   const type = MIME[extension];
   if (!type) { response.status(404).type('text').send('not found'); return; }
+  // 先把要发的字节读到手，再写缓存头。反过来的话，读文件失败时错误响应会带着「缓存一年」和 content-encoding 发出去。
+  // 某一份压缩件读不到就换下一份，最后退到原文件。
+  const compressible = COMPRESSIBLE.has(extension);
+  let body: Buffer | null = null;
+  let encoding: string | null = null;
+  if (compressible) {
+    const accepted = acceptedEncodings(request.headers['accept-encoding']);
+    for (const [candidate, suffix] of PRECOMPRESSED) {
+      if (!accepted.has(candidate)) continue;
+      body = readFileOrNull(file + suffix);
+      if (body) { encoding = candidate; break; }
+    }
+  }
+  body ??= readFileOrNull(file);
+  if (!body) { response.status(404).type('text').send('not found'); return; }
   response.setHeader('cache-control', 'public, max-age=31536000, immutable');
   // 外层给所有响应加了 pragma: no-cache（src/mobile/router.ts）。Safari 见到它会把这份指纹资源当成 no-cache，
   // 每次打开都回源确认一遍，immutable 就白写了。和旧页面资源的 cacheFor() 一样，在这里去掉。
   response.removeHeader('pragma');
   response.setHeader('content-type', type);
-  if (COMPRESSIBLE.has(extension)) {
-    // 同一个地址会按请求头给出不同的字节，中间缓存要按 Accept-Encoding 分开存。
-    response.vary('Accept-Encoding');
-    const accepted = acceptedEncodings(request.headers['accept-encoding']);
-    for (const [encoding, suffix] of PRECOMPRESSED) {
-      if (!accepted.has(encoding) || !isFile(file + suffix)) continue;
-      response.setHeader('content-encoding', encoding);
-      response.send(readFileSync(file + suffix));
-      return;
-    }
-  }
-  response.send(readFileSync(file));
+  // 同一个地址会按请求头给出不同的字节，中间缓存要按 Accept-Encoding 分开存。
+  if (compressible) response.vary('Accept-Encoding');
+  if (encoding) response.setHeader('content-encoding', encoding);
+  response.send(body);
 }
 
 /** 单页应用自己的路由（相对 /s）；其余路径仍由服务端页面处理。 */
