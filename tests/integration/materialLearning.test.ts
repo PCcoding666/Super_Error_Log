@@ -228,3 +228,11 @@ it('does not change real synthetic source bytes during a transcript correction',
   expect(createHash('sha256').update(readFileSync(file)).digest('hex')).toBe(hash);expect(store.getQuestion(question)!.stem[0]!.sourceHash).toBe(hash);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
+
+it.each(['unchecked','failed','low','missing-diagram'] as const)('does not auto-file a verified cross over an untrusted %s stem', kind => {
+ const {store,question,add}=fixture();
+ add('question','如图求角度',question,null,{check:kind==='missing-diagram'?'passed':kind,requiresDiagram:kind==='missing-diagram'});
+ add('teacher_mark','×');
+ syncMaterialLearning(store);
+ expect(store.getQuestion(question)!.itemId).toBeNull();
+});

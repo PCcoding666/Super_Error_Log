@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { saveIntakeProgress, completeIntakeProgress } from './intakeProgress.js';
 import { isDeepStrictEqual } from 'node:util';
 import { SET_PAGE_MISSING } from './captureHints.js';
 import type { CaptureHints, Extraction } from './contracts.js';
@@ -84,7 +85,14 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
   try {
     let result: ExtractedMaterial; let partial: PartialMaterialExtractionError | undefined;
     const sent = leadRun ? pages : undefined;
-    try { result = await provider.extract({ assetId: row.asset_id, revision: row.revision, bytes: await fs.readFile(row.storage_path), hints, pages: sent }, signal); }
+    try { result = await provider.extract({ assetId: row.asset_id, revision: row.revision, bytes: await fs.readFile(row.storage_path), hints, pages: sent, onProgress: update => {
+      signal.throwIfAborted();
+      const target = update.extraction.assetId === source.assetId ? source : sent?.find(page => page.assetId === update.extraction.assetId);
+      if (!target?.sourceHash) throw new Error('Progress named a page outside this extraction');
+      const current = input(store, jobId);
+      if (current.revision !== row.revision || current.sourceHash !== row.sourceHash) throw new Error('Extraction source changed');
+      saveIntakeProgress(store, jobId, update, target.sourceHash);
+    } }, signal); }
     catch (error) { if (!(error instanceof PartialMaterialExtractionError)) throw error; partial = error; result = error.extraction; }
     signal.throwIfAborted();
     const bundle = leadRun && result.set?.length ? result.set : [result];
@@ -120,13 +128,19 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
     });
     if (!persisted) return;
     for (const assetId of persisted) covered.add(assetId);
-    for (const extraction of bundle) {
+    const storedBundle = bundle.map(extraction => {
       const stored = { ...extraction }; delete (stored as ExtractedMaterial).set;
-      if (stored.fragments.length) {
-        if (reconcile) await reconcile(extraction.assetId, stored);
+      return stored;
+    });
+    for (const extraction of storedBundle) {
+      if (extraction.fragments.length) {
+        if (reconcile) await reconcile(extraction.assetId, extraction);
         else reconcileAsset(store, extraction.assetId);
       }
     }
+    // A later page may attach a same-question diagram or continuation. Evaluate
+    // saved selections only after every page in this result has been reconciled.
+    for (const extraction of storedBundle) completeIntakeProgress(store, jobId, extraction, !!partial);
     if (partial) throw partial.failure;
   } finally {
     if (leadRun && !signal.aborted) settleUncoveredFollowers(store, row.asset_id, covered);

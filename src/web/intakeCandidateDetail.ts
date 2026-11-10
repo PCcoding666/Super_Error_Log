@@ -1,3 +1,5 @@
+import { findPreview } from '../materials/intakeProgress.js';
+import { previewCrop, previewStatus } from './intakeProgressView.js';
 import type { QuestionBundle, ReferenceAnswer } from '../materials/contracts.js';
 import { learningObservationFragments } from '../materials/learning.js';
 import { readQuestion } from '../materials/queries.js';
@@ -17,6 +19,16 @@ export type IntakeDetailResult =
 export function readIntakeCandidateDetail(store: MaterialStore, questionId: string, revision: number): IntakeDetailResult {
   if (!QUESTION_ID.test(questionId) || !Number.isSafeInteger(revision) || revision < 1) {
     return { ok: false, status: 400, code: 'invalid_request', message: '勾选信息不可用，请刷新后再试。' };
+  }
+  const preview = findPreview(store, questionId, revision);
+  if (preview) {
+    const { progress, fragment } = preview;
+    const q = store.listQuestions().find(q => q.stem.some(f => f.fragmentId === fragment.fragmentId));
+    if (q && progress.phase === 'done') return { ok: true, detail: { ...toDetail(store, q), id: questionId, revision, status: previewStatus(progress, fragment, q) } };
+    return { ok: true, detail: { id: questionId, revision, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',
+      subject: progress.extraction.document.subject, status: previewStatus(progress, fragment, q),
+      stem: [{ role: 'question', text: fragment.text, number: fragment.number, check: fragment.check, uncertainties: fragment.uncertainties, requiresDiagram: fragment.requiresDiagram }],
+      crop: previewCrop(questionId, revision), source: `/s/materials/assets/${fragment.assetId}/image`, work: [], marks: [], answers: [], grades: [] } };
   }
   const question = readQuestion(store, questionId);
   if (!question) return { ok: false, status: 404, code: 'not_found', message: '题目不存在。' };

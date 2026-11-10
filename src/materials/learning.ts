@@ -1,10 +1,11 @@
+import { expectedIntakeStem } from './intakeProgressState.js';
 import { SUBJECTS, type Subject } from '../domain/types.js';
 import { newId, now } from '../db/connection.js';
 import { MobileRequestError } from '../mobile/service.js';
 import type { MaterialStore } from './store.js';
 import { questionExcerpt } from '../text/stemBlocks.js';
 import { unsupportedSubject } from './subjects.js';
-import { effectiveQuestionStem, readQuestion, resolveQuestionId } from './queries.js';
+import { diagramCovers, effectiveQuestionStem, readQuestion, resolveQuestionId } from './queries.js';
 
 /** Intent is retained on original identities. Association combines choices with exclusion priority.
  * An explicit choice on the merged question updates its entire current alias family; undo then
@@ -105,9 +106,18 @@ export function sortQuestions<T extends import('./contracts.js').QuestionBundle>
    ||x.photo-y.photo||a.id.localeCompare(b.id);
  });
 }
+/** Automatic filing and early selections need a verified, complete source stem.
+ * Explicit inclusion of an already extracted low-confidence question keeps its v2 policy. */
+export function verifiedMaterialStem(q:import('./contracts.js').QuestionBundle, expected:import('./contracts.js').Fragment[]=[]):boolean {
+ return !unsupportedSubject(q.subject)&&!q.missing.includes('stem')&&!q.missing.includes('diagram')
+  &&q.stem.some(f=>f.role==='question'&&!!f.text.trim())
+  &&q.stem.every(f=>f.check==='passed'&&!f.uncertainties.length)
+  &&q.stem.filter(f=>f.role==='question'&&f.requiresDiagram).every(f=>q.stem.some(d=>diagramCovers(f,d)))
+  &&expected.every(f=>q.stem.some(s=>s.fragmentId===f.fragmentId&&s.sourceHash===f.sourceHash&&s.role===f.role));
+}
 function automaticMistake(store:MaterialStore,questionId:string):boolean {
  const q=readQuestion(store,questionId)!;
- if(unsupportedSubject(q.subject)) return false;
+ if(!verifiedMaterialStem(q,expectedIntakeStem(store,q))) return false;
  if(q.grades.some(g=>!g.stale&&(g.result==='incorrect'||g.result==='partial'||(!!g.score&&typeof g.score.total==="number"&&g.score.total>0&&g.score.earned<g.score.total)))) return true;
  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
  return q.teacherMarks.some(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansWrong(f.text,full));
