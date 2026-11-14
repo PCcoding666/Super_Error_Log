@@ -26,6 +26,7 @@ Copy every flag and quoted string after it unchanged. Do not reimplement the act
 ## Driving conventions
 
 - Start every recipe from the baseline state unless its preconditions say otherwise.
+- `drive` commands share one browser page until `cleanup`. `drive open /s/` followed by `drive secret` fills the page the first command opened.
 - Prefer the role, accessible name, or `data-testid` the command already names. Do not switch to a CSS selector or a screen coordinate.
 - After a mutation, prove the result from a second user-facing view (reload, another entry point, or a later screen), not only from a toast.
 - `sel-verify drive secret` is the only way to type an invite code. Do not print the code, put it in a command you might commit, or screenshot a field that still shows it.

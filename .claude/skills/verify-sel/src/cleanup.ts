@@ -1,8 +1,9 @@
 import { readdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { stopBrowser } from './browserClient.js';
 import { removeInstance, readInstance } from './instance.js';
 import { alive } from './proc.js';
-import { evidenceDir, launchErrorPath, runDir, serverLogPath, sessionDir } from './paths.js';
+import { browserErrorPath, evidenceDir, launchErrorPath, runDir, serverLogPath, sessionDir } from './paths.js';
 
 function signalPid(pid: number, signal: NodeJS.Signals): void {
   try { process.kill(pid, signal); } catch { /* already gone */ }
@@ -44,8 +45,10 @@ function statExists(dir: string): boolean {
  * Evidence files stay where they are.
  */
 export async function cleanup(): Promise<CleanupReport> {
+  const browserPid = await stopBrowser();
   const instance = readInstance();
   const stopped: number[] = [];
+  if (browserPid) stopped.push(browserPid);
   const pids = [instance?.supervisorPid, instance?.serverPid].filter((pid): pid is number => typeof pid === 'number');
   if (instance && alive(instance.supervisorPid)) signalPid(instance.supervisorPid, 'SIGTERM');
   if (instance && !(await waitDead(instance.supervisorPid, 8_000))) signalPid(instance.supervisorPid, 'SIGKILL');
@@ -61,7 +64,8 @@ export async function cleanup(): Promise<CleanupReport> {
   rmSync(sessionDir, { recursive: true, force: true });
   rmSync(serverLogPath, { force: true });
   rmSync(launchErrorPath, { force: true });
-  const still = pids.filter(pid => alive(pid));
+  rmSync(browserErrorPath, { force: true });
+  const still = [...pids, ...(browserPid ? [browserPid] : [])].filter(pid => alive(pid));
   return {
     ok: still.length === 0,
     stopped,

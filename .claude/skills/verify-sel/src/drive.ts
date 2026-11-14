@@ -1,7 +1,6 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
-import { doctor } from './doctor.js';
 import { syntheticJpeg } from './jpeg.js';
 import { assertSafeBase, readInstance, slotValue, type VerifyInstance } from './instance.js';
 import { evidenceDir, IPHONE_SAFARI, storageStatePath } from './paths.js';
@@ -47,49 +46,7 @@ interface LogLine {
 
 const DEFAULT_TIMEOUT = 15_000;
 
-export async function driveScript(file: string, fallbackFeature: string): Promise<{ ok: true; steps: number; trace: string }> {
-  const ops = JSON.parse(readFileSync(file, 'utf8')) as DriveOp[];
-  if (!Array.isArray(ops)) throw new Error('drive script must be a JSON array');
-  const report = await doctor();
-  if (!report.ok) throw new Error(`doctor failed: ${report.reasons.join('; ')}`);
-  const instance = readInstance();
-  if (!instance) throw new Error('instance disappeared after doctor');
-  const session = await DriveSession.open(instance);
-  const trace = path.join(evidenceDir, 'trace.zip');
-  mkdirSync(evidenceDir, { recursive: true });
-  await session.context.tracing.start({ screenshots: false, snapshots: true, sources: false });
-  try {
-    for (let index = 0; index < ops.length; index += 1) {
-      const op = ops[index]!;
-      try {
-        await session.run(op, fallbackFeature);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await session.failureShot(message, index, op);
-        throw new Error(`step ${index} (${op.op}) failed: ${message}`);
-      }
-    }
-  } finally {
-    await session.context.tracing.stop({ path: trace }).catch(() => undefined);
-    await session.close();
-  }
-  return { ok: true, steps: ops.length, trace };
-}
-
-export async function driveOne(op: DriveOp): Promise<LogLine> {
-  const report = await doctor();
-  if (!report.ok) throw new Error(`doctor failed: ${report.reasons.join('; ')}`);
-  const instance = readInstance();
-  if (!instance) throw new Error('instance disappeared after doctor');
-  const session = await DriveSession.open(instance);
-  try {
-    return await session.run(op, op.feature ?? 'drive');
-  } finally {
-    await session.close();
-  }
-}
-
-class DriveSession {
+export class DriveSession {
   readonly consoleErrors: string[] = [];
   readonly networkErrors: string[] = [];
   private consoleCursor = 0;
@@ -267,16 +224,18 @@ class DriveSession {
       }
       throw new Error(`still visible after ${timeout}ms`);
     }
+    if (op.testid && op.text) {
+      // Retry until the text appears. A status can be visible as 保存中… before it becomes 已保存.
+      const loc = nth(this.page.getByTestId(op.testid), op.nth).filter({ hasText: op.text });
+      await loc.first().waitFor({ state: 'visible', timeout });
+      return this.record(op, 'visible');
+    }
     const target = op.heading
       ? this.page.getByRole('heading', { name: op.heading, exact: op.exact ?? true }).first()
-      : op.text && !op.testid
+      : op.text
         ? this.page.getByText(op.text, { exact: op.exact }).first()
         : await this.one(this.locate(op));
     await target.waitFor({ state: 'visible', timeout });
-    if (op.text && op.testid) {
-      const body = await target.innerText();
-      if (!body.includes(op.text)) throw new Error(`visible, but text did not include ${JSON.stringify(op.text)}`);
-    }
     return this.record(op, 'visible');
   }
 

@@ -48,9 +48,9 @@ A rebuilt client is noted and still served, because the host reads `index.html` 
 
 ## Drive
 
-Doctor runs at the start of every drive. One `drive` command is one browser action. `drive script --file <path>` runs a JSON array in one browser session and writes `artifacts/verify-sel/evidence/trace.zip`.
+Doctor runs at the start of every drive. One `drive` command is one browser action. The first drive starts a browser host and leaves it running. Later commands, including a command in another process, continue on that same page: URL, form values, history, and open overlays stay. `cleanup` closes the host. `drive script --file <path>` runs a JSON array on that page and writes `artifacts/verify-sel/evidence/trace.zip`.
 
-The browser is Playwright Chromium, headless, 390×844, iPhone Safari user agent, `zh-CN`, `Asia/Shanghai`, service workers blocked. Cookies persist under `artifacts/verify-sel/session/` until cleanup.
+The browser is Playwright Chromium, headless, 390×844, iPhone Safari user agent, `zh-CN`, `Asia/Shanghai`, service workers blocked. On shutdown the host also writes cookies to `artifacts/verify-sel/session/`. A host that was killed without shutdown starts a new page; `open` again.
 
 ```sh
 npx tsx .claude/skills/verify-sel/src/cli.ts drive open /s/
@@ -60,7 +60,7 @@ npx tsx .claude/skills/verify-sel/src/cli.ts drive wait --heading "你现在读�
 npx tsx .claude/skills/verify-sel/src/cli.ts drive shot --feature choose-stage --name gate --entry server-page
 ```
 
-Actions wait for an element, heading, or URL. They do not sleep. `drive files --testid <id>` attaches a generated JPEG. `drive secret` and `drive open-slot` read a code from the instance file and do not print it. `drive swipe` drags; if the row action stays hidden it opens `ion-item-sliding` the way `tests/e2e/intakeDelete.spec.ts` does, and the log says which happened.
+Actions wait for an element, heading, URL, or text. A `wait` that names both a test id and text keeps waiting until that text is present or the timeout expires. They do not sleep. `drive files --testid <id>` attaches a generated JPEG. `drive secret` and `drive open-slot` read a code from the instance file and do not print it. `drive swipe` drags; if the row action stays hidden it opens `ion-item-sliding` the way `tests/e2e/intakeDelete.spec.ts` does, and the log says which happened.
 
 A shot waits for finite CSS animations so an iOS page push is settled. Looping animations, such as a skeleton, do not block it. When several visible controls share a name, the last one in DOM order is used: that is the topmost Ionic sheet while an older sheet is still dismissing.
 
@@ -121,9 +121,9 @@ Do not commit the evidence log or the instance file.
 | --- | --- |
 | `launch` | Build the client if needed, start the synthetic student host, write `artifacts/verify-sel/instance.json`. |
 | `doctor` | Report whether that process is the one to drive. |
-| `drive` | One Playwright action, or `drive script --file`. |
+| `drive` | One action on the persistent page, or `drive script --file` on that same page. |
 | `evidence` | List proof files. |
-| `cleanup` | Stop the server and delete session state. Keep proof files. |
+| `cleanup` | Stop the browser host and the server. Delete session state. Keep proof files. |
 | `maintain` | Source audit of `features/`. |
 
 `examples/learning-loop.json` is the worked script for the four learning-loop features. Viewport, user agent, and waits live in `src/drive.ts`. The server is the existing fixture `tests/e2e/studentHostServer.ts`, not a second implementation.

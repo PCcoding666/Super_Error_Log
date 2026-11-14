@@ -1,7 +1,9 @@
 import path from 'node:path';
+import { browse } from './browserHost.js';
+import { driveOne, driveScript } from './browserClient.js';
 import { cleanup, evidenceSummary } from './cleanup.js';
 import { doctor } from './doctor.js';
-import { driveOne, driveScript, type DriveOp } from './drive.js';
+import type { DriveOp } from './drive.js';
 import { launch, supervise } from './launch.js';
 import { auditFeatureDir } from './maintain.js';
 import { featureDir, repoRoot } from './paths.js';
@@ -15,8 +17,8 @@ Run from the repository root:
 Commands
   launch                         Start the invitation fixture (mock AI, synthetic students) and build the client if dist/client is missing.
   doctor                         Read-only check: our process, 127.0.0.1, mock AI, materials capture, client shell.
-  drive <op> [flags]             One browser action against the launched server. Runs doctor first.
-  drive script --file <path>    Run a JSON array of drive ops in one browser session. Writes a trace.
+  drive <op> [flags]             One browser action on the persistent page. Runs doctor first.
+  drive script --file <path>    Run a JSON array on that same page. Writes a trace.
   evidence                       List proof files. Does not delete them.
   cleanup                        Stop the server this launch started and delete session state. Keeps evidence.
   maintain                       Audit features/ against the source tree. Does not edit files and does not drive.
@@ -111,6 +113,10 @@ async function main(): Promise<void> {
   }
   if (command === 'supervise') {
     await supervise();
+    return;
+  }
+  if (command === 'browse') {
+    await browse();
     return;
   }
   if (command === 'launch') {
