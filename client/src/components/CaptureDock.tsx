@@ -18,7 +18,10 @@ function useCaptureRoute(): CaptureRouteKind | null {
 }
 
 export function CaptureModeSwitch(): ReactNode {
+  const route = useCaptureRoute();
   const { mode } = useCaptureSession();
+  // The old single-page flow has no multi-page tray. The pill stays off until the route is materials.
+  if (route !== 'materials') return null;
   return <div className="capture-mode-switch" data-testid="capture-mode-switch">
     <div className="capture-mode-bar" role="radiogroup" aria-label="拍摄模式" data-testid="capture-mode-bar">
       <button type="button" role="radio" aria-checked={mode === 'single'} data-testid="capture-mode-single" onClick={() => captureSession.setMode('single')}>单页</button>
