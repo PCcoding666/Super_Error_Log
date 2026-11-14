@@ -42,36 +42,33 @@ test('配对后看到错题本，拍照进入录入态，自动收录的题左�
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await pair(page);
   await expect(page.getByTestId('subject-switch')).toContainText('数学');
-  await expect(page.getByTestId('next-step-primary')).toBeVisible();
   await expect(page.getByTestId('corner-search')).toBeVisible();
-  await expect(page.getByTestId('capture-camera')).toBeVisible();
-  await expect(page.getByTestId('capture-album')).toBeVisible();
-  const library = page.locator('#library-input');
+  await expect(page.getByTestId('capture-camera')).toContainText('拍照或从相册选择');
+  await expect(page.getByTestId('capture-album')).toHaveCount(0);
+  await expect(page.getByTestId('next-step-primary')).toHaveCount(0);
   const camera = page.locator('#camera-input');
-  await expect(library).toHaveAttribute('accept', 'image/*');
-  await expect(library).toHaveAttribute('multiple', '');
-  await expect(library).not.toHaveAttribute('capture');
-  await expect(camera).toHaveAttribute('capture', 'environment');
-  await expect(camera).not.toHaveAttribute('multiple');
-  // 右下角和空态上的相册框要有真实面积。裁成 1px 再脚本 click()，小米 WebView 不会弹出相册。
-  for (const input of [library, page.getByTestId('capture-album').locator('input')]) {
-    const box = await input.boundingBox();
-    expect(box?.width ?? 0).toBeGreaterThan(40);
-    expect(box?.height ?? 0).toBeGreaterThan(40);
-  }
-  // 点右下角相册圆钮本身会打开系统选择器，而不是靠脚本去点一个看不见的框。
+  await expect(camera).toHaveAttribute('accept', 'image/*');
+  await expect(camera).toHaveAttribute('multiple', '');
+  await expect(camera).not.toHaveAttribute('capture');
+  await expect(page.locator('#library-input')).toHaveCount(0);
+  // 入口铺满按钮。裁成 1px 再脚本 click()，小米 WebView 不会弹出相册。
+  const box = await camera.boundingBox();
+  expect(box?.width ?? 0).toBeGreaterThan(40);
+  expect(box?.height ?? 0).toBeGreaterThan(40);
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    library.click(),
+    camera.click(),
   ]);
   expect(chooser.isMultiple()).toBe(true);
   // 一张有批改痕迹（偏红）、一张没有（偏蓝）。
   await chooser.setFiles([await synthetic('#efb7b2'), await synthetic('#b0d3e0')]);
   await expect.poll(() => url(page)).toBe('/s/new');
-  await expect(page.getByTestId('intake-album').locator('input')).not.toHaveAttribute('capture');
-  await expect(page.getByTestId('intake-camera').locator('input')).toHaveAttribute('capture', 'environment');
-  const intakeAlbum = await page.getByTestId('intake-album').locator('input').boundingBox();
-  expect(intakeAlbum?.width ?? 0).toBeGreaterThan(40);
+  await expect(page.getByTestId('intake-album')).toHaveCount(0);
+  const intakeCamera = page.getByTestId('intake-camera').locator('input');
+  await expect(intakeCamera).not.toHaveAttribute('capture');
+  await expect(intakeCamera).toHaveAttribute('multiple', '');
+  const intakeBox = await intakeCamera.boundingBox();
+  expect(intakeBox?.width ?? 0).toBeGreaterThan(40);
   const marked = page.locator('section.intake-photo[data-state="done"]');
   await expect(marked).toHaveCount(1, { timeout: 40_000 });
   await expect(marked.getByTestId('intake-question')).toHaveCount(3);

@@ -110,7 +110,7 @@ async function main(): Promise<void> {
 
     await page.getByTestId('empty-notebook').waitFor();
     await page.locator('[data-testid="capture-dock"]:visible').waitFor();
-    await page.waitForFunction(() => document.querySelector('[data-testid="capture-dock"]')?.getAttribute('data-capture-choice') === 'choice');
+    await page.waitForFunction(() => document.querySelector('[data-testid="capture-dock"]')?.getAttribute('data-capture-choice') === 'direct');
     await page.waitForTimeout(400);
     await save(page, 'notebook-empty');
 
@@ -129,7 +129,7 @@ async function main(): Promise<void> {
     await page.locator('.capture-inline').waitFor();
     await page.waitForFunction(() => {
       const dock = document.querySelector('.capture-inline');
-      return dock?.getAttribute('data-capture-choice') === 'choice' && !dock.querySelector('[data-testid="capture-mode-bar"]');
+      return dock?.getAttribute('data-capture-choice') === 'direct' && Boolean(dock.querySelector('[data-testid="capture-mode-bar"]'));
     });
     const pick = page.locator('section.intake-photo[data-state="needsPick"]').first();
     await pick.waitFor({ timeout: 60_000 });

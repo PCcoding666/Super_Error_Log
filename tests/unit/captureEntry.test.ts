@@ -1,22 +1,31 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { captureEntryAction, pickedFileDestination, showCaptureModeBar } from '../../client/src/lib/captureEntry.js';
+import { captureEntryAction, iosOffersCameraAndLibrary, pickedFileDestination, showCaptureModeBar } from '../../client/src/lib/captureEntry.js';
 
 describe('capture entry', () => {
-  it('hides the mode bar until a materials tray exists, and asks before the first shot', () => {
+  it('shows the mode pill before the first materials shot, and keeps the picker off that control', () => {
     expect(showCaptureModeBar(null, 0)).toBe(false);
     expect(showCaptureModeBar('legacy', 0)).toBe(false);
     expect(showCaptureModeBar('legacy', 2)).toBe(false);
-    expect(showCaptureModeBar('materials', 0)).toBe(false);
+    expect(showCaptureModeBar('materials', 0)).toBe(true);
     expect(showCaptureModeBar('materials', 1)).toBe(true);
 
     expect(captureEntryAction(null, 0, 'multi')).toBe('direct');
     expect(captureEntryAction('legacy', 0, 'single')).toBe('direct');
-    expect(captureEntryAction('materials', 0, 'single')).toBe('choice');
-    expect(captureEntryAction('materials', 0, 'multi')).toBe('choice');
+    expect(captureEntryAction('materials', 0, 'single')).toBe('direct');
+    expect(captureEntryAction('materials', 0, 'multi')).toBe('direct');
     expect(captureEntryAction('materials', 2, 'multi')).toBe('direct');
     expect(captureEntryAction('materials', 2, 'single')).toBe('held');
+  });
+
+  it('combines camera and library only where the system sheet already offers both', () => {
+    expect(iosOffersCameraAndLibrary('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)')).toBe(true);
+    expect(iosOffersCameraAndLibrary('Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)')).toBe(true);
+    expect(iosOffersCameraAndLibrary('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5)).toBe(true);
+    expect(iosOffersCameraAndLibrary('Mozilla/5.0 (Linux; Android 14) Chrome/118 XiaoMi')).toBe(false);
+    expect(iosOffersCameraAndLibrary('Mozilla/5.0 (Windows NT 10.0) Chrome/120')).toBe(false);
+    expect(iosOffersCameraAndLibrary('Mozilla/5.0 (Macintosh; Intel Mac OS X) Chrome/120', 'MacIntel', 0)).toBe(false);
   });
 
   it('does not let a stored multi mode stage a tray before the materials route is known', () => {

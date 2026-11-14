@@ -6,7 +6,8 @@ import { albumsOutline, cameraOutline, checkmark, checkmarkCircleOutline, chevro
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { NotebookItem, NotebookResponse } from '../../../src/web/apiTypes';
-import { CaptureDock, CaptureEntry } from '../components/CaptureDock';
+import { CaptureDock, CaptureEntry, CaptureModeSwitch } from '../components/CaptureDock';
+import { deviceOffersCombinedCapture } from '../lib/captureEntry';
 import { useCaptureSession } from '../lib/captureSession';
 import { Problem } from '../components/Problem';
 import { StageGate } from '../components/StageGate';
@@ -149,8 +150,13 @@ export function HomePage(): ReactNode {
         <b>{data.total ? '没有符合筛选的题' : '拍一张批改过的卷子'}</b>
         <p>{data.total ? '换个章节或状态试试。' : 'AI 会找出错题，放进这里。相册可以一次选多张。'}</p>
         {data.total ? <IonButton fill="clear" onClick={() => patch({ chapter: '', tag: '', q: '' })}>清除筛选</IonButton> : capture.pages.length ? null : <div className="empty-actions">
-          <CaptureEntry kind="camera" className="pick-button pick-solid" testId="capture-camera"><IonIcon icon={cameraOutline} aria-hidden="true" />去拍照</CaptureEntry>
-          <CaptureEntry kind="album" className="pick-button pick-plain" testId="capture-album"><IonIcon icon={albumsOutline} aria-hidden="true" />从相册选择</CaptureEntry>
+          <CaptureModeSwitch />
+          {deviceOffersCombinedCapture()
+            ? <CaptureEntry kind="camera" combined className="pick-button pick-solid" testId="capture-camera"><IonIcon icon={cameraOutline} aria-hidden="true" />拍照或从相册选择</CaptureEntry>
+            : <>
+                <CaptureEntry kind="camera" className="pick-button pick-solid" testId="capture-camera"><IonIcon icon={cameraOutline} aria-hidden="true" />去拍照</CaptureEntry>
+                <CaptureEntry kind="album" className="pick-button pick-plain" testId="capture-album"><IonIcon icon={albumsOutline} aria-hidden="true" />从相册选择</CaptureEntry>
+              </>}
         </div>}
       </div> : null}
       {data?.groups.map(group => <section key={group.key} className="group">
@@ -162,7 +168,7 @@ export function HomePage(): ReactNode {
       <div className={capture.pages.length ? 'bottom-space tall' : 'bottom-space'} />
       {!selecting ? <>
         <IonFab vertical="bottom" horizontal="start" slot="fixed"><IonFabButton color="light" size="small" className="corner corner-search" aria-label="搜索" data-testid="corner-search" onClick={() => setSearchOpen(open => !open)}><IonIcon icon={searchOutline} /></IonFabButton></IonFab>
-        <CaptureDock placement="corner" cameraInputId="camera-input" albumInputId="library-input" cameraTestId="capture-fab-camera" albumTestId="next-step-primary" />
+        <CaptureDock placement="corner" showMode={!(data && !items.length && !data.total && capture.pages.length === 0)} cameraInputId="camera-input" albumInputId="library-input" cameraTestId="capture-fab-camera" albumTestId="next-step-primary" />
       </> : <IonFab vertical="bottom" horizontal="end" slot="fixed"><IonFabButton color="danger" className="corner" aria-label="移除所选" data-testid="discard-selected" disabled={!selected.size} onClick={() => setConfirming(true)}><IonIcon icon={trashOutline} /></IonFabButton></IonFab>}
       <IonActionSheet isOpen={confirming} onDidDismiss={() => setConfirming(false)} header={`把这 ${selected.size} 道移出错题本？`} subHeader="原图保留，移出后可以撤销。"
         buttons={[{ text: '移除', role: 'destructive', handler: () => { void discard([...selected]); } }, { text: '取消', role: 'cancel' }]} />
