@@ -19,8 +19,7 @@ async function login(page: Page, base: string, code: string): Promise<void> {
 }
 
 async function uploadOne(page: Page, file: { name: string; mimeType: string; buffer: Buffer }): Promise<void> {
-  await page.getByTestId('next-step-primary').click();
-  await page.getByTestId('capture-mode-single').locator('input').setInputFiles(file);
+  await page.locator('#library-input:visible').setInputFiles(file);
   await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
 }
 

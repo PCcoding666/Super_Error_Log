@@ -78,8 +78,7 @@ test('首页：数据返回前显示骨架，返回后换成内容；之后的�
 
 test('详情页：数据返回前显示骨架，返回后换成题目；接口出错时骨架让位给错误提示', async ({ page }) => {
   await login(page, gateway.codes[1]!);
-  await page.getByTestId('next-step-primary').click();
-  await page.getByTestId('capture-mode-single').locator('input').setInputFiles({ name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: { r: 210, g: 220, b: 230 } } }).jpeg().toBuffer() });
+  await page.locator('#library-input:visible').setInputFiles({ name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: { r: 210, g: 220, b: 230 } } }).jpeg().toBuffer() });
   await expect(page.getByTestId('pick-candidate').first()).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('pick-page').first().click();
   await page.getByTestId('pick-submit').first().click();
