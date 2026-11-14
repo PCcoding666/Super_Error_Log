@@ -3,20 +3,34 @@ import type { CaptureMode } from './captureSession.js';
 export type CaptureRouteKind = 'legacy' | 'materials';
 
 /**
- * direct: the control is a real file label (legacy, route still loading, or a multi-page tray).
- * choice: materials home/intake is idle, so the tap opens the single/multi sheet first.
+ * direct: the control is a real file label. The 单页 / 多页 pill is already on screen, so the tap opens the system picker.
  * held: a tray is open and the student switched it back to 单页. Camera and album stay closed until 完成 or 放弃.
  *
  * A null route stays direct so a picker opened while /s/api/upload is in flight keeps its input.
  * That file is still committed as a single upload; stored 多页 does not apply until the route is materials.
  */
-export type CaptureEntryAction = 'direct' | 'choice' | 'held';
+export type CaptureEntryAction = 'direct' | 'held';
 
 export function captureEntryAction(route: CaptureRouteKind | null, pageCount: number, mode: CaptureMode): CaptureEntryAction {
   if (route !== 'materials') return 'direct';
-  if (pageCount <= 0) return 'choice';
-  if (mode === 'single') return 'held';
+  if (pageCount > 0 && mode === 'single') return 'held';
   return 'direct';
+}
+
+/**
+ * iPhone and iPad Safari show 照片图库 / 拍照 / 选取文件 for one image input, and ignore capture.
+ * Android, including Xiaomi and Redmi, opens the camera or the gallery from different inputs.
+ * A desktop file dialog is not that iOS sheet, so it keeps the two inputs.
+ */
+export function iosOffersCameraAndLibrary(ua: string, platform = '', maxTouchPoints = 0): boolean {
+  if (/Android/i.test(ua)) return false;
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  return platform === 'MacIntel' && maxTouchPoints > 1;
+}
+
+export function deviceOffersCombinedCapture(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return iosOffersCameraAndLibrary(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
 }
 
 /**
@@ -31,9 +45,9 @@ export function pickedFileDestination(route: CaptureRouteKind | null, explicit: 
   return 'upload';
 }
 
-/** The 单页 / 多页 bar stays with a populated tray only. Idle home and intake do not show it. */
-export function showCaptureModeBar(route: CaptureRouteKind | null, pageCount: number): boolean {
-  return route === 'materials' && pageCount > 0;
+/** The 单页 / 多页 pill is on screen before the picker, including an empty materials page. */
+export function showCaptureModeBar(route: CaptureRouteKind | null, _pageCount: number): boolean {
+  return route === 'materials';
 }
 
 export type CaptureChoiceKind = 'camera' | 'album';
