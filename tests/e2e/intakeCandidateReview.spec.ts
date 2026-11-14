@@ -30,8 +30,8 @@ async function login(page: Page, base: string, code: string): Promise<void> {
 }
 
 async function uploadOne(page: Page, file: { name: string; mimeType: string; buffer: Buffer }, fromIntake: boolean): Promise<void> {
-  await page.getByTestId(fromIntake ? 'intake-album' : 'next-step-primary').click();
-  await page.getByTestId('capture-mode-single').locator('input').setInputFiles(file);
+  const selector = fromIntake ? '[data-testid="intake-album"] input' : '#library-input';
+  await page.locator(`${selector}:visible`).setInputFiles(file);
   if (!fromIntake) await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
 }
 

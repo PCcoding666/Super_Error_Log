@@ -12,9 +12,8 @@ test('first crops are selectable while enrichment runs; picks and pending filing
     await page.getByRole('button', { name: '进入我的错题本' }).click();
     await page.getByRole('button', { name: '初中', exact: true }).click();
     await expect(page.getByTestId('empty-notebook')).toBeVisible();
-    await page.getByTestId('next-step-primary').click();
     const start = Date.now();
-    await page.getByTestId('capture-mode-single').locator('input').setInputFiles({ name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: '#fff' } }).jpeg().toBuffer() });
+    await page.locator('#library-input:visible').setInputFiles({ name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: '#fff' } }).jpeg().toBuffer() });
     const candidate = page.getByTestId('pick-candidate');
     await expect(candidate).toHaveCount(1);
     await expect(candidate).toContainText('待识别');
@@ -52,8 +51,7 @@ test('terminal uncertain selection explains why it was not filed and how to reco
     await page.getByRole('button', { name: '进入我的错题本' }).click();
     await page.getByRole('button', { name: '初中', exact: true }).click();
     await expect(page.getByTestId('empty-notebook')).toBeVisible();
-    await page.getByTestId('next-step-primary').click();
-    await page.getByTestId('capture-mode-single').locator('input').setInputFiles({name:'synthetic.jpg',mimeType:'image/jpeg',buffer:await sharp({create:{width:240,height:320,channels:3,background:'#fff'}}).jpeg().toBuffer()});
+    await page.locator('#library-input:visible').setInputFiles({name:'synthetic.jpg',mimeType:'image/jpeg',buffer:await sharp({create:{width:240,height:320,channels:3,background:'#fff'}}).jpeg().toBuffer()});
     const candidate = page.getByTestId('pick-candidate');
     await candidate.getByTestId('pick-checkbox').click();
     await page.getByTestId('pick-submit').click();
