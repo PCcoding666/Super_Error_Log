@@ -39,7 +39,7 @@ Preconditions:
 - **Finish.** `sel-verify drive click --testid capture-set-done`. The URL is `/s/new` and intake shows the uploaded pages.
 - **Discard.** `sel-verify drive click --testid capture-set-discard`. The tray is gone and intake does not gain those pages.
 - **Intake footer.** On `/s/new`, `--testid intake-camera` and `--testid intake-album` open the same sheet. Shot `--feature capture --name sheet-intake-camera --entry intake-camera` and `--name sheet-intake-album --entry intake-album`.
-- **Blocked chooser.** `sel-verify drive skip --feature capture --entry blocked-chooser --blocker "The default browser is iPhone Safari. The blocked-chooser toast only runs for an Android user agent whose file input never fires a change."`
+- **Blocked chooser.** `sel-verify drive profile --name android` (or a script op `profile` with `name` `android`) switches this same login onto the Android shell user agent. Open the album sheet, then `sel-verify drive tap-file --testid capture-mode-single` so the file dialog opens and no file is chosen. Within about two seconds the toast says `打不开相册`. `知道了` dismisses it. The default iPhone profile does not show this toast.
 
 ## Gotchas
 

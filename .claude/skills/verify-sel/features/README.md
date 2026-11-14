@@ -64,4 +64,4 @@ Sweep top to bottom. The learning loop is in the middle. Account recovery and in
 - [My invite code](./my-invite.md) covers viewing, copying, regenerating, and setting a recovery PIN.
 - [Add to Home Screen](./add-to-home-screen.md) covers the install instructions opened from Settings.
 
-`examples/learning-loop.json` is one script that drives the notebook, capture, intake, and question-detail entry points on a single synthetic student. It does not replace the other feature files.
+`examples/learning-loop.json` drives the notebook, capture, intake, and question-detail entry points, including stem edit, category save, answer-photo upload, detail discard, and the Android blocked-chooser toast. `examples/account.json` drives register, prefilled login, account switch, recover, My invite code, install, and log out. Neither script replaces the other feature files.

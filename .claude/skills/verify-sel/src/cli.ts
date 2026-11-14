@@ -26,6 +26,11 @@ Commands
 Drive ops
   open <path>                    page.goto, for example /s/ or /s/new
   open-slot --slot <slot>        Open /s/?code= for that slot. The code is not printed or logged.
+  capture-code --testid <id> --slot <name>
+                                 Remember the visible code under that name. The value is not printed.
+  profile --name android|iphone Switch the device profile and keep the login.
+  reset [--name android|iphone]  New page, same profile by default, cookies dropped.
+  tap-file --testid <id>         Open that file input and choose nothing. Used for the Android blocked-chooser toast.
   click --testid <id>            or --role <role> --name <name>, or --text, or --label
   fill --text <value>            with the same target flags as click
   secret --slot <slot>           Fill an invite code from the instance file. The code is not printed.

@@ -1,9 +1,9 @@
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type FileChooser, type Locator, type Page } from 'playwright';
 import { syntheticJpeg } from './jpeg.js';
 import { assertSafeBase, readInstance, slotValue, type VerifyInstance } from './instance.js';
-import { evidenceDir, IPHONE_SAFARI, storageStatePath } from './paths.js';
+import { ANDROID_SHELL, evidenceDir, IPHONE_SAFARI, storageStatePath } from './paths.js';
 
 export interface DriveOp {
   op: string;
@@ -27,6 +27,8 @@ export interface DriveOp {
   url?: string;
   placeholder?: string;
   blocker?: string;
+  /** iphone (default) or android. Used by profile and reset. */
+  profile?: string;
 }
 
 interface LogLine {
@@ -46,51 +48,72 @@ interface LogLine {
 
 const DEFAULT_TIMEOUT = 15_000;
 
+type BrowserProfile = 'iphone' | 'android';
+
 export class DriveSession {
   readonly consoleErrors: string[] = [];
   readonly networkErrors: string[] = [];
   private consoleCursor = 0;
   private networkCursor = 0;
+  private profile: BrowserProfile = 'iphone';
+  private readonly captured = new Map<string, string>();
+  private heldChooser: FileChooser | null = null;
+  context: BrowserContext;
+  page: Page;
 
   private constructor(
     readonly instance: VerifyInstance,
     readonly browser: Browser,
-    readonly context: BrowserContext,
-    readonly page: Page,
-  ) {}
+    context: BrowserContext,
+    page: Page,
+  ) {
+    this.context = context;
+    this.page = page;
+  }
 
   static async open(instance: VerifyInstance): Promise<DriveSession> {
     assertSafeBase(instance.base);
     mkdirSync(path.dirname(storageStatePath), { recursive: true });
     const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-      baseURL: instance.base,
-      viewport: { width: 390, height: 844 },
-      deviceScaleFactor: 2,
-      isMobile: true,
-      hasTouch: true,
-      userAgent: IPHONE_SAFARI,
-      locale: 'zh-CN',
-      timezoneId: 'Asia/Shanghai',
-      serviceWorkers: 'block',
-      storageState: existsSync(storageStatePath) ? storageStatePath : undefined,
-    });
+    const context = await browser.newContext(contextOptions(instance, 'iphone', existsSync(storageStatePath)));
+    await grantClipboard(context);
     const page = await context.newPage();
+    const session = new DriveSession(instance, browser, context, page);
+    session.attach(page);
+    return session;
+  }
+
+  private attach(page: Page): void {
     page.setDefaultTimeout(DEFAULT_TIMEOUT);
     page.setDefaultNavigationTimeout(30_000);
-    const session = new DriveSession(instance, browser, context, page);
     page.on('console', message => {
-      if (message.type() === 'error') session.consoleErrors.push(trim(message.text()));
+      if (message.type() === 'error') this.consoleErrors.push(trim(message.text()));
     });
-    page.on('pageerror', error => session.consoleErrors.push(trim(String(error))));
+    page.on('pageerror', error => this.consoleErrors.push(trim(String(error))));
     page.on('requestfailed', request => {
       if (request.url().includes('favicon')) return;
-      session.networkErrors.push(trim(`${request.failure()?.errorText ?? 'failed'} ${request.method()} ${request.url()}`));
+      this.networkErrors.push(trim(`${request.failure()?.errorText ?? 'failed'} ${request.method()} ${request.url()}`));
     });
     page.on('response', response => {
-      if (response.status() >= 500) session.networkErrors.push(trim(`${response.status()} ${response.url()}`));
+      if (response.status() >= 500) this.networkErrors.push(trim(`${response.status()} ${response.url()}`));
     });
-    return session;
+  }
+
+  /** Swap the device profile. `keepSession` carries cookies; a reset drops them. */
+  async replaceContext(profile: BrowserProfile, keepSession: boolean): Promise<void> {
+    if (keepSession) await this.context.storageState({ path: storageStatePath }).catch(() => undefined);
+    else rmSync(storageStatePath, { force: true });
+    await this.context.close();
+    this.profile = profile;
+    this.heldChooser = null;
+    this.context = await this.browser.newContext(contextOptions(this.instance, profile, keepSession && existsSync(storageStatePath)));
+    await grantClipboard(this.context);
+    this.page = await this.context.newPage();
+    this.attach(this.page);
+  }
+
+  private codeFor(slot: string): string {
+    return this.captured.get(slot) ?? slotValue(this.instance, slot);
   }
 
   async close(): Promise<void> {
@@ -106,9 +129,31 @@ export class DriveSession {
     }
     if (op.op === 'open-slot') {
       const slot = required(op.slot, 'slot');
-      const code = slotValue(this.instance, slot);
+      const code = this.codeFor(slot);
       await this.page.goto(`/s/?code=${encodeURIComponent(code)}`, { waitUntil: 'domcontentloaded', timeout });
       return this.record(op, `opened prefill for slot ${slot}`);
+    }
+    if (op.op === 'profile' || op.op === 'reset') {
+      const profile: BrowserProfile = op.name === 'android' || op.profile === 'android' ? 'android' : 'iphone';
+      await this.replaceContext(profile, op.op === 'profile');
+      return this.record(op, op.op === 'profile' ? `profile ${profile}` : `reset ${profile}`);
+    }
+    if (op.op === 'capture-code') {
+      const slot = required(op.slot, 'slot');
+      const loc = await this.one(this.locate(op));
+      await loc.waitFor({ state: 'visible', timeout });
+      const value = (await loc.innerText()).replace(/\s+/g, '');
+      if (!value) throw new Error(`no code text in ${op.testid ?? 'target'}`);
+      this.captured.set(slot, value);
+      return this.record(op, `captured slot ${slot}`);
+    }
+    if (op.op === 'tap-file') {
+      const testid = required(op.testid, 'testid');
+      const input = await fileInput(this.page, testid);
+      const opened = this.page.waitForEvent('filechooser', { timeout });
+      await input.click({ timeout });
+      this.heldChooser = await opened;
+      return this.record(op, `opened file chooser on ${testid} without choosing a file`);
     }
     if (op.op === 'reload') {
       await this.page.reload({ waitUntil: 'domcontentloaded', timeout });
@@ -129,8 +174,7 @@ export class DriveSession {
     }
     if (op.op === 'secret') {
       const slot = required(op.slot, 'slot');
-      const value = slotValue(this.instance, slot);
-      await fillLocator(await this.one(this.locate(op)), value);
+      await fillLocator(await this.one(this.locate(op)), this.codeFor(slot));
       return this.record(op, `filled slot ${slot}`);
     }
     if (op.op === 'files') {
@@ -341,6 +385,27 @@ export class DriveSession {
     mkdirSync(evidenceDir, { recursive: true });
     appendFileSync(path.join(evidenceDir, 'log.jsonl'), `${JSON.stringify(line)}\n`);
   }
+}
+
+type ProfileName = 'iphone' | 'android';
+
+function contextOptions(instance: VerifyInstance, profile: ProfileName, storage: boolean) {
+  return {
+    baseURL: instance.base,
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+    userAgent: profile === 'android' ? ANDROID_SHELL : IPHONE_SAFARI,
+    locale: 'zh-CN',
+    timezoneId: 'Asia/Shanghai',
+    serviceWorkers: 'block' as const,
+    storageState: storage ? storageStatePath : undefined,
+  };
+}
+
+async function grantClipboard(context: BrowserContext): Promise<void> {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => undefined);
 }
 
 function nth(loc: Locator, index: number | undefined): Locator {

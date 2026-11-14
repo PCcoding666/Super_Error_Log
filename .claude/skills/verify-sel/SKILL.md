@@ -66,13 +66,14 @@ A shot waits for finite CSS animations so an iOS page push is settled. Looping a
 
 `drive script` stops on the first failing step after writing `artifacts/verify-sel/evidence/failure.png`. Fix the step and run again. Do not weaken a feature recipe to make the script pass.
 
-The composed loop for notebook, capture, intake, and question detail:
+The composed loops:
 
 ```sh
 npx tsx .claude/skills/verify-sel/src/cli.ts drive script --file .claude/skills/verify-sel/examples/learning-loop.json --feature learning-loop
+npx tsx .claude/skills/verify-sel/src/cli.ts drive script --file .claude/skills/verify-sel/examples/account.json --feature account
 ```
 
-That script is not a substitute for the rest of the map.
+The learning loop covers notebook, capture, intake, and question detail, then switches to the Android shell for the blocked-chooser toast. The account script starts by dropping cookies and covers register, prefilled login, account switch, recover, My invite code, install, and log out. Neither script replaces the rest of the map.
 
 ## Evidence
 
