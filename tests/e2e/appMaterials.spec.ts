@@ -52,10 +52,10 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   const legacyUploads: string[] = [];
   page.on('request', request => { if (request.method() === 'POST' && /\/s\/capture$/.test(request.url())) legacyUploads.push(request.url()); });
   const dock = page.locator('[data-testid="capture-dock"]:visible');
-  await expect(dock).toHaveAttribute('data-capture-choice', 'choice');
-  await expect(page.getByTestId('capture-mode-bar')).toHaveCount(0);
-  await page.getByTestId('next-step-primary').click();
-  await page.getByTestId('capture-mode-single').locator('input').setInputFiles([await jpeg()]);
+  await expect(dock).toHaveAttribute('data-capture-choice', 'direct');
+  await expect(page.getByTestId('capture-mode-bar')).toBeVisible();
+  await page.getByTestId('capture-mode-single').click();
+  await page.locator('#library-input').setInputFiles([await jpeg()]);
   await expect.poll(() => url(page)).toBe('/s/new');
   // 合成提取：一道题「1 + 1 = ?」带作答和参考答案，没有老师批改痕迹 → 等学生勾选。
   const photo = page.locator('section.intake-photo[data-state="needsPick"]');
