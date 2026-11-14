@@ -120,6 +120,13 @@ describe('产品说明页文案', () => {
     expect(home).toContain('Chrome');
     expect(home).toContain('添加到桌面');
     expect(home).toContain('iPhone Safari 和安卓 Chrome');
+    expect(home).toContain('/help/img/iphone-confirm.webp');
+    expect(home).toContain('/help/img/iphone-home.webp');
+    expect(home).toContain('作为网页 App 打开');
+    expect(home).toContain('在主屏幕上找到它');
+    expect(home).toContain('超级错题本');
+    expect(html).not.toContain('loading="lazy"');
+    expect(html).toContain('loading="eager"');
     const faq = /<section id="faq">[\s\S]*?<\/section>/.exec(html)![0];
     expect(faq).toContain('扫一下就能登录');
     expect(faq).toContain('「复制网址」');

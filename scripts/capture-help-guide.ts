@@ -12,6 +12,8 @@ import { chromium, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
 const OUT = path.resolve('src/portal/help-img');
+/** `npx tsx scripts/capture-help-guide.ts --only account` 只重拍我的邀请码，避免盖掉其它图。 */
+const onlyShot = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] ?? '' : '';
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -34,6 +36,7 @@ async function jpeg(kind: 'marked' | 'plain'): Promise<Buffer> {
 }
 
 async function save(page: Page, name: string): Promise<void> {
+  if (onlyShot && onlyShot !== name) return;
   const png = await page.screenshot({ type: 'png', animations: 'disabled' });
   const file = path.join(OUT, `${name}.webp`);
   await sharp(png).webp({ quality: 58, effort: 5 }).toFile(file);
@@ -108,6 +111,17 @@ async function main(): Promise<void> {
       await page.getByRole('button', { name: '初中', exact: true }).click();
     }
 
+    if (onlyShot === 'account') {
+      await page.goto(`${base}/s/account`);
+      await page.getByRole('heading', { name: '我的邀请码' }).waitFor();
+      await page.getByTestId('my-invite-qr').waitFor();
+      await page.getByTestId('my-invite-link').waitFor();
+      await page.getByTestId('my-invite-link-block').evaluate((node: HTMLElement) => node.scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(300);
+      await save(page, 'account');
+      return;
+    }
+
     await page.getByTestId('empty-notebook').waitFor();
     await page.locator('[data-testid="capture-dock"]:visible').waitFor();
     await page.waitForFunction(() => document.querySelector('[data-testid="capture-dock"]')?.getAttribute('data-capture-choice') === 'choice');
@@ -167,6 +181,11 @@ async function main(): Promise<void> {
     await save(page, 'settings');
     await page.goto(`${base}/s/account`);
     await page.getByRole('heading', { name: '我的邀请码' }).waitFor();
+    // 登录链接和二维码只在本机看得到邀请码、且 Host 能拼出入口时出现。没出来就不要盖掉旧图。
+    await page.getByTestId('my-invite-qr').waitFor();
+    await page.getByTestId('my-invite-link').waitFor();
+    await page.getByTestId('my-invite-link-block').evaluate((node: HTMLElement) => node.scrollIntoView({ block: 'center' }));
+    await page.waitForTimeout(300);
     await save(page, 'account');
     await page.goto(`${base}/s/install`);
     await page.getByRole('heading', { name: '放到主屏幕' }).waitFor();
