@@ -81,8 +81,10 @@ describe('产品说明页文案', () => {
     expect(html).toContain('示意图');
     expect(html).toContain('添加到桌面');
     expect(html).toContain('添加到主屏幕');
-    expect(html).toContain('display 是 browser');
-    expect(html).toContain('/s/manifest.webmanifest');
+    expect(html).toContain('桌面图标会打开浏览器页面');
+    expect(html).not.toContain('manifest');
+    expect(html).not.toContain('Service Worker');
+    expect(html).not.toContain('standalone');
     expect(html).toContain('https://study.pccoding666.com/s/register');
     expect(html).toContain('https://study.pccoding666.com/s/recover');
     expect(html).toContain('4 位数字找回码');

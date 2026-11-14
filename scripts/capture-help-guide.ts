@@ -47,7 +47,7 @@ async function save(page: Page, name: string): Promise<void> {
 function startHost(): { child: ChildProcess; ready: Promise<{ base: string; codes: string[] }> } {
   const child = fork(path.resolve('tests/e2e/studentHostServer.ts'), [], {
     execArgv: ['--import', 'tsx'],
-    env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_E2E_MATERIAL_CAPTURE: '1' },
+    env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_E2E_MATERIAL_CAPTURE: '1', SEL_HELP_CAPTURE_ORIGIN: 'https://study.pccoding666.com' },
     stdio: ['ignore', 'inherit', 'pipe', 'ipc'],
   });
   child.stderr?.on('data', chunk => process.stderr.write(chunk));
@@ -66,6 +66,19 @@ async function stopHost(child: ChildProcess): Promise<void> {
     child.once('exit', () => { clearTimeout(timer); resolve(); });
     if (child.connected) child.send({ stop: true }, () => {}); else child.kill('SIGTERM');
   });
+}
+
+/** 帮助页上的登录链接必须是公网入口，二维码编的是同一条链接。码来自合成夹具。 */
+async function captureAccount(page: Page, base: string): Promise<void> {
+  await page.goto(`${base}/s/account`);
+  await page.getByRole('heading', { name: '我的邀请码' }).waitFor();
+  await page.getByTestId('my-invite-qr').waitFor();
+  const link = (await page.getByTestId('my-invite-link').innerText()).replace(/\s+/g, '');
+  if (!link.startsWith('https://study.pccoding666.com/s/?code=')) throw new Error(`登录链接不是公网入口：${link}`);
+  if (link.includes('127.0.0.1') || link.includes('localhost')) throw new Error(`登录链接带了本机地址：${link}`);
+  await page.getByTestId('my-invite-link-block').evaluate((node: HTMLElement) => node.scrollIntoView({ block: 'center' }));
+  await page.waitForTimeout(300);
+  await save(page, 'account');
 }
 
 async function main(): Promise<void> {
@@ -112,13 +125,7 @@ async function main(): Promise<void> {
     }
 
     if (onlyShot === 'account') {
-      await page.goto(`${base}/s/account`);
-      await page.getByRole('heading', { name: '我的邀请码' }).waitFor();
-      await page.getByTestId('my-invite-qr').waitFor();
-      await page.getByTestId('my-invite-link').waitFor();
-      await page.getByTestId('my-invite-link-block').evaluate((node: HTMLElement) => node.scrollIntoView({ block: 'center' }));
-      await page.waitForTimeout(300);
-      await save(page, 'account');
+      await captureAccount(page, base);
       return;
     }
 
@@ -179,14 +186,7 @@ async function main(): Promise<void> {
     await page.getByText('即将推出').waitFor();
     await page.getByTestId('settings-my-invite').waitFor();
     await save(page, 'settings');
-    await page.goto(`${base}/s/account`);
-    await page.getByRole('heading', { name: '我的邀请码' }).waitFor();
-    // 登录链接和二维码只在本机看得到邀请码、且 Host 能拼出入口时出现。没出来就不要盖掉旧图。
-    await page.getByTestId('my-invite-qr').waitFor();
-    await page.getByTestId('my-invite-link').waitFor();
-    await page.getByTestId('my-invite-link-block').evaluate((node: HTMLElement) => node.scrollIntoView({ block: 'center' }));
-    await page.waitForTimeout(300);
-    await save(page, 'account');
+    await captureAccount(page, base);
     await page.goto(`${base}/s/install`);
     await page.getByRole('heading', { name: '放到主屏幕' }).waitFor();
     await save(page, 'install');
