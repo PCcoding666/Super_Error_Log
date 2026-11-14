@@ -47,7 +47,7 @@ import { sendHtml } from '../views/render.js';
 import { AccountPage, HostErrorPage, LoginPage, RecoveryPage, RegistrationPage, RegistrationCompletePage, registrationFieldErrors } from './loginView.js';
 import { CAPACITY_RETRY_SECONDS, CapacityWaitlist, capacityLines, capacityPageHtml } from './busyView.js';
 import { LiveStats } from './liveStats.js';
-import { CODE_QUERY_PARAM, isSafeHostHeader, loginLink, loginPageUrl, prefillCodeFromQuery } from './inviteLink.js';
+import { CODE_QUERY_PARAM, isSafeHostHeader, loginLink, loginPageUrl, prefillCodeFromQuery, resolvePublicOrigin } from './inviteLink.js';
 import { elapsedMs, errorSummary, logEvent, newRequestId, uaFamily } from '../observability/log.js';
 import { routeTemplate } from '../web/trail.js';
 
@@ -185,6 +185,12 @@ export interface StudentHostGatewayDeps {
   ipOf: (request: Request) => string;
   /** 公网入口的协议（带冒号，如 'https:'）；同源校验比对它。缺省按请求自身协议（本机测试 http:）。 */
   originScheme?: string;
+  /**
+   * 登录链接和二维码用的公网入口（如 https://study.pccoding666.com）。
+   * 只用于帮助页截图这类合成环境，让画面上的链接不是 127.0.0.1。不参与同源校验。
+   * 缺省仍按本次请求的 Host 拼。
+   */
+  linkOrigin?: string;
 }
 
 export interface StudentHostGatewayOptions {
@@ -275,6 +281,11 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
     const form = express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 20 });
     const expectedScheme = deps.originScheme ?? 'http:';
     const isCrossSite = (request: Request): boolean => crossSite(request, expectedScheme);
+    const fixedLinkOrigin = (() => {
+      const raw = deps.linkOrigin?.trim();
+      if (!raw) return null;
+      try { return resolvePublicOrigin({}, raw); } catch { return null; }
+    })();
 
     r.use((request, response, next) => {
       // 请求 ID：网关生成、回给浏览器（x-sel-request-id）、交给 worker（内部头）；三边日志靠它对上。
@@ -321,7 +332,7 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
 
     const inApp = (request: Request): boolean => isInAppBrowserAgent(request.headers['user-agent']);
     /** 浏览器眼里的本站入口：协议由部署形态给出，主机来自 Host 头且只认安全形状；拼不出来返回 null（页面少一个复制按钮而已）。 */
-    const siteOrigin = (request: Request): string | null => (isSafeHostHeader(request.headers.host) ? `${expectedScheme}//${request.headers.host}` : null);
+    const siteOrigin = (request: Request): string | null => fixedLinkOrigin ?? (isSafeHostHeader(request.headers.host) ? `${expectedScheme}//${request.headers.host}` : null);
     /**
      * 登录页。只有 GET /s/?code=… 这一条路径会把查询串里的码预填进输入框（规范化后；别的路径、别的参数一律不看），
      * 微信里的「复制网址」也连码一起带上。这里只渲染，不兑换、不计限速、不记日志——查询串不会出现在任何日志里
