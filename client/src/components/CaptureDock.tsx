@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { flushSync } from 'react-dom';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { captureEntryAction, captureSheet, pickerLease, showCaptureModeBar, type CaptureRouteKind } from '../lib/captureEntry';
+import { CAPTURE_MODE_NOTE, captureEntryAction, captureSheet, pickerLease, showCaptureModeBar, type CaptureRouteKind } from '../lib/captureEntry';
 import { MAX_SET_PAGES, captureSession, hintsForPages, useCaptureSession, type CaptureMode } from '../lib/captureSession';
 import { uploader } from '../lib/uploader';
 import { PickLabel } from './CaptureInput';
@@ -23,9 +23,12 @@ export function CaptureModeSwitch(): ReactNode {
   const route = useCaptureRoute();
   const { mode } = useCaptureSession();
   if (route !== 'materials') return null;
-  return <div className="capture-mode-bar" role="radiogroup" aria-label="拍摄模式" data-testid="capture-mode-bar">
-    <button type="button" role="radio" aria-checked={mode === 'single'} data-testid="capture-mode-single" onClick={() => captureSession.setMode('single')}>单页</button>
-    <button type="button" role="radio" aria-checked={mode === 'multi'} data-testid="capture-mode-multi" onClick={() => captureSession.setMode('multi')}>多页</button>
+  return <div className="capture-mode-switch">
+    <div className="capture-mode-bar" role="radiogroup" aria-label="拍摄模式" data-testid="capture-mode-bar">
+      <button type="button" role="radio" aria-checked={mode === 'single'} data-testid="capture-mode-single" onClick={() => captureSession.setMode('single')}>单页</button>
+      <button type="button" role="radio" aria-checked={mode === 'multi'} data-testid="capture-mode-multi" onClick={() => captureSession.setMode('multi')}>多页</button>
+    </div>
+    <p className="capture-mode-note" data-testid="capture-mode-note">{CAPTURE_MODE_NOTE[mode]}</p>
   </div>;
 }
 
@@ -129,7 +132,7 @@ export function CaptureModeSheet(): ReactNode {
           <button type="button" role="radio" aria-checked={draft === 'single'} data-testid="capture-mode-single" onClick={() => setDraft('single')}>单页</button>
           <button type="button" role="radio" aria-checked={draft === 'multi'} data-testid="capture-mode-multi" onClick={() => setDraft('multi')}>多页</button>
         </div>
-        <p className="capture-mode-note">试卷和答题卡不在同一张纸上，或一道题的材料有好几页时，用「多页」。</p>
+        <p className="capture-mode-note" data-testid="capture-mode-note">{CAPTURE_MODE_NOTE[draft]}</p>
       </div>}
       <PickLabel
         kind="album"

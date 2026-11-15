@@ -112,7 +112,7 @@ button.fab-circle { padding: 0; }
 .capture-overflow { margin: 6px 0 0; color: #974b06; font-size: 12px; }
 .capture-mode-hold { margin: 0; max-width: 240px; text-align: right; color: var(--sel-muted); font-size: 13px; line-height: 1.35; }
 .capture-inline .capture-mode-hold { max-width: none; text-align: center; }
-.capture-choice-backdrop { position: fixed; inset: 0; z-index: 30000; display: flex; align-items: flex-end; justify-content: center; background: rgba(0, 0, 0, .4); }
+.capture-choice-backdrop { position: fixed; inset: 0; z-index: 100000; display: flex; align-items: flex-end; justify-content: center; background: rgba(0, 0, 0, .4); }
 .capture-choice-sheet { display: flex; flex-direction: column; width: min(480px, 100%); margin: 0; padding: 18px 16px calc(16px + env(safe-area-inset-bottom, 0px)); border-radius: 16px 16px 0 0; background: var(--ion-item-background); color: var(--ion-text-color); box-shadow: 0 -8px 32px rgba(0, 0, 0, .24); }
 .capture-choice-sheet .capture-mode-note { margin-top: 10px; }
 .capture-sheet-go { width: 100%; margin-top: 14px; }

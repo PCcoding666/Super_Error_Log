@@ -1,9 +1,14 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { captureEntryAction, pickedFileDestination, showCaptureModeBar } from '../../client/src/lib/captureEntry.js';
+import { CAPTURE_MODE_NOTE, captureEntryAction, pickedFileDestination, showCaptureModeBar } from '../../client/src/lib/captureEntry.js';
 
 describe('capture entry', () => {
+  it('keeps the pill note with the selected tab', () => {
+    expect(CAPTURE_MODE_NOTE.single).toBe('一张纸拍完就用单页');
+    expect(CAPTURE_MODE_NOTE.multi).toBe('试卷和答题卡不在同一张纸，或一道题的材料有好几页时，用多页');
+  });
+
   it('opens the mode sheet before the first materials shot, and keeps the pill on an open tray', () => {
     expect(showCaptureModeBar(null, 0)).toBe(false);
     expect(showCaptureModeBar('legacy', 0)).toBe(false);

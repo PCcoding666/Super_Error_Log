@@ -2,6 +2,12 @@ import type { CaptureMode } from './captureSession.js';
 
 export type CaptureRouteKind = 'legacy' | 'materials';
 
+/** The sentence under the 单页 / 多页 pill. It follows the selected tab. */
+export const CAPTURE_MODE_NOTE = {
+  single: '一张纸拍完就用单页',
+  multi: '试卷和答题卡不在同一张纸，或一道题的材料有好几页时，用多页',
+} as const;
+
 /**
  * sheet: idle materials. 新增 opens the mode sheet. It is not a file input.
  * direct: a real file label. Legacy has no multi-page tray, and an open multi-page tray adds another page.

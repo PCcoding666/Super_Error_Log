@@ -81,7 +81,17 @@ test('材料流程的多页一次提交，两张照片共用一个拍摄批次',
   await expect(page.locator('[data-testid="capture-add"]:visible').last()).toHaveText('新增');
   // Browser-test captures from Playwright Chromium, not a real Android or iOS picker.
   await page.screenshot({ path: shot('browser-test-idle-home-mobile') });
+  await page.locator('[data-testid="capture-add"]:visible').last().click();
+  await expect(page.getByTestId('capture-mode-sheet')).toBeVisible();
+  await expect(page.getByTestId('capture-mode-note')).toHaveText('一张纸拍完就用单页');
+  await page.getByTestId('capture-mode-multi').click();
+  await expect(page.getByTestId('capture-mode-note')).toHaveText('试卷和答题卡不在同一张纸，或一道题的材料有好几页时，用多页');
+  await page.getByTestId('capture-mode-single').click();
+  await expect(page.getByTestId('capture-mode-note')).toHaveText('一张纸拍完就用单页');
+  await page.getByTestId('capture-mode-cancel').click();
+  await expect(page.getByTestId('capture-mode-sheet')).toHaveCount(0);
   await chooseMode(page, 'multi');
+  await expect(page.getByTestId('capture-mode-note')).toHaveText('试卷和答题卡不在同一张纸，或一道题的材料有好几页时，用多页');
   const multi = entryInput(page);
   await expect(multi).not.toHaveAttribute('capture');
   await expect(multi).toHaveAttribute('multiple', '');
@@ -172,6 +182,7 @@ test('单页和相册都先选模式，录入页同样不常驻模式条，托�
   await expect(inline.getByTestId('capture-mode-bar')).toBeVisible();
   await expect(uploads).toHaveLength(1);
   await inline.getByTestId('capture-mode-single').click();
+  await expect(page.locator('[data-testid="capture-mode-note"]:visible')).toHaveText('一张纸拍完就用单页');
   await expect(page.getByTestId('capture-mode-hold')).toBeVisible();
   const add = page.locator('[data-testid="capture-add"]:visible').last();
   await expect(add).toHaveAttribute('aria-disabled', 'true');
@@ -182,6 +193,7 @@ test('单页和相册都先选模式，录入页同样不常驻模式条，托�
   await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
   await inline.getByTestId('capture-mode-multi').click();
   await expect(page.getByTestId('capture-mode-hold')).toHaveCount(0);
+  await expect(page.locator('[data-testid="capture-mode-note"]:visible')).toHaveText('试卷和答题卡不在同一张纸，或一道题的材料有好几页时，用多页');
   await page.locator('#camera-input').setInputFiles(await jpeg());
   await expect(page.getByTestId('capture-count')).toHaveText('已拍 2 张');
   await page.getByTestId('capture-set-discard').click();
