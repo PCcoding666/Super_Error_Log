@@ -83,7 +83,7 @@ button.pick-button, button.fab-circle { appearance: none; border: 0; font: inher
 button.is-held { opacity: .45; cursor: not-allowed; }
 button.fab-circle { padding: 0; }
 /* 和左下角小圆钮同一外沿：ion-fab 底边 10px，small 按钮再缩进 8px。 */
-.capture-corner, .capture-dock { position: absolute; z-index: 10; top: auto; left: auto; right: calc(18px + var(--ion-safe-area-right, 0px)); bottom: calc(18px + max(var(--ion-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px))); display: flex; flex-direction: column; align-items: flex-end; gap: 10px; width: max-content; max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); height: max-content; }
+.capture-corner, .capture-dock { position: absolute; z-index: 10; top: auto; left: auto; right: calc(18px + var(--ion-safe-area-right, 0px)); bottom: calc(18px + max(var(--ion-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px))); display: flex; flex-direction: column; align-items: flex-end; gap: 10px; width: max-content; min-width: 8px; min-height: 8px; max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); height: max-content; }
 .capture-dock.has-tray { left: calc(12px + env(safe-area-inset-left, 0px)); width: auto; align-items: stretch; }
 .capture-dock-picks { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .capture-dock.has-tray .capture-dock-picks, .capture-dock.has-tray .capture-mode-bar { align-self: flex-end; }
@@ -113,7 +113,11 @@ button.fab-circle { padding: 0; }
 .capture-mode-hold { margin: 0; max-width: 240px; text-align: right; color: var(--sel-muted); font-size: 13px; line-height: 1.35; }
 .capture-inline .capture-mode-hold { max-width: none; text-align: center; }
 .capture-choice-backdrop { position: fixed; inset: 0; z-index: 30000; display: flex; align-items: flex-end; justify-content: center; background: rgba(0, 0, 0, .4); }
-.capture-choice-sheet { width: min(480px, 100%); margin: 0; padding: 18px 16px calc(16px + env(safe-area-inset-bottom, 0px)); border-radius: 16px 16px 0 0; background: var(--ion-item-background); color: var(--ion-text-color); box-shadow: 0 -8px 32px rgba(0, 0, 0, .24); }
+.capture-choice-sheet { display: flex; flex-direction: column; width: min(480px, 100%); margin: 0; padding: 18px 16px calc(16px + env(safe-area-inset-bottom, 0px)); border-radius: 16px 16px 0 0; background: var(--ion-item-background); color: var(--ion-text-color); box-shadow: 0 -8px 32px rgba(0, 0, 0, .24); }
+.capture-choice-sheet .capture-mode-note { margin-top: 10px; }
+.capture-sheet-go { width: 100%; margin-top: 14px; }
+.capture-sheet-parked { position: fixed; inset: 0; visibility: hidden; pointer-events: none; background: transparent; }
+.capture-add-fab { min-width: 88px; }
 .capture-choice-sheet:focus { outline: none; }
 .capture-choice-sheet h2 { margin: 0 0 4px; font-size: 20px; font-weight: 700; }
 .capture-choice-sheet > p { margin: 0 0 12px; color: var(--sel-muted); font-size: 14px; line-height: 1.4; }

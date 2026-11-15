@@ -30,8 +30,12 @@ async function login(page: Page, base: string, code: string): Promise<void> {
 }
 
 async function uploadOne(page: Page, file: { name: string; mimeType: string; buffer: Buffer }, fromIntake: boolean): Promise<void> {
-  const selector = fromIntake ? '[data-testid="intake-album"] input' : '#library-input';
-  await page.locator(`${selector}:visible`).setInputFiles(file);
+  const add = page.locator('[data-testid="capture-add"]:visible').last();
+  if (await add.locator('input').count() === 0) {
+    await add.click();
+    await page.getByTestId('capture-mode-single').click();
+  }
+  await page.locator('#camera-input:visible').setInputFiles(file);
   if (!fromIntake) await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
 }
 
@@ -279,7 +283,8 @@ test('a legacy candidate opens details from the crop it already has and does not
     await page.goto(link.replace('https://study.pccoding666.com', base));
     await page.getByTestId('next-step-primary').click();
     await page.waitForURL(/\/s\/\?paired=1$/);
-    await page.locator('#library-input').setInputFiles(await jpeg({ r: 176, g: 211, b: 224 }));
+    await expect(page.locator('[data-testid="capture-dock"]:visible')).toHaveAttribute('data-capture-route', 'legacy');
+    await page.locator('[data-testid="capture-add"]:visible input').setInputFiles(await jpeg({ r: 176, g: 211, b: 224 }));
     await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
     const unmarked = page.locator('section.intake-photo[data-state="needsPick"]');
     await expect(unmarked.getByTestId('pick-candidate')).toHaveCount(3, { timeout: 40_000 });

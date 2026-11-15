@@ -37,13 +37,14 @@ async function login(page: Page, gateway: MaterialGateway): Promise<void> {
   await enterCode(page, gateway);
   await page.getByRole('button', { name: '初中', exact: true }).click();
   await expect(page.getByTestId('empty-notebook')).toBeVisible();
-  await expect(page.locator('[data-testid="capture-dock"]:visible')).toHaveAttribute('data-capture-choice', 'direct');
+  await expect(page.locator('[data-testid="capture-dock"]:visible')).toHaveAttribute('data-capture-choice', 'sheet');
 }
 
 /** 从空错题本传一张合成照片（单页），停在录入页。 */
 async function uploadSingle(page: Page): Promise<void> {
-  await page.locator('[data-testid="capture-mode-single"]').last().click();
-  await page.locator('#library-input').setInputFiles(await jpeg());
+  await page.locator('[data-testid="capture-add"]:visible').last().click();
+  await page.getByTestId('capture-mode-single').click();
+  await page.locator('#camera-input').setInputFiles(await jpeg());
   await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
 }
 
@@ -309,37 +310,36 @@ test('题目详情的备注提示语是「错在哪？下次注意什么？」�
 
 test('用指针点拍摄模式不会打开系统选择器；选完照片后入口不套焦点框', async ({ page, gateway }) => {
   await login(page, gateway);
-  const tray = page.getByTestId('capture-tray');
   const count = page.getByTestId('capture-count');
-  const multi = page.locator('[data-testid="capture-mode-multi"]').last();
   let opened = false;
   page.on('filechooser', () => { opened = true; });
-  await multi.click();
+  await page.locator('[data-testid="capture-add"]:visible').last().click();
+  await page.getByTestId('capture-mode-multi').click();
   await page.waitForTimeout(150);
   expect(opened).toBe(false);
-  await expect(page.getByTestId('capture-mode-sheet')).toHaveCount(0);
-  const fabAlbum = page.getByTestId('next-step-primary');
-  await pickWithPointer(page, fabAlbum);
+  await expect(page.getByTestId('capture-mode-sheet')).toBeVisible();
+  const start = page.getByTestId('capture-start');
+  await pickWithPointer(page, start);
   await expect(count).toHaveText('已拍 1 张');
-  await expect(fabAlbum.locator('input')).toBeFocused();
-  await expectNoRing(fabAlbum, '右下角的相册圆钮，指针选完照片后');
+  await expect(page.getByTestId('capture-mode-sheet')).toHaveCount(0);
+  await expectNoRing(page.locator('[data-testid="capture-add"]:visible').last(), '预览条上的「新增」，指针选完照片后');
   await page.getByTestId('capture-set-discard').click();
-  await expect(tray).toHaveCount(0);
 
   await uploadSingle(page);
-  const intakeAlbum = page.getByTestId('intake-album');
-  await page.locator('[data-testid="capture-mode-multi"]').last().click();
-  await pickWithPointer(page, intakeAlbum);
+  await page.locator('[data-testid="capture-add"]:visible').last().click();
+  await page.getByTestId('capture-mode-multi').click();
+  const intakeStart = page.getByTestId('capture-start');
+  await pickWithPointer(page, intakeStart);
   await expect(count).toHaveText('已拍 1 张');
-  await expect(intakeAlbum.locator('input')).toBeFocused();
-  await expectNoRing(intakeAlbum, '录入页的「从相册选择」，指针选完照片后');
+  await expectNoRing(page.locator('[data-testid="capture-add"]:visible').last(), '录入页的「新增」，指针选完照片后');
 });
 
-test('用键盘走到「单页 / 多页」和拍照入口时有看得见的焦点框', async ({ page, gateway }) => {
+test('用键盘走到「单页 / 多页」和「开始」时有看得见的焦点框', async ({ page, gateway }) => {
   await login(page, gateway);
-  const count = page.getByTestId('capture-count');
-  const single = page.locator('[data-testid="capture-mode-single"]').last();
-  const multi = page.locator('[data-testid="capture-mode-multi"]').last();
+  await page.locator('[data-testid="capture-add"]:visible').last().click();
+  const single = page.getByTestId('capture-mode-single');
+  const multi = page.getByTestId('capture-mode-multi');
+  const start = page.getByTestId('capture-start');
   await single.focus();
   await page.keyboard.press('Tab');
   await expect(multi).toBeFocused();
@@ -348,31 +348,9 @@ test('用键盘走到「单页 / 多页」和拍照入口时有看得见的焦�
   await page.keyboard.press('Shift+Tab');
   await expect(single).toBeFocused();
   await expectRing(single, '「单页」，Shift+Tab 走到时');
-
-  await multi.click();
-  const fabCamera = page.getByTestId('capture-fab-camera');
-  const fabAlbum = page.getByTestId('next-step-primary');
-  await fabCamera.locator('input').setInputFiles(await jpeg());
-  await expect(count).toHaveText('已拍 1 张');
-  await fabCamera.locator('input').focus();
+  await multi.focus();
   await page.keyboard.press('Tab');
-  await expect(fabAlbum.locator('input')).toBeFocused();
-  await expectRing(fabAlbum, '右下角的相册圆钮，Tab 走到时');
-  await expectNoRing(fabCamera, '右下角的拍照圆钮，焦点离开后');
-  await page.keyboard.press('Shift+Tab');
-  await expect(fabCamera.locator('input')).toBeFocused();
-  await expectRing(fabCamera, '右下角的拍照圆钮，Shift+Tab 走到时');
-
-  await page.getByTestId('capture-set-discard').click();
-  await uploadSingle(page);
-  await page.locator('[data-testid="capture-mode-multi"]').last().click();
-  const intakeCamera = page.getByTestId('intake-camera');
-  const intakeAlbum = page.getByTestId('intake-album');
-  await intakeCamera.locator('input').setInputFiles(await jpeg());
-  await expect(count).toHaveText('已拍 1 张');
-  await intakeCamera.locator('input').focus();
-  await page.keyboard.press('Tab');
-  await expect(intakeAlbum.locator('input')).toBeFocused();
-  await expectRing(intakeAlbum, '录入页的「从相册选择」，Tab 走到时');
-  await expectNoRing(intakeCamera, '录入页的「拍照」，焦点离开后');
+  await expect(start.locator('input')).toBeFocused();
+  await expectRing(start, '「开始」，Tab 走到时');
+  await expectNoRing(multi, '「多页」，焦点离开后');
 });

@@ -4,7 +4,7 @@ The notebook is the home list of saved wrong questions. It is where the student 
 
 ## Sub-features
 
-- `notebook-empty` shows the first-run empty state, with on-page camera and album actions, and the corner camera and album controls.
+- `notebook-empty` shows the first-run empty state, with one on-page 新增 action. The corner does not repeat it.
 - `notebook-list` shows grouped rows. Tapping a row opens question detail.
 - `notebook-grid` shows the same questions as cards.
 - `notebook-search` filters from the search box and can be cancelled.
@@ -33,7 +33,7 @@ Preconditions:
 - On this fixture the mock question text contains `1 + 1`. The chapter is often `未分类`. Do not expect a textbook chapter name until a question has one.
 
 - **After stage.** `sel-verify drive wait --testid empty-notebook --timeout 60000` on a new account, or `--testid item-card` when questions exist. Shot `--feature notebook --name home --entry after-stage`.
-- **Empty state.** `--testid empty-notebook` is visible. `--testid capture-camera` (去拍照) and `--testid capture-album` (从相册选择) are visible. The corner dock is also visible: `--testid capture-fab-camera` and `--testid next-step-primary` (accessible name `从相册选择`). No `--testid item-card`.
+- **Empty state.** `--testid empty-notebook` is visible. `--testid capture-add` (新增) is visible. There is no corner duplicate and no `--testid item-card`.
 - **From Settings.** `sel-verify drive click --testid settings-link`, wait for heading `设置`, then `sel-verify drive click --testid back-link`. The notebook is visible again. Shot `--feature notebook --name from-settings --entry settings-back`.
 - **From intake.** On `/s/new`, `sel-verify drive click --testid intake-done`. The URL is `/s/` and the notebook is visible. Shot `--feature notebook --name from-intake --entry intake-done`.
 - **From detail.** Open a row, then `sel-verify drive click --testid back-link`. The notebook is visible. Shot `--feature notebook --name from-detail --entry detail-back`.

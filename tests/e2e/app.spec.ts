@@ -43,7 +43,7 @@ test('配对后看到错题本，拍照进入录入态，自动收录的题左�
   await pair(page);
   await expect(page.getByTestId('subject-switch')).toContainText('数学');
   await expect(page.getByTestId('corner-search')).toBeVisible();
-  await expect(page.getByTestId('capture-camera')).toContainText('拍照或从相册选择');
+  await expect(page.locator('[data-testid="capture-add"]:visible')).toContainText('新增');
   await expect(page.getByTestId('capture-album')).toHaveCount(0);
   await expect(page.getByTestId('next-step-primary')).toHaveCount(0);
   const camera = page.locator('#camera-input');
@@ -64,7 +64,7 @@ test('配对后看到错题本，拍照进入录入态，自动收录的题左�
   await chooser.setFiles([await synthetic('#efb7b2'), await synthetic('#b0d3e0')]);
   await expect.poll(() => url(page)).toBe('/s/new');
   await expect(page.getByTestId('intake-album')).toHaveCount(0);
-  const intakeCamera = page.getByTestId('intake-camera').locator('input');
+  const intakeCamera = page.locator('[data-testid="capture-add"]:visible input').last();
   await expect(intakeCamera).not.toHaveAttribute('capture');
   await expect(intakeCamera).toHaveAttribute('multiple', '');
   const intakeBox = await intakeCamera.boundingBox();
@@ -344,7 +344,7 @@ test.describe('安卓桌面图标壳', () => {
   test('点相册两秒内页面没被盖住也没选到文件，就提示换手机浏览器打开；manifest 给安卓的是 browser', async ({ page }) => {
     await pair(page);
     // Playwright 拦下文件选择器、页面不会被盖住——正好就是小米「添加到桌面」壳的样子。
-    await page.locator('#library-input').click();
+    await page.locator('#camera-input').click();
     const hint = page.locator('ion-toast.chooser-blocked');
     await expect(hint).toBeVisible({ timeout: 5000 });
     await expect(hint).toContainText('打不开相册');

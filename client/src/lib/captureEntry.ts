@@ -3,34 +3,20 @@ import type { CaptureMode } from './captureSession.js';
 export type CaptureRouteKind = 'legacy' | 'materials';
 
 /**
- * direct: the control is a real file label. The 单页 / 多页 pill is already on screen, so the tap opens the system picker.
- * held: a tray is open and the student switched it back to 单页. Camera and album stay closed until 完成 or 放弃.
+ * sheet: idle materials. 新增 opens the mode sheet. It is not a file input.
+ * direct: a real file label. Legacy has no multi-page tray, and an open multi-page tray adds another page.
+ * held: a tray is open and the student switched it back to 单页. 新增 stays closed until 完成 or 放弃.
  *
  * A null route stays direct so a picker opened while /s/api/upload is in flight keeps its input.
  * That file is still committed as a single upload; stored 多页 does not apply until the route is materials.
  */
-export type CaptureEntryAction = 'direct' | 'held';
+export type CaptureEntryAction = 'sheet' | 'direct' | 'held';
 
 export function captureEntryAction(route: CaptureRouteKind | null, pageCount: number, mode: CaptureMode): CaptureEntryAction {
   if (route !== 'materials') return 'direct';
   if (pageCount > 0 && mode === 'single') return 'held';
-  return 'direct';
-}
-
-/**
- * iPhone and iPad Safari show 照片图库 / 拍照 / 选取文件 for one image input, and ignore capture.
- * Android, including Xiaomi and Redmi, opens the camera or the gallery from different inputs.
- * A desktop file dialog is not that iOS sheet, so it keeps the two inputs.
- */
-export function iosOffersCameraAndLibrary(ua: string, platform = '', maxTouchPoints = 0): boolean {
-  if (/Android/i.test(ua)) return false;
-  if (/iPhone|iPad|iPod/i.test(ua)) return true;
-  return platform === 'MacIntel' && maxTouchPoints > 1;
-}
-
-export function deviceOffersCombinedCapture(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return iosOffersCameraAndLibrary(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
+  if (pageCount > 0) return 'direct';
+  return 'sheet';
 }
 
 /**
@@ -45,12 +31,10 @@ export function pickedFileDestination(route: CaptureRouteKind | null, explicit: 
   return 'upload';
 }
 
-/** The 单页 / 多页 pill is on screen before the picker, including an empty materials page. */
-export function showCaptureModeBar(route: CaptureRouteKind | null, _pageCount: number): boolean {
-  return route === 'materials';
+/** The 单页 / 多页 pill stays on an open materials tray. The first choice lives in the sheet. */
+export function showCaptureModeBar(route: CaptureRouteKind | null, pageCount: number): boolean {
+  return route === 'materials' && pageCount > 0;
 }
-
-export type CaptureChoiceKind = 'camera' | 'album';
 
 type Listener = () => void;
 
@@ -79,25 +63,26 @@ class PickerLease {
 
 export const pickerLease = new PickerLease();
 
-/** Which entry opened the mode sheet. Shared by the corner dock, the inline dock, and the empty-notebook buttons. */
-class CaptureChoice {
-  kind: CaptureChoiceKind | null = null;
+/** The mode sheet. One instance, shared by the empty notebook, the corner button, and the intake page. */
+class CaptureSheet {
+  open = false;
   private listeners = new Set<Listener>();
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
-  open(kind: CaptureChoiceKind): void {
-    this.kind = kind;
+  show(): void {
+    if (this.open) return;
+    this.open = true;
     this.emit();
   }
-  close(): void {
-    if (this.kind === null) return;
-    this.kind = null;
+  hide(): void {
+    if (!this.open) return;
+    this.open = false;
     this.emit();
   }
   private emit(): void { for (const listener of this.listeners) listener(); }
 }
 
-export const captureChoice = new CaptureChoice();
+export const captureSheet = new CaptureSheet();

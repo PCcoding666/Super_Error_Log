@@ -74,7 +74,9 @@ describe('产品说明页文案', () => {
     expect(html).toContain('选拍摄模式');
     expect(html).toContain('单页');
     expect(html).toContain('多页');
-    expect(html).toContain('改回之后拍照和相册先停用，要点「完成」或「放弃这组」才能再拍');
+    expect(html).toContain('改回之后「新增」先停用，要点「完成」或「放弃这组」才能再拍');
+    expect(html).toContain('点「新增」');
+    expect(html).not.toContain('iPhone 的系统菜单');
     expect(html).not.toContain('上方还有「单页 / 多页」');
     expect(html).toContain('没有练习入口');
     expect(html).not.toContain('/s/practices');
