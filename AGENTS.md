@@ -24,6 +24,7 @@ Primary student surface: mobile browser `/s/`, per-student invitation login, ser
 - `npm run web:fake` — synthetic mobile web preview on **3198**; prints a local pairing link (legacy single-student fixture, not invitation login)
 - `npm run test:e2e` — Playwright: legacy journeys on **3199**, mobile web on **3196/3197**, invitation/upload fixtures on ephemeral loopback ports; single worker
 - `npm run verify` — full gate: typecheck + tests + build + e2e. Run this before considering work done.
+- `npx tsx .claude/skills/verify-sel/src/cli.ts` — local student-app proof (launch, doctor, drive, evidence, cleanup). Canonical skill: `.claude/skills/verify-sel/SKILL.md`. A change to student-facing UI (`client/`, invitation/account/install/stage pages) must run it over every entry point of each affected feature in `features/` and link the screenshots in the PR. This does not replace `npm run verify`. Leftover server-rendered pages (`/s/items`, `/s/photos`, `/s/practice/*`, …) are not current features.
 - Node >= 24 required. Install Playwright Chromium before `npm test` (fixture generation needs it). See the cloud setup commands in `docs/CODEX_CLOUD_HANDOFF.md`. Claude Code cloud sessions run `.claude/hooks/session-start.sh` at startup, which installs Node 24, npm deps and the matching Playwright Chromium automatically.
 
 ## Gotchas
