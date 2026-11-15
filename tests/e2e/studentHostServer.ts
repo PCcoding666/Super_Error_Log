@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { StudentRegistry } from '../../src/studentHost/registry.js';
 import { StudentWorkerPool } from '../../src/studentHost/workers.js';
 import { createStudentHostGateway } from '../../src/studentHost/router.js';
+import { resolvePublicOrigin } from '../../src/studentHost/inviteLink.js';
 import { RateLimiter } from '../../src/mobile/rateLimit.js';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sel-invite-browser-'));
@@ -34,7 +35,10 @@ const fixtureEnv = process.env.SEL_E2E_MATERIAL_JOURNEY === '1' ? { SEL_E2E_MATE
 const pool = new StudentWorkerPool({ dirFor: id => registry.studentDir(id), env: { ...fixtureEnv, NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_STUDENT_WORKER_FAKE: '1', SEL_E2E_LEGACY_CAPTURE: process.env.SEL_E2E_MATERIAL_CAPTURE === '1' ? '0' : '1', SEL_E2E_MATERIAL_DELAY: process.env.SEL_E2E_MATERIAL_CAPTURE === '1' ? '1' : '0' } });
 const gateway = await createStudentHostGateway({ registry, pool, requireRegistrationCode: false });
 const app = express();
-app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: req => req.socket.remoteAddress ?? '127.0.0.1' }));
+const linkOrigin = process.env.SEL_HELP_CAPTURE_ORIGIN?.trim()
+  ? resolvePublicOrigin(process.env, process.env.SEL_HELP_CAPTURE_ORIGIN)
+  : undefined;
+app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: req => req.socket.remoteAddress ?? '127.0.0.1', linkOrigin }));
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;

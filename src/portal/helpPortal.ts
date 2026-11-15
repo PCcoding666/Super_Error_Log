@@ -37,6 +37,8 @@ export const HELP_GUIDE_IMAGES = [
   'settings.webp',
   'account.webp',
   'install.webp',
+  'iphone-confirm.webp',
+  'iphone-home.webp',
 ] as const;
 
 const HELP_GUIDE_IMAGE_SET = new Set<string>(HELP_GUIDE_IMAGES);
@@ -84,9 +86,14 @@ function contactHtml(contact: HelpContact): string {
   return `<dl class="group">${rows.join('')}</dl>`;
 }
 
-/** 一步一张卡：手机框里的合成示例图，配一两句说明。 */
+/**
+ * 一步一张卡：手机框里的图，配一两句说明。
+ * 说明页没有脚本，CSP 也不允许补脚本。Safari 会跳过 loading=lazy 的预加载，
+ * 从目录锚点或平滑滚动把图带进画面后也不一定开始请求，框里就只剩占位底色。
+ * 所以这里全部立即加载。
+ */
 function card(file: string, alt: string, title: string, text: string): string {
-  return `<article class="card"><figure class="device"><img src="/help/img/${file}" width="390" height="844" alt="${alt}" loading="lazy" decoding="async"></figure><div class="card-copy"><h3>${title}</h3><p>${text}</p></div></article>`;
+  return `<article class="card"><figure class="device"><img src="/help/img/${file}" width="390" height="844" alt="${alt}" loading="eager" decoding="async"></figure><div class="card-copy"><h3>${title}</h3><p>${text}</p></div></article>`;
 }
 
 const TOC_LINKS = `<a href="#product">产品是什么</a><a href="#start">注册与登录</a><a href="#home">添加到手机桌面</a><a href="#capture">怎么拍照</a><a href="#pick">怎么选错题</a><a href="#practice">练习</a><a href="#faq">常见问题</a><a href="#contact">联系方式</a>`;
@@ -484,7 +491,7 @@ footer p { margin: 0 0 6px; }
       <div class="section-head">
         <p class="kicker">放到桌面</p>
         <h2>添加到手机桌面</h2>
-        <p>错题本是网页，带了主屏幕清单、图标和离线壳。请用系统浏览器打开，不要在微信里添加：微信里先点右上角「…」，选「在浏览器打开」或「在 Safari 中打开」。</p>
+        <p>错题本是网页，可以放到手机桌面上。请用系统浏览器打开，不要在微信里添加：微信里先点右上角「…」，选「在浏览器打开」或「在 Safari 中打开」。</p>
         <p class="url"><a href="${STUDY_URL}">${STUDY_URL}</a></p>
       </div>
       <div class="cards">
@@ -493,18 +500,20 @@ footer p { margin: 0 0 6px; }
           ${ANDROID_DIAGRAM}
           <div class="card-copy">
             <h3>安卓（小米、红米浏览器和 Chrome）</h3>
-            <p>用自带浏览器或 Chrome 打开学习页并登录，在菜单里点「添加到桌面」或「安装应用」，图标名是「错题本」。安卓上的清单故意用浏览器方式打开（manifest 的 display 是 browser），桌面图标会进浏览器标签，这样点相册和拍照时系统选择器才能弹出来；如果某个壳打不开相册，改用 Chrome 或系统浏览器再添加一次。</p>
+            <p>用自带浏览器或 Chrome 打开学习页并登录，在菜单里点「添加到桌面」或「安装应用」，图标名是「错题本」。桌面图标会打开浏览器页面，这样拍照和从相册选图才能用；如果点了没反应，改用 Chrome 或系统浏览器再添加到桌面一次。</p>
           </div>
         </article>
         <article class="card card-wide">
           ${IPHONE_DIAGRAM}
           <div class="card-copy">
             <h3>iPhone（Safari）</h3>
-            <p>必须用 Safari：点屏幕下方的「分享」（方框加向上箭头），往下找「添加到主屏幕」，再点右上角「添加」，图标名是「错题本」。iPhone 上清单是独立应用方式（display 为 standalone，页面也标记了可添加到主屏幕），从主屏幕打开是全屏；如果又要你登录，输入自己的邀请码，学习记录都在。</p>
+            <p>必须用 Safari：点屏幕下方的「分享」（方框加向上箭头），往下找「添加到主屏幕」。前两步还是示意图；确认页和主屏幕图标在下面。从主屏幕打开是全屏；如果又要你登录，输入自己的邀请码，学习记录都在。</p>
           </div>
         </article>
+        ${card('iphone-confirm.webp', 'iPhone 添加到主屏幕的确认页。名称是超级错题本，地址是学习页，作为网页 App 打开是开着的。', '确认添加', '名称是「超级错题本」，地址是 <a href="' + STUDY_URL + '">' + STUDY_URL + '</a>。「作为网页 App 打开」保持打开，再点右上角「添加」。')}
+        ${card('iphone-home.webp', '主屏幕上的超级错题本图标。', '在主屏幕上找到它', '添加完成以后，主屏幕上会出现「超级错题本」。以后从这里打开。')}
       </div>
-      <p class="note">清单地址是 /s/manifest.webmanifest，图标和名称都是「错题本」。Service Worker 只缓存页面外壳，不缓存你的错题和照片；没网时打不开新内容，已经传上去的都在服务器上。</p>
+      <p class="note">没网时打不开新内容，已经传上去的都还在。</p>
     </section>
 
     <section id="capture">
@@ -578,7 +587,7 @@ footer p { margin: 0 0 6px; }
       <p><a href="${GITHUB_URL}">GitHub</a></p>
       <p class="url"><a href="${GITHUB_URL}">${GITHUB_URL}</a></p>
       <p>超级错题本 · Super Error Log</p>
-      <p>配图为合成示例，不含学生数据。</p>
+      <p>配图不含学生数据。</p>
     </footer>
   </main>
 </div>

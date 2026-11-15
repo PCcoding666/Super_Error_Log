@@ -49,13 +49,13 @@ function openRegistry(dir = root(), now?: () => Date): StudentRegistry {
 }
 
 /** 网关 + 合成 IP（x-test-ip 只在测试夹具里被 ipOf 采信）。 */
-async function setup(options: { now?: () => Date; requireRegistrationCode?: boolean; failureDelayMs?: number } = {}) {
+async function setup(options: { now?: () => Date; requireRegistrationCode?: boolean; failureDelayMs?: number; linkOrigin?: string } = {}) {
   const dir = root();
   const registry = StudentRegistry.open(dir, options.now ? { now: options.now } : undefined);
   const gateway = await createStudentHostGateway({ registry, now: options.now, requireRegistrationCode: options.requireRegistrationCode ?? false, failureDelayMs: options.failureDelayMs });
   gateways.push(gateway);
   const app = express();
-  app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: request => String(request.headers['x-test-ip'] ?? '192.0.2.10') }));
+  app.use('/s', gateway.router({ limiter: new RateLimiter(), ipOf: request => String(request.headers['x-test-ip'] ?? '192.0.2.10'), linkOrigin: options.linkOrigin }));
   const server = app.listen(0, '127.0.0.1');
   servers.push(server);
   await new Promise<void>(resolve => server.once('listening', resolve));
@@ -826,6 +826,21 @@ describe('预填邀请码的登录链接（/s/?code=…）', () => {
     expect(hidden).toContain('data-testid="invite-code-unavailable"');
     expect(hidden).not.toContain('my-invite-link');
     expect(hidden).not.toContain('my-invite-qr');
+  });
+
+  it('指定公网入口时，登录链接和二维码用这个入口，不带本机地址', async () => {
+    const origin = 'https://study.pccoding666.com';
+    const env = await setup({ linkOrigin: origin });
+    const registered = await env.post('/s/register', { name: '测试学生甲', phone: '13800002222', ...pinField });
+    const code = codeFrom(await registered.text());
+    const cookie = sessionCookie(await env.post('/s/login', { code }));
+    const html = await (await env.get('/s/account', { cookie })).text();
+    const link = `${origin}/s/?code=${code}`;
+    expect(html).toContain(`>${link}<`);
+    expect(html).not.toContain('127.0.0.1');
+    expect(html).not.toContain('localhost');
+    const qr = qrSvg(encodeQr(link).modules);
+    expect(html).toContain(`d="${qr.path}"`);
   });
 });
 

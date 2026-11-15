@@ -12,6 +12,8 @@ import { chromium, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
 const OUT = path.resolve('src/portal/help-img');
+/** `npx tsx scripts/capture-help-guide.ts --only account` 只重拍我的邀请码，避免盖掉其它图。 */
+const onlyShot = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] ?? '' : '';
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -34,6 +36,7 @@ async function jpeg(kind: 'marked' | 'plain'): Promise<Buffer> {
 }
 
 async function save(page: Page, name: string): Promise<void> {
+  if (onlyShot && onlyShot !== name) return;
   const png = await page.screenshot({ type: 'png', animations: 'disabled' });
   const file = path.join(OUT, `${name}.webp`);
   await sharp(png).webp({ quality: 58, effort: 5 }).toFile(file);
@@ -44,7 +47,7 @@ async function save(page: Page, name: string): Promise<void> {
 function startHost(): { child: ChildProcess; ready: Promise<{ base: string; codes: string[] }> } {
   const child = fork(path.resolve('tests/e2e/studentHostServer.ts'), [], {
     execArgv: ['--import', 'tsx'],
-    env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_E2E_MATERIAL_CAPTURE: '1' },
+    env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_E2E_MATERIAL_CAPTURE: '1', SEL_HELP_CAPTURE_ORIGIN: 'https://study.pccoding666.com' },
     stdio: ['ignore', 'inherit', 'pipe', 'ipc'],
   });
   child.stderr?.on('data', chunk => process.stderr.write(chunk));
@@ -63,6 +66,19 @@ async function stopHost(child: ChildProcess): Promise<void> {
     child.once('exit', () => { clearTimeout(timer); resolve(); });
     if (child.connected) child.send({ stop: true }, () => {}); else child.kill('SIGTERM');
   });
+}
+
+/** 帮助页上的登录链接必须是公网入口，二维码编的是同一条链接。码来自合成夹具。 */
+async function captureAccount(page: Page, base: string): Promise<void> {
+  await page.goto(`${base}/s/account`);
+  await page.getByRole('heading', { name: '我的邀请码' }).waitFor();
+  await page.getByTestId('my-invite-qr').waitFor();
+  const link = (await page.getByTestId('my-invite-link').innerText()).replace(/\s+/g, '');
+  if (!link.startsWith('https://study.pccoding666.com/s/?code=')) throw new Error(`登录链接不是公网入口：${link}`);
+  if (link.includes('127.0.0.1') || link.includes('localhost')) throw new Error(`登录链接带了本机地址：${link}`);
+  await page.getByTestId('my-invite-link-block').evaluate((node: HTMLElement) => node.scrollIntoView({ block: 'center' }));
+  await page.waitForTimeout(300);
+  await save(page, 'account');
 }
 
 async function main(): Promise<void> {
@@ -106,6 +122,11 @@ async function main(): Promise<void> {
     if (await page.getByRole('heading', { name: '你现在读初中还是高中？' }).count()) {
       await save(page, 'stage');
       await page.getByRole('button', { name: '初中', exact: true }).click();
+    }
+
+    if (onlyShot === 'account') {
+      await captureAccount(page, base);
+      return;
     }
 
     await page.getByTestId('empty-notebook').waitFor();
@@ -165,9 +186,7 @@ async function main(): Promise<void> {
     await page.getByText('即将推出').waitFor();
     await page.getByTestId('settings-my-invite').waitFor();
     await save(page, 'settings');
-    await page.goto(`${base}/s/account`);
-    await page.getByRole('heading', { name: '我的邀请码' }).waitFor();
-    await save(page, 'account');
+    await captureAccount(page, base);
     await page.goto(`${base}/s/install`);
     await page.getByRole('heading', { name: '放到主屏幕' }).waitFor();
     await save(page, 'install');
