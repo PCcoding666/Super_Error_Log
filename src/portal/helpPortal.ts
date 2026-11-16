@@ -2,7 +2,7 @@
  * 公开产品说明页，地址 https://study.pccoding666.com/help/ 。
  * 与学生应用同一进程、同一端口，按路径区分，不看 Host：
  * GET /help/ 返回本页，GET /help 301 到 /help/（查询串保留）。
- * GET /help/img/<name>.webp 返回说明页用的合成示例图（无学生数据），可缓存。
+ * GET /help/img/<name>.webp 返回说明页配图。应用内截图来自真实试卷，已隐去姓名、学校、手机号和邀请码。
  * study.pccoding666.com 的 GET / 仍是 404；/s、/v1、/v2、/admin 不在这里处理。
  * help.pccoding666.com 子域名暂不使用（DNS 仍是 NXDOMAIN）。不要再按主机名把 GET / 换成这一页。
  * 页面是静态文案。发布包只带 dist/，HTML 随 tsc 编译进去；图片在构建时复制到 dist/portal/help-img/。
@@ -21,11 +21,10 @@ const STUDY_URL = 'https://study.pccoding666.com/s/';
 const PORTAL_URL = 'https://study.pccoding666.com/help/';
 const GITHUB_URL = 'https://github.com/PCcoding666/Super_Error_Log';
 
-/** 说明页允许下发的合成示例图。名字固定，拒绝其它路径。 */
+/** 说明页允许下发的图。名字固定，拒绝其它路径。 */
 export const HELP_GUIDE_IMAGES = [
   'notebook-empty.webp',
   'notebook-list.webp',
-  'intake-auto.webp',
   'intake-pick.webp',
   'item-detail.webp',
   'item-menu.webp',
@@ -34,10 +33,7 @@ export const HELP_GUIDE_IMAGES = [
   'register.webp',
   'register-done.webp',
   'recover.webp',
-  'stage.webp',
-  'settings.webp',
   'wechat-group.webp',
-  'install.webp',
   'iphone-confirm.webp',
   'iphone-home.webp',
 ] as const;
@@ -85,7 +81,7 @@ function contactHtml(contact: HelpContact): string {
   if (contact.wechat) rows.push(`<div><dt>微信</dt><dd data-contact="wechat">${escapeHtml(contact.wechat)}</dd></div>`);
   const directory = rows.length === 0 ? '' : `<dl class="group">${rows.join('')}</dl>`;
   const none = rows.length === 0 ? ' data-contact="none"' : '';
-  return `<p class="note"${none}>使用中有问题，先问给你邀请码的老师。</p>
+  return `<p class="note"${none}>使用中有问题，先问老师。</p>
 <p>也可以加入微信群「超级错题本天使用户」。下面的二维码在 2026 年 11 月 23 日前有效（图上写的是 7 天内、11月23日前），过期后要换成新的。</p>
 <figure class="contact-qr"><img src="/help/img/wechat-group.webp" width="1220" height="2712" alt="微信群「超级错题本天使用户」的入群二维码，图上写着 11月23日前有效。" loading="eager" decoding="async"></figure>
 ${directory}`;
@@ -101,53 +97,7 @@ function card(file: string, alt: string, title: string, text: string): string {
   return `<article class="card"><figure class="device"><img src="/help/img/${file}" width="390" height="844" alt="${alt}" loading="eager" decoding="async"></figure><div class="card-copy"><h3>${title}</h3><p>${text}</p></div></article>`;
 }
 
-const TOC_LINKS = `<a href="#product">产品是什么</a><a href="#start">注册与登录</a><a href="#home">添加到手机桌面</a><a href="#capture">怎么拍照</a><a href="#pick">怎么选错题</a><a href="#practice">练习</a><a href="#faq">常见问题</a><a href="#contact">联系方式</a>`;
-
-const ANDROID_DIAGRAM = `<figure class="diagram">
-<svg viewBox="0 0 640 300" role="img" aria-labelledby="android-diagram-title">
-  <title id="android-diagram-title">安卓浏览器菜单示意图</title>
-  <rect x="8" y="8" width="176" height="284" rx="22" fill="#fff" stroke="#eaeaea"/>
-  <rect x="20" y="24" width="152" height="28" rx="6" fill="#f6f6f6"/>
-  <text x="32" y="43" font-size="13" fill="#171717">错题本</text>
-  <circle cx="148" cy="38" r="2.4" fill="#171717"/><circle cx="156" cy="38" r="2.4" fill="#171717"/><circle cx="164" cy="38" r="2.4" fill="#171717"/>
-  <text x="32" y="90" font-size="12" fill="#4d4d4d">学习页已打开</text>
-  <path d="M188 38h36" stroke="#0066d6" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <rect x="240" y="48" width="220" height="168" rx="14" fill="#fff" stroke="#eaeaea"/>
-  <text x="258" y="84" font-size="16" fill="#171717">添加到桌面</text>
-  <line x1="258" y1="100" x2="442" y2="100" stroke="#eaeaea"/>
-  <text x="258" y="132" font-size="16" fill="#171717">安装应用</text>
-  <line x1="258" y1="148" x2="442" y2="148" stroke="#eaeaea"/>
-  <text x="258" y="180" font-size="16" fill="#6e6e73">刷新</text>
-  <text x="480" y="92" font-size="14" fill="#4d4d4d">菜单</text>
-  <text x="480" y="116" font-size="13" fill="#666">字可能是</text>
-  <text x="480" y="136" font-size="13" fill="#666">上面两种</text>
-  <text x="480" y="156" font-size="13" fill="#666">里的一种</text>
-  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill="#0066d6"/></marker></defs>
-</svg>
-<figcaption>示意图。小米、红米自带浏览器和 Chrome 的菜单位置不一样，不是真机截图。</figcaption>
-</figure>`;
-
-const IPHONE_DIAGRAM = `<figure class="diagram">
-<svg viewBox="0 0 640 300" role="img" aria-labelledby="iphone-diagram-title">
-  <title id="iphone-diagram-title">iPhone Safari 添加到主屏幕示意图</title>
-  <rect x="8" y="8" width="176" height="284" rx="22" fill="#fff" stroke="#eaeaea"/>
-  <text x="32" y="40" font-size="13" fill="#171717">Safari</text>
-  <rect x="20" y="250" width="152" height="28" rx="8" fill="#f6f6f6"/>
-  <path d="M96 258 v12 M90 264 h12" stroke="#0066d6" stroke-width="1.6" fill="none"/>
-  <rect x="70" y="266" width="14" height="12" rx="2" fill="none" stroke="#0066d6" stroke-width="1.6"/>
-  <path d="M188 268h36" stroke="#0066d6" stroke-width="1.5"/>
-  <rect x="240" y="36" width="230" height="220" rx="16" fill="#fff" stroke="#eaeaea"/>
-  <text x="258" y="68" font-size="14" fill="#6e6e73">分享</text>
-  <rect x="256" y="84" width="198" height="40" rx="8" fill="#f3f8ff" stroke="#c5ddff"/>
-  <text x="270" y="109" font-size="16" fill="#171717">添加到主屏幕</text>
-  <text x="258" y="156" font-size="15" fill="#4d4d4d">拷贝</text>
-  <text x="258" y="186" font-size="15" fill="#4d4d4d">加入阅读列表</text>
-  <text x="490" y="100" font-size="14" fill="#4d4d4d">点这一行</text>
-  <text x="490" y="124" font-size="13" fill="#666">再点右上角</text>
-  <text x="490" y="144" font-size="13" fill="#666">「添加」</text>
-</svg>
-<figcaption>示意图。方框加向上箭头是 Safari 下方的「分享」。不是真机截图。</figcaption>
-</figure>`;
+const TOC_LINKS = `<a href="#start">第一次用</a><a href="#use">经常用</a><a href="#faq">遇到问题</a><a href="#contact">联系</a>`;
 
 export function helpPortalHtml(contact: HelpContact = readHelpContact()): string {
   return `<!doctype html>
@@ -158,7 +108,7 @@ export function helpPortalHtml(contact: HelpContact = readHelpContact()): string
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
-<meta name="description" content="超级错题本使用说明：注册登录、拍照收错题、查看详情。">
+<meta name="description" content="超级错题本使用说明：自己注册，拍一张批改过的卷子，做错的题收进错题本。">
 <link rel="canonical" href="${PORTAL_URL}">
 <title>超级错题本</title>
 <style>
@@ -279,12 +229,8 @@ main { min-width: 0; }
   line-height: 1.3;
 }
 .toc a:hover { color: var(--ion-text-color); background: rgba(120, 120, 128, .12); text-decoration: none; }
-body:has(#product:target) .toc a[href="#product"],
 body:has(#start:target) .toc a[href="#start"],
-body:has(#home:target) .toc a[href="#home"],
-body:has(#capture:target) .toc a[href="#capture"],
-body:has(#pick:target) .toc a[href="#pick"],
-body:has(#practice:target) .toc a[href="#practice"],
+body:has(#use:target) .toc a[href="#use"],
 body:has(#faq:target) .toc a[href="#faq"],
 body:has(#contact:target) .toc a[href="#contact"] {
   color: var(--ion-text-color);
@@ -300,13 +246,13 @@ h1 {
 }
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 400px);
+  grid-template-columns: minmax(0, 40em);
   gap: 28px 40px;
   align-items: center;
   padding: 28px 0 8px;
   scroll-margin-top: 72px;
 }
-.lede { margin: 0; max-width: 22em; font-size: 20px; line-height: 1.45; }
+.lede { margin: 0; max-width: 28em; font-size: 20px; line-height: 1.45; }
 .quiet, .note { margin: 12px 0 0; color: var(--sel-muted); font-size: 15px; line-height: 1.5; }
 .hero-actions { margin: 22px 0 0; }
 .shot-note { margin: 10px 0 0; color: var(--sel-muted); font-size: 14px; line-height: 1.4; text-align: center; }
@@ -366,6 +312,7 @@ section { scroll-margin-top: 72px; }
   background: var(--ion-item-background);
 }
 .card-note .card-copy { padding: 0; background: transparent; }
+.card-note .card-copy p + p { margin-top: 8px; }
 .card-copy h3 { margin: 0 0 6px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
 .card-copy p { margin: 0; }
 .soon {
@@ -448,10 +395,10 @@ footer p { margin: 0 0 6px; }
 </style>
 </head>
 <body>
-<a class="skip" href="#product">跳到正文</a>
+<a class="skip" href="#start">跳到第一次用</a>
 <header class="top">
   <a class="brand" href="/help/">超级错题本</a>
-  <a class="cta" href="${STUDY_URL}">开始使用</a>
+  <a class="cta" href="${STUDY_URL}register">去注册</a>
 </header>
 <div class="layout">
   <nav class="sidenav toc" aria-label="目录">${TOC_LINKS}</nav>
@@ -465,119 +412,83 @@ footer p { margin: 0 0 6px; }
       <div class="hero-copy">
         <p class="kicker">产品是什么</p>
         <h1>超级错题本</h1>
-        <p class="lede">把卷子上做错的题收进错题本，需要时再拿出来看。照片里的题目由 AI 抽出，建议也由 AI 给出，最后保存什么由你决定。</p>
+        <p class="lede">学生自己注册，拍一张批改过的卷子，做错的题就收进错题本。</p>
         <p class="quiet">家长只看到完成情况和掌握程度这些汇总，看不到题目，也看不到错因。目前支持数学、物理、化学。</p>
-        <p class="hero-actions"><a class="cta" href="${STUDY_URL}">开始使用</a></p>
-      </div>
-      <div class="hero-visual">
-        <figure class="device device-hero">
-          <img src="/help/img/notebook-list.webp" width="390" height="844" alt="合成浏览器示例，不是系统相机或相册。错题本按学科列出收进来的题，右上角可以筛选，左下角可以搜索。" loading="eager" fetchpriority="high" decoding="async">
-        </figure>
-        <p class="shot-note">合成浏览器示例，不是系统相机或相册。题按学科列在错题本里，右上角可以筛选，左下角可以搜索。右下角只有拍照和相册。</p>
+        <p class="hero-actions"><a class="cta" href="${STUDY_URL}register">去注册</a> <a href="${STUDY_URL}">已有邀请码，去登录</a></p>
       </div>
     </section>
 
     <section id="start">
       <div class="section-head">
-        <p class="kicker">开始使用</p>
-        <h2>注册与登录</h2>
-        <p>用邀请码进入自己的错题本。没有密码，也不发短信。</p>
-        <p data-testid="start-steps">最快的三步：老师给你一个<strong>二维码或链接</strong>，扫一下或点开，登录页里邀请码已经填好 → 点<strong>「进入我的错题本」</strong> → 点「新增」，<strong>拍一张批改过的卷子</strong>。只拿到 12 位邀请码的，按下面的步骤自己输入。</p>
+        <p class="kicker">第一次用</p>
+        <h2>三步就能开始</h2>
+        <p data-testid="start-steps">打开注册页，填好 Name、手机号和找回码 → 把邀请码保存下来 → <strong>拍一张批改过的卷子</strong>。</p>
       </div>
       <div class="cards">
-        ${card('register.webp', '合成示例。注册页：Name、手机号和找回码', '注册', '打开 <a href="' + STUDY_URL + 'register">注册页</a>，填写 Name、手机号和找回码。页面上写着「找回码跟手机号仅用于找回账户」。老师给了班级注册码才会多出这一格。已经有邀请码的，点「已有邀请码，直接登录」。')}
-        ${card('register-done.webp', '合成示例。注册成功页，邀请码只完整显示这一次', '保存邀请码', '注册成功后会显示你的 12 位邀请码，只在这一页完整显示一次。请截图或点「复制邀请码」，不要发给别人；邀请码 60 天内可以反复登录。')}
-        ${card('stage.webp', '合成示例。第一次选择初中或高中', '选学段', '第一次进入会问初中还是高中，以后可以在设置里改。错题按这个学段整理章节，目前只支持数学、物理、化学。')}
-        ${card('login.webp', '合成示例。输入 12 位邀请码的登录页', '登录', '打开 <a href="' + STUDY_URL + '">学习页</a>，输入邀请码，点「进入我的错题本」。老师发的二维码或链接打开后邀请码已经填好，直接点进入；打开链接本身不算登录，点了按钮才算。短横线、空格、大小写都不用管，登录后常用的话不用每次输。')}
-        ${card('settings.webp', '合成示例。设置页：学段、练习即将推出、添加到主屏幕、我的邀请码', '设置', '登录后打开设置，可以改学段，也能进入「我的邀请码」。练习一行写着「即将推出」。')}
+        ${card('register.webp', '注册页：Name、手机号、找回码，以及找回码跟手机号仅用于找回账户。', '注册', '打开 <a href="' + STUDY_URL + 'register">注册页</a>，填写 Name、手机号和找回码。页面上写着「找回码跟手机号仅用于找回账户」。已经有邀请码的，点「已有邀请码，直接登录」。')}
+        ${card('register-done.webp', '注册成功页。邀请码已隐去，只在这一页完整显示一次。', '保存邀请码', '注册成功后会显示 12 位邀请码，只在这一页完整显示一次。请截图或点「复制邀请码」，不要发给别人。邀请码 60 天内可以反复登录。图里的邀请码已隐去。')}
+        ${card('notebook-empty.webp', '错题本里点新增后的选择：单页、多页，然后开始。', '拍卷子', '点「新增」。一张纸用「单页」。试卷和答题卡不在同一页，用「多页」。再点「开始」。放平、拍全、光线均匀。')}
+        ${card('intake-pick.webp', '录入页列出真实题目。这页没有批改痕迹，勾出做错的题再加入。', '收进错题本', '老师打了叉、或能看出批改痕迹的题，会自动收进来。这页看不出批改痕迹时，勾出做错的题，再点「加入」。认出来的字如果和照片不一样，以照片为准。')}
       </div>
+      <p class="note">第一次进入会问初中还是高中。选好以后，错题按这个学段整理。</p>
     </section>
 
-    <section id="home">
+    <section id="use">
       <div class="section-head">
-        <p class="kicker">放到桌面</p>
-        <h2>添加到手机桌面</h2>
-        <p>错题本是网页，可以放到手机桌面上。请用系统浏览器打开，不要在微信里添加：微信里先点右上角「…」，选「在浏览器打开」或「在 Safari 中打开」。</p>
-        <p class="url"><a href="${STUDY_URL}">${STUDY_URL}</a></p>
+        <p class="kicker">经常用</p>
+        <h2>看错题，放到桌面</h2>
+        <p>收进来的题在错题本里，按章节和知识点排好。添加到手机桌面、换手机，都在这一节。</p>
       </div>
       <div class="cards">
-        ${card('install.webp', '合成示例。设置里的「添加到主屏幕」说明页', '应用里的说明', '设置里也有一页「添加到主屏幕」，写了 iPhone Safari 和安卓 Chrome 的步骤，和下面两条一样。')}
-        <article class="card card-wide">
-          ${ANDROID_DIAGRAM}
+        ${card('notebook-list.webp', '错题本列出真实题目，标题是章节，下面是题目原文。', '错题本', '点进一道题就能看整张原图和认出来的文字。右上角可以筛选，左下角可以搜索。')}
+        ${card('item-detail.webp', '题目详情最上面是拍下的整张试卷，下面是这道题的原文。', '看整张原图', '最上面是你拍的整张照片，点开可以放大。字认错了，点「识别错了？改」，以照片为准。')}
+        ${card('item-answer.webp', '详情下半：章节、知识点，以及正确答案。解答标着仅供参考。', '章节和答案', '章节与知识点写在题目下面。正确答案和解题过程标着「仅供参考」。也可以拍照录入答案，或在备注里打字、按一下说。')}
+        ${card('item-menu.webp', '题目详情右上角菜单：修改分类、改题目文字、不是错题就移除。', '改错字或移出', '右上角「…」里可以修改分类，或改题目文字。这道不该在错题本里，点「不是错题，移除」。')}
+        <article class="card card-note">
           <div class="card-copy">
-            <h3>安卓（小米、红米浏览器和 Chrome）</h3>
-            <p>用自带浏览器或 Chrome 打开学习页并登录，在菜单里点「添加到桌面」或「安装应用」，图标名是「错题本」。桌面图标会打开浏览器页面，这样拍照和从相册选图才能用；如果点了没反应，改用 Chrome 或系统浏览器再添加到桌面一次。</p>
+            <h3>添加到手机桌面</h3>
+            <p>错题本是网页，可以放到手机桌面上。请用系统浏览器打开，不要在微信里添加：微信里先点右上角「…」，选「在浏览器打开」或「在 Safari 中打开」。</p>
+            <p class="url"><a href="${STUDY_URL}">${STUDY_URL}</a></p>
           </div>
         </article>
-        <article class="card card-wide">
-          ${IPHONE_DIAGRAM}
+        <article class="card card-note">
           <div class="card-copy">
             <h3>iPhone（Safari）</h3>
-            <p>必须用 Safari：点屏幕下方的「分享」（方框加向上箭头），往下找「添加到主屏幕」。前两步还是示意图；确认页和主屏幕图标在下面。从主屏幕打开是全屏；如果又要你登录，输入自己的邀请码，学习记录都在。</p>
+            <p>1. 用 Safari 打开学习页。微信里打开的，先点右上角「…」，选「在 Safari 中打开」。</p>
+            <p>2. 点屏幕下方的「分享」（方框里一个向上的箭头）。</p>
+            <p>3. 往下找「添加到主屏幕」，点它，再点右上角「添加」。</p>
+            <p>4. 以后从主屏幕上的「超级错题本」打开。如果又要登录，输入自己的邀请码，学习记录都在。</p>
           </div>
         </article>
         ${card('iphone-confirm.webp', 'iPhone 添加到主屏幕的确认页。名称是超级错题本，地址是学习页，作为网页 App 打开是开着的。', '确认添加', '名称是「超级错题本」，地址是 <a href="' + STUDY_URL + '">' + STUDY_URL + '</a>。「作为网页 App 打开」保持打开，再点右上角「添加」。')}
         ${card('iphone-home.webp', '主屏幕上的超级错题本图标。', '在主屏幕上找到它', '添加完成以后，主屏幕上会出现「超级错题本」。以后从这里打开。')}
+        <article class="card card-note">
+          <div class="card-copy">
+            <h3>安卓（Chrome 或系统浏览器）</h3>
+            <p>用 Chrome 或系统浏览器打开学习页并登录。菜单里点「添加到桌面」或「安装应用」。桌面图标会打开浏览器页面，这样拍照和从相册选图才能用。点了没反应时，换 Chrome 或系统浏览器再添加一次。</p>
+          </div>
+        </article>
+        ${card('login.webp', '登录页：输入 12 位邀请码，点进入我的错题本。', '再次登录', '已经有邀请码的，打开 <a href="' + STUDY_URL + '">学习页</a>，输入邀请码，点「进入我的错题本」。短横线、空格、大小写都不用管。登录以后常用的话不用每次输。')}
       </div>
       <p class="note">没网时打不开新内容，已经传上去的都还在。</p>
     </section>
 
-    <section id="capture">
-      <div class="section-head">
-        <p class="kicker">拍照</p>
-        <h2>怎么拍照</h2>
-        <p>点「新增」。先选「单页」或「多页」，再点「开始」，才会打开拍照或相册。选模式的时候不会弹出系统选择器。手机上都是这一个入口。下面的图是浏览器里的合成界面，不是手机系统相机或相册。</p>
-      </div>
-      <div class="cards">
-        ${card('notebook-empty.webp', '合成浏览器示例，不是系统相机或相册。空错题本点新增后再选单页或多页', '选拍摄模式', '点「新增」后才出现「单页 / 多页」，点这两个字不会打开系统选择器。说明跟着当前选中的那一档走：选「单页」是「一张纸拍完就用单页」，选「多页」是「适用于答题卡与试卷不在一页上的情况」。点「开始」才打开拍照或相册。「单页」拍一张或从相册选图后立刻上传；可以一次选多张，每张按单独一页处理。「多页」先留在预览条里，可标「试卷」或「答题卡」，可删掉某一张，点「完成」后整组一起上传，一次最多 8 页；点「放弃这组」会清空还没传的预览。这组还在的时候，预览条上的说明也跟着改；改回单页之后「新增」先停用，要点「完成」或「放弃这组」才能再拍。')}
-        ${card('intake-auto.webp', '合成浏览器示例，不是系统相机或相册。录入页底部是新增', '拍卷子', '拍题目、你的作答、老师的批改和答案页，放平、拍全、光线均匀，顺序不限，之后还能补拍。选好后进入「录入」，AI 在后台找题，不用一直停在这一页；传完点「完成」回到错题本，录入页还可以按上传日筛选。录入页也是先点「新增」，选好单页或多页，再点「开始」。')}
-      </div>
-      <p class="note">同一张图只保存一次。微信里如果选不了相册，先换到系统浏览器或 Safari 再拍。</p>
-    </section>
-
-    <section id="pick">
-      <div class="section-head">
-        <p class="kicker">收题</p>
-        <h2>怎么选错题</h2>
-        <p>收进来的题按学科列在错题本里，右上角可以筛选，左下角可以搜索。</p>
-      </div>
-      <div class="cards">
-        ${card('intake-pick.webp', '合成浏览器示例，不是系统相机或相册。录入页勾出没有批改痕迹的题，底部是拍照和从相册选择', '收进错题本', '老师打了叉、或能看出批改痕迹的题会自动收进来，录入页写着「已加入错题本」；不相关的，在那一行上左滑，点「删除」。这页没有批改痕迹时，页面写「勾出做错的题」，做错或没把握的勾上，再点「加入 N 道」，做对的不用勾。')}
-        ${card('item-detail.webp', '合成示例。题目详情，上面是整张原图', '看整张原图', '在错题本点进题目，最上面是你拍的整张照片，点开可以放大，下面是识别出的题目文字。字认错了，点「识别错了？改」，以照片为准。')}
-        ${card('item-menu.webp', '合成示例。题目详情右上角菜单：改题目文字、不是错题', '改错字或移出', '右上角「…」里可以修改分类，或改题目文字。这道不该在错题本里，点「不是错题，移除」。')}
-        ${card('item-answer.webp', '合成示例。详情下半：章节、正确答案、错因备注', '答案和备注', '详情往下还有你写的、批改痕迹、章节与知识点、正确答案和错因备注。可以拍照录入答案，也可以打字或按一下说；AI 给出的答案和解题过程标为仅供参考。')}
-      </div>
-    </section>
-
-    <section id="practice">
-      <div class="section-head">
-        <p class="kicker">还没开放</p>
-        <h2>练习</h2>
-      </div>
-      <article class="card card-note">
-        <div class="card-copy">
-          <p class="soon">即将推出</p>
-          <p>设置里的「练习」一行写着「即将推出」。当前学生端没有练习入口，也不提供打印练习、纸上记结果或拍照交练习。注册与登录里的设置截图可以看到这一行。</p>
-        </div>
-      </article>
-    </section>
-
     <section id="faq">
       <div class="section-head">
-        <p class="kicker">答疑</p>
+        <p class="kicker">遇到问题</p>
         <h2>常见问题</h2>
       </div>
       <div class="cards">
-        ${card('recover.webp', '合成示例。用姓名、手机号和找回码找回邀请码', '忘了邀请码', '打开 <a href="' + STUDY_URL + 'recover">找回页</a>，用注册时的姓名、手机号和找回码换一个新码，学习记录都在，旧码作废。对不上时页面不会告诉你是哪一项错了；没设过找回码，或找回码也忘了，找老师重发。')}
+        ${card('recover.webp', '找回页：用姓名、手机号和找回码换一个新的邀请码。', '忘了邀请码', '打开 <a href="' + STUDY_URL + 'recover">找回页</a>，用注册时的姓名、手机号和找回码换一个新码，学习记录都在，旧码作废。对不上时页面不会告诉你是哪一项错了。没设过找回码，或找回码也忘了，找老师。')}
       </div>
       <dl class="group">
-        <div><dt>换手机</dt><dd>旧手机「设置 → 我的邀请码」里有登录链接和二维码，用新手机的相机扫一下就能登录；或者直接在新手机输入同一个邀请码。学习记录都在。</dd></div>
-        <div><dt>忘了邀请码</dt><dd>打开 <a href="${STUDY_URL}recover">${STUDY_URL}recover</a>，用注册时的姓名、手机号和找回码换一个新码，记录都在，旧码作废。没设过找回码，或找回码也忘了，找老师重发。</dd></div>
+        <div><dt>换手机</dt><dd>「设置 → 我的邀请码」里的登录链接和二维码，是给学生在新手机上再用自己的码，不是开学的第一步。用新手机的相机扫一下就能登录，也可以输入同一个邀请码。打开链接本身不算登录，要点「进入我的错题本」才算。学习记录都在。</dd></div>
+        <div><dt>忘了邀请码</dt><dd>打开 <a href="${STUDY_URL}recover">${STUDY_URL}recover</a>，用注册时的姓名、手机号和找回码换一个新码，记录都在，旧码作废。没设过找回码，或找回码也忘了，找老师。</dd></div>
         <div><dt>打不开相册</dt><dd>安卓上如果桌面图标打开的是一个没有文件选择器的壳，点相册没反应。改用 Chrome 或系统浏览器打开学习页再拍。小米、红米请点页面上的相册入口。</dd></div>
-        <div><dt>AI 认错字</dt><dd>题目详情里点「识别错了？改」，或右上角「…」→「改题目文字」。以照片为准。</dd></div>
+        <div><dt>识别错了</dt><dd>题目详情里点「识别错了？改」，或右上角「…」→「改题目文字」。以照片为准。</dd></div>
         <div><dt>不是错题</dt><dd>题目详情右上角「…」→「不是错题，移除」。录入页里不相关的题可以左滑删除。</dd></div>
-        <div><dt>重复照片</dt><dd>同一张图只保存一次。</dd></div>
-        <div><dt>微信里打开</dt><dd>可以先看，但添加到桌面和相册都更稳妥的做法是：点右上角「…」，选「在浏览器打开」（iPhone 上叫「在 Safari 中打开」），再登录一次。登录页上有「复制网址」按钮，粘到浏览器地址栏也行；带着邀请码进来的话，网址里连码一起带着。</dd></div>
+        <div><dt>重复照片</dt><dd>同一张图只保存一次。微信里如果选不了相册，先换到系统浏览器或 Safari 再拍。</dd></div>
+        <div><dt>微信里打开</dt><dd>可以先看。添加到桌面和选相册时，点右上角「…」，选「在浏览器打开」（iPhone 上叫「在 Safari 中打开」），再登录一次。登录页上有「复制网址」按钮，粘到浏览器地址栏也行。</dd></div>
       </dl>
     </section>
 
@@ -590,10 +501,10 @@ footer p { margin: 0 0 6px; }
     </section>
 
     <footer>
-      <p><a href="${GITHUB_URL}">GitHub</a></p>
+      <p><a href="${GITHUB_URL}">代码仓库</a></p>
       <p class="url"><a href="${GITHUB_URL}">${GITHUB_URL}</a></p>
       <p>超级错题本 · Super Error Log</p>
-      <p>配图不含学生数据。</p>
+      <p>说明页里的题目来自真实试卷，已隐去姓名、学校、手机号和邀请码。</p>
     </footer>
   </main>
 </div>
