@@ -182,21 +182,23 @@ function FieldAlert(props: { id: string; message?: string }): ReactNode {
   return <p className="field-error" id={`${props.id}-error`} role="alert" data-testid={`${props.id}-error`} hidden={!props.message}>{props.message ?? ''}</p>;
 }
 
-/** 4 位找回码输入框（注册、找回、我的邀请码共用）。 */
-function PinInput(props: { id: string; label: string; hint: string; error?: string; autoFocus?: boolean; message: string; caption: string }): ReactNode {
+/** 4 位找回码输入框（注册、找回、我的邀请码共用）。注册页不写占位和说明。 */
+function PinInput(props: { id: string; label: string; hint?: string; placeholder?: string; error?: string; autoFocus?: boolean; message: string; caption: string }): ReactNode {
+  const describedBy = [props.error ? `${props.id}-error` : '', props.hint ? `${props.id}-hint` : ''].filter(Boolean).join(' ');
+  const placeholder = props.placeholder === '' ? undefined : (props.placeholder ?? '4 位数字');
   return <>
     <label htmlFor={props.id} className="field-label">{props.label}</label>
     <input id={props.id} name="pin" type="text" inputMode="numeric" autoComplete="off" enterKeyHint="done" pattern="[0-9]{4}" minLength={4} maxLength={4} required
-      placeholder="4 位数字" aria-describedby={props.error ? `${props.id}-error ${props.id}-hint` : `${props.id}-hint`} aria-invalid={props.error ? true : undefined}
+      placeholder={placeholder} aria-describedby={describedBy || undefined} aria-invalid={props.error ? true : undefined}
       autoFocus={props.autoFocus} data-invalid-message={props.message} data-caption={props.caption} data-testid={`${props.id}-input`} />
     <FieldAlert id={props.id} message={props.error} />
-    <p className="hint" id={`${props.id}-hint`}>{props.hint}</p>
+    {props.hint ? <p className="hint" id={`${props.id}-hint`}>{props.hint}</p> : null}
   </>;
 }
 
 /**
- * 注册：填姓名（可写化名）、手机号，自己设一个 4 位找回码；网关打开班级注册码时另要注册码。
- * 手机号不发短信、不验证归属，只和找回码一起用来自助找回。
+ * 注册：Name、手机号、找回码。校验规则不变；页面上不再写占位和字段说明。
+ * 网关打开班级注册码时另要注册码。
  */
 export function RegistrationPage(props: { error?: string; duplicate?: boolean; blocked?: AttemptBlock; inAppBrowser?: boolean; values?: RegistrationFormValues; requireCode?: boolean; fieldErrors?: Partial<Record<RegistrationField, string>> }): ReactNode {
   const values = props.values ?? {};
@@ -207,7 +209,6 @@ export function RegistrationPage(props: { error?: string; duplicate?: boolean; b
     <Page title="注册账号" back={{ href: '/s/', label: '邀请码登录' }} showSettings={false}
       bar={{ ...bar, primary: { title: '注册并生成邀请码', key: 'register', form: 'register-form' }, secondary: [] }}>
       <h1>注册账号</h1>
-      <p className="lead">填姓名和手机号，设一个找回码，就能有自己的错题本。以后输入邀请码登录。</p>
       <InAppBrowserNotice show={props.inAppBrowser === true} where="register" />
       {props.blocked
         ? <Problem title="提交太频繁了" detail={throttleText(props.blocked, props.requireCode ? '这个码' : '这个网络')} />
@@ -223,22 +224,22 @@ export function RegistrationPage(props: { error?: string; duplicate?: boolean; b
               autoFocus={focus === 'regcode'} data-invalid-message="请填写老师发的注册码。" data-caption="请先填对注册码" />
             <FieldAlert id="register-code" message={errors?.regcode} />
           </> : null}
-          <label htmlFor="register-name" className="field-label">学生姓名（可以写化名）</label>
+          <label htmlFor="register-name" className="field-label">Name</label>
           <input id="register-name" name="name" type="text" autoComplete="name" maxLength={60} required defaultValue={values.name ?? ''}
             aria-invalid={errors?.name ? true : undefined} aria-describedby={errors?.name ? 'register-name-error' : undefined}
             autoFocus={focus === 'name'} data-invalid-message={NAME_MESSAGE} data-caption="请先填写姓名" />
           <FieldAlert id="register-name" message={errors?.name} />
           <label htmlFor="register-phone" className="field-label">手机号</label>
           <input id="register-phone" name="phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={40} required defaultValue={values.phone ?? ''}
-            placeholder="填写常用手机号，可含国家区号" aria-invalid={errors?.phone ? true : undefined}
-            aria-describedby={errors?.phone ? 'register-phone-error registration-phone-hint' : 'registration-phone-hint'}
+            aria-invalid={errors?.phone ? true : undefined}
+            aria-describedby={errors?.phone ? 'register-phone-error' : undefined}
             autoFocus={focus === 'phone'} data-invalid-message={PHONE_MESSAGE} data-caption="请先填对手机号" />
           <FieldAlert id="register-phone" message={errors?.phone} />
-          <p className="hint" id="registration-phone-hint">不会发短信。可以填家长的手机号，不同学生可共用同一号码。</p>
-          <PinInput id="register-pin" label="设一个找回码（4 位数字）" hint="忘了邀请码时，用姓名、手机号和这 4 位数字找回。不要用 1234、0000 这种好猜的，也别告诉别人。"
+          <PinInput id="register-pin" label="找回码" placeholder=""
             error={errors?.pin} autoFocus={focus === 'pin'} message={RECOVERY_PIN_SET_MESSAGE} caption="请先设好 4 位找回码" />
         </form>
       </section>
+      <p>找回码跟手机号仅用于找回账户</p>
       <p><a href="/s/">已有邀请码，直接登录</a></p>
     </Page>
   );

@@ -91,7 +91,13 @@ describe('产品说明页文案', () => {
     expect(html).not.toContain('standalone');
     expect(html).toContain('https://study.pccoding666.com/s/register');
     expect(html).toContain('https://study.pccoding666.com/s/recover');
-    expect(html).toContain('4 位数字找回码');
+    expect(html).toContain('找回码跟手机号仅用于找回账户');
+    expect(html).not.toContain('查看或换邀请码');
+    expect(html).not.toContain('在「设置 → 我的邀请码」可以查看、复制，或重新生成');
+    expect(html).toContain('超级错题本天使用户');
+    expect(html).toContain('2026 年 11 月 23 日前有效');
+    expect(html).toContain('/help/img/wechat-group.webp');
+    expect(html).not.toContain('/help/img/account.webp');
     expect(html).toContain('加入 N 道');
     expect(html).toContain('即将推出');
     expect(html).toContain('href="https://study.pccoding666.com/s/"');
@@ -119,7 +125,7 @@ describe('产品说明页文案', () => {
     expect(start).toContain('「进入我的错题本」');
     expect(start).toContain('拍一张批改过的卷子');
     expect(start).toContain('打开链接本身不算登录');
-    expect(start).toContain('登录链接和二维码');
+    expect(start).not.toContain('查看或换邀请码');
     const home = /<section id="home">[\s\S]*?<\/section>/.exec(html)![0];
     expect(home).toContain('Safari');
     expect(home).toContain('添加到主屏幕');
@@ -135,6 +141,7 @@ describe('产品说明页文案', () => {
     expect(html).toContain('loading="eager"');
     const faq = /<section id="faq">[\s\S]*?<\/section>/.exec(html)![0];
     expect(faq).toContain('扫一下就能登录');
+    expect(faq).toContain('登录链接和二维码');
     expect(faq).toContain('「复制网址」');
     expect(faq).toContain('在 Safari 中打开');
     // 说明页不含任何邀请码或带码链接的样子
@@ -210,6 +217,12 @@ describe('说明页在 /help/，不占用学生学习站，也不看 Host', () =
     expect(String(portalHeaders['content-security-policy'])).toContain("img-src 'self'");
 
     const image = await request(port, 'GET', '/help/img/notebook-empty.webp', 'study.pccoding666.com');
+    const group = await request(port, 'GET', '/help/img/wechat-group.webp', 'study.pccoding666.com');
+    expect(group.status).toBe(200);
+    expect(group.type).toContain('image/webp');
+    expect(group.body.startsWith('RIFF')).toBe(true);
+    const removed = await request(port, 'GET', '/help/img/account.webp', 'study.pccoding666.com');
+    expect(removed.status).toBe(404);
     expect(image.status).toBe(200);
     expect(image.type).toContain('image/webp');
     expect(image.cache).toContain('public');
