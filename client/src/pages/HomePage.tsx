@@ -146,7 +146,7 @@ export function HomePage(): ReactNode {
       </div> : null}
       {data && !items.length && !loading ? <div className="empty" data-testid="empty-notebook">
         <IonIcon icon={cameraOutline} />
-        <b>{data.total ? '没有符合筛选的题' : '拍一张批改过的卷子'}</b>
+        <b>{data.total ? '没有符合筛选的题' : '拍一张你的错题照片'}</b>
         <p>{data.total ? '换个章节或状态试试。' : 'AI 会找出错题，放进这里。'}</p>
         {data.total ? <IonButton fill="clear" onClick={() => patch({ chapter: '', tag: '', q: '' })}>清除筛选</IonButton> : capture.pages.length ? null : <div className="empty-actions">
           <CaptureEntry className="pick-button pick-solid" testId="capture-add">新增</CaptureEntry>
