@@ -2,7 +2,7 @@
  * 给公开说明页拍合成示例图。只启动本机临时服务器，照片和账号都是编的，退出即删。
  * 运行：npx tsx scripts/capture-help-guide.ts
  *
- * 错题本 / 录入 / 详情走邀请码网关 + 材料流程。空闲首页只有拍照和相册；单页 / 多页在点开之后的选择层里。
+ * 错题本 / 录入 / 详情走邀请码网关 + 材料流程。空闲首页是「新增」；单页 / 多页在点开之后的选择层里，点「开始」才打开选择器。
  * 注册 / 登录 / 找回等仍用同一网关。练习截图不再拍：设置里写着即将推出，学生端没有入口。
  */
 import { fork, type ChildProcess } from 'node:child_process';
@@ -14,6 +14,7 @@ import sharp from 'sharp';
 const OUT = path.resolve('src/portal/help-img');
 /** `npx tsx scripts/capture-help-guide.ts --only account` 只重拍我的邀请码，避免盖掉其它图。 */
 const onlyShot = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] ?? '' : '';
+const onlyNames = onlyShot === 'notebook' ? new Set(['notebook-empty', 'intake-auto']) : onlyShot ? new Set([onlyShot]) : null;
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 
 fs.mkdirSync(OUT, { recursive: true });
@@ -36,7 +37,7 @@ async function jpeg(kind: 'marked' | 'plain'): Promise<Buffer> {
 }
 
 async function save(page: Page, name: string): Promise<void> {
-  if (onlyShot && onlyShot !== name) return;
+  if (onlyNames && !onlyNames.has(name)) return;
   const png = await page.screenshot({ type: 'png', animations: 'disabled' });
   const file = path.join(OUT, `${name}.webp`);
   await sharp(png).webp({ quality: 58, effort: 5 }).toFile(file);
@@ -131,31 +132,29 @@ async function main(): Promise<void> {
 
     await page.getByTestId('empty-notebook').waitFor();
     await page.locator('[data-testid="capture-dock"]:visible').waitFor();
-    await page.waitForFunction(() => document.querySelector('[data-testid="capture-dock"]')?.getAttribute('data-capture-choice') === 'choice');
+    await page.waitForFunction(() => document.querySelector('[data-testid="capture-dock"]')?.getAttribute('data-capture-choice') === 'sheet');
     await page.waitForTimeout(400);
     await save(page, 'notebook-empty');
 
-    await page.getByTestId('next-step-primary').click();
-    const [chooser] = await Promise.all([
-      page.waitForEvent('filechooser'),
-      page.getByTestId('capture-mode-single').locator('input').click(),
-    ]);
+    await page.locator('[data-testid="capture-add"]:visible').click();
+    await page.getByTestId('capture-mode-single').click();
     // 材料合成提取默认给出没有批改痕迹、需要勾选的题；再传一张同批照片只为占位。
-    await chooser.setFiles([
+    await page.locator('#camera-input').setInputFiles([
       { name: 'plain.jpg', mimeType: 'image/jpeg', buffer: await jpeg('plain') },
       { name: 'marked.jpg', mimeType: 'image/jpeg', buffer: await jpeg('marked') },
     ]);
     await page.waitForURL(/\/s\/new$/);
-    // Ionic keeps the previous page mounted. Idle 录入 has no mode bar; the choice sheet opens from the inline buttons.
+    // Ionic keeps the previous page mounted. Idle 录入 opens the mode sheet from 新增 and does not show the tray pill.
     await page.locator('.capture-inline').waitFor();
     await page.waitForFunction(() => {
       const dock = document.querySelector('.capture-inline');
-      return dock?.getAttribute('data-capture-choice') === 'choice' && !dock.querySelector('[data-testid="capture-mode-bar"]');
+      return dock?.getAttribute('data-capture-choice') === 'sheet' && !dock.querySelector('[data-testid="capture-mode-bar"]');
     });
     const pick = page.locator('section.intake-photo[data-state="needsPick"]').first();
     await pick.waitFor({ timeout: 60_000 });
     await page.waitForTimeout(500);
     await save(page, 'intake-auto');
+    if (onlyShot === 'notebook') return;
     await pick.scrollIntoViewIfNeeded();
     await pick.getByTestId('pick-candidate').first().click();
     await page.waitForTimeout(300);

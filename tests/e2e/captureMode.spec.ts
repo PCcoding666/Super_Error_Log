@@ -40,10 +40,10 @@ test('旧流程只保留单页，拍一张就上传', async ({ page }) => {
   await expect(page.getByTestId('capture-mode-bar')).toHaveCount(0);
   await expect(page.getByTestId('capture-mode-sheet')).toHaveCount(0);
   await expect(page.getByTestId('capture-mode-multi')).toHaveCount(0);
-  await expect(page.locator('#camera-input')).toHaveAttribute('capture', 'environment');
-  await expect(page.locator('#camera-input')).not.toHaveAttribute('multiple');
-  await expect(page.locator('#library-input')).toHaveAttribute('multiple', '');
-  await expect(page.locator('#library-input')).not.toHaveAttribute('capture');
+  // iPhone：一个输入框，系统菜单里已经有拍照和照片图库。
+  await expect(page.locator('#camera-input')).not.toHaveAttribute('capture');
+  await expect(page.locator('#camera-input')).toHaveAttribute('multiple', '');
+  await expect(page.locator('#library-input')).toHaveCount(0);
   const cameraBox = await page.locator('#camera-input').boundingBox();
   expect(cameraBox?.width ?? 0).toBeGreaterThan(40);
   expect(cameraBox?.height ?? 0).toBeGreaterThan(40);

@@ -1,9 +1,9 @@
-import { IonIcon, useIonViewWillEnter, useIonViewWillLeave } from '@ionic/react';
-import { albumsOutline, cameraOutline } from 'ionicons/icons';
+import { useIonViewWillEnter, useIonViewWillLeave } from '@ionic/react';
 import { useNavigate } from 'react-router-dom';
-import { createPortal } from 'react-dom';
+import { flushSync } from 'react-dom';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { captureChoice, captureEntryAction, pickerLease, showCaptureModeBar, type CaptureChoiceKind, type CaptureRouteKind } from '../lib/captureEntry';
+import { createPortal } from 'react-dom';
+import { CAPTURE_MODE_NOTE, captureEntryAction, captureSheet, pickerLease, showCaptureModeBar, type CaptureRouteKind } from '../lib/captureEntry';
 import { MAX_SET_PAGES, captureSession, hintsForPages, useCaptureSession, type CaptureMode } from '../lib/captureSession';
 import { uploader } from '../lib/uploader';
 import { PickLabel } from './CaptureInput';
@@ -18,103 +18,32 @@ function useCaptureRoute(): CaptureRouteKind | null {
   return route;
 }
 
-function usePickerOpen(): boolean {
-  const [open, setOpen] = useState(pickerLease.open);
-  useEffect(() => pickerLease.subscribe(() => setOpen(pickerLease.open)), []);
-  return open;
-}
-
-function useChoiceKind(): CaptureChoiceKind | null {
-  const [kind, setKind] = useState<CaptureChoiceKind | null>(captureChoice.kind);
-  useEffect(() => captureChoice.subscribe(() => setKind(captureChoice.kind)), []);
-  return kind;
-}
-
-function ModeBar(props: { mode: CaptureMode }): ReactNode {
-  return <div className="capture-mode-bar" role="radiogroup" aria-label="拍摄模式" data-testid="capture-mode-bar">
-    <button type="button" role="radio" aria-checked={props.mode === 'single'} data-testid="capture-mode-single" onClick={() => captureSession.setMode('single')}>单页</button>
-    <button type="button" role="radio" aria-checked={props.mode === 'multi'} data-testid="capture-mode-multi" onClick={() => captureSession.setMode('multi')}>多页</button>
+/** Pill on an open multi-page tray. The first choice is the sheet, not this bar. */
+export function CaptureModeSwitch(): ReactNode {
+  const route = useCaptureRoute();
+  const { mode } = useCaptureSession();
+  if (route !== 'materials') return null;
+  return <div className="capture-mode-switch">
+    <div className="capture-mode-bar" role="radiogroup" aria-label="拍摄模式" data-testid="capture-mode-bar">
+      <button type="button" role="radio" aria-checked={mode === 'single'} data-testid="capture-mode-single" onClick={() => captureSession.setMode('single')}>单页</button>
+      <button type="button" role="radio" aria-checked={mode === 'multi'} data-testid="capture-mode-multi" onClick={() => captureSession.setMode('multi')}>多页</button>
+    </div>
+    <p className="capture-mode-note" data-testid="capture-mode-note">{CAPTURE_MODE_NOTE[mode]}</p>
   </div>;
 }
 
-function CaptureChoiceSheet(props: { kind: CaptureChoiceKind }): ReactNode {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const leaseEnd = useRef<(() => void) | null>(null);
-  const arm = (): void => { if (!leaseEnd.current) leaseEnd.current = pickerLease.begin(); };
-  const disarm = (): void => { leaseEnd.current?.(); leaseEnd.current = null; };
-  const closeSheet = (): void => { disarm(); captureChoice.close(); };
-  useEffect(() => () => { disarm(); }, []);
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dialog?.focus();
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') { event.preventDefault(); closeSheet(); return; }
-      if (event.key !== 'Tab' || !dialog) return;
-      const focusable = [...dialog.querySelectorAll<HTMLElement>('button, input')].filter(element => !element.hasAttribute('disabled'));
-      if (!focusable.length) return;
-      const first = focusable[0]!;
-      const last = focusable[focusable.length - 1]!;
-      const active = document.activeElement;
-      if (event.shiftKey && (active === first || active === dialog)) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      previous?.focus();
-    };
-  }, []);
-  const camera = props.kind === 'camera';
-  const option = (mode: CaptureMode, title: string, detail: string, testId: string): ReactNode => <PickLabel
-    kind={props.kind}
-    className="capture-choice-option"
-    testId={testId}
-    route="materials"
-    mode={mode}
-    inputLabel={camera ? `${title}拍照` : `${title}从相册选择`}
-    onArm={arm}
-    onPicked={() => { disarm(); captureChoice.close(); }}
-    onCancel={disarm}
-  >
-    <span><b>{title}</b><small>{detail}</small></span>
-  </PickLabel>;
-  return createPortal(<div className="capture-choice-backdrop" data-testid="capture-mode-sheet" onClick={closeSheet}>
-    <div
-      className="capture-choice-sheet"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="capture-choice-title"
-      tabIndex={-1}
-      ref={dialogRef}
-      onClick={event => event.stopPropagation()}
-    >
-      <h2 id="capture-choice-title">{camera ? '怎么拍照' : '怎么从相册选'}</h2>
-      <p>选好这一次是单页还是多页。点下去会直接打开{camera ? '相机' : '相册'}。</p>
-      <div role="group" aria-label="拍摄模式">
-        {option('single', '单页', '选好就上传', 'capture-mode-single')}
-        {option('multi', '多页', '先留在本页，拍完再一起上传', 'capture-mode-multi')}
-      </div>
-      <button type="button" className="capture-choice-cancel" data-testid="capture-mode-cancel" onClick={closeSheet}>取消</button>
-    </div>
-  </div>, document.body);
-}
-
 /**
- * Camera and album entry. Idle materials asks for 单页 / 多页 in a sheet whose options are real file labels.
- * The picker opens from that tap. Do not script a click on a hidden file input.
+ * 新增. Idle materials opens the mode sheet. Legacy, and an open multi-page tray, are a real file label.
+ * A tray switched back to 单页 stays closed until 完成 or 放弃.
+ * Do not script a click on a hidden file input.
  */
 export function CaptureEntry(props: {
-  kind: CaptureChoiceKind;
   className?: string;
   testId?: string;
   inputId?: string;
-  /** Icon-only controls pass a name. Buttons that already show text leave this unset. */
-  label?: string;
   children: ReactNode;
 }): ReactNode {
   const route = useCaptureRoute();
-  const choice = useChoiceKind();
   const { mode, pages } = useCaptureSession();
   const leased = useRef(false);
   const pinSingle = useRef(false);
@@ -143,64 +72,107 @@ export function CaptureEntry(props: {
     leaseEnd.current = null;
     leased.current = false;
   }, []);
-  // An in-flight picker keeps its input. Held and the idle chooser only replace it after the picker ends.
   if (!leased.current && action === 'held') {
     return <button
       type="button"
       className={`${props.className ?? ''} is-held`}
       data-testid={props.testId}
-      aria-label={props.label}
+      aria-label="新增"
       aria-disabled="true"
       aria-describedby="capture-mode-hold"
     >{props.children}</button>;
   }
-  if (action === 'choice' && !leased.current) {
-    const open = choice === props.kind;
-    return <button
-      type="button"
-      className={props.className}
-      data-testid={props.testId}
-      aria-label={props.label}
-      aria-haspopup="dialog"
-      aria-expanded={open}
-      onClick={() => captureChoice.open(props.kind)}
-    >{props.children}</button>;
+  if (!leased.current && action === 'sheet') {
+    return <button type="button" className={props.className} data-testid={props.testId} onClick={() => captureSheet.show()}>{props.children}</button>;
   }
   return <PickLabel
-    kind={props.kind}
+    kind="album"
+    combined
     className={props.className}
     testId={props.testId}
-    inputId={props.inputId}
-    inputLabel={props.label}
+    inputId={props.inputId ?? 'camera-input'}
+    inputLabel="新增"
     route={route}
-    mode={pinSingle.current || route !== 'materials' ? 'single' : undefined}
+    mode={pinSingle.current || route !== 'materials' ? 'single' : mode}
     onArm={arm}
     onPicked={disarm}
     onCancel={disarm}
   >{props.children}</PickLabel>;
 }
 
+/** Mode sheet. 单页 / 多页 does not open the picker. 开始 is the file label, and the sheet hides on that tap. */
+export function CaptureModeSheet(): ReactNode {
+  const route = useCaptureRoute();
+  const [open, setOpen] = useState(captureSheet.open);
+  const [picking, setPicking] = useState(false);
+  const [draft, setDraft] = useState<CaptureMode>('single');
+  useEffect(() => captureSheet.subscribe(() => {
+    setOpen(captureSheet.open);
+    if (captureSheet.open) {
+      setDraft(captureSession.mode);
+      setPicking(false);
+    }
+  }), []);
+  if (route !== 'materials' || (!open && !picking)) return null;
+  const finish = (): void => {
+    setPicking(false);
+    captureSheet.hide();
+  };
+  return createPortal(<div
+    className={picking ? 'capture-sheet-parked' : 'capture-choice-backdrop'}
+    data-testid={picking ? undefined : 'capture-mode-sheet'}
+    role={picking ? undefined : 'dialog'}
+    aria-modal={picking ? undefined : true}
+    aria-label={picking ? undefined : '新增'}
+    onClick={() => { if (!picking) captureSheet.hide(); }}
+  >
+    <div className="capture-choice-sheet" onClick={event => event.stopPropagation()}>
+      {picking ? null : <div className="capture-sheet-copy">
+        <div className="capture-mode-bar" role="radiogroup" aria-label="拍摄模式" data-testid="capture-mode-bar">
+          <button type="button" role="radio" aria-checked={draft === 'single'} data-testid="capture-mode-single" onClick={() => setDraft('single')}>单页</button>
+          <button type="button" role="radio" aria-checked={draft === 'multi'} data-testid="capture-mode-multi" onClick={() => setDraft('multi')}>多页</button>
+        </div>
+        <p className="capture-mode-note" data-testid="capture-mode-note">{CAPTURE_MODE_NOTE[draft]}</p>
+      </div>}
+      <PickLabel
+        kind="album"
+        combined
+        className="pick-button pick-solid capture-sheet-go"
+        testId="capture-start"
+        inputId="camera-input"
+        inputLabel="开始"
+        route={route}
+        mode={draft}
+        onArm={() => {
+          captureSession.setMode(draft);
+          flushSync(() => setPicking(true));
+          captureSheet.hide();
+        }}
+        onPicked={finish}
+        onCancel={finish}
+      >开始</PickLabel>
+      {picking ? null : <button type="button" className="capture-choice-cancel" data-testid="capture-mode-cancel" onClick={() => captureSheet.hide()}>取消</button>}
+    </div>
+  </div>, document.body);
+}
+
 /**
- * Bottom capture controls. The phone camera has no room for our buttons, so a populated
- * multi-page tray keeps 单页 / 多页 here. Idle home and intake only show camera and album;
- * the mode choice is the next tap, on a real file label.
+ * Bottom capture control. One 新增 on every phone.
+ * The mode pill on this dock is only the open tray; the first choice is the sheet.
  */
 export function CaptureDock(props: {
   placement: 'corner' | 'inline';
-  cameraInputId?: string;
-  albumInputId?: string;
-  albumTestId?: string;
-  cameraTestId?: string;
+  /** Empty notebook already shows 新增 in the page body. */
+  showAdd?: boolean;
+  showMode?: boolean;
 }): ReactNode {
   const navigate = useNavigate();
   const { mode, pages, overflow } = useCaptureSession();
-  // Ionic keeps the previous page mounted. A second dock would cover this one and duplicate #camera-input.
+  // Ionic keeps the previous page mounted. A second dock would cover this one and duplicate the file input.
   const [active, setActive] = useState(true);
   const route = useCaptureRoute();
-  const choice = useChoiceKind();
-  const pickerOpen = usePickerOpen();
   useIonViewWillEnter(() => setActive(true));
-  useIonViewWillLeave(() => setActive(false));
+  useIonViewWillLeave(() => { setActive(false); captureSheet.hide(); });
   useEffect(() => {
     if (!active || route !== 'legacy') return;
     captureSession.setMode('single');
@@ -210,10 +182,7 @@ export function CaptureDock(props: {
     uploader.add(staged.map(page => page.file));
     navigate('/new');
   }, [active, route, navigate]);
-  useEffect(() => { if (!active) captureChoice.close(); }, [active]);
   const action = captureEntryAction(route, pages.length, mode);
-  // Only the visible dock may dismiss the sheet. Leave it up while its file picker can still deliver a change.
-  useEffect(() => { if (active && choice && action !== 'choice' && !pickerOpen) captureChoice.close(); }, [active, choice, action, pickerOpen]);
   if (!active) return null;
   const tray = pages.length > 0;
   const finish = (): void => {
@@ -222,15 +191,10 @@ export function CaptureDock(props: {
     uploader.add(staged.map(page => page.file), { hints: hintsForPages(staged), setId: crypto.randomUUID() });
     navigate('/new');
   };
-  const picks = props.placement === 'inline'
-    ? <div className="intake-picks">
-        <CaptureEntry kind="camera" className="pick-button pick-text" testId="intake-camera"><IonIcon icon={cameraOutline} aria-hidden="true" />拍照</CaptureEntry>
-        <CaptureEntry kind="album" className="pick-button pick-text" testId="intake-album"><IonIcon icon={albumsOutline} aria-hidden="true" />从相册选择</CaptureEntry>
-      </div>
-    : <div className="capture-dock-picks">
-        <CaptureEntry kind="camera" className="fab-circle fab-camera" inputId={props.cameraInputId} testId={props.cameraTestId} label="拍照"><IonIcon icon={cameraOutline} aria-hidden="true" /></CaptureEntry>
-        <CaptureEntry kind="album" className="fab-circle fab-album" inputId={props.albumInputId} testId={props.albumTestId} label="从相册选择"><IonIcon icon={albumsOutline} aria-hidden="true" /></CaptureEntry>
-      </div>;
+  const add = props.showAdd === false && !tray ? null : <CaptureEntry
+    className={props.placement === 'inline' ? 'pick-button pick-text' : 'pick-button pick-solid capture-add-fab'}
+    testId="capture-add"
+  >新增</CaptureEntry>;
   const body = <>
     {tray ? <div className="capture-tray" data-testid="capture-tray">
       <div className="capture-tray-head">
@@ -253,12 +217,14 @@ export function CaptureDock(props: {
       {overflow ? <p className="capture-overflow" data-testid="capture-overflow">一次最多 {MAX_SET_PAGES} 页</p> : null}
     </div> : null}
     {action === 'held' ? <p id="capture-mode-hold" className="capture-mode-hold" data-testid="capture-mode-hold" role="status">这组还在。先点完成或放弃，再拍单页。</p> : null}
-    {picks}
-    {showCaptureModeBar(route, pages.length) ? <ModeBar mode={mode} /> : null}
-    {choice && action === 'choice' ? <CaptureChoiceSheet kind={choice} /> : null}
+    {props.showMode !== false && showCaptureModeBar(route, pages.length) ? <CaptureModeSwitch /> : null}
+    {add}
   </>;
-  if (props.placement === 'inline') {
-    return <div className="capture-inline" data-testid="capture-dock" data-capture-route={route ?? 'pending'} data-capture-choice={action}>{body}</div>;
-  }
-  return <div className={`capture-dock${tray ? ' has-tray' : ''}`} slot="fixed" data-testid="capture-dock" data-capture-route={route ?? 'pending'} data-capture-choice={action}>{body}</div>;
+  const dock = props.placement === 'inline'
+    ? <div className="capture-inline" data-testid="capture-dock" data-capture-route={route ?? 'pending'} data-capture-choice={action}>{body}</div>
+    : <div className={`capture-dock${tray ? ' has-tray' : ''}`} slot="fixed" data-testid="capture-dock" data-capture-route={route ?? 'pending'} data-capture-choice={action}>{body}</div>;
+  return <>
+    <CaptureModeSheet />
+    {dock}
+  </>;
 }

@@ -58,9 +58,11 @@ test('首页：数据返回前显示骨架，返回后换成内容；之后的�
   // 去设置页再回来：首页重新取数，这段时间保留旧内容，不退回骨架。
   await page.getByTestId('settings-link').click();
   await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
+  // 转场没结束时，路由出口会盖住返回钮，点击一直点不中。等错题本那页真的收起来再点。
+  await expect(page.locator('div.ion-page:has(> ion-content.home)')).toHaveClass(/ion-page-hidden/);
   release = await hold(page, isNotebook);
   const refetch = page.waitForRequest(request => isNotebook(new URL(request.url())));
-  await page.getByTestId('back-link').click();
+  await page.locator('div.ion-page:not(.ion-page-hidden) [data-testid="back-link"]').click({ force: true });
   await refetch;
   await expect(page.getByTestId('empty-notebook')).toBeVisible();
   await expect(page.getByTestId('subject-switch')).toContainText('数学');
@@ -78,8 +80,9 @@ test('首页：数据返回前显示骨架，返回后换成内容；之后的�
 
 test('详情页：数据返回前显示骨架，返回后换成题目；接口出错时骨架让位给错误提示', async ({ page }) => {
   await login(page, gateway.codes[1]!);
-  await page.getByTestId('next-step-primary').click();
-  await page.getByTestId('capture-mode-single').locator('input').setInputFiles({ name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: { r: 210, g: 220, b: 230 } } }).jpeg().toBuffer() });
+  await page.locator('[data-testid="capture-add"]:visible').last().click();
+  await page.getByTestId('capture-mode-single').click();
+  await page.locator('#camera-input').setInputFiles({ name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: { r: 210, g: 220, b: 230 } } }).jpeg().toBuffer() });
   await expect(page.getByTestId('pick-candidate').first()).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('pick-page').first().click();
   await page.getByTestId('pick-submit').first().click();
