@@ -121,9 +121,9 @@ test('name, phone and recovery-code registration works without JavaScript; the c
     await page.getByRole('link', { name: '首次使用，注册账号' }).click();
     await expect(page.getByRole('heading', { name: '注册账号' })).toBeVisible();
     await expect(page.getByLabel('注册码（8 位，老师发的）')).toHaveCount(0);
-    await page.getByLabel('学生姓名（可以写化名）').fill('合成浏览器学生');
+    await page.getByLabel('Name').fill('合成浏览器学生');
     await page.getByLabel('手机号', { exact: true }).fill('+6587654321');
-    await page.getByLabel('设一个找回码（4 位数字）').fill('2580');
+    await page.getByLabel('找回码').fill('2580');
     await page.getByRole('button', { name: '注册并生成邀请码' }).click();
     await expect(page.getByRole('heading', { name: '注册成功' })).toBeVisible();
     const code = (await page.getByTestId('registered-invite-code').textContent())!;
@@ -165,9 +165,9 @@ test('registration refuses an easy-to-guess recovery code on the server too, and
   await expect(page.getByRole('link', { name: '《个人信息处理规则》' })).toHaveCount(0);
   // 绕过浏览器端的格式检查，确认服务端也拦。
   await page.locator('#register-form').evaluate(form => form.setAttribute('novalidate', ''));
-  await page.getByLabel('学生姓名（可以写化名）').fill('合成无码学生');
+  await page.getByLabel('Name').fill('合成无码学生');
   await page.getByLabel('手机号', { exact: true }).fill('+6587650000');
-  await page.getByLabel('设一个找回码（4 位数字）').fill('1234');
+  await page.getByLabel('找回码').fill('1234');
   await page.getByRole('button', { name: '注册并生成邀请码' }).click();
   await expect(page.getByTestId('register-pin-error')).toContainText('请设一个 4 位数字的找回码');
   await expect(page.getByTestId('problem')).toContainText('请设一个 4 位数字的找回码');
@@ -179,7 +179,7 @@ test('registration refuses an easy-to-guess recovery code on the server too, and
 
 test('empty or easy recovery code is marked on the field without leaving the register page', async ({ page }) => {
   await page.goto(base + '/s/register');
-  await page.getByLabel('学生姓名（可以写化名）').fill('pctest002');
+  await page.getByLabel('Name').fill('pctest002');
   await page.getByLabel('手机号', { exact: true }).fill('18924082429');
   await page.getByRole('button', { name: '注册并生成邀请码' }).click();
   await expect(page).toHaveURL(/\/s\/register$/);
@@ -191,16 +191,16 @@ test('empty or easy recovery code is marked on the field without leaving the reg
   await expect(page.getByTestId('offline-title')).toHaveCount(0);
   await expect(page.locator('#register-pin')).toBeFocused();
 
-  await page.getByLabel('设一个找回码（4 位数字）').fill('4567');
+  await page.getByLabel('找回码').fill('4567');
   await page.getByRole('button', { name: '注册并生成邀请码' }).click();
   await expect(page).toHaveURL(/\/s\/register$/);
   await expect(page.getByTestId('problem')).toHaveCount(0);
-  await expect(page.getByLabel('设一个找回码（4 位数字）')).toHaveValue('4567');
+  await expect(page.getByLabel('找回码')).toHaveValue('4567');
   await expect(page.getByTestId('register-pin-error')).toContainText('1234、0000');
   await expect(page.getByTestId('registered-invite-code')).toHaveCount(0);
 
   await page.getByLabel('手机号', { exact: true }).fill('002');
-  await page.getByLabel('设一个找回码（4 位数字）').fill('2580');
+  await page.getByLabel('找回码').fill('2580');
   await page.getByRole('button', { name: '注册并生成邀请码' }).click();
   await expect(page).toHaveURL(/\/s\/register$/);
   await expect(page.getByTestId('problem')).toHaveCount(0);
@@ -220,15 +220,15 @@ test('a controlled service worker still shows register validation instead of the
     await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
     // 客户端会先拦住好猜的码；关掉它，确认服务端的 400 也不会被 Service Worker 换成离线页。
     await page.locator('#register-form').evaluate(form => form.setAttribute('novalidate', ''));
-    await page.getByLabel('学生姓名（可以写化名）').fill('pctest002');
+    await page.getByLabel('Name').fill('pctest002');
     await page.getByLabel('手机号', { exact: true }).fill('18924082429');
-    await page.getByLabel('设一个找回码（4 位数字）').fill('4567');
+    await page.getByLabel('找回码').fill('4567');
     await page.getByRole('button', { name: '注册并生成邀请码' }).click();
     await expect(page.getByTestId('offline-title')).toHaveCount(0);
     await expect(page.getByTestId('register-pin-error')).toBeVisible();
     await expect(page.getByTestId('problem')).toContainText('4 位数字');
-    await expect(page.getByLabel('学生姓名（可以写化名）')).toHaveValue('pctest002');
-    await page.getByLabel('设一个找回码（4 位数字）').fill('2580');
+    await expect(page.getByLabel('Name')).toHaveValue('pctest002');
+    await page.getByLabel('找回码').fill('2580');
     await page.getByRole('button', { name: '注册并生成邀请码' }).click();
     await expect(page.getByRole('heading', { name: '注册成功' })).toBeVisible();
     await expect(page.getByTestId('offline-title')).toHaveCount(0);

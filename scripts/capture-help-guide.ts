@@ -12,7 +12,7 @@ import { chromium, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
 const OUT = path.resolve('src/portal/help-img');
-/** `npx tsx scripts/capture-help-guide.ts --only account` 只重拍我的邀请码，避免盖掉其它图。 */
+/** `npx tsx scripts/capture-help-guide.ts --only register` 只重拍注册页，避免盖掉其它图。 */
 const onlyShot = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] ?? '' : '';
 const onlyNames = onlyShot === 'notebook' ? new Set(['notebook-empty', 'intake-auto']) : onlyShot ? new Set([onlyShot]) : null;
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
@@ -69,19 +69,6 @@ async function stopHost(child: ChildProcess): Promise<void> {
   });
 }
 
-/** 帮助页上的登录链接必须是公网入口，二维码编的是同一条链接。码来自合成夹具。 */
-async function captureAccount(page: Page, base: string): Promise<void> {
-  await page.goto(`${base}/s/account`);
-  await page.getByRole('heading', { name: '我的邀请码' }).waitFor();
-  await page.getByTestId('my-invite-qr').waitFor();
-  const link = (await page.getByTestId('my-invite-link').innerText()).replace(/\s+/g, '');
-  if (!link.startsWith('https://study.pccoding666.com/s/?code=')) throw new Error(`登录链接不是公网入口：${link}`);
-  if (link.includes('127.0.0.1') || link.includes('localhost')) throw new Error(`登录链接带了本机地址：${link}`);
-  await page.getByTestId('my-invite-link-block').evaluate((node: HTMLElement) => node.scrollIntoView({ block: 'center' }));
-  await page.waitForTimeout(300);
-  await save(page, 'account');
-}
-
 async function main(): Promise<void> {
   const browser = await chromium.launch();
   const context = await browser.newContext({
@@ -105,6 +92,7 @@ async function main(): Promise<void> {
     await page.goto(`${base}/s/register`);
     await page.getByRole('heading', { name: '注册账号' }).waitFor();
     await save(page, 'register');
+    if (onlyShot === 'register') return;
     await page.locator('#register-name').fill('示例学生');
     await page.locator('#register-phone').fill('13800001111');
     await page.getByTestId('register-pin-input').fill('2580');
@@ -123,11 +111,6 @@ async function main(): Promise<void> {
     if (await page.getByRole('heading', { name: '你现在读初中还是高中？' }).count()) {
       await save(page, 'stage');
       await page.getByRole('button', { name: '初中', exact: true }).click();
-    }
-
-    if (onlyShot === 'account') {
-      await captureAccount(page, base);
-      return;
     }
 
     await page.getByTestId('empty-notebook').waitFor();
@@ -185,7 +168,6 @@ async function main(): Promise<void> {
     await page.getByText('即将推出').waitFor();
     await page.getByTestId('settings-my-invite').waitFor();
     await save(page, 'settings');
-    await captureAccount(page, base);
     await page.goto(`${base}/s/install`);
     await page.getByRole('heading', { name: '放到主屏幕' }).waitFor();
     await save(page, 'install');
@@ -195,7 +177,7 @@ async function main(): Promise<void> {
     await browser.close();
   }
 
-  for (const stale of ['practice-home', 'practice-question', 'practice-print', 'practice-record', 'practice-submit', 'settings-practice']) {
+  for (const stale of ['practice-home', 'practice-question', 'practice-print', 'practice-record', 'practice-submit', 'settings-practice', 'account']) {
     const file = path.join(OUT, `${stale}.webp`);
     if (fs.existsSync(file)) {
       fs.unlinkSync(file);
