@@ -6,7 +6,7 @@ import { CAPTURE_MODE_NOTE, captureEntryAction, pickedFileDestination, showCaptu
 describe('capture entry', () => {
   it('keeps the pill note with the selected tab', () => {
     expect(CAPTURE_MODE_NOTE.single).toBe('一张纸拍完就用单页');
-    expect(CAPTURE_MODE_NOTE.multi).toBe('试卷和答题卡不在同一张纸，或一道题的材料有好几页时，用多页');
+    expect(CAPTURE_MODE_NOTE.multi).toBe('适用于答题卡与试卷不在一页上的情况');
   });
 
   it('opens the mode sheet before the first materials shot, and keeps the pill on an open tray', () => {

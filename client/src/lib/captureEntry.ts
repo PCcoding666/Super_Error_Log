@@ -5,7 +5,7 @@ export type CaptureRouteKind = 'legacy' | 'materials';
 /** The sentence under the 单页 / 多页 pill. It follows the selected tab. */
 export const CAPTURE_MODE_NOTE = {
   single: '一张纸拍完就用单页',
-  multi: '试卷和答题卡不在同一张纸，或一道题的材料有好几页时，用多页',
+  multi: '适用于答题卡与试卷不在一页上的情况',
 } as const;
 
 /**
