@@ -41,7 +41,7 @@ Preconditions:
 - **Grid.** `sel-verify drive click --testid notebook-filters`, then `sel-verify drive click --text "网格" --exact`. Cards replace the list. The same questions remain. Shot `--feature notebook --name grid --entry menu`.
 - **List.** From the same menu, `sel-verify drive click --text "列表" --exact`. The rows return.
 - **Search.** `sel-verify drive click --testid corner-search`. Fill `--role searchbox` with a string that is not in any question, such as `zzzz-no-match`. Wait for the text `没有符合筛选的题`. Shot `--feature notebook --name search-empty`. `sel-verify drive click --text "取消" --exact` or the `清除筛选` button restores the list. The search box debounces. Wait for the row, not a fixed delay.
-- **Subject.** `sel-verify drive click --testid subject-switch`, then the button for another subject, such as `物理`. A subject with no questions shows the first-run empty copy `拍一张批改过的卷子`, not the filter-empty copy. Switch back to `数学` and the saved question returns. Shot `--feature notebook --name subject`.
+- **Subject.** `sel-verify drive click --testid subject-switch`, then the button for another subject, such as `物理`. A subject with no questions shows the first-run empty copy `拍一张你的错题照片`, not the filter-empty copy. Switch back to `数学` and the saved question returns. Shot `--feature notebook --name subject`.
 - **Chapter.** `sel-verify drive click --testid notebook-filters`, then `sel-verify drive click --text "章节" --exact`. The sheet lists `全部章节` plus chapters that appear on questions in the current subject and stage. It does not list the whole textbook. Pick one, confirm the list, then pick `全部章节` to clear it.
 - **Tag.** `sel-verify drive click --testid tag-filter --optional --feature notebook --entry tag-filter`. When the subject has no knowledge tags the row is disabled and the command records a skip. That skip is the proof for an empty tag list, not a failed filter.
 - **Stage filter.** `--testid stage-filter` is absent while the subject has questions in only one stage. `sel-verify drive skip --feature notebook --entry stage-filter --blocker "Only one stage is stored for this subject, so the menu does not show 学段."` Do not treat that as a failure.
@@ -58,5 +58,5 @@ Preconditions:
 - `选择` is disabled when there are no rows.
 - A disabled `知识点` row does not close the filter menu. Choose another row, such as `列表`, to dismiss it. Escape does not.
 - Swipe-to-remove is list-only. Grid uses select mode or the detail screen.
-- `没有符合筛选的题` means the current subject and stage still have questions (`total` > 0) but search, chapter, or tag hid them. `拍一张批改过的卷子` means this subject and stage have none. Switching subject to an empty subject uses the second sentence.
+- `没有符合筛选的题` means the current subject and stage still have questions (`total` > 0) but search, chapter, or tag hid them. `拍一张你的错题照片` means this subject and stage have none. Switching subject to an empty subject uses the second sentence.
 - `sel-verify drive swipe` drags the row. If the option stays hidden, it opens `ion-item-sliding` the way `tests/e2e/intakeDelete.spec.ts` does, and the log says which one happened.
