@@ -87,7 +87,7 @@
     switch (kind) {
       case 'login':
         if (!String(values.get('code') || '').trim()) { say('演示登录：随便输入文字即可进入，请勿输入真实邀请码。'); return; }
-        go('today', '已进入合成错题本；没有兑换邀请码，也没有创建真实登录会话。'); break;
+        go('items', '已进入合成题目列表。这是旧的服务端页面预览，不是现在的学生端首页。没有兑换邀请码，也没有创建真实登录会话。'); break;
       case 'logout': go('login', '已返回演示登录页；不会影响真实账号。'); break;
       case 'settings': {
         const saved = save('settings', Object.fromEntries(values.entries()));

@@ -1,25 +1,25 @@
 # AI PROVIDER CONTRACT — AI 服务契约
 
-版本：v1.0（2026-09-05）
+版本：v1.0（2026-09-05）。接口形状仍供阅读；**运行模式以 `src/main.ts` 和 `AGENTS.md` 为准。**
 
 ## 原则
 
 - 业务逻辑只依赖 `AiProvider` 接口；mock 与真实服务可互换。
 - 所有 AI 输出都是「建议 + 置信度」，永不直接写入学生反思。
-- 无 API Key 时自动使用 deterministic mock，全部功能与测试可运行。
+- 真实模式缺配置直接失败，不退回 mock。`SEL_AI_MODE` 缺省为 mock 只属于 `npm run dev` 的旧本机演示。生产入口 `src/main.ts` 调用 `assertV2AiConfigured`，移动识别同样拒绝 mock。
 - 日志与 `ai_run` 审计只记录元数据，不记录图片内容、反思文本、API Key。
 
 ## 配置
 
 | 环境变量 | 说明 |
 |---|---|
-| `SEL_AI_MODE` | `mock`（默认）/ `openai` |
+| `SEL_AI_MODE` | `mock` / `openai` / `bailian`。生产与移动识别只接受 `bailian`。 |
 | `SEL_AI_BASE_URL` | OpenAI-compatible endpoint（如 `https://api.example.com/v1`） |
 | `SEL_AI_API_KEY` | Key（仅从环境读取，不显示、不记录、不持久化到库） |
 | `SEL_AI_MODEL` | 模型名（真实模式） |
 | `SEL_AI_TIMEOUT_MS` | 默认 30000 |
 
-模式解析：`SEL_AI_MODE=openai` 但缺少 BASE_URL/KEY/MODEL → 自动降级 mock 并在 UI 与启动日志提示（不打印 Key）。
+模式解析：真实模式缺少 BASE_URL、KEY 或 MODEL 时启动失败。不要改成自动降级 mock。
 
 ## 接口（src/ai/provider.ts）
 

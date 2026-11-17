@@ -1,7 +1,7 @@
 # Super Error Log — 纸错题延迟重做闭环 MVP
 
 面向寄宿制初三学生的错题复习闭环：**周末数字化，工作日纸质复习，下周末结果回传**。
-当前学生用手机网页拍卷子：AI先找题，学生补勾遗漏，练习首页主动建议一小组题，学生查看题目或打印后在纸上重做，拍照提交并确认核对建议；也保留自己选题和直接录结果。当前原题重做闭环已实现；家长独立网页和变式题尚未接入。
+当前学生用手机浏览器打开 `/s/`，用邀请码进入 `client/` 里的错题本：拍照或选图录入，查看题目。练习在学生端是「即将推出」。家长独立网页和变式题尚未接入。
 
 ## Codex Cloud 从这里接手
 
@@ -33,7 +33,17 @@
 - **当场做对不算掌握**：只有延迟 3–7 天的独立重做正确才进入"暂时掌握"，7–14 天确认轮再做对才"稳定掌握"。
 - **家长只见聚合**：家长视图只有完成率、学科掌握度、薄弱标签等聚合数字。
 
-## 旧本地演示快速开始
+## 本机看学生端
+
+只按 [verify-sel](.claude/skills/verify-sel/SKILL.md)：
+
+```bash
+npm run verify:sel -- launch
+```
+
+它启动带邀请码登录的合成服务器。全量检查是 `npm run verify`。生产入口是 `dist/main.js`（源码 `src/main.ts`）。
+
+## 旧本地演示（不是学生端）
 
 ```bash
 npm install
@@ -47,7 +57,7 @@ npm run demo        # 生成演示夹具并启动（mock 模式，无需 API Key
 
 | 命令 | 作用 |
 |---|---|
-| `npm run dev` | 开发服务器（tsx watch，默认端口 3100） |
+| `npm run dev` | 旧本地演示（`src/server.ts`，端口 3100）。不是邀请码学生端 |
 | `npm run demo` | 生成夹具 + 启动，一键演示 |
 | `npm test` | 单元 + 集成测试（Vitest） |
 | `npm run test:e2e` | E2E 旅程测试 J1–J8（Playwright，端口 3199） |
@@ -66,15 +76,15 @@ npm run demo        # 生成演示夹具并启动（mock 模式，无需 API Key
 
 ## 文档
 
-- 产品：`docs/product/`（PRD、页面规格、试点协议、假设登记）
-- 架构：`docs/architecture/`（架构、数据模型、AI Provider 契约）
+- 产品：`docs/product/`。当前学生端是 `docs/CLIENT_APP.md`；`docs/product/PRD.md` 是 2026-09 的历史稿
+- 架构：`docs/architecture/ARCHITECTURE.md`（当前）。同目录的 `ARCHIVE-2026-09-05-local-demo.md` 只作历史
 - 质量：`docs/quality/`（测试策略、发布检查单）
 - 隐私：`docs/privacy/PRIVACY_AND_MINOR_DATA.md`
-- 用户手册：`docs/MVP_USER_MANUAL.md`
+- 旧本地演示手册：`docs/MVP_USER_MANUAL.md`（不是当前学生端）
 - 验证报告：`docs/PRODUCT_VALIDATION_REPORT.md`
 - 当前交接：[Codex Cloud 接手说明](docs/CODEX_CLOUD_HANDOFF.md)；分支规则：[分支说明](docs/BRANCHES.md)
 - 历史工程过程：`.ai/tasks/current/`（保留历史状态、决策、风险和测试日志，不代表当前上线状态）
 
 ## 技术栈
 
-TypeScript · Express 5 · React 19 SSR（表单驱动，无 hydration）· node:sqlite（零原生依赖）· sharp（EXIF 转正/元数据剥离）· Playwright（A4 PDF 生成 + E2E）· Vitest
+TypeScript · Express 5 · Ionic React（`client/`，当前学生端）· 旧的 React 19 服务端页面仍挂在没有入口的路径上 · node:sqlite（零原生依赖）· sharp（EXIF 转正/元数据剥离）· Playwright（A4 PDF 生成 + E2E）· Vitest

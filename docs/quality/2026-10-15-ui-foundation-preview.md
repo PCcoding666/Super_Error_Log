@@ -1,5 +1,7 @@
 # 手机网页视觉基础：第一批交付
 
+这是 2026-10-15 的对照记录。里面的「今天」页已经删除。当前学生端见 `docs/CLIENT_APP.md`，本机启动只按 `.claude/skills/verify-sel/SKILL.md`。
+
 ## 查看结果
 
 - [可操作的新旧对照](https://super-error-log-ui-review.speedyvenus3.chatgpt.site)
