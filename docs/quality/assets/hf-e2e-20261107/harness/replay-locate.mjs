@@ -1,12 +1,18 @@
 // 重放材料流程的 locate 调用（同提示词、同图片、同参数），打印原始模型输出并逐条复刻 inventory 校验，找出 invalid_output 的具体原因。
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
-import { validateBox } from '/Users/chengpeng/MyProject/Super_Error_Log/src/media/images.ts';
+import { validateBox } from '../../../../../src/media/images.ts';
+const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const [imagePath, assetId, sourceHash, outPath] = process.argv.slice(2);
-const providerSrc = fs.readFileSync('/Users/chengpeng/MyProject/Super_Error_Log/src/materials/provider.ts', 'utf8');
+const providerSrc = fs.readFileSync(path.join(root, 'src/materials/provider.ts'), 'utf8');
 const SYSTEM = /const SYSTEM = `([\s\S]*?)`;/.exec(providerSrc)[1];
-const env = fs.readFileSync('/Users/chengpeng/MyProject/Super_Error_Log/.env', 'utf8');
-const apiKey = /^SEL_AI_API_KEY=(.*)$/m.exec(env)[1].trim();
+const apiKey = process.env.SEL_AI_API_KEY?.trim();
+if (!apiKey) {
+  console.error('Set SEL_AI_API_KEY in the environment. This script does not read .env files.');
+  process.exit(1);
+}
 const ROLES = ['question', 'diagram', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown'];
 const candidateSchema = { key: 'unique string', role: ROLES, box: { x: '0..1', y: '0..1', width: '>0', height: '>0' }, number: 'printed question number|null', subpart: 'printed subpart|null', page: 'positive integer|null', order: 'unique increasing nonnegative integer', requiresDiagram: 'boolean' };
 const documentSchema = { title: 'string|null', subject: 'string|null', date: 'string|null', printedCode: 'string|null', page: 'positive integer|null' };

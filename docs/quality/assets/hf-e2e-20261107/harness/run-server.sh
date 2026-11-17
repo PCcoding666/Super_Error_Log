@@ -1,7 +1,7 @@
 #!/bin/zsh
 # 高保真 E2E：用生产入口 dist/main.js 启动云端模式 + 学生邀请码网关，真实百炼模型，数据放在仓库 data/hf-e2e-20261107/（gitignored）。
 set -u
-REPO=/Users/chengpeng/MyProject/Super_Error_Log
+REPO=$(cd "$(dirname "$0")/../../../../.." && pwd)
 cd "$REPO"
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NODE_USE_ENV_PROXY ALL_PROXY all_proxy
 export NODE_ENV=production
