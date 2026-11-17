@@ -76,3 +76,18 @@ swift test --package-path iOS
 ```
 
 同一台机器上不要同时在两个 worktree 里跑 E2E，端口会冲突（服务会报 `Process from config.webServer exited early`）。CI 里每个 job 是独立机器，不会遇到。
+
+## Bugbot
+
+`.cursor/BUGBOT.md` 写了已经重复出现过的审查规则。`.cursor/config/bugbot.yaml` 让 Bugbot 在每次推送时审查，不审查草稿，自动修复保持关闭，所以它不能往分支推提交。
+
+Bugbot 读的是 PR 要合并进去的分支，也就是 `main`。这两个文件要先合并进 `main`，之后的 PR 才会用到。本文件所在的 PR 自己不会被这套规则审查。
+
+仓库文件打不开 Bugbot。打开步骤：
+
+1. 打开 [Cursor 仪表盘](https://cursor.com/dashboard) 的 Integrations。GitHub 旁边点 Connect；已经连过就点 Manage Connections。
+2. 选择 All repositories，或在 Selected repositories 里勾上 `PCcoding666/Super_Error_Log`。
+3. 打开仪表盘里 Automations 下的 Bugbot，确认这个仓库是打开的。GitHub 上连接时，授过的仓库通常会打开。连接的人不是团队管理员，而团队已经开过 Bugbot 时，仓库会保持关闭，要管理员打开。说明见 [Bugbot 文档](https://cursor.com/docs/bugbot)。
+4. 下一张 PR 上应出现名为 `Cursor Bugbot` 的检查。人可以在 PR 里评论 `bugbot run` 或 `cursor review`。机器人发的评论会被忽略。
+
+不要把 `Cursor Bugbot` 设成必需检查，也不要打开「未解决就失败」，除非维护者自己决定。发现默认是 `neutral`，不会挡住合并。

@@ -1,0 +1,18 @@
+# Read from the pull request's base branch. Settings here apply only after this file is on main.
+# https://cursor.com/docs/bugbot
+version: 1
+
+triggers:
+  drafts: false
+  frequency: everyPush
+
+review:
+  effort: default
+  incremental: true
+
+prSummary:
+  mode: comment
+
+autofix:
+  # Stay off. This file can lower Autofix, not raise it, and nothing here may push to a branch.
+  mode: disabled
