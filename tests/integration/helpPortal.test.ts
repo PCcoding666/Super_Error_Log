@@ -60,29 +60,34 @@ async function listen(): Promise<number> {
 describe('产品说明页文案', () => {
   const html = helpPortalHtml({});
 
-  it('用中文写清注册、拍照、收题、单页多页、练习即将推出、学习页和 GitHub；没配联系方式时不出现占位符', () => {
+  it('用中文写清自己注册、拍照、收题、单页多页和学习页；没配联系方式时不出现占位符', () => {
     expect(HELP_PORTAL_PATH).toBe('/help/');
     expect(html).toContain('href="https://study.pccoding666.com/help/"');
     expect(html).toContain('href="/help/"');
     expect(html).toContain('产品是什么');
-    expect(html).toContain('注册与登录');
-    expect(html).toContain('怎么拍照');
-    expect(html).toContain('怎么选错题');
-    expect(html).toContain('常见问题');
+    expect(html).toContain('第一次用');
+    expect(html).toContain('经常用');
+    expect(html).toContain('遇到问题');
     expect(html).toContain('拍卷子');
     expect(html).toContain('收进错题本');
-    expect(html).toContain('选拍摄模式');
     expect(html).toContain('单页');
     expect(html).toContain('多页');
-    expect(html).toContain('改回单页之后「新增」先停用，要点「完成」或「放弃这组」才能再拍');
-    expect(html).toContain('一张纸拍完就用单页');
-    expect(html).toContain('适用于答题卡与试卷不在一页上的情况');
     expect(html).toContain('点「新增」');
+    expect(html).toContain('点「开始」');
     expect(html).not.toContain('iPhone 的系统菜单');
     expect(html).not.toContain('上方还有「单页 / 多页」');
-    expect(html).toContain('没有练习入口');
+    expect(html).not.toContain('放弃这组');
+    expect(html).not.toContain('一次最多 8 页');
     expect(html).not.toContain('/s/practices');
-    expect(html).toContain('示意图');
+    expect(html).not.toContain('练习');
+    expect(html).not.toContain('即将推出');
+    expect(html).not.toContain('示意图');
+    expect(html).not.toContain('合成');
+    expect(html).not.toContain('应用里的说明');
+    expect(html).not.toContain('最快的三步');
+    expect(html).not.toContain('老师给你');
+    expect(html).not.toContain('开始使用');
+    expect(html).toContain('去注册');
     expect(html).toContain('添加到桌面');
     expect(html).toContain('添加到主屏幕');
     expect(html).toContain('桌面图标会打开浏览器页面');
@@ -98,10 +103,11 @@ describe('产品说明页文案', () => {
     expect(html).toContain('2026 年 11 月 23 日前有效');
     expect(html).toContain('/help/img/wechat-group.webp');
     expect(html).not.toContain('/help/img/account.webp');
-    expect(html).toContain('加入 N 道');
-    expect(html).toContain('即将推出');
+    expect(html).not.toContain('/help/img/intake-auto.webp');
+    expect(html).not.toContain('/help/img/install.webp');
+    expect(html).not.toContain('/help/img/settings.webp');
+    expect(html).not.toContain('/help/img/stage.webp');
     expect(html).toContain('href="https://study.pccoding666.com/s/"');
-    expect(html).toContain('开始使用');
     expect(html).not.toContain('待补充');
     expect(html).not.toContain('>邮箱<');
     expect(html).not.toContain('>微信<');
@@ -115,36 +121,46 @@ describe('产品说明页文案', () => {
     expect(new Set(images).size).toBe(images.length);
     for (const name of images) expect(readHelpImage(name!)?.length ?? 0).toBeGreaterThan(1000);
     expect(images.some(name => name?.startsWith('practice-'))).toBe(false);
+    const contact = /<section id="contact">[\s\S]*?<\/section>/.exec(html)![0];
+    expect(contact).not.toContain('github.com');
+    expect(contact).toContain('先问老师');
   });
 
-  it('「开始使用」先讲扫码 / 点链接一键进入（打开不算登录）；换手机、微信里打开都提到链接与二维码；iPhone Safari 与安卓 Chrome 的添加到主屏幕步骤都在', () => {
+  it('第一次用从自己注册开始，不从老师的二维码开始；换手机才讲自己的登录链接；桌面步骤在经常用', () => {
     const start = /<section id="start">[\s\S]*?<\/section>/.exec(html)![0];
     expect(start).toContain('data-testid="start-steps"');
-    expect(start).toContain('二维码或链接');
-    expect(start).toContain('邀请码已经填好');
-    expect(start).toContain('「进入我的错题本」');
     expect(start).toContain('拍一张批改过的卷子');
-    expect(start).toContain('打开链接本身不算登录');
+    expect(start).toContain('找回码跟手机号仅用于找回账户');
+    expect(start).toContain('点「新增」');
+    expect(start).toContain('单页');
+    expect(start).toContain('多页');
+    expect(start).toContain('收进错题本');
+    expect(start).toContain('以照片为准');
+    expect(start).not.toContain('二维码');
+    expect(start).not.toContain('老师给你');
+    expect(start).not.toContain('老师的二维码');
     expect(start).not.toContain('查看或换邀请码');
-    const home = /<section id="home">[\s\S]*?<\/section>/.exec(html)![0];
-    expect(home).toContain('Safari');
-    expect(home).toContain('添加到主屏幕');
-    expect(home).toContain('Chrome');
-    expect(home).toContain('添加到桌面');
-    expect(home).toContain('iPhone Safari 和安卓 Chrome');
-    expect(home).toContain('/help/img/iphone-confirm.webp');
-    expect(home).toContain('/help/img/iphone-home.webp');
-    expect(home).toContain('作为网页 App 打开');
-    expect(home).toContain('在主屏幕上找到它');
-    expect(home).toContain('超级错题本');
+    const use = /<section id="use">[\s\S]*?<\/section>/.exec(html)![0];
+    expect(use).toContain('Safari');
+    expect(use).toContain('添加到主屏幕');
+    expect(use).toContain('Chrome');
+    expect(use).toContain('添加到桌面');
+    expect(use).toContain('/help/img/iphone-confirm.webp');
+    expect(use).toContain('/help/img/iphone-home.webp');
+    expect(use).toContain('作为网页 App 打开');
+    expect(use).toContain('在主屏幕上找到它');
+    expect(use).toContain('超级错题本');
+    expect(use).toContain('「进入我的错题本」');
     expect(html).not.toContain('loading="lazy"');
     expect(html).toContain('loading="eager"');
     const faq = /<section id="faq">[\s\S]*?<\/section>/.exec(html)![0];
     expect(faq).toContain('扫一下就能登录');
     expect(faq).toContain('登录链接和二维码');
+    expect(faq).toContain('不是开学的第一步');
+    expect(faq).toContain('打开链接本身不算登录');
+    expect(faq).toContain('「进入我的错题本」');
     expect(faq).toContain('「复制网址」');
     expect(faq).toContain('在 Safari 中打开');
-    // 说明页不含任何邀请码或带码链接的样子
     expect(html).not.toMatch(/code=[A-Z0-9]{4}-/);
   });
 
@@ -166,7 +182,7 @@ describe('产品说明页文案', () => {
     expect(oddEmail).not.toContain('mailto:');
   });
 
-  it('版式跟随学生端主题，注册与登录排在各步骤之前，窄屏目录可收起', () => {
+  it('版式跟随学生端主题，第一次用排在经常用之前，窄屏目录可收起', () => {
     expect(html).toContain('--ion-color-primary: #0066d6');
     expect(html).toContain('--ion-font-family: -apple-system, BlinkMacSystemFont, "PingFang SC"');
     expect(html).toContain('--ion-background-color: #f2f2f7');
@@ -185,15 +201,17 @@ describe('产品说明页文案', () => {
     expect(html).toContain('<summary>目录</summary>');
     expect(html).toContain('color-scheme');
     const at = (id: string) => html.indexOf(`id="${id}"`);
-    const order = ['product', 'start', 'home', 'capture', 'pick', 'practice', 'faq', 'contact'];
+    const order = ['product', 'start', 'use', 'faq', 'contact'];
     const positions = order.map(at);
     for (const pos of positions) expect(pos).toBeGreaterThan(0);
     for (let index = 1; index < positions.length; index += 1) {
       expect(positions[index], order[index]).toBeGreaterThan(positions[index - 1] ?? -1);
     }
-    expect(html.indexOf('href="#start"')).toBeLessThan(html.indexOf('href="#home"'));
-    expect(html.indexOf('kicker">开始使用')).toBeGreaterThan(at('product'));
-    expect(html.indexOf('kicker">开始使用')).toBeLessThan(at('home'));
+    expect(html.indexOf('href="#start"')).toBeLessThan(html.indexOf('href="#use"'));
+    expect(html.indexOf('kicker">第一次用')).toBeGreaterThan(at('product'));
+    expect(html.indexOf('kicker">第一次用')).toBeLessThan(at('use'));
+    expect(html).not.toContain('id="practice"');
+    expect(html).not.toContain('id="home"');
   });
 });
 
