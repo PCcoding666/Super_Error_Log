@@ -8,11 +8,9 @@ import { activePractice, setTaskLifecycle, startSuggestedPractice, suggestedPrac
 import { practiceProgress } from '../v2/practiceProgress.js';
 import { PracticeDashboardPage } from './views/practiceDashboard.js';
 /**
- * 学生网页版（/s/）：云端移动服务同源挂载，SSR、表单驱动、不做 hydration。
- * - 鉴权：配对兑换得到的设备令牌放在 httpOnly cookie（Path=/s），每个请求按 /v1 /v2 同一规则鉴权与限流。
- * - 业务全部调用现有服务（识别 service、/v2 的 week/practice/print/return/reflection/correction/settings），
- *   不在视图里另写一份规则；页面只做「取数 → WeekPlan → 渲染」与表单提交。
- * - 只有拍照上传与录音用到脚本；关掉脚本时每屏照样能用（语音除外）。
+ * /s/ 路由。学生看见的页面是 client/ 单页应用，数据走 /s/api。
+ * 这个文件里其余的服务端页面没有学生端入口，不要加新页面。
+ * 鉴权仍是 httpOnly cookie（Path=/s），业务调用现有服务，不在视图里另写规则。
  */
 import { categoryForItem, chooseStudentStage, editItemCategory, stageChoiceNeeded, STAGE_REQUIRED_MESSAGE } from '../classification/itemCategories.js';
 import { StageChoicePage } from './views/stage.js';
@@ -66,11 +64,11 @@ import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, typ
 import { routeTemplate, trailRecorder, trailTaps } from './trail.js';
 import { errorSummary, logEvent, newRequestId, requestIdOf } from '../observability/log.js';
 import { DEFAULT_TIME_ZONE, localDayOrdinal, localDayText, stepCaption, type StepKind } from './weekPlan.js';
-import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, PairPage, TodayPage, type BusyReason, type TodayWait } from './views/today.js';
-import { CapturePage, PhotosPage, PickPage, findingSince } from './views/photos.js';
+import { barButton, barFromPlan, BusyPage, ConnectPage, ErrorPage, InstallPage, PairPage, type BusyReason } from './views/today.js';
+import { CapturePage, PhotosPage, PickPage } from './views/photos.js';
 import { CategoryEditPage, EditPage, FixPage, ItemDetailPage, ItemsPage } from './views/items.js';
 import {
-  ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage, printExpect,
+  ChoosePage, PracticesPage, PrintPage, RecordDatePage, RecordItemPage, ResultsPage, SettingsPage, SheetPage,
   WhyAskPage, WhyConfirmPage, WhyDonePage, WhyIntroPage, COMPLETIONS, type DayOption, type PrintState, type RecordAnswer,
 } from './views/practice.js';
 import { createMaterialsRouter } from './materialsRouter.js';
@@ -402,25 +400,13 @@ export function createWebClientRouter(options: WebClientOptions): Router {
   }
 
   // 根地址和三个子路径下发学生端单页应用（Ionic React，client/）；数据走 /s/api。
-  // 旧的服务端页面（/s/items、/s/photos、/s/settings …）仍然保留，直到单页应用完全接管。
+  // 旧的服务端页面（/s/items、/s/photos、练习页）没有学生端入口。不要加新页面。
   // 新账号先在服务端的选学段页选好（关掉脚本也能用）；深链接直接打接口时单页应用自己也会处理 409 stage_required。
   for (const route of CLIENT_SHELL_ROUTES) r.get(route, (_request, response) => sendClientShell(response));
   r.use('/api', createStudentApi(ctx, { studentHostWorker: options.studentHostWorker === true, service: options.service, materialsJobs: options.materials?.jobs, accountRoleOf: response => accountRoleOf(response), inviteExpiresOf: response => inviteExpiresOf(response) }));
   r.post('/install/seen', page((request, response) => { markInstallHint(request, response); response.redirect(303, '/s/'); }));
   r.get('/install', page((_request, response) => render(response, InstallPage({ invitation: options.studentHostWorker === true }))));
 
-  /** 「今天」在等 AI 吗：找题中的照片（从最早那张算）或正在准备的练习纸（从开始准备算）。都不在等时 null。 */
-  const todayWait = (state: TodayState): TodayWait | null => {
-    if (state.photos.some(photo => photo.state === 'finding')) return { since: findingSince(state.photos), expect: 'AI 找好以后，这一步会自己打勾' };
-    if (state.preparingPrintID) {
-      const since = printStartedAt(state.preparingPrintID);
-      const status = getPrintStatus(state.preparingPrintID, 'all');
-      const progress = status.httpStatus === 200 ? (status.body as { progress?: { done: number; total: number } }).progress : undefined;
-      const elapsed = since ? Math.max(0, Math.floor((ctx.now().getTime() - Date.parse(since)) / 1000)) : null;
-      return { since, expect: printExpect(progress?.done ?? 0, progress?.total ?? 0, elapsed) };
-    }
-    return null;
-  };
 
   // 「跳过」只记在本次打开里（会话 cookie）；「跳过，直接打印」顺手开始准备练习纸。
   r.post('/skip', form, page((request, response) => {
