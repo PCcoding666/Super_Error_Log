@@ -69,9 +69,10 @@ async function maskInviteCode(page: Page): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const pages = await prepareHelpPages(fs.mkdtempSync(path.join(os.tmpdir(), 'sel-help-pages-')));
-  const exam = fs.readFileSync(pages.exam);
-  const factor = fs.readFileSync(pages.factor);
+  const onlyEmpty = onlyNames?.size === 1 && onlyNames.has('notebook-empty');
+  const pages = onlyEmpty ? null : await prepareHelpPages(fs.mkdtempSync(path.join(os.tmpdir(), 'sel-help-pages-')));
+  const exam = pages ? fs.readFileSync(pages.exam) : Buffer.alloc(0);
+  const factor = pages ? fs.readFileSync(pages.factor) : Buffer.alloc(0);
   const browser = await chromium.launch();
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -123,7 +124,11 @@ async function main(): Promise<void> {
     await page.getByTestId('capture-mode-single').waitFor();
     await page.getByTestId('capture-mode-multi').waitFor();
     await page.getByTestId('capture-start').waitFor();
+    await page.getByText('拍一张你的错题照片').waitFor();
+    await page.getByText('AI 会找出错题，放进这里。').waitFor();
+    if (await page.getByText('拍一张批改过的卷子').count()) throw new Error('notebook-empty still shows the old empty-state headline');
     await save(page, 'notebook-empty');
+    if (onlyEmpty) return;
 
     await page.locator('#camera-input').setInputFiles([
       { name: 'exam.jpg', mimeType: 'image/jpeg', buffer: exam },
