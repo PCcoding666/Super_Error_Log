@@ -41,6 +41,7 @@ Primary student surface: mobile browser `/s/`, per-student invitation login, ser
 ## Style & commits
 
 - TypeScript ESM (`"type": "module"`), `tsx` for running TS directly.
+- Before adding or materially rewriting code comments or docstrings, read [Design comment conventions](docs/engineering/CODE_COMMENTS.md). Explain non-obvious constraints and consequences, use the actual author or agent identity for new design notes, and cite existing evidence where the claim depends on it.
 - Commit style: `type(scope): summary` (e.g. `feat(api): add classification endpoint`).
 - Current engineering handoff is `docs/CODEX_CLOUD_HANDOFF.md`; current specs/release evidence are linked there. `.ai/tasks/current/` is preserved history. Check these before large changes.
 
