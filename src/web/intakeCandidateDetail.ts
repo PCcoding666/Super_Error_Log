@@ -28,12 +28,20 @@ export function readIntakeCandidateDetail(store: MaterialStore, questionId: stri
     return { ok: true, detail: { id: questionId, revision, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',
       subject: progress.extraction.document.subject, status: previewStatus(progress, fragment, q),
       stem: [{ role: 'question', text: fragment.text, number: fragment.number, check: fragment.check, uncertainties: fragment.uncertainties, requiresDiagram: fragment.requiresDiagram }],
-      crop: previewCrop(questionId, revision), source: `/s/materials/assets/${fragment.assetId}/image`, work: [], marks: [], answers: [], grades: [] } };
+      crop: previewCrop(questionId, revision), figures: diagramFigures(fragment, progress.extraction.fragments, item => previewCrop(item.fragmentId, revision)),
+      source: `/s/materials/assets/${fragment.assetId}/image`, work: [], marks: [], answers: [], grades: [] } };
   }
   const question = readQuestion(store, questionId);
   if (!question) return { ok: false, status: 404, code: 'not_found', message: '题目不存在。' };
   if (question.revision !== revision) return { ok: false, status: 409, code: 'revision_conflict', message: '材料已更新，请刷新后再试。' };
   return { ok: true, detail: toDetail(store, question) };
+}
+
+/** A diagram that already carries this question's printed number. The question crop is not widened. */
+function diagramFigures<T extends { fragmentId: string; role: string; number: string | null; subpart: string | null }>(question: { fragmentId: string; number: string | null; subpart: string | null }, fragments: T[], url: (fragment: T) => string): { crop: string }[] {
+  if (question.number === null) return [];
+  return fragments.filter(fragment => fragment.role === 'diagram' && fragment.fragmentId !== question.fragmentId && fragment.number === question.number && fragment.subpart === question.subpart)
+    .map(fragment => ({ crop: url(fragment) }));
 }
 
 function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandidateDetail {
@@ -70,6 +78,7 @@ function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandida
     subject: question.subject,
     stem,
     crop: primary ? `/s/materials/fragments/${primary.fragmentId}/crop?revision=${primary.revision}` : null,
+    figures: primary ? diagramFigures(primary, question.stem, item => `/s/materials/fragments/${item.fragmentId}/crop?revision=${item.revision}`) : [],
     source: primary ? `/s/materials/assets/${primary.assetId}/image` : null,
     work: question.attempts.flatMap(attempt => attempt.fragments.flatMap((fragment): IntakeCandidateDetail['work'] => {
       if (!fragment.text.trim()) return [];
