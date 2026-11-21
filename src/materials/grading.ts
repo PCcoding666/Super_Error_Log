@@ -8,7 +8,7 @@ import type { MaterialJobs } from './jobs.js';
 import type { MaterialUploads } from './uploads.js';
 import { answerEligibility, answersConflict, generateAnswerForBasis, selectedAnswerIds } from './answers.js';
 import { answerBasis, dependenciesCurrent, effectiveFragmentCheck, effectiveQuestionStem, gradeBasis, readQuestion, type MaterialBasis } from './queries.js';
-import { createMaterialActionProvider, validateMaterialGrade, type MaterialGradingProvider, type MaterialProviderOptions } from './provider.js';
+import { blocksProvisionalGrade, createMaterialActionProvider, validateMaterialGrade, type MaterialGradingProvider, type MaterialProviderOptions } from './provider.js';
 import { unsupportedSubject } from './subjects.js';
 const invalid = (message:string):never=>{throw new MobileRequestError(400,'invalid_request',message);};
 const conflict = ():never=>{throw new MobileRequestError(409,'idempotency_conflict','请求键已用于不同题目、作答或依据。');};
@@ -95,8 +95,7 @@ export function registerMaterialGrading(store:MaterialStore,jobs:MaterialJobs,up
 export type IntakeVerdict = 'wrong' | 'partial' | 'right' | 'confirm';
 
 function readableForIntake(fragment: Fragment, requireText: boolean): boolean {
-  if (fragment.uncertainties.includes('missing_diagram')) return false;
-  if (fragment.check !== 'passed' && fragment.check !== 'low') return false;
+  if (blocksProvisionalGrade(fragment)) return false;
   return !requireText || !!fragment.text.trim();
 }
 

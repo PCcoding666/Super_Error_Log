@@ -552,9 +552,11 @@ function parseScoringRubric(f:Fragment):ParsedScoringRubric|null {
  return Number.isFinite(total)?{criteria,total}:null;
 }
 export function hasScoringCriteria(f:Fragment):boolean {return parseScoringRubric(f)!==null;}
-/** Workspace grades stay strict. Intake may keep a model result when text is readable at passed or low, unless a blocking uncertainty such as missing_diagram remains. */
-function blocksProvisionalGrade(f:Fragment):boolean {
- if(f.uncertainties.includes('missing_diagram'))return true;
+/** Explicitly incomplete crops. A low check alone can still be graded; a missing condition or step cannot. */
+const BLOCKING_PROVISIONAL_UNCERTAINTY = ['missing_diagram', 'incomplete_coverage'];
+/** Workspace grades stay strict. Intake may keep a model result when text is readable at passed or low, unless content is missing. */
+export function blocksProvisionalGrade(f:Fragment):boolean {
+ if(f.uncertainties.some(item=>BLOCKING_PROVISIONAL_UNCERTAINTY.includes(item)))return true;
  if(f.check!=='passed'&&f.check!=='low')return true;
  return f.role!=='diagram'&&!f.text.trim();
 }
