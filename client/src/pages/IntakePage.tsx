@@ -260,7 +260,7 @@ export function IntakePage(): ReactNode {
           <IonItemOptions side="end"><IonItemOption color="danger" data-testid="question-swipe-delete" onClick={() => void remove(question.id)}>删除</IonItemOption></IonItemOptions>
         </IonItemSliding>)}
         {photo.candidates.length ? <>
-          <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p>{photo.progress ? '可以先看图勾出做错的题，校验通过后加入错题本。' : '这页没有批改痕迹，勾出做错的题'}</p></IonLabel></IonItem>
+          <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p>{photo.progress ? '可以先看图勾出做错的题，校验通过后加入错题本。' : (photo.pickNote ?? '这页没有批改痕迹，勾出做错的题')}</p></IonLabel></IonItem>
           <div className="intake-candidates">
             {photo.candidates.map(candidate => <div key={candidate.id} className="intake-candidate" data-testid="pick-candidate">
               <IonCheckbox

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { saveIntakeProgress, completeIntakeProgress } from './intakeProgress.js';
 import { isDeepStrictEqual } from 'node:util';
+import { pairAnswerSheetCapture } from './answerSheetPairing.js';
 import { SET_PAGE_MISSING } from './captureHints.js';
 import type { CaptureHints, Extraction } from './contracts.js';
 import type { MaterialPageImage } from './provider.js';
@@ -96,6 +97,7 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
     catch (error) { if (!(error instanceof PartialMaterialExtractionError)) throw error; partial = error; result = error.extraction; }
     signal.throwIfAborted();
     const bundle = leadRun && result.set?.length ? result.set : [result];
+    const leadSaved = bundle.some(item => item.assetId === row.asset_id);
     const persisted = store.transaction(() => {
       const current = input(store, jobId);
       if (current.revision !== row.revision || current.sourceHash !== row.sourceHash) {
@@ -118,8 +120,10 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
           store.putFragment(next); return next;
         });
         const { set: _set, ...stored } = extraction as ExtractedMaterial;
-        store.db.prepare('UPDATE material_asset SET extraction_json=?,status=? WHERE owner_id=? AND id=?').run(JSON.stringify(stored), partial ? 'partial' : 'extracted', store.studentId, extraction.assetId);
-        const summary = JSON.stringify({ assetId: extraction.assetId, revision: pageSource.revision, sourceHash: pageSource.sourceHash, partial: !!partial });
+        // A failed lead page must not mark the paper pages that did extract as partial.
+        const pagePartial = !!partial && (leadSaved || extraction.assetId === row.asset_id);
+        store.db.prepare('UPDATE material_asset SET extraction_json=?,status=? WHERE owner_id=? AND id=?').run(JSON.stringify(stored), pagePartial ? 'partial' : 'extracted', store.studentId, extraction.assetId);
+        const summary = JSON.stringify({ assetId: extraction.assetId, revision: pageSource.revision, sourceHash: pageSource.sourceHash, partial: pagePartial });
         if (extraction.assetId === row.asset_id) store.db.prepare('UPDATE material_job SET result_json=? WHERE owner_id=? AND id=?').run(summary, store.studentId, jobId);
         else store.db.prepare(`UPDATE material_job SET state='succeeded', error=NULL, result_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND asset_id=? AND kind='extract' AND id!=? AND state IN ('queued','interrupted')`).run(summary, store.studentId, extraction.assetId, jobId);
         wrote.push(extraction.assetId);
@@ -138,9 +142,13 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
         else reconcileAsset(store, extraction.assetId);
       }
     }
+    if (hints.captureMode === 'multi') pairAnswerSheetCapture(store, row.asset_id);
     // A later page may attach a same-question diagram or continuation. Evaluate
     // saved selections only after every page in this result has been reconciled.
-    for (const extraction of storedBundle) completeIntakeProgress(store, jobId, extraction, !!partial);
+    for (const extraction of storedBundle) {
+      const pagePartial = !!partial && (leadSaved || extraction.assetId === row.asset_id);
+      completeIntakeProgress(store, jobId, extraction, pagePartial);
+    }
     if (partial) throw partial.failure;
   } finally {
     if (leadRun && !signal.aborted) settleUncoveredFollowers(store, row.asset_id, covered);

@@ -150,6 +150,10 @@ export interface IntakeCandidate {
   label: string;
   excerpt: string;
   status?: 'preliminary' | 'verifying' | 'verified' | 'needs_review';
+  /** Answer-sheet verdict joined to this paper item. Right items are not offered in the wrong-question list. */
+  verdict?: 'wrong' | 'right' | 'unclear';
+  /** joined: the answer sheet matched this item. unmatched: a sheet mark or paper item that did not match. */
+  pairing?: 'joined' | 'unmatched';
   /** Selection submitted to the server; waits for trustworthy final evidence. */
   submitted?: boolean;
   /** 裁图；材料流程没有裁图时为 null。 */
@@ -209,6 +213,8 @@ export interface IntakePhoto {
   full: string;
   state: IntakePhotoState;
   statusText: string;
+  /** Replaces the generic “no marks” line when this photo is part of a paper / answer-sheet set. */
+  pickNote?: string;
   progress?: { stage: 'located' | 'enriching' | 'done'; total: number; verified: number; firstBatchCount: number; tLocateDoneMs: number; tFirstSelectableMs: number | null; tFullExtractMs: number | null };
   /** 已经在错题本里的题。 */
   questions: IntakeQuestion[];

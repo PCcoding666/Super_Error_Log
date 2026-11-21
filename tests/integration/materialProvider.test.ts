@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import sharp from 'sharp';
-import { MULTI_PAGE_LOCATE_NOTE, MULTI_PAGE_READ_NOTE, SET_LOCATE_MAX_EDGE, createMaterialProvider, fitSetPagesToBudget, type MaterialRequestExecutor, type MaterialSource } from '../../src/materials/provider.js';
+import { MULTI_PAGE_LOCATE_NOTE, MULTI_PAGE_READ_NOTE, SET_LOCATE_MAX_EDGE, PartialMaterialExtractionError, createMaterialProvider, fitSetPagesToBudget, type MaterialRequestExecutor, type MaterialSource } from '../../src/materials/provider.js';
 import { MAX_INPUT_TOKEN_RESERVATION, reserveImageTokens } from '../../src/ai/chatClient.js';
 import { assertV2AiConfigured } from '../../src/v2/aiConfigGuard.js';
 
@@ -226,8 +226,8 @@ describe('grounded material provider protocol', () => {
     expect(later.length).toBeGreaterThan(0);
     expect(later.every(request => (request.messages[1]!.content as { type: string }[]).filter(part => part.type === 'image_url').length === 1)).toBe(true);
     expect(later.every(request => JSON.stringify(request.messages).includes(MULTI_PAGE_READ_NOTE))).toBe(true);
-    expect(result.runs[0]?.promptVersion).toBe('material-v1.3');
-    expect(result.runs.slice(1).every(run => run.promptVersion === 'material-v1.3')).toBe(true);
+    expect(result.runs[0]?.promptVersion).toBe('material-v1.4');
+    expect(result.runs.slice(1).every(run => run.promptVersion === 'material-v1.4')).toBe(true);
   });
 
   it('keeps mock deterministic and offline, and real configuration fail-hard', async () => {
@@ -417,6 +417,57 @@ describe('grounded material provider protocol', () => {
       else send(res, response(body, [candidate('q', 'question', 0), candidate('d', 'diagram', 1)]));
     });
     await expect(createMaterialProvider({ mode: 'openai', chat: withDiagram.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
+  });
+
+  it('treats a locate-set that describes only the current page as that page', async () => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate-set') { send(res, { result: { document, candidates: [candidate(c.source.assetId === source.assetId ? 'sheet-q' : 'paper-q', 'question')], warnings: [] } }); return; }
+      send(res, { ...response(body), source: c.source });
+    });
+    const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct });
+    const paper = await image();
+    const result = await provider.extract({
+      assetId: source.assetId, revision: 1, bytes: await image(),
+      hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' },
+      pages: [
+        { assetId: 'paper', pageIndex: 1, pageKind: 'paper', bytes: paper, revision: 1, sourceHash: 'paper-hash' },
+        { assetId: source.assetId, pageIndex: 2, pageKind: 'answer_sheet', bytes: await image() },
+      ],
+    }, new AbortController().signal);
+    expect(result.set?.map(page => page.assetId).sort()).toEqual(['paper', source.assetId].sort());
+    expect(result.set?.every(page => page.fragments.length === 1)).toBe(true);
+    expect(f.requests.filter(request => context(request).operation === 'locate-set')).toHaveLength(2);
+  });
+
+  it('still extracts the paper pages when the answer-sheet locate fails validation', async () => {
+    const f = await local((body, res) => {
+      const c = context(body) as ReturnType<typeof context> & { submission?: { pageKind?: string | null } };
+      if (c.operation === 'locate-set' && c.submission?.pageKind === 'answer_sheet') {
+        send(res, { pages: [{ assetId: c.source.assetId, document, candidates: [{ ...candidate('bad', 'teacher_mark'), box: { x: 3, y: 0, width: 1, height: 0.2 } }], warnings: [] }] });
+        return;
+      }
+      if (c.operation === 'locate-set') {
+        send(res, { pages: [{ assetId: c.source.assetId, document: { ...document, subject: '化学' }, candidates: [{ ...candidate('q', 'question'), number: c.source.assetId === source.assetId ? '1' : '8' }], warnings: [] }] });
+        return;
+      }
+      send(res, { ...response(body), source: c.source });
+    });
+    const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct });
+    const bytes = await image();
+    const result = await provider.extract({
+      assetId: source.assetId, revision: 1, bytes,
+      hints: { captureMode: 'multi', pageIndex: 1, pageCount: 3, pageKind: 'paper' },
+      pages: [
+        { assetId: source.assetId, pageIndex: 1, pageKind: 'paper', bytes, revision: 1, sourceHash: source.sourceHash },
+        { assetId: 'sheet', pageIndex: 2, pageKind: 'answer_sheet', bytes, revision: 1, sourceHash: 'sheet-hash' },
+        { assetId: 'paper-2', pageIndex: 3, pageKind: 'paper', bytes, revision: 1, sourceHash: 'paper-2-hash' },
+      ],
+    }, new AbortController().signal);
+    expect(result).not.toBeInstanceOf(PartialMaterialExtractionError);
+    expect(result.set?.map(page => page.assetId).sort()).toEqual([source.assetId, 'paper-2'].sort());
+    expect(result.fragments.map(fragment => fragment.number)).toEqual(['1']);
+    expect(f.requests.filter(request => context(request).operation === 'locate-set')).toHaveLength(3);
   });
 });
 function fModels() { return { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' }; }
