@@ -125,7 +125,8 @@ test('students can select one source page and review an unsaved candidate withou
     await expect(sheet).toBeHidden();
 
     await pageA.getByRole('button', { name: '查看第 2 题的详情' }).click();
-    await expect(sheet.getByTestId('candidate-uncertain')).toBeVisible();
+    await expect(sheet.getByTestId('candidate-uncertain')).toHaveCount(0);
+    await expect(sheet).not.toContainText('不确定');
     await expect(sheet.getByTestId('candidate-judgment-empty')).toHaveText('还没有答案或判断。');
     await expect(sheet).not.toContainText('blurry');
     await expect(sheet).not.toContainText('PAGE-A-ANSWER');
@@ -292,7 +293,7 @@ test('a legacy candidate opens details from the crop it already has and does not
     page.on('request', request => { if (request.method() === 'POST') posts.push(new URL(request.url()).pathname); });
     await unmarked.getByRole('button', { name: '查看第 4 题的详情' }).click();
     const sheet = page.getByTestId('candidate-detail-sheet');
-    await expect(sheet.getByTestId('candidate-stem-empty')).toHaveText('还没有识别出题目文字。');
+    await expect(sheet.getByTestId('candidate-stem-empty')).toHaveText('还没有读出题目文字。');
     await expect(sheet.getByTestId('candidate-judgment-empty')).toHaveText('还没有答案或判断。');
     await expect(sheet.getByTestId('candidate-traces-empty')).toBeVisible();
     await expect(sheet.locator('img[alt="题目裁图"]')).toBeVisible();
