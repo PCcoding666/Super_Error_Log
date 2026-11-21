@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { initialUploadDayFilter, intakeListParams, intakeResponseMatches, intakeWaitsForUpload, reduceUploadDayFilter } from '../../../src/materials/dayFilter';
 import type { IntakeCandidate, IntakeCandidateDetail, IntakePhoto } from '../../../src/web/apiTypes';
 import { INTAKE_SELECT_LIMIT, intakePickKey, pagePickState, prunePhotoPicks, selectDisplayedPage, selectionCountText, selectionTotals } from '../../../src/web/intakeSelection';
-import { canAddCandidate, orderCandidates, outcomeLabel, pageNote, processLabel, shouldPreselect } from '../lib/intakeVerdict';
+import { canAddCandidate, focusScrollPlan, orderCandidates, outcomeLabel, pageNote, processLabel, shouldPreselect } from '../lib/intakeVerdict';
 import { CandidateDetailModal } from '../components/CandidateDetailModal';
 import { CaptureDock } from '../components/CaptureDock';
 import { useCaptureSession } from '../lib/captureSession';
@@ -168,17 +168,16 @@ export function IntakePage(): ReactNode {
 
   useEffect(() => {
     if (!listReady) return;
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-intake-focus="wrong"]')];
+    const plan = focusScrollPlan(rows.map(row => row.dataset.candidateId ?? ''), seenFocus.current);
+    for (const id of plan.remember) seenFocus.current.add(id);
+    const row = plan.target ? rows.find(item => item.dataset.candidateId === plan.target) : undefined;
+    if (!row) return;
     const bar = document.querySelector('.intake-bottom');
     const barTop = bar?.getBoundingClientRect().top ?? window.innerHeight;
-    for (const row of document.querySelectorAll<HTMLElement>('[data-intake-focus="wrong"]')) {
-      const id = row.dataset.candidateId;
-      if (!id || seenFocus.current.has(id)) continue;
-      seenFocus.current.add(id);
-      const box = row.getBoundingClientRect();
-      const visible = box.height > 0 && box.top >= 0 && box.bottom <= barTop - 4;
-      if (!visible) row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      break;
-    }
+    const box = row.getBoundingClientRect();
+    const visible = box.height > 0 && box.top >= 0 && box.bottom <= barTop - 4;
+    if (!visible) row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [data, listReady, dockPad]);
 
   const remove = async (itemId: string): Promise<void> => {

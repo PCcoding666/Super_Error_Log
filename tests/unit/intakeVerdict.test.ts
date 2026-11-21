@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  canAddCandidate, detailLead, orderCandidates, outcomeLabel, pageNote, processLabel, readVerdict, shouldPreselect,
+  canAddCandidate, detailLead, focusScrollPlan, orderCandidates, outcomeLabel, pageNote, processLabel, readVerdict, shouldPreselect,
 } from '../../client/src/lib/intakeVerdict.js';
 
 const banned = '不确定处';
@@ -60,6 +60,15 @@ describe('intake verdict presentation', () => {
     expect(shouldPreselect({ id: 's', verdict: 'wrong', preselected: true, submitted: true }, false)).toBe(false);
     expect(shouldPreselect({ id: 'n', verdict: 'wrong', preselected: 'yes' }, false)).toBe(false);
     expect(shouldPreselect({ id: 'u', preselected: true }, false)).toBe(true);
+  });
+
+  it('scrolls only the first new wrong row and remembers the rest of that paint', () => {
+    const first = focusScrollPlan(['a', 'b', 'c'], new Set());
+    expect(first).toEqual({ target: 'a', remember: ['a', 'b', 'c'] });
+    const seen = new Set(first.remember);
+    expect(focusScrollPlan(['a', 'b', 'c'], seen)).toEqual({ target: null, remember: ['a', 'b', 'c'] });
+    expect(focusScrollPlan(['a', 'b', 'c', 'd'], seen)).toEqual({ target: 'd', remember: ['a', 'b', 'c', 'd'] });
+    expect(focusScrollPlan(['', 'b'], new Set())).toEqual({ target: 'b', remember: ['b'] });
   });
 
   it('uses a page prompt instead of a repeated outcome when nothing is wrong', () => {

@@ -66,6 +66,15 @@ export function orderCandidates<T extends { id: string; verdict?: unknown }>(can
   return ordered.map(({ candidate, verdict, focus }) => ({ candidate, verdict, focus }));
 }
 
+/**
+ * Scroll to the first focus id that this screen has not already shown.
+ * Every id from the current paint is remembered, so a later poll or dock resize does not walk down the same list.
+ */
+export function focusScrollPlan(ids: readonly string[], seen: ReadonlySet<string>): { target: string | null; remember: string[] } {
+  const remember = ids.filter(id => id.length > 0);
+  return { target: remember.find(id => !seen.has(id)) ?? null, remember };
+}
+
 /** Honor a server preselection until the student toggles that row. Right rows are never preselected onto the add path. */
 export function shouldPreselect(
   candidate: { id: string; verdict?: unknown; preselected?: unknown; submitted?: boolean },
