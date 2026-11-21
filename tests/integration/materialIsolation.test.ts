@@ -41,5 +41,8 @@ it('rejects every protected URL without auth, every foreign resource, CSRF mutat
 it('accepts 40000 Chinese characters through parent auth and rejects stale CAS, invalid limits and oversized body',async()=>{
  const {g,a}=await setup();const s=await g.snapshot();const q=s.material_question![0]!;const body={questionId:q.id,subpart:null,text:'答'.repeat(40000),claimedSource:'合成输入',expectedRevision:q.revision};
  expect((await a.post('/s/materials/answers/manual',body)).status).toBe(200);expect((await a.post('/s/materials/answers/manual',body)).status).toBe(409);expect((await a.post('/s/materials/answers/manual',{...body,text:'答'.repeat(40001)})).status).toBe(400);expect((await a.post('/s/materials/answers/manual',{...body,claimedSource:'源'.repeat(201)})).status).toBe(400);expect((await a.post('/s/materials/answers/manual',{...body,text:'x'.repeat(530000)})).status).toBe(413);
- const after=await g.snapshot();expect(after.material_answer!.find(r=>r.source==='manual')!.content_json).toContain('答'.repeat(40000));expect(after.material_job!.filter(j=>j.kind!=='extract')).toHaveLength(0);
+ const after=await g.snapshot();expect(after.material_answer!.find(r=>r.source==='manual')!.content_json).toContain('答'.repeat(40000));
+ // Extract may already have queued an intake grade. Saving this answer must not add another job.
+ const extraJobs=(rows:Array<Record<string,unknown>>|undefined)=>(rows??[]).filter(row=>row.kind!=='extract').map(row=>row.id).sort();
+ expect(extraJobs(after.material_job)).toEqual(extraJobs(s.material_job));
 },60000);

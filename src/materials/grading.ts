@@ -12,7 +12,7 @@ import { createMaterialActionProvider, validateMaterialGrade, type MaterialGradi
 const invalid = (message:string):never=>{throw new MobileRequestError(400,'invalid_request',message);};
 const conflict = ():never=>{throw new MobileRequestError(409,'idempotency_conflict','请求键已用于不同题目、作答或依据。');};
 function question(store:MaterialStore,id:string){const q=readQuestion(store,id);if(!q)throw new MobileRequestError(404,'not_found','题目不存在。');return q;}
-type FrozenGrade = { questionId:string; attemptId:string; stem:Fragment[]; work:Fragment[]; answers:ReferenceAnswer[]; original:MaterialBasis; answerBasis:MaterialBasis; prepared?:MaterialBasis };
+type FrozenGrade = { questionId:string; attemptId:string; stem:Fragment[]; work:Fragment[]; answers:ReferenceAnswer[]; original:MaterialBasis; answerBasis:MaterialBasis; prepared?:MaterialBasis; source?:'intake'; provisional?:boolean };
 function candidate(store:MaterialStore,id:string,chosen?:string):{reason:string}|{input:FrozenGrade;basis:MaterialBasis} {
  const q=question(store,id);const reason=answerEligibility(store,id);if(reason)return {reason};
  const attempts=q.attempts.filter(a=>a.fragments.some(f=>f.role==='student_work'));const a=chosen?q.attempts.find(a=>a.id===chosen):attempts.length===1?attempts[0]:undefined;
@@ -77,9 +77,10 @@ export async function gradeQuestion(store:MaterialStore,provider:MaterialGrading
  }
  if(!current())return;
  const basis=input.prepared??input.original;
- const output=validateMaterialGrade(await provider.grade({questionId:input.questionId,attemptId:input.attemptId,basisKey:basis.basisKey,stem:input.stem,work:input.work,answers:input.answers},signal),{stem:input.stem,work:input.work});signal.throwIfAborted();
+ const provisional=input.provisional===true;
+ const output=validateMaterialGrade(await provider.grade({questionId:input.questionId,attemptId:input.attemptId,basisKey:basis.basisKey,stem:input.stem,work:input.work,answers:input.answers,...(provisional?{provisional:true}:{})},signal),{stem:input.stem,work:input.work},{provisional});signal.throwIfAborted();
  store.transaction(()=>{
-  const stale=!current();const grade:Grade={id:newId('mgr'),attemptId:input.attemptId,answerIds:input.answers.map(a=>a.id),basisKey:basis.basisKey,...output,stale};
+  const stale=!current();const grade:Grade={id:newId('mgr'),attemptId:input.attemptId,answerIds:input.answers.map(a=>a.id),basisKey:basis.basisKey,...output,stale,...(input.source==='intake'?{source:'intake' as const}:{})};
   if(row()!.result_json)return;
   store.db.prepare('INSERT INTO material_grade(id,owner_id,attempt_id,basis_key,dependencies_json,content_json,stale) VALUES (?,?,?,?,?,?,?)').run(grade.id,store.studentId,grade.attemptId,grade.basisKey,JSON.stringify(basis.dependencies),JSON.stringify(grade),Number(stale));
   syncMaterialLearning(store);

@@ -1,6 +1,6 @@
 import { withProcessImage } from '../mobile/admission.js';
 import { dismissPreviewCandidates, findPreview, progressQuestion, readIntakeProgress, selectPreviewCandidates } from '../materials/intakeProgress.js';
-import { photoProgress, previewCandidates } from './intakeProgressView.js';
+import { photoProgress, previewCandidates, verdictFields } from './intakeProgressView.js';
 import { readNormalizedSource } from '../materials/media.js';
 import { cropPhoto } from '../media/images.js';
 /**
@@ -473,6 +473,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const jobs = store.db.prepare(`SELECT j.id, j.state, j.asset_id, j.error FROM material_job j WHERE j.owner_id=? AND j.kind='extract'
       AND NOT EXISTS (SELECT 1 FROM material_job n WHERE n.owner_id=j.owner_id AND n.kind='extract' AND n.asset_id=j.asset_id AND n.rowid>j.rowid)`).all(store.studentId) as { id: string; state: string; asset_id: string | null; error: string | null }[];
     const jobByAsset = new Map(jobs.map(job => [job.asset_id, job]));
+    const gradingIds = new Set((store.db.prepare(`SELECT question_id FROM material_job WHERE owner_id=? AND kind='grade' AND state IN ('queued','running') AND question_id IS NOT NULL`).all(store.studentId) as { question_id: string }[]).map(row => row.question_id));
     const all = sortQuestions(store, store.listQuestions()).filter(q => !unplacedMaterial(q));
     const intents = inclusionIntents(store);
     const pending = new Map(notYetIncluded(store, all, intents).map(group => [group.assetId, group.questions]));
@@ -495,24 +496,47 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       const processing = job?.state === 'queued' || job?.state === 'running';
       const failed = job?.state === 'failed' || job?.state === 'interrupted';
       const questions: IntakeQuestion[] = (included.get(asset.id) ?? []).map(q => ({ id: q.itemId!, excerpt: stemFirstSentence(q, 60), chapter: (() => { try { return categoryForItem(q.itemId!).chapter || '未分类'; } catch { return q.subject ?? '未分类'; } })(), thumb: cropOf(q) ?? `/s/img/item/${q.itemId}?s=thumb` }));
-      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q) }));
-      if (preview) candidates.push(...previewCandidates(preview, all, intents));
+      const listed = new Set<string>();
+      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => {
+        listed.add(q.id);
+        for (const fragment of q.stem) if (fragment.role === 'question') listed.add(fragment.fragmentId);
+        return { id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q), ...verdictFields(q, gradingIds.has(q.id)) };
+      });
+      if (preview) for (const candidate of previewCandidates(preview, all, intents, gradingIds)) {
+        listed.add(candidate.id.split(':')[0] ?? candidate.id);
+        candidates.push(candidate);
+      }
+      // A ticked-right question is not in the "still to add" batch, but intake still shows it as right.
+      for (const q of all) {
+        if (assetOf(q) !== asset.id || q.itemId || intents.get(q.id) === false) continue;
+        const fields = verdictFields(q, gradingIds.has(q.id));
+        if (fields.verdict !== 'right') continue;
+        const stem = q.stem.find(fragment => fragment.role === 'question');
+        if (!stem || listed.has(q.id) || listed.has(stem.fragmentId)) continue;
+        candidates.push({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q), ...fields });
+      }
+      const grading = all.some(q => assetOf(q) === asset.id && gradingIds.has(q.id));
       const state = processing ? (preview ? (preview.phase === 'located' ? 'located' : 'enriching') : 'finding') : failed ? 'failed' : other ? 'unsupported' : candidates.length ? 'needsPick' : 'done';
       const correct = all.filter(q => assetOf(q) === asset.id && markedRight(q)).length;
+      const judgedWrong = candidates.some(candidate => candidate.verdict === 'wrong' || candidate.verdict === 'partial');
       const statusText = state === 'located' ? '已找到题目 · 可以先勾选' : state === 'enriching' ? '正在识别和校验 · 可以先勾选' : state === 'finding' ? 'AI 正在找题' : state === 'failed' ? '没整理成功' : state === 'unsupported' ? `${other}：${UNSUPPORTED_SUBJECT_MESSAGE}`
-        : state === 'needsPick' ? '没有批改痕迹 · 勾出做错的题' : questions.length ? `找到 ${questions.length} 道${correct ? ` · ${correct} 道打了 √` : ''}` : correct ? `${correct} 道都打了 √，没有错题` : '没有新增错题';
+        : grading ? '正在判断对错 · 可以先勾选' : state === 'needsPick' ? (judgedWrong ? '已标出做错的题 · 确认后加入' : '勾出做错的题，确认后加入') : questions.length ? `找到 ${questions.length} 道${correct ? ` · ${correct} 道打了 √` : ''}` : correct ? `${correct} 道都打了 √，没有错题` : '没有新增错题';
       return {
         id: asset.id, number: span - offset - index, takenAt: asset.created_at.includes('T') ? asset.created_at : asset.created_at.replace(' ', 'T') + 'Z',
-        thumb: `/s/materials/assets/${asset.id}/image`, full: `/s/materials/assets/${asset.id}/image`, state, statusText, questions, candidates, ...(preview ? { progress: photoProgress(preview) } : {}),
+        thumb: `/s/materials/assets/${asset.id}/image`, full: `/s/materials/assets/${asset.id}/image`, state, statusText, questions, candidates, ...(grading ? { grading } : {}), ...(preview ? { progress: photoProgress(preview) } : {}),
         failure: failed ? { title: '没整理成功', detail: retryable ? '原图已保留，可以重新整理。' : '看不清或格式不对，请重拍这张。', retryable } : null,
       };
     });
     const listedIds = filter
       ? new Set((store.db.prepare(`SELECT id FROM material_asset WHERE owner_id=?${range.sql}`).all(store.studentId, ...range.params) as { id: string }[]).map(row => row.id))
       : null;
-    const busy = listedIds
+    const extractBusy = listedIds
       ? jobs.some(job => !!job.asset_id && listedIds.has(job.asset_id) && (job.state === 'queued' || job.state === 'running'))
       : jobs.some(job => job.state === 'queued' || job.state === 'running');
+    const gradingBusy = listedIds
+      ? all.some(q => gradingIds.has(q.id) && listedIds.has(assetOf(q) ?? ''))
+      : gradingIds.size > 0;
+    const busy = extractBusy || gradingBusy;
     return {
       mode: 'materials', draftNamespace: store.getWorkspace().draftNamespace, photos, busy,
       ...(filter ? dayFilterBody(filter, page, total) : {}),

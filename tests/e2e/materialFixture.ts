@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import { newId } from '../../src/db/connection.js';
 import { extractMaterial } from '../../src/materials/extraction.js';
+import { enqueueIntakeGrades } from '../../src/materials/intakeGrade.js';
 import { registerMaterialAnswers } from '../../src/materials/answers.js';
 import { registerMaterialGrading } from '../../src/materials/grading.js';
 import { MaterialProviderError } from '../../src/materials/provider.js';
@@ -17,7 +18,16 @@ export const configureMaterials: NonNullable<CloudAssemblyOverrides['configureMa
   jobs.register = (kind, handler) => register(kind, async (id, signal) => {
     const config=control();
     await new Promise<void>((resolve,reject)=>{const timer=setTimeout(resolve,config.delayMs??40);signal.addEventListener('abort',()=>{clearTimeout(timer);reject(signal.reason)},{once:true});});
-    if(kind!=='extract'&&config.failOnce?.includes(kind)&&!failed.has(kind)){failed.add(kind);throw new MaterialProviderError('provider_unavailable','合成服务暂时不可用，请重试。',true);}
+    if(kind!=='extract'&&config.failOnce?.includes(kind)&&!failed.has(kind)){
+      // The first automatic intake grade is not the failure the materials page is waiting to retry.
+      if(kind==='grade'){
+        const row=jobs.store.db.prepare('SELECT input_json FROM material_job WHERE owner_id=? AND id=?').get(jobs.store.studentId,id) as {input_json:string}|undefined;
+        let intake=false;
+        try{intake=!!row&&JSON.parse(row.input_json).source==='intake';}catch{intake=false;}
+        if(intake){await handler(id,signal);return;}
+      }
+      failed.add(kind);throw new MaterialProviderError('provider_unavailable','合成服务暂时不可用，请重试。',true);
+    }
     await handler(id,signal);
   });
   registerMaterialAnswers(jobs.store,jobs,uploads,{mode:'mock'});
@@ -38,6 +48,6 @@ export const configureMaterials: NonNullable<CloudAssemblyOverrides['configureMa
         await waitWhile('read');
       }
       return result;
-    }},id,signal);
+    }},id,signal,undefined,assetIds=>enqueueIntakeGrades(jobs.store,jobs,assetIds));
   });
 };

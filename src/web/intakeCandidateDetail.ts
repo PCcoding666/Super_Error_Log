@@ -1,5 +1,5 @@
 import { findPreview } from '../materials/intakeProgress.js';
-import { previewCrop, previewStatus } from './intakeProgressView.js';
+import { previewCrop, previewStatus, verdictFields } from './intakeProgressView.js';
 import type { QuestionBundle, ReferenceAnswer } from '../materials/contracts.js';
 import { learningObservationFragments } from '../materials/learning.js';
 import { readQuestion } from '../materials/queries.js';
@@ -27,6 +27,7 @@ export function readIntakeCandidateDetail(store: MaterialStore, questionId: stri
     if (q && progress.phase === 'done') return { ok: true, detail: { ...toDetail(store, q), id: questionId, revision, status: previewStatus(progress, fragment, q) } };
     return { ok: true, detail: { id: questionId, revision, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',
       subject: progress.extraction.document.subject, status: previewStatus(progress, fragment, q),
+      ...verdictFields(q, q ? gradeRunning(store, q.id) : false),
       stem: [{ role: 'question', text: fragment.text, number: fragment.number, check: fragment.check, uncertainties: fragment.uncertainties, requiresDiagram: fragment.requiresDiagram }],
       crop: previewCrop(questionId, revision), figures: diagramFigures(fragment, progress.extraction.fragments, item => previewCrop(item.fragmentId, revision)),
       source: `/s/materials/assets/${fragment.assetId}/image`, work: [], marks: [], answers: [], grades: [] } };
@@ -35,6 +36,10 @@ export function readIntakeCandidateDetail(store: MaterialStore, questionId: stri
   if (!question) return { ok: false, status: 404, code: 'not_found', message: '题目不存在。' };
   if (question.revision !== revision) return { ok: false, status: 409, code: 'revision_conflict', message: '材料已更新，请刷新后再试。' };
   return { ok: true, detail: toDetail(store, question) };
+}
+
+function gradeRunning(store: MaterialStore, questionId: string): boolean {
+  return !!store.db.prepare(`SELECT 1 FROM material_job WHERE owner_id=? AND kind='grade' AND question_id=? AND state IN ('queued','running')`).get(store.studentId, questionId);
 }
 
 /** A diagram that already carries this question's printed number. The question crop is not widened. */
@@ -80,6 +85,7 @@ function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandida
     crop: primary ? `/s/materials/fragments/${primary.fragmentId}/crop?revision=${primary.revision}` : null,
     figures: primary ? diagramFigures(primary, question.stem, item => `/s/materials/fragments/${item.fragmentId}/crop?revision=${item.revision}`) : [],
     source: primary ? `/s/materials/assets/${primary.assetId}/image` : null,
+    ...verdictFields(question, gradeRunning(store, question.id)),
     work: question.attempts.flatMap(attempt => attempt.fragments.flatMap((fragment): IntakeCandidateDetail['work'] => {
       if (!fragment.text.trim()) return [];
       if (fragment.role === 'student_work') return [{ text: fragment.text, label: null }];

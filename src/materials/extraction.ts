@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { saveIntakeProgress, completeIntakeProgress } from './intakeProgress.js';
+import { enqueueIntakeGrades } from './intakeGrade.js';
 import { isDeepStrictEqual } from 'node:util';
 import { SET_PAGE_MISSING } from './captureHints.js';
 import type { CaptureHints, Extraction } from './contracts.js';
@@ -38,6 +39,8 @@ async function setPages(store: MaterialStore, assetId: string): Promise<Material
   return pages;
 }
 export type MaterialReconciler = (assetId: string, extraction: Extraction) => void | Promise<void>;
+/** Called only after a full extract has been stored. Grading must not fail that extract. */
+export type IntakeGradeScheduler = (assetIds: readonly string[]) => void;
 
 function jobRole(store: MaterialStore, jobId: string): string | undefined {
   const row = store.db.prepare('SELECT input_json FROM material_job WHERE owner_id=? AND id=?').get(store.studentId, jobId) as { input_json: string } | undefined;
@@ -71,7 +74,7 @@ function settleUncoveredFollowers(store: MaterialStore, leadAssetId: string, cov
 }
 
 /** Persists source evidence only. Question/document association belongs to the reconciler. */
-export async function extractMaterial(store: MaterialStore, provider: MaterialProvider, jobId: string, signal: AbortSignal, reconcile?: MaterialReconciler): Promise<void> {
+export async function extractMaterial(store: MaterialStore, provider: MaterialProvider, jobId: string, signal: AbortSignal, reconcile?: MaterialReconciler, scheduleGrades?: IntakeGradeScheduler): Promise<void> {
   const row = input(store, jobId); const source = { assetId: row.asset_id, revision: row.revision, sourceHash: row.sourceHash };
   const hints = JSON.parse(row.hints_json) as CaptureHints;
   const pages = hints.captureMode === 'multi' ? await setPages(store, row.asset_id) : [];
@@ -141,6 +144,11 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
     // A later page may attach a same-question diagram or continuation. Evaluate
     // saved selections only after every page in this result has been reconciled.
     for (const extraction of storedBundle) completeIntakeProgress(store, jobId, extraction, !!partial);
+    // Question rows exist now. Queue grades without waiting, and never fail the extract if the queue refuses them.
+    if (!partial && scheduleGrades) {
+      try { scheduleGrades(storedBundle.map(extraction => extraction.assetId)); }
+      catch { /* a grading fault leaves those items as confirm; the page is already saved */ }
+    }
     if (partial) throw partial.failure;
   } finally {
     if (leadRun && !signal.aborted) settleUncoveredFollowers(store, row.asset_id, covered);
@@ -153,6 +161,6 @@ export function registerMaterialExtraction(store: MaterialStore, jobs: MaterialJ
   jobs.register('extract', async (jobId, signal) => {
     const row = input(store, jobId); const source = uploads.source(row.asset_id);
     const provider = createMaterialProvider(options, { source: { assetId: row.asset_id, revision: row.revision, sourceHash: source.sourceHash }, request: (key, invoke) => jobs.request(jobId, key, invoke) });
-    await extractMaterial(store, provider, jobId, signal, reconcile);
+    await extractMaterial(store, provider, jobId, signal, reconcile, assetIds => enqueueIntakeGrades(store, jobs, assetIds));
   });
 }

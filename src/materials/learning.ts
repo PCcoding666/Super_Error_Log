@@ -76,9 +76,10 @@ export function teacherMarkMeansRight(raw:string,fullMarks:number|null=null):boo
  const scored=/^[√✓✔☑]\s*(?:得\s*)?[+＋]?\s*(\d+(?:\.\d+)?)\s*分?$/u.exec(text);
  return !!scored&&fullMarks!==null&&Number(scored[1])>=fullMarks;
 }
-/** Every certain teacher mark on the question is a tick, and no current AI grade says otherwise. */
+/** Every certain teacher mark on the question is a tick, and no current workspace grade says otherwise.
+ * An intake grade never overrides that tick. */
 export function markedRight(q:import('./contracts.js').QuestionBundle):boolean {
- if(!q.teacherMarks.length||q.grades.some(g=>!g.stale&&g.result!=='correct'))return false;
+ if(!q.teacherMarks.length||q.grades.some(g=>!g.stale&&g.source!=='intake'&&g.result!=='correct'))return false;
  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
  return q.teacherMarks.every(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansRight(f.text,full));
 }
@@ -118,7 +119,8 @@ export function verifiedMaterialStem(q:import('./contracts.js').QuestionBundle, 
 function automaticMistake(store:MaterialStore,questionId:string):boolean {
  const q=readQuestion(store,questionId)!;
  if(!verifiedMaterialStem(q,expectedIntakeStem(store,q))) return false;
- if(q.grades.some(g=>!g.stale&&(g.result==='incorrect'||g.result==='partial'||(!!g.score&&typeof g.score.total==="number"&&g.score.total>0&&g.score.earned<g.score.total)))) return true;
+ // Intake grades are suggestions the student still has to confirm. A later workspace grade keeps the old rule.
+ if(q.grades.some(g=>!g.stale&&g.source!=='intake'&&(g.result==='incorrect'||g.result==='partial'||(!!g.score&&typeof g.score.total==="number"&&g.score.total>0&&g.score.earned<g.score.total)))) return true;
  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
  return q.teacherMarks.some(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansWrong(f.text,full));
 }

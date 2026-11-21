@@ -816,7 +816,7 @@ const gradeStates: Record<string, string> = { queued: '等待批改', running: '
 function GradePanel({ namespace, question: q, jobs }: { namespace: string; question: QuestionBundle; jobs: { id: string; state: string; error: string | null }[] }): ReactNode {
   return (
     <>
-      <p className="hint">只在你点击后批改。没有参考答案时，本次会先生成并单独保存 AI 参考答案。不会修改原作、反思或掌握状态。</p>
+      <p className="hint">有作答、老师还没判定的题，录入时会先给一份建议。在这里再点一次会按当前材料重新批改。没有参考答案时，本次会先生成并单独保存 AI 参考答案。不会修改原作、反思或掌握状态。</p>
       <p className="hint">只有题干中明确的评分条件与分值才支持计分；老师批改痕迹单独保留。</p>
       {!q.grades.length ? <p>未批改</p> : null}
       {q.grades.map(g => (
