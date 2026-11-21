@@ -6,6 +6,8 @@ Closes #
 
 <!-- 用几句话说清这次改动。 -->
 
+<!-- 涉及新增或实质性改写的设计注释时，按 docs/engineering/CODE_COMMENTS.md 核对原因、实际作者署名及引用依据，并在这里列出一个相关约束和证据位置。 -->
+
 ## 本地测试
 
 <!-- 跑过的命令和结果。例如 `SEL_AI_MODE=mock npm run verify`。 -->
