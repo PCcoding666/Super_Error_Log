@@ -167,6 +167,29 @@ it('says when no answer or judgment exists and keeps the recognition uncertainty
   expect(response.body.stem).toMatchObject([{ text: '2. PAGE-A-TWO 看不清的式子', check: 'low', uncertainties: ['blurry'] }]);
 });
 
+it('serves an associated side diagram separately and keeps a missing figure in review', async () => {
+  const withFigure = store.createQuestion({ number: '4', subject: '数学' }).id;
+  const question = piece(asset, 'question', '4. synthetic left text', { number: '4', box: { x: 0.02, y: 0.28, width: 0.68, height: 0.15 }, requiresDiagram: true });
+  const diagram = piece(asset, 'diagram', 'synthetic circle', { number: '4', box: { x: 0.72, y: 0.30, width: 0.24, height: 0.12 } });
+  store.putFragment(question);
+  store.putFragment(diagram);
+  store.linkFragment(question.fragmentId, 1, { questionId: withFigure, attemptId: null });
+  store.linkFragment(diagram.fragmentId, 1, { questionId: withFigure, attemptId: null });
+  const found = await get(`/s/api/intake/candidates/${withFigure}?revision=${readQuestion(store, withFigure)!.revision}`);
+  expect(found.status).toBe(200);
+  expect(found.body.crop).toBe(`/s/materials/fragments/${question.fragmentId}/crop?revision=1`);
+  expect(found.body.figures).toEqual([{ crop: `/s/materials/fragments/${diagram.fragmentId}/crop?revision=1` }]);
+
+  const missingId = store.createQuestion({ number: '8', subject: '数学' }).id;
+  const missing = piece(asset, 'question', '8. synthetic text without a figure', { number: '8', requiresDiagram: true, check: 'low', uncertainties: ['missing_diagram'] });
+  store.putFragment(missing);
+  store.linkFragment(missing.fragmentId, 1, { questionId: missingId, attemptId: null });
+  const absent = await get(`/s/api/intake/candidates/${missingId}?revision=${readQuestion(store, missingId)!.revision}`);
+  expect(absent.body.figures).toEqual([]);
+  expect(absent.body.crop).toBe(`/s/materials/fragments/${missing.fragmentId}/crop?revision=1`);
+  expect(absent.body.stem).toMatchObject([{ check: 'low', requiresDiagram: true, uncertainties: ['missing_diagram'] }]);
+});
+
 it('rejects another student, a stale revision and a legacy workspace without copying the question', async () => {
   const before = fingerprint();
   const foreign = await get(`/s/api/intake/candidates/${foreignId}?revision=${foreignRevision}`);

@@ -537,10 +537,10 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const store = ctx.materials;
     const revision = Number(request.query.revision);
     if (!store || !Number.isSafeInteger(revision) || revision < 1) fail(404, 'not_found', '题目裁图不存在。');
-    const found = findPreview(store!, String(request.params.fragmentId), revision);
+    const found = findPreview(store!, String(request.params.fragmentId), revision, ['question', 'diagram']);
     if (!found) fail(404, 'not_found', '题目裁图不存在或已更新。');
     const image = await withProcessImage(async () => cropPhoto(await readNormalizedSource(store!, found!.fragment), found!.fragment.box));
-    const latest = findPreview(store!, String(request.params.fragmentId), revision);
+    const latest = findPreview(store!, String(request.params.fragmentId), revision, ['question', 'diagram']);
     if (!latest || latest.fragment.sourceHash !== found!.fragment.sourceHash) fail(409, 'revision_conflict', '材料已更新。');
     response.setHeader('Cache-Control', 'private, no-store');
     response.type('image/jpeg').send(image);

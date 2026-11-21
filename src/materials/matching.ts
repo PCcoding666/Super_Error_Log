@@ -3,6 +3,7 @@ import { newId } from '../db/connection.js';
 import type { CaptureHints, DocumentClues, Extraction, Fragment, QuestionBundle } from './contracts.js';
 import type { MaterialStore } from './store.js';
 import { answerBasis, currentLink, latestFragments, readQuestion, resolveQuestionId } from './queries.js';
+import { intakeGroupKey, isRejectedQuestion } from './regionPolicy.js';
 
 type Asset = { id:string; document_id:string|null; hints_json:string; extraction_json:string|null };
 export function materialAsset(store:MaterialStore,id:string):Asset {
@@ -148,10 +149,12 @@ export function reconcileAsset(store:MaterialStore,assetId:string):{linked:numbe
     const completions:(()=>void)[]=[];
     const groups=new Map<string,Fragment[]>();
     for (const fragment of fragments) {
-      const key=fragment.number===null?`unknown:${fragment.fragmentId}`:`number:${fragment.number}`;
+      const key=intakeGroupKey(fragment);
       groups.set(key,[...(groups.get(key)??[]),fragment]);
     }
     for (const group of groups.values()) {
+      // A heading the verifier rejected stays in the extraction and is not a question.
+      if (group.every(isRejectedQuestion)) continue;
       if (group.every(f=>currentLink(store,f.fragmentId))) {
         for (const f of group) {
           const old=currentLink(store,f.fragmentId)!;

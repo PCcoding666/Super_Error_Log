@@ -177,8 +177,10 @@ export interface IntakeCandidateDetail {
   subject: string | null;
   stem: IntakeCandidateFragment[];
   status?: IntakeCandidate['status'];
-  /** 题目区域裁图；没有时为 null。 */
+  /** 题目区域裁图；没有时为 null。框保持定位结果，不并入旁边的图。 */
   crop: string | null;
+  /** 已关联的题目图形，各自仍是自己的裁图。没有关联图形时为空。 */
+  figures: { crop: string }[];
   /** 来源整页；没有时为 null。 */
   source: string | null;
   work: { text: string; label: string | null }[];

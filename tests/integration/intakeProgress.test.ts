@@ -328,6 +328,44 @@ describe('first selectable intake candidates', () => {
     expect((await f.intake()).photos[0]!.candidates[0]!.status).not.toBe('verified');
   });
 
+  it('drops a selected heading after role_mismatch and still shows a short mismatched question', async () => {
+    const f = await fixture();
+    const page = await f.page();
+    const heading: Fragment = {
+      ...page.fragment, fragmentId: newId('mfr'), number: '1', order: 1,
+      box: { x: 0.02, y: 0.08, width: 0.96, height: 0.03 },
+    };
+    const shortQuestion: Fragment = {
+      ...page.fragment, fragmentId: newId('mfr'), number: null, order: 2,
+      box: { x: 0.02, y: 0.5, width: 0.4, height: 0.03 },
+    };
+    const headingId = `${heading.fragmentId}:1`;
+    const shortId = `${shortQuestion.fragmentId}:1`;
+    await page.publish('located', {}, [heading, shortQuestion]);
+    expect((await f.select(page.assetId, [page.candidateId, headingId, shortId])).body).toMatchObject({ included: 0, pending: 3, skipped: 0 });
+    await page.publish('enriching', { text: '1. synthetic stem', check: 'low', uncertainties: ['text_mismatch'] }, [
+      { ...heading, text: 'synthetic heading', check: 'low', uncertainties: ['role_mismatch'] },
+      { ...shortQuestion, text: 'synthetic short stem', check: 'low', uncertainties: ['text_mismatch'] },
+    ]);
+    const during = (await f.intake('/reload/api')).photos[0]!;
+    expect(during.state).not.toBe('failed');
+    expect(during.candidates.map(candidate => candidate.id)).not.toContain(headingId);
+    expect(during.candidates.find(candidate => candidate.id === shortId)).toMatchObject({ status: 'needs_review', submitted: true });
+    expect(during.candidates.find(candidate => candidate.id === page.candidateId)).toMatchObject({ status: 'needs_review', submitted: true });
+    expect((await f.select(page.assetId, [headingId])).body.skipped).toBe(1);
+    await page.finish({ text: '1. synthetic stem', check: 'low', uncertainties: ['text_mismatch'] }, [
+      { ...heading, text: 'synthetic heading', check: 'low', uncertainties: ['role_mismatch'] },
+      { ...shortQuestion, text: 'synthetic short stem', check: 'low', uncertainties: ['text_mismatch'] },
+    ]);
+    expect(f.count('error_item')).toBe(0);
+    const questions = f.stores.a.listQuestions();
+    const numbered = questions.find(question => question.stem.some(fragment => fragment.fragmentId === page.fragment.fragmentId));
+    expect(numbered?.stem.some(fragment => fragment.fragmentId === heading.fragmentId)).toBe(false);
+    expect(questions.some(question => question.stem.some(fragment => fragment.fragmentId === heading.fragmentId))).toBe(false);
+    expect(questions.some(question => question.stem.some(fragment => fragment.fragmentId === shortQuestion.fragmentId))).toBe(true);
+    expect(f.stores.a.db.prepare('SELECT content_json FROM material_fragment WHERE id=?').get(heading.fragmentId)).toBeTruthy();
+  });
+
   it('does not automatically file an intermediate stem before its low continuation is linked', async () => {
     const f = await fixture(); const page = await f.page();
     const mark: Fragment = {...page.fragment,fragmentId:'mfr_b',role:'teacher_mark',text:'×',check:'passed',order:1};

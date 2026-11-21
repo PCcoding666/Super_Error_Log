@@ -5,6 +5,7 @@ import type { Extraction, Fragment, QuestionBundle } from './contracts.js';
 import type { MaterialStore } from './store.js';
 import { validateMaterialExtraction, type MaterialExtractionProgress } from './provider.js';
 import { inclusionIntent, setQuestionIncluded, verifiedMaterialStem } from './learning.js';
+import { selectableQuestion } from './regionPolicy.js';
 import { MobileRequestError } from '../mobile/service.js';
 
 /** A UI projection, not learning evidence. Stored alongside durable model checkpoints;
@@ -29,7 +30,7 @@ export function saveIntakeProgress(store: MaterialStore, jobId: string, update: 
     write(store, job, {
       extraction: { ...structuredClone(update.extraction), fragments }, sourceHash: source.sourceHash,
       phase: same && old.phase !== 'located' ? 'enriching' : update.phase,
-      selected: same ? old.selected.filter(id => !dismissed.includes(id) && fragments.some(f => f.fragmentId === id && f.role === 'question')) : [],
+      selected: same ? old.selected.filter(id => !dismissed.includes(id) && fragments.some(f => f.fragmentId === id && selectableQuestion(f))) : [],
       dismissed,
       locatedAt: same ? old.locatedAt : time,
       firstSelectableAt: (same ? old.firstSelectableAt : null) ?? (fragments.some(f => f.role === 'question') ? time : null),
@@ -40,10 +41,10 @@ export function saveIntakeProgress(store: MaterialStore, jobId: string, update: 
 export function progressQuestion(progress: IntakeProgress, q: QuestionBundle): boolean {
   return q.stem.some(f => f.role === 'question' && progress.extraction.fragments.some(p => p.fragmentId === f.fragmentId));
 }
-export function findPreview(store: MaterialStore, fragmentId: string, revision: number): { progress: SavedIntakeProgress; fragment: Fragment } | null {
+export function findPreview(store: MaterialStore, fragmentId: string, revision: number, roles: readonly Fragment['role'][] = ['question']): { progress: SavedIntakeProgress; fragment: Fragment } | null {
   for (const progress of readIntakeProgress(store).values()) {
     if (progress.extraction.revision !== revision) continue;
-    const fragment = progress.extraction.fragments.find(f => f.fragmentId === fragmentId && f.role === 'question');
+    const fragment = progress.extraction.fragments.find(f => f.fragmentId === fragmentId && roles.includes(f.role));
     if (fragment) return { progress, fragment };
   }
   return null;
@@ -75,7 +76,7 @@ export function selectPreviewCandidates(store: MaterialStore, assetId: string, p
     const progress = readIntakeProgress(store).get(assetId);
     if (!progress) return { included: 0, pending: 0, skipped: picks.length };
     const dismissed = new Set(progress.dismissed ?? []);
-    const accepted = picks.filter(p => p.revision === progress.extraction.revision && !dismissed.has(p.questionId) && progress.extraction.fragments.some(f => f.fragmentId === p.questionId && f.role === 'question'));
+    const accepted = picks.filter(p => p.revision === progress.extraction.revision && !dismissed.has(p.questionId) && progress.extraction.fragments.some(f => f.fragmentId === p.questionId && selectableQuestion(f)));
     const job = jobOf(store, progress.jobId)!;
     write(store, job, { ...progress, selected: [...new Set([...progress.selected, ...accepted.map(p => p.questionId)])] });
     flushIntakeSelections(store, assetId);

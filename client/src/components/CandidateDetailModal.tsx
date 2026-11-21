@@ -43,12 +43,14 @@ function reviewImage(url: string | null): string | null {
   }
 }
 
-function Images(props: { crop: string | null; source: string | null }): ReactNode {
+function Images(props: { crop: string | null; source: string | null; figures?: { crop: string }[] }): ReactNode {
   const crop = reviewImage(props.crop);
   const source = reviewImage(props.source);
-  if (!crop && !source) return <p className="muted">没有可看的题目图片。</p>;
+  const figures = (props.figures ?? []).map(figure => reviewImage(figure.crop)).filter((url): url is string => !!url);
+  if (!crop && !source && !figures.length) return <p className="muted">没有可看的题目图片。</p>;
   return <div className="candidate-images">
     {crop ? <figure><figcaption>题目裁图</figcaption><img src={crop} alt="题目裁图" /></figure> : <p className="muted">没有题目裁图。</p>}
+    {figures.map(url => <figure key={url}><figcaption>题目图形</figcaption><img src={url} alt="题目图形" data-testid="candidate-figure" /></figure>)}
     {source ? <figure><figcaption>来源页</figcaption><img src={source} alt="来源页" /></figure> : null}
   </div>;
 }
@@ -57,12 +59,12 @@ function Recognized(props: { detail: IntakeCandidateDetail }): ReactNode {
   const text = questionText(props.detail.stem);
   const notes = readableUncertainties(props.detail.stem);
   const unsure = props.detail.stem.some(fragment => fragment.check !== 'passed' || fragment.uncertainties.length > 0);
-  const diagram = props.detail.stem.some(fragment => fragment.role === 'diagram' || fragment.requiresDiagram);
+  const diagram = props.detail.figures.length > 0 || props.detail.stem.some(fragment => fragment.role === 'diagram' || fragment.requiresDiagram);
   return <>
     {props.detail.status && props.detail.status !== 'verified' ? <p className="item-hint tone-orange">{props.detail.status === 'needs_review' ? '识别仍有不确定处，请以原图为准。' : '题目仍在识别和校验，可以先看图勾选。'}</p> : null}
     <h3>识别出的题目</h3>
     {text ? <div className="item-stem candidate-stem" data-testid="candidate-stem"><StemText text={text} /></div> : <p className="muted" data-testid="candidate-stem-empty">还没有识别出题目文字。</p>}
-    {diagram ? <p className="muted">这道题有图，请对照上面的裁图和来源页。</p> : null}
+    {diagram ? <p className="muted">{props.detail.figures.length ? '这道题有图，请对照上面的题目裁图、题目图形和来源页。' : '这道题有图，请对照上面的裁图和来源页。'}</p> : null}
     {unsure ? <p className="item-hint tone-orange" data-testid="candidate-uncertain">识别还有不确定处，请对照原图。</p> : null}
     {notes.map(note => <p key={note} className="muted">{note}</p>)}
     {props.detail.work.length ? <section data-testid="candidate-work"><h3>你写的</h3>{props.detail.work.map((line, index) => <p key={`${line.label ?? ''}-${index}`}>{line.label ? `${line.label}：` : ''}{line.text}</p>)}</section> : null}
@@ -116,7 +118,7 @@ export function CandidateDetailModal(props: {
       </> : props.loading ? <p className="muted" role="status"><IonSpinner name="lines-small" /> 正在读取这道题…</p>
         : props.error ? <p className="tone-red" role="alert" data-testid="candidate-detail-error">{props.error}</p>
           : props.detail ? <>
-            <Images crop={props.detail.crop} source={props.detail.source} />
+            <Images crop={props.detail.crop} source={props.detail.source} figures={props.detail.figures} />
             <Recognized detail={props.detail} />
           </> : null}
       <div className="candidate-select">

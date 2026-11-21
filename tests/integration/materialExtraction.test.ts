@@ -93,6 +93,41 @@ describe('material extraction persistence', () => {
     expect(seen.filter(k => k === 'locate:')).toHaveLength(1); expect(seen.filter(k => k === 'read:first')).toHaveLength(1); expect(seen.filter(k => k === 'verify:first')).toHaveLength(1); expect(seen.filter(k => k === 'read:second')).toHaveLength(1); expect(seen.filter(k => k === 'verify:second')).toHaveLength(4);
   });
 
+  it('persists a question when only an auxiliary read is invalid and does not offer retry', async () => {
+    const f = await fixture();
+    const server = http.createServer(async (req, res) => {
+      let raw = ''; for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw);
+      const context = JSON.parse(body.messages.find((message: { role: string }) => message.role === 'user').content.find((part: { type: string }) => part.type === 'text').text);
+      const { operation, source, candidate } = context;
+      const value = operation === 'locate'
+        ? { source, document: { title: null, subject: '数学', date: null, printedCode: null, page: 1 }, candidates: [
+          { key: 'q', role: 'question', box: { x: 0.02, y: 0.28, width: 0.68, height: 0.15 }, number: '4', subpart: null, page: 1, order: 0, requiresDiagram: true },
+          { key: 'mark', role: 'teacher_mark', box: { x: 0.8, y: 0.3, width: 0.1, height: 0.05 }, number: '4', subpart: null, page: 1, order: 1, requiresDiagram: false },
+        ], warnings: [] }
+        : operation === 'read'
+          ? (candidate.key === 'mark' ? { source, candidateKey: 'invented', text: 'x', uncertainties: [] } : { source, candidateKey: candidate.key, text: 'synthetic left text', uncertainties: [] })
+          : { source, candidateKey: candidate.key, check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] };
+      res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(value) } }] }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+    const saved = await f.uploads.save(f.input);
+    registerMaterialExtraction(f.store, f.jobs, f.uploads, { mode: 'openai', chat: { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`, apiKey: 'synthetic', timeoutMs: 1000, bailianOnly: false, models: { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' } } });
+    await f.jobs.resume();
+    await expect.poll(() => f.jobs.get(saved.job.id)?.state).toBe('succeeded');
+    const row = f.db.prepare('SELECT extraction_json,status FROM material_asset WHERE id=?').get(saved.assetId) as { extraction_json: string; status: string };
+    const extraction = JSON.parse(row.extraction_json);
+    expect(row.status).toBe('extracted');
+    expect(extraction.warnings).toContain('fragment_unavailable:mark:invalid_output');
+    expect(extraction.fragments.find((item: { role: string }) => item.role === 'question')).toMatchObject({ check: 'low', uncertainties: ['missing_diagram'] });
+    expect(extraction.fragments.find((item: { role: string }) => item.role === 'teacher_mark')).toMatchObject({ check: 'failed' });
+    expect(extraction.fragments.find((item: { role: string; box: { width: number } }) => item.role === 'question').box.width).toBe(0.68);
+    const progress = JSON.parse((f.db.prepare('SELECT input_json FROM material_job WHERE id=?').get(saved.job.id) as { input_json: string }).input_json).intakeProgress[saved.assetId];
+    expect(progress.phase).toBe('done');
+    expect(() => f.jobs.retry(saved.job.id, randomUUID())).toThrow(/无法重试/);
+  });
+
   it('appends a fragment revision when recovered diagram evidence changes completeness', async () => {
     const f = await fixture(); const saved = await f.uploads.save(f.input); let recovered = false;
     const fragment = { assetId: saved.assetId, sourceHash: f.uploads.source(saved.assetId).sourceHash, fragmentId: 'synthetic-fragment', revision: 1, box: { x: 0, y: 0, width: 1, height: .5 }, role: 'question' as const, text: 'synthetic question with diagram', number: '1', subpart: null, page: 1, order: 0, requiresDiagram: true, check: 'low' as const, uncertainties: ['missing_diagram'] };
