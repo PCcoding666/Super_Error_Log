@@ -300,6 +300,37 @@ test('详情页：立体图由程序画，能拖动旋转', async ({ page }) => 
   await expect.poll(() => figure.locator('#s circle').first().getAttribute('cx')).not.toBe(before);
 });
 
+test('设置齿轮：点图标本身、筛选菜单还开着、以及菜单收起之后，都会进入设置', async ({ page }) => {
+  await pair(page);
+  const gear = page.getByTestId('settings-link');
+  // routerLink 会渲染成 <a>。iOS 上点按可以只剩按下态、click 不到这个锚点。必须是 button。
+  await expect.poll(() => gear.evaluate(element => element.shadowRoot?.querySelector('.button-native')?.tagName)).toBe('BUTTON');
+  const icon = gear.locator('ion-icon');
+  const box = await icon.boundingBox();
+  expect(box).toBeTruthy();
+  // 菜单盖住齿轮（全屏遮罩在深色底上几乎看不见）。点图标中心仍应进入设置。
+  await openMenu(page);
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await expect.poll(() => url(page)).toBe('/s/me');
+  await page.goBack();
+  await expect(gear).toBeVisible();
+  await openMenu(page);
+  // 点遮罩本身收起菜单。点页面坐标在 Chromium 上会打到 popover 宿主而不是 backdrop，菜单不收。
+  await page.locator('ion-popover.filter-popover ion-backdrop').click();
+  await expect(page.locator('ion-popover.filter-popover')).toBeHidden();
+  // click 被丢掉时（只剩 pointerdown/pointerup）也要能打开。
+  const again = await gear.locator('ion-icon').boundingBox();
+  expect(again).toBeTruthy();
+  await page.evaluate(({ x, y }) => {
+    const target = document.elementFromPoint(x, y);
+    if (!target) throw new Error('齿轮上没有元素');
+    const event = (type: string) => new PointerEvent(type, { bubbles: true, composed: true, cancelable: true, pointerId: 1, pointerType: 'touch', button: 0, clientX: x, clientY: y });
+    target.dispatchEvent(event('pointerdown'));
+    target.dispatchEvent(event('pointerup'));
+  }, { x: again!.x + again!.width / 2, y: again!.y + again!.height / 2 });
+  await expect.poll(() => url(page)).toBe('/s/me');
+});
+
 test('设置页：学段、练习即将推出、添加到主屏幕；刷新深链接仍是单页应用', async ({ page }) => {
   await pair(page);
   await page.getByTestId('settings-link').click();

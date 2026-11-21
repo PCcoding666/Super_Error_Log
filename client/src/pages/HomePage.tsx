@@ -3,7 +3,7 @@ import {
   IonLabel, IonList, IonPage, IonPopover, IonSearchbar, IonSkeletonText, IonTitle, IonToast, IonToolbar, useIonViewWillEnter,
 } from '@ionic/react';
 import { cameraOutline, checkmark, checkmarkCircleOutline, chevronDown, gridOutline, listOutline, optionsOutline, searchOutline, settingsOutline, trashOutline } from 'ionicons/icons';
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { NotebookItem, NotebookResponse } from '../../../src/web/apiTypes';
 import { CaptureDock, CaptureEntry } from '../components/CaptureDock';
@@ -37,6 +37,71 @@ export function HomePage(): ReactNode {
   const [connected, setConnected] = useState(params.get('paired') === '1' || params.get('login') === '1');
   const [menuEvent, setMenuEvent] = useState<Event | null>(null);
   const capture = useCaptureSession();
+  // routerLink 会把 ion-button 画成 shadow DOM 里的 <a href>。点在图标上时，iOS 会先给按钮
+  // 加上按下态（pointerdown → ion-activated），再把 click 丢掉——可滚动的 ion-content、以及
+  // 筛选弹层的全屏遮罩刚收起时都容易这样。筛选按钮是普通 button + onClick，同样的点按能打开菜单。
+  // 设置也在 click 时 navigate。若 click 没来，松手后的定时器仍进入设置。
+  const settingsPointer = useRef<{ x: number; y: number } | null>(null);
+  const settingsFallback = useRef(0);
+  const openSettings = useCallback(() => {
+    window.clearTimeout(settingsFallback.current);
+    settingsFallback.current = 0;
+    setMenuEvent(null);
+    navigate('/me');
+  }, [navigate]);
+  useEffect(() => () => window.clearTimeout(settingsFallback.current), []);
+  const onSettingsPointerDown = (event: ReactPointerEvent): void => {
+    if (event.button !== 0) return;
+    settingsPointer.current = { x: event.clientX, y: event.clientY };
+  };
+  const onSettingsPointerUp = (event: ReactPointerEvent): void => {
+    const start = settingsPointer.current;
+    settingsPointer.current = null;
+    // 触摸的 pointerup 在部分 WebKit 上 button 是 -1，不能据此丢掉这下点按。
+    if (!start || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (dx * dx + dy * dy > 144) return;
+    // click 通常紧跟着来，由它导航。iOS 把 click 丢掉时，松手后仍进入设置。
+    window.clearTimeout(settingsFallback.current);
+    settingsFallback.current = window.setTimeout(openSettings, 400);
+  };
+  const onSettingsClick = (event: ReactMouseEvent): void => {
+    event.preventDefault();
+    openSettings();
+  };
+  // 筛选弹层铺满整屏（ion-app 上 z-index 高于页面），齿轮的坐标实际点到的是透明遮罩。
+  // 深色底上遮罩几乎看不见，按下态却像落在齿轮上。菜单开着时按坐标认这下点按。
+  useEffect(() => {
+    if (menuEvent === null) return;
+    let start: { x: number; y: number } | null = null;
+    const insideSettings = (x: number, y: number): boolean => {
+      const button = document.querySelector('[data-testid="settings-link"]');
+      if (!button) return false;
+      const rect = button.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+    const down = (event: PointerEvent): void => {
+      if (event.button !== 0) return;
+      start = insideSettings(event.clientX, event.clientY) ? { x: event.clientX, y: event.clientY } : null;
+    };
+    const up = (event: PointerEvent): void => {
+      const origin = start;
+      start = null;
+      if (!origin || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      const dx = event.clientX - origin.x;
+      const dy = event.clientY - origin.y;
+      if (dx * dx + dy * dy > 144) return;
+      if (!insideSettings(event.clientX, event.clientY)) return;
+      openSettings();
+    };
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('pointerup', up, true);
+    return () => {
+      document.removeEventListener('pointerdown', down, true);
+      document.removeEventListener('pointerup', up, true);
+    };
+  }, [menuEvent, openSettings]);
 
   const patch = useCallback((changes: Record<string, string>) => {
     const next = new URLSearchParams(params);
@@ -116,7 +181,7 @@ export function HomePage(): ReactNode {
       {!selecting ? <div className="home-top">
         <div className="capsule">
           <IonButton fill="clear" aria-label="视图与筛选" data-testid="notebook-filters" onClick={event => setMenuEvent(event.nativeEvent)}><IonIcon icon={optionsOutline} slot="icon-only" /></IonButton>
-          <IonButton fill="clear" routerLink="/me" aria-label="设置" data-testid="settings-link"><IonIcon icon={settingsOutline} slot="icon-only" /></IonButton>
+          <IonButton fill="clear" type="button" aria-label="设置" data-testid="settings-link" onPointerDown={onSettingsPointerDown} onPointerUp={onSettingsPointerUp} onClick={onSettingsClick}><IonIcon icon={settingsOutline} slot="icon-only" /></IonButton>
         </div>
       </div> : null}
       <IonPopover isOpen={menuEvent !== null} event={menuEvent ?? undefined} onDidDismiss={() => setMenuEvent(null)} dismissOnSelect side="bottom" alignment="end" className="filter-popover">
