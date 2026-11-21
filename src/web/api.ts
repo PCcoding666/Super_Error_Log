@@ -34,7 +34,7 @@ import { directCorrection, getEvidenceView } from '../v2/correctionService.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
 import { canRecover } from '../mobile/contracts.js';
-import { excludeQuestions, includeQuestions, inclusionIntents, markedRight, notYetIncluded, setQuestionIncluded, sortQuestions, unplacedMaterial } from '../materials/learning.js';
+import { excludeQuestions, includeQuestions, inclusionIntents, markedRight, materialIntakeSummary, notYetIncluded, setQuestionIncluded, sortQuestions, unplacedMaterial } from '../materials/learning.js';
 import { ASSET_PAGE_SIZE, createdAtRangeSql, DayFilterError, instantInRange, parseAssetDayFilter, type AssetDayFilter } from '../materials/dayFilter.js';
 import { unsupportedSubject, UNSUPPORTED_SUBJECT_MESSAGE } from '../materials/subjects.js';
 import type { MaterialJobs } from '../materials/jobs.js';
@@ -241,12 +241,15 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     }
     const order = (items: NotebookItem[]) => [...items].sort((a, b) => (b.intakeDay ?? '').localeCompare(a.intakeDay ?? ''));
     const photos = getRegisteredPhotos(ctx.mobileDataDir, true);
+    // processing is the latest extract per photo while it is queued or running. Failed and interrupted jobs stay out.
+    // pending is the same not-yet-included count as before; processing is not added there.
+    const intake = ctx.materials ? materialIntakeSummary(ctx.materials) : null;
     const body: NotebookResponse = {
       subject, subjects, grade: resolved.grade, stages: resolved.stages, chapter, chapters, status, tag, tags, q,
       total: scope.length, shown: shown.length, todo: shown.filter(item => notebookStatusGroup(item.status) === 'todo').length,
       groups: ([['today', '今天'], ['week', '本周'], ['earlier', '更早']] as const).filter(([key]) => groups[key].length).map(([key, title]) => ({ key, title, items: order(groups[key]) })),
-      finding: photos.filter(photo => photo.recognition === 'processing').length,
-      pendingIntake: ctx.materials ? notYetIncluded(ctx.materials).reduce((n, g) => n + g.questions.length, 0) : 0,
+      finding: photos.filter(photo => photo.recognition === 'processing').length + (intake?.processing ?? 0),
+      pendingIntake: intake?.pending ?? 0,
     };
     return body;
   }));
