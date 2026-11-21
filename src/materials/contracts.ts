@@ -38,7 +38,9 @@ export type Grade = { id: string; attemptId: string; answerIds: string[]; basisK
   result: 'correct' | 'partial' | 'incorrect' | 'uncertain';
   findings: { fragmentIds: string[]; text: string }[];
   score: { earned: number; total: number; rubricFragmentIds: string[] } | null;
-  stale: boolean; run: StageRun };
+  stale: boolean; run: StageRun;
+  /** Present only on grades started from intake. Workspace grades omit it and can still auto-file. */
+  source?: 'intake' };
 export type QuestionBundle = {
   id: string; documentId: string | null; revision: number; basisKey: string;
   number: string | null; subject: string | null; tags: string[];

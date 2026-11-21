@@ -144,6 +144,9 @@ export interface IntakeQuestion {
   thumb: string;
 }
 
+/** 学生看到的对错。confirm 表示还不能标成对或错。和识别 status 是两件事。 */
+export type IntakeVerdict = 'wrong' | 'partial' | 'right' | 'confirm';
+
 export interface IntakeCandidate {
   /** 识别出的候选题 id（旧流程为识别任务里的题 id，材料流程为 questionId:revision 或稳定的 fragmentId:sourceRevision）。 */
   id: string;
@@ -154,6 +157,10 @@ export interface IntakeCandidate {
   submitted?: boolean;
   /** 裁图；材料流程没有裁图时为 null。 */
   crop: string | null;
+  /** 这道题目前的对错。老师的批改优先于 AI。 */
+  verdict: IntakeVerdict;
+  /** 错和部分对会预先勾上。真正收入错题本仍要走确认接口。 */
+  preselected?: boolean;
 }
 
 /** 候选详情里的一段题干或图。只描述已经识别出来的内容。 */
@@ -177,6 +184,8 @@ export interface IntakeCandidateDetail {
   subject: string | null;
   stem: IntakeCandidateFragment[];
   status?: IntakeCandidate['status'];
+  verdict: IntakeVerdict;
+  preselected?: boolean;
   /** 题目区域裁图；没有时为 null。框保持定位结果，不并入旁边的图。 */
   crop: string | null;
   /** 已关联的题目图形，各自仍是自己的裁图。没有关联图形时为空。 */
