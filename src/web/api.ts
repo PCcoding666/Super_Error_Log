@@ -34,6 +34,7 @@ import { directCorrection, getEvidenceView } from '../v2/correctionService.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
 import { canRecover } from '../mobile/contracts.js';
+import { itemHeading, pairingCandidateLabel, pairingCopy, readIntakePairing, type IntakePairing } from '../materials/answerSheetPairing.js';
 import { excludeQuestions, includeQuestions, inclusionIntents, markedRight, materialIntakeSummary, notYetIncluded, setQuestionIncluded, sortQuestions, unplacedMaterial } from '../materials/learning.js';
 import { ASSET_PAGE_SIZE, createdAtRangeSql, DayFilterError, instantInRange, parseAssetDayFilter, type AssetDayFilter } from '../materials/dayFilter.js';
 import { unsupportedSubject, UNSUPPORTED_SUBJECT_MESSAGE } from '../materials/subjects.js';
@@ -164,6 +165,38 @@ export interface StudentApiOptions {
   materialsJobs?: MaterialJobs;
   accountRoleOf: (response: Response) => AccountRole | null;
   inviteExpiresOf: (response: Response) => string | null;
+}
+
+function questionForCandidate(candidate: IntakeCandidate, questions: QuestionBundle[]): QuestionBundle | undefined {
+  const id = candidate.id.split(':')[0] ?? '';
+  return questions.find(question => question.id === id
+    || question.stem.some(fragment => fragment.fragmentId === id)
+    || question.teacherMarks.some(fragment => fragment.fragmentId === id)
+    || question.attempts.some(attempt => attempt.fragments.some(fragment => fragment.fragmentId === id)));
+}
+
+/** Attach answer-sheet verdicts to the candidates of one photo. Joined right items are not offered as wrong. */
+function applyAnswerSheetPairing(candidates: IntakeCandidate[], pairing: IntakePairing, questions: QuestionBundle[], assetId: string): IntakeCandidate[] {
+  const seen = new Set<string>();
+  const paired = candidates.flatMap(candidate => {
+    const question = questionForCandidate(candidate, questions);
+    if (!question) return [candidate];
+    seen.add(question.id);
+    const verdict = pairing.verdicts.get(question.id);
+    const unmatched = pairing.unmatchedQuestions.has(question.id);
+    const mark = pairing.unmatchedMarks.find(item => item.questionId === question.id);
+    if (verdict === 'right') return [];
+    if (!verdict && !unmatched && !mark) return [candidate];
+    const kind = mark ? 'unmatched-mark' : unmatched ? 'unmatched' : verdict === 'wrong' ? 'wrong' : 'unclear';
+    const shown = mark?.verdict === 'right' ? null : pairingCandidateLabel(mark ? mark.heading : itemHeading(question), kind);
+    if (!shown || mark?.verdict === 'right') return [];
+    return [{ ...candidate, label: shown, verdict: mark?.verdict ?? verdict ?? 'unclear', pairing: mark || unmatched ? 'unmatched' as const : 'joined' as const }];
+  });
+  for (const mark of pairing.unmatchedMarks) {
+    if (mark.assetId !== assetId || seen.has(mark.questionId) || mark.verdict === 'right') continue;
+    paired.push({ id: `${mark.questionId}:${mark.revision}`, label: pairingCandidateLabel(mark.heading, 'unmatched-mark'), excerpt: mark.text.slice(0, 60), crop: `/s/materials/fragments/${mark.fragmentId}/crop?revision=${mark.fragmentRevision}`, verdict: mark.verdict, pairing: 'unmatched' });
+  }
+  return paired;
 }
 
 export function createStudentApi(ctx: WebContext, options: StudentApiOptions): Router {
@@ -473,7 +506,9 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const jobs = store.db.prepare(`SELECT j.id, j.state, j.asset_id, j.error FROM material_job j WHERE j.owner_id=? AND j.kind='extract'
       AND NOT EXISTS (SELECT 1 FROM material_job n WHERE n.owner_id=j.owner_id AND n.kind='extract' AND n.asset_id=j.asset_id AND n.rowid>j.rowid)`).all(store.studentId) as { id: string; state: string; asset_id: string | null; error: string | null }[];
     const jobByAsset = new Map(jobs.map(job => [job.asset_id, job]));
-    const all = sortQuestions(store, store.listQuestions()).filter(q => !unplacedMaterial(q));
+    const listed = sortQuestions(store, store.listQuestions());
+    const pairing = readIntakePairing(store, listed);
+    const all = listed.filter(q => !unplacedMaterial(q));
     const intents = inclusionIntents(store);
     const pending = new Map(notYetIncluded(store, all, intents).map(group => [group.assetId, group.questions]));
     const assetOf = (q: QuestionBundle): string | null => q.stem.find(f => f.role === 'question')?.assetId ?? q.stem[0]?.assetId ?? null;
@@ -497,13 +532,16 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       const questions: IntakeQuestion[] = (included.get(asset.id) ?? []).map(q => ({ id: q.itemId!, excerpt: stemFirstSentence(q, 60), chapter: (() => { try { return categoryForItem(q.itemId!).chapter || '未分类'; } catch { return q.subject ?? '未分类'; } })(), thumb: cropOf(q) ?? `/s/img/item/${q.itemId}?s=thumb` }));
       const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q) }));
       if (preview) candidates.push(...previewCandidates(preview, all, intents));
-      const state = processing ? (preview ? (preview.phase === 'located' ? 'located' : 'enriching') : 'finding') : failed ? 'failed' : other ? 'unsupported' : candidates.length ? 'needsPick' : 'done';
+      const paired = applyAnswerSheetPairing(candidates, pairing, listed, asset.id);
+      const state = processing ? (preview ? (preview.phase === 'located' ? 'located' : 'enriching') : 'finding') : failed ? 'failed' : other ? 'unsupported' : paired.length ? 'needsPick' : 'done';
       const correct = all.filter(q => assetOf(q) === asset.id && markedRight(q)).length;
+      const filedFromSheet = questions.some(item => listed.some(q => q.itemId === item.id && pairing.verdicts.get(q.id) === 'wrong'));
+      const copy = pairingCopy(pairing, asset.id, filedFromSheet);
       const statusText = state === 'located' ? '已找到题目 · 可以先勾选' : state === 'enriching' ? '正在识别和校验 · 可以先勾选' : state === 'finding' ? 'AI 正在找题' : state === 'failed' ? '没整理成功' : state === 'unsupported' ? `${other}：${UNSUPPORTED_SUBJECT_MESSAGE}`
-        : state === 'needsPick' ? '没有批改痕迹 · 勾出做错的题' : questions.length ? `找到 ${questions.length} 道${correct ? ` · ${correct} 道打了 √` : ''}` : correct ? `${correct} 道都打了 √，没有错题` : '没有新增错题';
+        : state === 'needsPick' ? (copy.statusText ?? '没有批改痕迹 · 勾出做错的题') : questions.length ? (copy.statusText === '答题卡标出错题' ? `找到 ${questions.length} 道 · 答题卡标出错题${correct ? ` · ${correct} 道打了 √` : ''}` : `找到 ${questions.length} 道${correct ? ` · ${correct} 道打了 √` : ''}`) : correct ? `${correct} 道都打了 √，没有错题` : '没有新增错题';
       return {
         id: asset.id, number: span - offset - index, takenAt: asset.created_at.includes('T') ? asset.created_at : asset.created_at.replace(' ', 'T') + 'Z',
-        thumb: `/s/materials/assets/${asset.id}/image`, full: `/s/materials/assets/${asset.id}/image`, state, statusText, questions, candidates, ...(preview ? { progress: photoProgress(preview) } : {}),
+        thumb: `/s/materials/assets/${asset.id}/image`, full: `/s/materials/assets/${asset.id}/image`, state, statusText, ...(state === 'needsPick' && copy.pickNote ? { pickNote: copy.pickNote } : {}), questions, candidates: paired, ...(preview ? { progress: photoProgress(preview) } : {}),
         failure: failed ? { title: '没整理成功', detail: retryable ? '原图已保留，可以重新整理。' : '看不清或格式不对，请重拍这张。', retryable } : null,
       };
     });
@@ -611,7 +649,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       for (const pick of regular) {
         const question = questions.get(pick.questionId);
         if (!question) { failed.push({ id: pick.clientId, message: '题目不存在。' }); continue; }
-        const asset = question.stem.find(fragment => fragment.role === 'question')?.assetId ?? question.stem[0]?.assetId ?? null;
+        const asset = question.stem.find(fragment => fragment.role === 'question')?.assetId ?? question.stem[0]?.assetId ?? question.teacherMarks[0]?.assetId ?? question.attempts.flatMap(attempt => attempt.fragments)[0]?.assetId ?? null;
         if (asset !== photoId) { failed.push({ id: pick.clientId, message: '这道题不在这张照片上。' }); continue; }
         if (question.itemId) { failed.push({ id: pick.clientId, message: '这道题已经在错题本里。' }); continue; }
         accepted.push(pick);

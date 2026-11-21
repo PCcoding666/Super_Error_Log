@@ -211,6 +211,8 @@ export function includeQuestions(store:MaterialStore,picks:{questionId:string;re
    if(!q||seen.has(q.id)||unsupportedSubject(q.subject)){skipped++;continue;}
    seen.add(q.id);
    if(q.itemId&&inclusionIntent(store,q.id)!==false){already.push(q.id);continue;}
+   // A mark that never found a paper stem stays visible for confirmation. Recording an include would hide it without filing anything.
+   if(q.missing.includes('stem')){skipped++;continue;}
    try{recorded.push(recordInclusion(store,q.id,true,pick.revision));}
    catch(error){if(error instanceof MobileRequestError&&[400,404,409].includes(error.status)){skipped++;continue;}throw error;}
   }
