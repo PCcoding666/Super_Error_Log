@@ -27,6 +27,13 @@ export function HomePage(): ReactNode {
   const query = useMemo(() => ({ subject: params.get('subject') ?? '', grade: params.get('grade') ?? '', chapter: params.get('chapter') ?? '', tag: params.get('tag') ?? '', q: params.get('q') ?? '' }), [params]);
   const { data, error, loading, reload } = useLoad(() => api.notebook(query), [query.subject, query.grade, query.chapter, query.tag, query.q]);
   useIonViewWillEnter(() => { void reload(); });
+  // 还有照片或材料在找题：每 3 秒取一次，和录入页一样。提示和题目不用离开这一页也会出现。失败的任务不占 finding，所以不会一直轮询。
+  const finding = (data?.finding ?? 0) > 0;
+  useEffect(() => {
+    if (!finding) return;
+    const timer = setInterval(() => { void reload(); }, 3000);
+    return () => clearInterval(timer);
+  }, [finding, reload]);
   const [view, setView] = useLocalPreference('sel-notebook-view', 'list');
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());

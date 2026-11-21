@@ -47,7 +47,7 @@ export interface NotebookResponse {
   shown: number;
   todo: number;
   groups: NotebookGroup[];
-  /** 还在找题的照片数：空状态时提示「AI 还在找题」。 */
+  /** 还在找题的数量：旧照片仍在识别，加上材料里最新一条提取为排队或进行中的份数。失败的不算。空状态时提示「AI 还在找题」。 */
   finding: number;
   /** 照片里还有没收进错题本的题（材料流程）。 */
   pendingIntake: number;
