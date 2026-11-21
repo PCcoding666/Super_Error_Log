@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { saveIntakeProgress, completeIntakeProgress } from './intakeProgress.js';
+import { requestIntakeGrades } from './grading.js';
 import { isDeepStrictEqual } from 'node:util';
 import { SET_PAGE_MISSING } from './captureHints.js';
 import type { CaptureHints, Extraction } from './contracts.js';
@@ -71,7 +72,7 @@ function settleUncoveredFollowers(store: MaterialStore, leadAssetId: string, cov
 }
 
 /** Persists source evidence only. Question/document association belongs to the reconciler. */
-export async function extractMaterial(store: MaterialStore, provider: MaterialProvider, jobId: string, signal: AbortSignal, reconcile?: MaterialReconciler): Promise<void> {
+export async function extractMaterial(store: MaterialStore, provider: MaterialProvider, jobId: string, signal: AbortSignal, reconcile?: MaterialReconciler, jobs?: MaterialJobs): Promise<void> {
   const row = input(store, jobId); const source = { assetId: row.asset_id, revision: row.revision, sourceHash: row.sourceHash };
   const hints = JSON.parse(row.hints_json) as CaptureHints;
   const pages = hints.captureMode === 'multi' ? await setPages(store, row.asset_id) : [];
@@ -141,6 +142,8 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
     // A later page may attach a same-question diagram or continuation. Evaluate
     // saved selections only after every page in this result has been reconciled.
     for (const extraction of storedBundle) completeIntakeProgress(store, jobId, extraction, !!partial);
+    // Questions exist now. Grade readable work in the background. A full queue must not fail extract.
+    if (jobs && !signal.aborted) for (const extraction of storedBundle) requestIntakeGrades(store, jobs, extraction.assetId);
     if (partial) throw partial.failure;
   } finally {
     if (leadRun && !signal.aborted) settleUncoveredFollowers(store, row.asset_id, covered);
@@ -153,6 +156,6 @@ export function registerMaterialExtraction(store: MaterialStore, jobs: MaterialJ
   jobs.register('extract', async (jobId, signal) => {
     const row = input(store, jobId); const source = uploads.source(row.asset_id);
     const provider = createMaterialProvider(options, { source: { assetId: row.asset_id, revision: row.revision, sourceHash: source.sourceHash }, request: (key, invoke) => jobs.request(jobId, key, invoke) });
-    await extractMaterial(store, provider, jobId, signal, reconcile);
+    await extractMaterial(store, provider, jobId, signal, reconcile, jobs);
   });
 }

@@ -1,3 +1,4 @@
+import { intakeVerdict } from '../materials/grading.js';
 import { findPreview } from '../materials/intakeProgress.js';
 import { previewCrop, previewStatus } from './intakeProgressView.js';
 import type { QuestionBundle, ReferenceAnswer } from '../materials/contracts.js';
@@ -26,7 +27,7 @@ export function readIntakeCandidateDetail(store: MaterialStore, questionId: stri
     const q = store.listQuestions().find(q => q.stem.some(f => f.fragmentId === fragment.fragmentId));
     if (q && progress.phase === 'done') return { ok: true, detail: { ...toDetail(store, q), id: questionId, revision, status: previewStatus(progress, fragment, q) } };
     return { ok: true, detail: { id: questionId, revision, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',
-      subject: progress.extraction.document.subject, status: previewStatus(progress, fragment, q),
+      subject: progress.extraction.document.subject, status: previewStatus(progress, fragment, q), ...intakeVerdict(q),
       stem: [{ role: 'question', text: fragment.text, number: fragment.number, check: fragment.check, uncertainties: fragment.uncertainties, requiresDiagram: fragment.requiresDiagram }],
       crop: previewCrop(questionId, revision), figures: diagramFigures(fragment, progress.extraction.fragments, item => previewCrop(item.fragmentId, revision)),
       source: `/s/materials/assets/${fragment.assetId}/image`, work: [], marks: [], answers: [], grades: [] } };
@@ -76,6 +77,7 @@ function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandida
     revision: question.revision,
     label: question.number ? `第 ${question.number} 题` : '题号不清',
     subject: question.subject,
+    ...intakeVerdict(question),
     stem,
     crop: primary ? `/s/materials/fragments/${primary.fragmentId}/crop?revision=${primary.revision}` : null,
     figures: primary ? diagramFigures(primary, question.stem, item => `/s/materials/fragments/${item.fragmentId}/crop?revision=${item.revision}`) : [],

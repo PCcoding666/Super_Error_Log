@@ -1,18 +1,19 @@
-import { syncMaterialLearning } from './learning.js';
+import { decisiveTeacherMark, inclusionIntent, syncMaterialLearning } from './learning.js';
 import { createHash } from 'node:crypto';
 import { newId } from '../db/connection.js';
 import { MobileRequestError } from '../mobile/service.js';
-import type { BatchAction, BatchRequest, Fragment, Grade, ReferenceAnswer } from './contracts.js';
+import type { BatchAction, BatchRequest, Fragment, Grade, QuestionBundle, ReferenceAnswer } from './contracts.js';
 import type { MaterialStore } from './store.js';
 import type { MaterialJobs } from './jobs.js';
 import type { MaterialUploads } from './uploads.js';
 import { answerEligibility, answersConflict, generateAnswerForBasis, selectedAnswerIds } from './answers.js';
 import { answerBasis, dependenciesCurrent, effectiveFragmentCheck, effectiveQuestionStem, gradeBasis, readQuestion, type MaterialBasis } from './queries.js';
-import { createMaterialActionProvider, validateMaterialGrade, type MaterialGradingProvider, type MaterialProviderOptions } from './provider.js';
+import { blocksProvisionalGrade, createMaterialActionProvider, validateMaterialGrade, type MaterialGradingProvider, type MaterialProviderOptions } from './provider.js';
+import { unsupportedSubject } from './subjects.js';
 const invalid = (message:string):never=>{throw new MobileRequestError(400,'invalid_request',message);};
 const conflict = ():never=>{throw new MobileRequestError(409,'idempotency_conflict','请求键已用于不同题目、作答或依据。');};
 function question(store:MaterialStore,id:string){const q=readQuestion(store,id);if(!q)throw new MobileRequestError(404,'not_found','题目不存在。');return q;}
-type FrozenGrade = { questionId:string; attemptId:string; stem:Fragment[]; work:Fragment[]; answers:ReferenceAnswer[]; original:MaterialBasis; answerBasis:MaterialBasis; prepared?:MaterialBasis };
+type FrozenGrade = { questionId:string; attemptId:string; stem:Fragment[]; work:Fragment[]; answers:ReferenceAnswer[]; original:MaterialBasis; answerBasis:MaterialBasis; prepared?:MaterialBasis; source?:'intake' };
 function candidate(store:MaterialStore,id:string,chosen?:string):{reason:string}|{input:FrozenGrade;basis:MaterialBasis} {
  const q=question(store,id);const reason=answerEligibility(store,id);if(reason)return {reason};
  const attempts=q.attempts.filter(a=>a.fragments.some(f=>f.role==='student_work'));const a=chosen?q.attempts.find(a=>a.id===chosen):attempts.length===1?attempts[0]:undefined;
@@ -77,9 +78,10 @@ export async function gradeQuestion(store:MaterialStore,provider:MaterialGrading
  }
  if(!current())return;
  const basis=input.prepared??input.original;
- const output=validateMaterialGrade(await provider.grade({questionId:input.questionId,attemptId:input.attemptId,basisKey:basis.basisKey,stem:input.stem,work:input.work,answers:input.answers},signal),{stem:input.stem,work:input.work});signal.throwIfAborted();
+ const provisional=input.source==='intake';
+ const output=validateMaterialGrade(await provider.grade({questionId:input.questionId,attemptId:input.attemptId,basisKey:basis.basisKey,stem:input.stem,work:input.work,answers:input.answers,...(provisional?{provisional:true}:{})},signal),{stem:input.stem,work:input.work},provisional?{provisional:true}:undefined);signal.throwIfAborted();
  store.transaction(()=>{
-  const stale=!current();const grade:Grade={id:newId('mgr'),attemptId:input.attemptId,answerIds:input.answers.map(a=>a.id),basisKey:basis.basisKey,...output,stale};
+  const stale=!current();const grade:Grade={id:newId('mgr'),attemptId:input.attemptId,answerIds:input.answers.map(a=>a.id),basisKey:basis.basisKey,...output,stale,...(input.source==='intake'?{source:'intake' as const}:{})};
   if(row()!.result_json)return;
   store.db.prepare('INSERT INTO material_grade(id,owner_id,attempt_id,basis_key,dependencies_json,content_json,stale) VALUES (?,?,?,?,?,?,?)').run(grade.id,store.studentId,grade.attemptId,grade.basisKey,JSON.stringify(basis.dependencies),JSON.stringify(grade),Number(stale));
   syncMaterialLearning(store);
@@ -88,4 +90,129 @@ export async function gradeQuestion(store:MaterialStore,provider:MaterialGrading
 }
 export function registerMaterialGrading(store:MaterialStore,jobs:MaterialJobs,uploads:MaterialUploads,options:MaterialProviderOptions):void {
  jobs.register('grade',async(id,signal)=>gradeQuestion(store,createMaterialActionProvider(options,{request:(key,invoke)=>jobs.request(id,key,invoke),source:assetId=>uploads.source(assetId)}),id,signal));
+}
+
+export type IntakeVerdict = 'wrong' | 'partial' | 'right' | 'confirm';
+
+function readableForIntake(fragment: Fragment, requireText: boolean): boolean {
+  if (blocksProvisionalGrade(fragment)) return false;
+  return !requireText || !!fragment.text.trim();
+}
+
+/** Provisional wrong/right/partial needs readable stem and work. Anything else stays confirm. */
+export function intakeProvisionalReady(question: QuestionBundle): boolean {
+  if (question.missing.includes('stem') || question.missing.includes('diagram') || question.unresolved.length) return false;
+  const stems = question.stem.filter(fragment => fragment.role === 'question');
+  if (!stems.length || stems.some(fragment => !readableForIntake(fragment, true))) return false;
+  if (question.stem.some(fragment => fragment.role === 'diagram' && !readableForIntake(fragment, false))) return false;
+  const work = question.attempts.flatMap(attempt => attempt.fragments).filter(fragment => fragment.role === 'student_work');
+  return work.length > 0 && work.every(fragment => readableForIntake(fragment, true));
+}
+
+function applicableGrade(question: QuestionBundle): Grade | undefined {
+  const decided = question.grades.filter(grade => !grade.stale && (grade.result === 'incorrect' || grade.result === 'partial' || grade.result === 'correct'));
+  if (!decided.length) return undefined;
+  return decided.every(grade => grade.result === decided[0]!.result) ? decided[0] : undefined;
+}
+
+/** Server-owned page verdict. Teacher marks win. A missing or unfinished grade stays confirm. */
+export function intakeVerdict(question?: QuestionBundle): { verdict: IntakeVerdict; preselected: boolean } {
+  const confirm = { verdict: 'confirm' as const, preselected: false };
+  if (!question) return confirm;
+  const mark = decisiveTeacherMark(question);
+  if (mark === 'wrong') return { verdict: 'wrong', preselected: true };
+  if (mark === 'right') return { verdict: 'right', preselected: false };
+  if (!intakeProvisionalReady(question)) return confirm;
+  const grade = applicableGrade(question);
+  if (grade?.result === 'incorrect') return { verdict: 'wrong', preselected: true };
+  if (grade?.result === 'partial') return { verdict: 'partial', preselected: true };
+  if (grade?.result === 'correct') return { verdict: 'right', preselected: false };
+  return confirm;
+}
+
+function questionOnAsset(question: QuestionBundle, assetId: string): boolean {
+  return question.stem.some(fragment => fragment.assetId === assetId)
+    || question.teacherMarks.some(fragment => fragment.assetId === assetId)
+    || question.attempts.some(attempt => attempt.fragments.some(fragment => fragment.assetId === assetId));
+}
+
+function intakeGradeRequestId(questionId: string, basisKey: string): string {
+  const digest = createHash('sha256').update(`sel-intake-grade:${questionId}:${basisKey}`).digest();
+  const bytes = Buffer.from(digest.subarray(0, 16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function intakeGradeInput(store: MaterialStore, question: QuestionBundle): { input: FrozenGrade; basis: MaterialBasis } | null {
+  if (!intakeProvisionalReady(question)) return null;
+  const attempts = question.attempts.filter(attempt => attempt.fragments.some(fragment => fragment.role === 'student_work' && readableForIntake(fragment, true)));
+  if (attempts.length !== 1) return null;
+  const attempt = attempts[0]!;
+  const studentWork = attempt.fragments.filter(fragment => fragment.role === 'student_work');
+  if (studentWork.some(fragment => !readableForIntake(fragment, true))) return null;
+  const work = [...studentWork, ...attempt.fragments.filter(fragment => fragment.role === 'correction' && readableForIntake(fragment, true))];
+  if (question.stem.filter(fragment => fragment.role === 'diagram').length + work.length > 16 || question.stem.length + work.length > 32) return null;
+  if ([...question.stem, ...work].reduce((total, fragment) => total + fragment.text.length, 0) > 40000) return null;
+  const ids = selectedAnswerIds(store, question.id);
+  const answers = ids.map(id => question.answers.find(answer => answer.id === id)!);
+  const selection = store.db.prepare('SELECT 1 FROM material_answer_selection WHERE owner_id=? AND question_id=?').get(store.studentId, question.id);
+  if (!ids.length && (question.answers.some(answer => answer.source !== 'ai' || !answer.stale) || selection)) return null;
+  if (answersConflict(answers)) return null;
+  const scopes = new Set([...question.stem.filter(fragment => fragment.role === 'question'), ...work].map(fragment => fragment.subpart));
+  if (answers.length && ![...scopes].every(scope => answers.some(answer => answer.subpart === null || answer.subpart === scope))) return null;
+  const basis = gradeBasis(store, question.id, attempt.id, ids);
+  return {
+    basis,
+    input: {
+      questionId: question.id, attemptId: attempt.id, stem: effectiveQuestionStem(store, question.id), work, answers,
+      original: basis, answerBasis: answerBasis(store, question.id), source: 'intake',
+    },
+  };
+}
+
+function intakeGradeAlreadyCovered(store: MaterialStore, questionId: string, basisKey: string): boolean {
+  const grades = store.db.prepare(`SELECT g.basis_key, g.dependencies_json FROM material_grade g
+    JOIN material_attempt a ON a.owner_id=g.owner_id AND a.id=g.attempt_id
+    WHERE g.owner_id=? AND a.question_id=? AND g.stale=0`).all(store.studentId, questionId) as { basis_key: string; dependencies_json: string }[];
+  if (grades.some(row => { try { return dependenciesCurrent(store, row.basis_key, JSON.parse(row.dependencies_json)); } catch { return false; } })) return true;
+  const rows = store.db.prepare(`SELECT input_json FROM material_job WHERE owner_id=? AND kind='grade' AND question_id=? AND state IN ('queued','running','interrupted','succeeded','failed')`).all(store.studentId, questionId) as { input_json: string }[];
+  return rows.some(row => {
+    try {
+      const input = JSON.parse(row.input_json) as { source?: string; original?: { basisKey?: string } };
+      return input.source === 'intake' && input.original?.basisKey === basisKey;
+    } catch { return false; }
+  });
+}
+
+function enqueueIntakeGrade(store: MaterialStore, jobs: MaterialJobs, question: QuestionBundle): void {
+  if (question.itemId || unsupportedSubject(question.subject) || inclusionIntent(store, question.id) === false || decisiveTeacherMark(question)) return;
+  const ready = intakeGradeInput(store, question);
+  if (!ready || intakeGradeAlreadyCovered(store, question.id, ready.basis.basisKey)) return;
+  jobs.enqueue('grade', question.id, intakeGradeRequestId(question.id, ready.basis.basisKey), ready.basis.basisKey, {
+    input: ready.input, dependencies: ready.basis.dependencies,
+  });
+}
+
+/** After extract, grade readable work that has no decisive teacher mark. 429/503 skips that item. */
+export function requestIntakeGrades(store: MaterialStore, jobs: MaterialJobs, assetId: string): void {
+  for (const question of store.listQuestions()) {
+    if (!questionOnAsset(question, assetId)) continue;
+    try { enqueueIntakeGrade(store, jobs, question); }
+    catch (error) {
+      if (error instanceof MobileRequestError && [429, 503, 409].includes(error.status)) continue;
+      throw error;
+    }
+  }
+}
+
+/** True while an intake grade for one of these questions is still queued or running. */
+export function intakeGradesPending(store: MaterialStore, questionIds: ReadonlySet<string>): boolean {
+  if (!questionIds.size) return false;
+  const rows = store.db.prepare("SELECT question_id, input_json FROM material_job WHERE owner_id=? AND kind='grade' AND state IN ('queued','running')").all(store.studentId) as { question_id: string | null; input_json: string }[];
+  return rows.some(row => {
+    if (!row.question_id || !questionIds.has(row.question_id)) return false;
+    try { return JSON.parse(row.input_json).source === 'intake'; } catch { return false; }
+  });
 }
