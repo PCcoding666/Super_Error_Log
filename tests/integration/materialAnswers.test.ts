@@ -343,7 +343,7 @@ it('uses owned real diagram crops and rejects bad references before a successful
             return value;
         } });
     const input = { questionId: q.id, basisKey: 'basis', fragments: [q.stem, diagram, second] };
-    await expect(provider.answer(input, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+    await expect(provider.answer(input, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: true });
     expect(checkpoint.size).toBe(0);
     bad = false;
     await provider.answer(input, new AbortController().signal);
@@ -354,7 +354,7 @@ it('uses owned real diagram crops and rejects bad references before a successful
     expect(imageCount).toBe(2);
     expect(new Set(keys).size).toBe(1);
     writeFileSync(imagePath, Buffer.from('replaced'));
-    await expect(provider.answer({ ...input, basisKey: 'changed' }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+    await expect(provider.answer({ ...input, basisKey: 'changed' }, new AbortController().signal)).rejects.toMatchObject({ code: 'source_mismatch', retryable: false });
     expect(calls).toBe(2);
 });
 it('invalidates adopted-answer grading on edits and preserves unrelated subpart answers', () => {
