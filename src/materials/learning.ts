@@ -98,9 +98,19 @@ export function teacherMarkMeansRight(raw:string,fullMarks:number|null=null):boo
  const scored=/^[√✓✔☑]\s*(?:得\s*)?[+＋]?\s*(\d+(?:\.\d+)?)\s*分?$/u.exec(text);
  return !!scored&&fullMarks!==null&&Number(scored[1])>=fullMarks;
 }
-/** Every certain teacher mark on the question is a tick, and no current AI grade says otherwise. */
+/** A high-confidence teacher mark on this question. Intake grades are ignored so a later model result cannot override the mark. */
+export function decisiveTeacherMark(q:import('./contracts.js').QuestionBundle):'wrong'|'right'|null {
+ const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
+ const certain=(f:import('./contracts.js').Fragment)=>f.check==='passed'&&!f.uncertainties.length;
+ if(q.teacherMarks.some(f=>certain(f)&&teacherMarkMeansWrong(f.text,full)))return 'wrong';
+ if(q.teacherMarks.length&&q.teacherMarks.every(f=>certain(f)&&teacherMarkMeansRight(f.text,full)))return 'right';
+ return null;
+}
+/** Every certain teacher mark is a tick, and no current workspace grade says otherwise.
+ * An intake-origin grade is only a suggestion and must not pull a ticked question back into the wrong list.
+ * Paired sets pass the answer-sheet marks; the default is the marks already on the question. */
 export function markedRight(q:import('./contracts.js').QuestionBundle, marks:import('./contracts.js').Fragment[]=q.teacherMarks):boolean {
- if(!marks.length||q.grades.some(g=>!g.stale&&g.result!=='correct'))return false;
+ if(!marks.length||q.grades.some(g=>!g.stale&&g.source!=='intake'&&g.result!=='correct'))return false;
  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
  return marks.every(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansRight(f.text,full));
 }
@@ -145,9 +155,9 @@ export function verifiedMaterialStem(q:import('./contracts.js').QuestionBundle, 
 }
 function automaticMistake(store:MaterialStore,questionId:string):boolean {
  const q=readQuestion(store,questionId)!;
-  if(!verifiedMaterialStem(q,expectedIntakeStem(store,q))) return false;
+ if(!verifiedMaterialStem(q,expectedIntakeStem(store,q))) return false;
  if(sheetVerdict(store,q)) return false;
- if(q.grades.some(g=>!g.stale&&(g.result==='incorrect'||g.result==='partial'||(!!g.score&&typeof g.score.total==="number"&&g.score.total>0&&g.score.earned<g.score.total)))) return true;
+ if(q.grades.some(g=>!g.stale&&g.source!=='intake'&&(g.result==='incorrect'||g.result==='partial'||(!!g.score&&typeof g.score.total==="number"&&g.score.total>0&&g.score.earned<g.score.total)))) return true;
  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
  const marks=decisiveMarks(store,q);
  return marks.some(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansWrong(f.text,full));

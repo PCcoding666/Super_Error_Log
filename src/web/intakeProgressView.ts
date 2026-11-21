@@ -1,4 +1,5 @@
 import type { Fragment, QuestionBundle } from '../materials/contracts.js';
+import { intakeVerdict } from '../materials/grading.js';
 import type { SavedIntakeProgress } from '../materials/intakeProgress.js';
 import { markedRight, verifiedMaterialStem } from '../materials/learning.js';
 import { selectableQuestion } from '../materials/regionPolicy.js';
@@ -21,7 +22,7 @@ export function previewCandidates(progress: SavedIntakeProgress, questions: Ques
     if (q && (q.itemId || intents.get(q.id) === false || (!progress.selected.includes(fragment.fragmentId) && markedRight(q)))) return [];
     return [{ id: `${fragment.fragmentId}:${progress.extraction.revision}`, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',
       excerpt: fragment.text.slice(0, 60), crop: previewCrop(fragment.fragmentId, progress.extraction.revision),
-      status: previewStatus(progress, fragment, q), submitted: progress.selected.includes(fragment.fragmentId) }];
+      status: previewStatus(progress, fragment, q), submitted: progress.selected.includes(fragment.fragmentId), ...intakeVerdict(q) }];
   });
 }
 export function photoProgress(progress: SavedIntakeProgress): NonNullable<IntakePhoto['progress']> {
