@@ -14,6 +14,7 @@ import { MaterialUploads } from '../../src/materials/uploads.js';
 import { registerMaterialExtraction, extractMaterial } from '../../src/materials/extraction.js';
 import { materialPracticeEligible, setQuestionIncluded } from '../../src/materials/learning.js';
 import type { MaterialProvider } from '../../src/materials/provider.js';
+import { canRecover } from '../../src/mobile/contracts.js';
 import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 
@@ -65,6 +66,10 @@ describe('material extraction persistence', () => {
     const provider: MaterialProvider = { extract: async input => ({ assetId: input.assetId, revision: input.revision, document: { title: null, subject: null, date: null, printedCode: null, page: null }, fragments: [{ assetId: 'invented', sourceHash: 'invented', fragmentId: 'f', revision: 1, box: { x: 0, y: 0, width: 1, height: 1 }, role: 'student_work', text: 'synthetic', number: null, subpart: null, page: null, order: 0, requiresDiagram: false, check: 'passed', uncertainties: [] }], warnings: [], runs: [] }) };
     f.jobs.register('extract', (id, signal) => extractMaterial(f.store, provider, id, signal));
     const saved = await f.uploads.save(f.input); await expect.poll(() => f.jobs.get(saved.job.id)?.state).toBe('failed');
+    const stored = JSON.parse((f.db.prepare('SELECT error FROM material_job WHERE id=?').get(saved.job.id) as { error: string }).error);
+    expect(stored).toMatchObject({ code: 'source_mismatch', retryable: false });
+    expect(canRecover({ ...stored, stage: 'transcribe' })).toBe(false);
+    expect(() => f.jobs.retry(saved.job.id, randomUUID())).toThrow(/无法重试/);
     expect(existsSync(f.uploads.source(saved.assetId).originalPath)).toBe(true);
     expect(f.db.prepare('SELECT status FROM material_asset WHERE id=?').get(saved.assetId)).toMatchObject({ status: 'saved' });
     expect(f.db.prepare('SELECT count(*) n FROM material_fragment').get()).toMatchObject({ n: 0 });
@@ -153,7 +158,7 @@ describe('material extraction persistence', () => {
     expect(f.db.prepare('SELECT extraction_json FROM material_asset WHERE id=?').get(saved.assetId)).toMatchObject({ extraction_json: null });
   });
 
-  it.each(['transient', 'invalid_output'])('binds every actual HTTP request and reuses checkpoints after %s failure', async failureKind => {
+  it.each(['transient', 'invalid_output', 'invalid_json'] as const)('binds every actual HTTP request and reuses checkpoints after %s failure', async failureKind => {
     const f = await fixture(); let verificationFails = true; const seen: string[] = []; let jobId = '';
     const server = http.createServer(async (req, res) => {
       let raw = ''; for await (const chunk of req) raw += chunk;
@@ -163,7 +168,8 @@ describe('material extraction persistence', () => {
       expect(stages.some(s => s.attempts >= 1)).toBe(true);
       if (operation === 'verify' && verificationFails) {
         if (failureKind === 'transient') { res.statusCode = 503; res.end('{}'); }
-        else res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ source, candidateKey: 'invented' }) } }] }));
+        else if (failureKind === 'invalid_json') res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{' } }] }));
+        else res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ source, candidateKey: candidate.key, check: 'passed', coverage: 'nope', textMatches: true, roleMatches: true, uncertainties: [] }) } }] }));
         return;
       }
       const value = operation === 'locate' ? { source, document: { title: null, subject: null, date: null, printedCode: null, page: null }, candidates: [{ key: 'q', role: 'question', box: { x: 0, y: 0, width: 1, height: 1 }, number: '1', subpart: null, page: null, order: 0, requiresDiagram: false }], warnings: [] } : operation === 'read' ? { source, candidateKey: candidate.key, text: 'synthetic stem', uncertainties: [] } : { source, candidateKey: candidate.key, check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] };
@@ -174,11 +180,39 @@ describe('material extraction persistence', () => {
     const saved = await f.uploads.save(f.input); jobId = saved.job.id;
     registerMaterialExtraction(f.store, f.jobs, f.uploads, { mode: 'openai', chat: { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`, apiKey: 'synthetic', timeoutMs: 1000, bailianOnly: false, models: { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' } } });
     await f.jobs.resume(); await expect.poll(() => f.jobs.get(jobId)?.state).toBe('failed');
-    const failedCalls = failureKind === 'transient' ? ['locate', 'read', 'verify', 'verify', 'verify'] : ['locate', 'read', 'verify'];
+    const failedCalls = ['locate', 'read', 'verify', 'verify', 'verify'];
     expect(seen).toEqual(failedCalls);
+    const stored = JSON.parse((f.db.prepare('SELECT error FROM material_job WHERE id=?').get(jobId) as { error: string }).error);
+    expect(stored).toMatchObject({ code: failureKind === 'transient' ? 'provider_unavailable' : 'invalid_output', retryable: true });
+    expect(canRecover({ ...stored, stage: 'transcribe' })).toBe(true);
     verificationFails = false; f.jobs.retry(jobId, randomUUID()); await expect.poll(() => f.jobs.get(jobId)?.state).toBe('succeeded');
     expect(seen).toEqual([...failedCalls, 'verify']);
     const row = f.db.prepare('SELECT extraction_json FROM material_asset WHERE id=?').get(saved.assetId) as { extraction_json: string };
     expect(JSON.parse(row.extraction_json).fragments[0].sourceHash).toBe(f.uploads.source(saved.assetId).sourceHash);
+  });
+
+  it('does not spend the attempt budget on a source identity mismatch and does not offer recovery', async () => {
+    const f = await fixture(); const seen: string[] = []; let jobId = '';
+    const server = http.createServer(async (req, res) => {
+      let raw = ''; for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw); const context = JSON.parse(body.messages.find((m: any) => m.role === 'user').content.find((p: any) => p.type === 'text').text);
+      const { operation, source, candidate } = context; seen.push(operation);
+      const value = operation === 'locate'
+        ? { source, document: { title: null, subject: null, date: null, printedCode: null, page: null }, candidates: [{ key: 'q', role: 'question', box: { x: 0, y: 0, width: 1, height: 1 }, number: '1', subpart: null, page: null, order: 0, requiresDiagram: false }], warnings: [] }
+        : operation === 'read'
+          ? { source, candidateKey: candidate.key, text: 'synthetic stem', uncertainties: [] }
+          : { source: { ...source, sourceHash: 'invented' }, candidateKey: candidate.key, check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] };
+      res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(value) } }] }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+    const saved = await f.uploads.save(f.input); jobId = saved.job.id;
+    registerMaterialExtraction(f.store, f.jobs, f.uploads, { mode: 'openai', chat: { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`, apiKey: 'synthetic', timeoutMs: 1000, bailianOnly: false, models: { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' } } });
+    await f.jobs.resume(); await expect.poll(() => f.jobs.get(jobId)?.state).toBe('failed');
+    expect(seen).toEqual(['locate', 'read', 'verify']);
+    const stored = JSON.parse((f.db.prepare('SELECT error FROM material_job WHERE id=?').get(jobId) as { error: string }).error);
+    expect(stored).toMatchObject({ code: 'source_mismatch', retryable: false });
+    expect(canRecover({ ...stored, stage: 'transcribe' })).toBe(false);
+    expect(() => f.jobs.retry(jobId, randomUUID())).toThrow(/无法重试/);
   });
 });
