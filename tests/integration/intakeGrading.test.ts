@@ -104,6 +104,8 @@ it('keeps a provisional result only when the stem and work are readable', () => 
   expect(validateMaterialGrade(output, { stem: [stem], work: [{ ...work, check: 'low', uncertainties: ['text_mismatch'] }] }, { provisional: true }).result).toBe('incorrect');
   expect(validateMaterialGrade(output, { stem: [stem], work: [{ ...work, check: 'low' }] }).result).toBe('uncertain');
   expect(validateMaterialGrade(output, { stem: [{ ...stem, uncertainties: ['missing_diagram'], check: 'low' }], work: [work] }, { provisional: true }).result).toBe('uncertain');
+  expect(validateMaterialGrade(output, { stem: [{ ...stem, uncertainties: ['incomplete_coverage'], check: 'low' }], work: [work] }, { provisional: true }).result).toBe('uncertain');
+  expect(validateMaterialGrade(output, { stem: [stem], work: [{ ...work, check: 'low', uncertainties: ['incomplete_coverage'] }] }, { provisional: true }).result).toBe('uncertain');
   expect(validateMaterialGrade(output, { stem: [{ ...stem, check: 'failed' }], work: [work] }, { provisional: true }).result).toBe('uncertain');
   expect(validateMaterialGrade(output, { stem: [{ ...stem, text: '   ' }], work: [work] }, { provisional: true }).result).toBe('uncertain');
 });
@@ -178,6 +180,7 @@ it('grades an unmarked page after extract, preselects wrong items, and files not
     ...spec('4', 'STEM-BLANK', null),
     ...spec('5', 'STEM-FAILED', 'WRONG 9', { check: 'failed' }, { check: 'failed' }),
     ...spec('6', 'STEM-DIAGRAM', 'WRONG 8', { check: 'low', requiresDiagram: true, uncertainties: ['missing_diagram'] }),
+    ...spec('9', 'STEM-CUT', 'WRONG 7', { check: 'low', uncertainties: ['incomplete_coverage'] }, { check: 'low', uncertainties: ['incomplete_coverage'] }),
     ...spec('7', 'STEM-CROSS', 'RIGHT 1', {}, {}, '×'),
     ...spec('8', 'STEM-TICK', 'WRONG 0', {}, {}, '√'),
   ];
@@ -202,7 +205,7 @@ it('grades an unmarked page after extract, preselects wrong items, and files not
   expect(before.busy).toBe(true);
   expect(photo.questions).toHaveLength(1);
   expect(photo.questions[0]!.excerpt).toContain('STEM-CROSS');
-  expect(photo.candidates.map(candidate => candidate.excerpt)).toEqual(expect.arrayContaining(['STEM-WRONG', 'STEM-RIGHT', 'STEM-PARTIAL', 'STEM-BLANK', 'STEM-FAILED', 'STEM-DIAGRAM']));
+  expect(photo.candidates.map(candidate => candidate.excerpt)).toEqual(expect.arrayContaining(['STEM-WRONG', 'STEM-RIGHT', 'STEM-PARTIAL', 'STEM-BLANK', 'STEM-FAILED', 'STEM-DIAGRAM', 'STEM-CUT']));
   expect(photo.candidates.some(candidate => candidate.excerpt.includes('STEM-TICK') || candidate.excerpt.includes('STEM-CROSS'))).toBe(false);
   expect(photo.candidates.every(candidate => candidate.verdict === 'confirm' && candidate.preselected === false)).toBe(true);
   expect(readIntakeProgress(store).get(saved.assetId)?.selected).toEqual([]);
@@ -217,7 +220,7 @@ it('grades an unmarked page after extract, preselects wrong items, and files not
   expect(byExcerpt.get('STEM-WRONG')).toMatchObject({ verdict: 'wrong', preselected: true });
   expect(byExcerpt.get('STEM-RIGHT')).toMatchObject({ verdict: 'right', preselected: false });
   expect(byExcerpt.get('STEM-PARTIAL')).toMatchObject({ verdict: 'partial', preselected: true });
-  for (const excerpt of ['STEM-BLANK', 'STEM-FAILED', 'STEM-DIAGRAM']) expect(byExcerpt.get(excerpt)).toMatchObject({ verdict: 'confirm', preselected: false });
+  for (const excerpt of ['STEM-BLANK', 'STEM-FAILED', 'STEM-DIAGRAM', 'STEM-CUT']) expect(byExcerpt.get(excerpt)).toMatchObject({ verdict: 'confirm', preselected: false });
   expect((await intake()).busy).toBe(false);
   const storedGrades = (db.prepare('SELECT content_json FROM material_grade').all() as { content_json: string }[]).map(row => JSON.parse(row.content_json) as Grade);
   expect(storedGrades.map(grade => grade.source)).toEqual(['intake', 'intake', 'intake']);
