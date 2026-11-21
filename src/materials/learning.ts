@@ -119,8 +119,17 @@ function automaticMistake(store:MaterialStore,questionId:string):boolean {
  const q=readQuestion(store,questionId)!;
  if(!verifiedMaterialStem(q,expectedIntakeStem(store,q))) return false;
  if(q.grades.some(g=>!g.stale&&(g.result==='incorrect'||g.result==='partial'||(!!g.score&&typeof g.score.total==="number"&&g.score.total>0&&g.score.earned<g.score.total)))) return true;
- const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
- return q.teacherMarks.some(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansWrong(f.text,full));
+  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
+  // A cross already on the question page still files the item. A cross joined from an answer sheet
+  // only marks that blank wrong so the student can select it.
+  return q.teacherMarks.some(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansWrong(f.text,full)&&!fromAnswerSheet(store,f));
+}
+/** An answer-sheet cross is offered for the student to select. A cross on the question's own page still files it. */
+function fromAnswerSheet(store:MaterialStore,fragment:{fragmentId:string;assetId:string}):boolean {
+ const link=store.db.prepare('SELECT basis_json FROM material_link_event WHERE owner_id=? AND fragment_id=? ORDER BY revision DESC LIMIT 1').get(store.studentId,fragment.fragmentId) as {basis_json:string}|undefined;
+ try { if(link&&JSON.parse(link.basis_json).reason==='answer_sheet') return true; } catch { /* fall through to the page tag */ }
+ const asset=store.db.prepare('SELECT hints_json FROM material_asset WHERE owner_id=? AND id=?').get(store.studentId,fragment.assetId) as {hints_json:string}|undefined;
+ try { return JSON.parse(asset?.hints_json??'{}').pageKind==='answer_sheet'; } catch { return false; }
 }
 export function questionIncluded(store:MaterialStore,questionId:string):boolean { return inclusionIntent(store,questionId)??automaticMistake(store,questionId); }
 /** Fragment ids the student removed from a preview before that question could be filed. */

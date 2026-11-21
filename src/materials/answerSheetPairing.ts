@@ -1,6 +1,6 @@
 import { newId } from '../db/connection.js';
 import type { CaptureHints, CapturePageKind, Fragment, QuestionBundle } from './contracts.js';
-import { fullMarksOf, teacherMarkMeansRight, teacherMarkMeansWrong } from './learning.js';
+import { fullMarksOf, inclusionIntents, teacherMarkMeansRight, teacherMarkMeansWrong } from './learning.js';
 import { currentLink, latestFragments, linkedFragments, readQuestion, resolveQuestionId } from './queries.js';
 import type { MaterialStore } from './store.js';
 
@@ -261,41 +261,50 @@ function assembleMarkedBlanks(store: MaterialStore, pages: CapturePage[], paperI
   const winners = new Map<string, string>();
   for (const number of fineNumbers) {
     const grains = [...new Map(wrong.filter(item => item.grain.number === number).map(item => [grainKey(item.grain), item.grain])).values()];
+    const winningKeys = new Set(grains.map(grainKey));
     for (const grain of grains) {
-      const all = fragmentsNow(store, pages);
-      const context = all.filter(fragment => {
+      const stems = fragmentsNow(store, pages).filter(fragment => {
+        if (!paperIds.has(fragment.assetId) || fragment.role !== 'question') return false;
+        const item = itemGrain(fragment.number, fragment.subpart);
+        return !!item && isContext(item, grain);
+      });
+      if (!stems.length || winners.has(grainKey(grain))) continue;
+      const parent = stems.find(fragment => {
+        const item = itemGrain(fragment.number, fragment.subpart);
+        return item && !item.part && !item.blank;
+      }) ?? stems[0]!;
+      const current = currentLink(store, parent.fragmentId)?.question_id;
+      const resolved = current ? resolveQuestionId(store, current) : null;
+      const winner = resolved && ![...winners.values()].includes(resolved) ? resolved : holdingQuestion(store, grain, winners, parent);
+      winners.set(grainKey(grain), winner);
+    }
+    for (const grain of grains) {
+      const winner = winners.get(grainKey(grain));
+      if (!winner) continue;
+      const context = fragmentsNow(store, pages).filter(fragment => {
         if (!paperIds.has(fragment.assetId) || (fragment.role !== 'question' && fragment.role !== 'diagram')) return false;
         const item = itemGrain(fragment.number, fragment.subpart);
         return !!item && isContext(item, grain);
       });
-      const stems = context.filter(fragment => fragment.role === 'question');
-      if (!stems.length) continue;
-      let winner = winners.get(grainKey(grain));
-      if (!winner) {
-        const parent = stems.find(fragment => {
-          const item = itemGrain(fragment.number, fragment.subpart);
-          return item && !item.part && !item.blank;
-        }) ?? stems[0]!;
-        const current = currentLink(store, parent.fragmentId)?.question_id;
-        const resolved = current ? resolveQuestionId(store, current) : null;
-        winner = resolved && ![...winners.values()].includes(resolved) ? resolved : holdingQuestion(store, grain, winners, parent);
-        winners.set(grainKey(grain), winner);
-      }
       for (const fragment of context) attachContext(store, fragment, winner, placed, moved);
       for (const fragment of fragmentsNow(store, pages)) {
         if (!SHEET_PACKAGE.has(fragment.role)) continue;
         const item = itemGrain(fragment.number, fragment.subpart);
-        if (!item || item.number !== grain.number) continue;
-        if (isBlankPackage(item, grain)) relink(store, fragment, winner, moved);
-        else if (isFine(item)) relink(store, fragment, holdingQuestion(store, item, holdings, fragment), moved);
+        if (!item || item.number !== grain.number || !isBlankPackage(item, grain)) continue;
+        relink(store, fragment, winner, moved);
       }
+    }
+    for (const grain of grains) {
+      const winner = winners.get(grainKey(grain));
+      if (!winner) continue;
       const keep = resolveQuestionId(store, winner);
       for (const fragment of linkedFragments(store, keep)) {
         const item = itemGrain(fragment.number, fragment.subpart);
         if (!item || item.number !== grain.number) continue;
         const stays = fragment.role === 'question' || fragment.role === 'diagram' ? isContext(item, grain) : isBlankPackage(item, grain);
         if (stays) continue;
-        relink(store, fragment, holdingQuestion(store, item, holdings, fragment), moved);
+        const other = item && winningKeys.has(grainKey(item)) ? winners.get(grainKey(item)) : undefined;
+        relink(store, fragment, other ?? holdingQuestion(store, item, holdings, fragment), moved);
       }
     }
   }
@@ -343,7 +352,6 @@ export function pairAnswerSheetCapture(store: MaterialStore, assetId: string): v
     return target ? [resolveQuestionId(store, target.question.id)] : [];
   }));
   for (const page of pages) {
-    if (!sheetIds.has(page.id)) continue;
     for (const fragment of latestFragments(store, page.id)) {
       if (!SHEET_PACKAGE.has(fragment.role)) continue;
       const item = itemGrain(fragment.number, fragment.subpart);
@@ -401,6 +409,7 @@ export type IntakePairing = {
 /** What intake can show after pairing. Same-page worksheets are absent, so their copy stays as it is. */
 export function readIntakePairing(store: MaterialStore, questions: QuestionBundle[]): IntakePairing {
   const result: IntakePairing = { byAsset: new Map(), sheetIncomplete: new Set(), verdicts: new Map(), unmatchedQuestions: new Set(), questionAsset: new Map(), unmatchedMarks: [] };
+  const excluded = inclusionIntents(store);
   const rows = store.db.prepare(`SELECT a.id, a.capture_id, a.hints_json, a.extraction_json,
       (SELECT j.state FROM material_job j WHERE j.owner_id=a.owner_id AND j.asset_id=a.id AND j.kind='extract' ORDER BY j.rowid DESC LIMIT 1) AS job_state
     FROM material_asset a WHERE a.owner_id=?`).all(store.studentId) as { id: string; capture_id: string; hints_json: string; extraction_json: string | null; job_state: string | null }[];
@@ -432,13 +441,14 @@ export function readIntakePairing(store: MaterialStore, questions: QuestionBundl
         const verdict = verdictOf(mark, full);
         return verdict ? [verdict] : [];
       });
+      if (excluded.get(target.question.id) === false) continue;
       if (!verdicts.length) result.unmatchedQuestions.add(target.question.id);
       else if (verdicts.includes('wrong')) result.verdicts.set(target.question.id, 'wrong');
       else if (verdicts.every(verdict => verdict === 'right')) result.verdicts.set(target.question.id, 'right');
       else result.verdicts.set(target.question.id, 'unclear');
     }
     for (const question of questions) {
-      if (paperQuestionIds.has(question.id)) continue;
+      if (paperQuestionIds.has(question.id) || excluded.get(question.id) === false) continue;
       const answers = question.attempts.flatMap(attempt => attempt.fragments).filter(fragment => sheetIds.has(fragment.assetId) && (fragment.role === 'student_work' || fragment.role === 'correction') && fragment.text.trim());
       const marks = question.teacherMarks.filter(mark => sheetIds.has(mark.assetId) && mark.text.trim());
       if (!answers.length && !marks.length) continue;

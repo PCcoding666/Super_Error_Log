@@ -14,7 +14,7 @@ import { MaterialJobs } from '../../src/materials/jobs.js';
 import { MaterialUploads } from '../../src/materials/uploads.js';
 import { extractMaterial } from '../../src/materials/extraction.js';
 import { canonicalItem, formatGrain, itemGrain, itemHeading, pairingCandidateLabel, pairingCopy, readIntakePairing } from '../../src/materials/answerSheetPairing.js';
-import { markedRight, notYetIncluded } from '../../src/materials/learning.js';
+import { excludeQuestions, markedRight, notYetIncluded } from '../../src/materials/learning.js';
 import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
@@ -108,7 +108,7 @@ describe('answer sheet paired with paper pages', () => {
     expect(right.teacherMarks.map(mark => mark.text)).toEqual(['√']);
     expect(markedRight(right)).toBe(true);
     expect(right.itemId).toBeNull();
-    expect(wrong.itemId).toBeTruthy();
+    expect(wrong.itemId).toBeNull();
     expect(wrong.stem.map(fragment => fragment.role).sort()).toEqual(['diagram', 'question']);
     expect(wrong.stem.find(fragment => fragment.role === 'diagram')!.assetId).toBe(paperA.assetId);
     expect(wrong.teacherMarks.map(mark => mark.text)).toEqual(['×']);
@@ -116,10 +116,10 @@ describe('answer sheet paired with paper pages', () => {
     expect(wrong.attempts.flatMap(attempt => attempt.fragments.map(fragment => fragment.text)).sort()).toEqual(['B', '纸上的演算']);
     expect(wrong.attempts.flatMap(attempt => attempt.fragments).find(fragment => fragment.text === 'B')!.assetId).toBe(sheet.assetId);
     expect(wrong.attempts.flatMap(attempt => attempt.fragments).find(fragment => fragment.text === '纸上的演算')!.assetId).toBe(paperA.assetId);
-    expect(crossed.itemId).toBeTruthy();
+    expect(crossed.itemId).toBeNull();
     expect(crossed.stem.map(fragment => fragment.role).sort()).toEqual(['diagram', 'question']);
     expect(crossed.stem.find(fragment => fragment.role === 'diagram')!.text).toBe('第8题装置图');
-    expect(deducted.itemId).toBeTruthy();
+    expect(deducted.itemId).toBeNull();
     expect(deducted.teacherMarks.map(mark => mark.text)).toEqual(['-1']);
     expect(unclear.itemId).toBeNull();
     expect(plain.itemId).toBeNull();
@@ -137,8 +137,8 @@ describe('answer sheet paired with paper pages', () => {
     expect(writtenOnly.teacherMarks.map(mark => mark.text)).toEqual(['×']);
     expect(questions.some(question => question.stem.some(fragment => fragment.role === 'question' && ['6', '15', '99'].includes(fragment.number ?? '')))).toBe(false);
     const pending = notYetIncluded(f.store).flatMap(group => group.questions.map(question => question.id));
-    expect(pending).toEqual(expect.arrayContaining([plain.id, unclear.id]));
-    expect(pending).not.toEqual(expect.arrayContaining([right.id, wrong.id, crossed.id, deducted.id]));
+    expect(pending).toEqual(expect.arrayContaining([plain.id, unclear.id, wrong.id, crossed.id, deducted.id]));
+    expect(pending).not.toContain(right.id);
     const pairing = readIntakePairing(f.store, questions);
     expect(pairing.verdicts.get(wrong.id)).toBe('wrong');
     expect(pairing.verdicts.get(deducted.id)).toBe('wrong');
@@ -186,7 +186,8 @@ describe('answer sheet paired with paper pages', () => {
     expect(wrong.stem.find(fragment => fragment.role === 'diagram')!.assetId).toBe(paper.assetId);
     expect(wrong.teacherMarks.map(mark => mark.text)).toEqual(['×']);
     expect(wrong.attempts.flatMap(attempt => attempt.fragments.map(fragment => fragment.text)).sort()).toEqual(['卡上第⑤空', '纸上第⑤空']);
-    expect(wrong.itemId).toBeTruthy();
+    expect(wrong.itemId).toBeNull();
+    expect(notYetIncluded(f.store).flatMap(group => group.questions.map(question => question.id))).toContain(wrong.id);
     expect(itemHeading(wrong)).toBe('第 13 题（2）⑤');
     expect(sibling.id).not.toBe(wrong.id);
     expect(sibling.itemId).toBeNull();
@@ -197,6 +198,58 @@ describe('answer sheet paired with paper pages', () => {
     const pairing = readIntakePairing(f.store, questions);
     expect(pairing.verdicts.get(wrong.id)).toBe('wrong');
     expect(pairing.verdicts.get(sibling.id)).not.toBe('wrong');
+  });
+
+  it('keeps every marked-wrong blank assembled when two blanks of one question are wrong', async () => {
+    const f = await fixture();
+    const hints = (pageIndex: number, pageKind: 'answer_sheet' | 'paper'): CaptureHints => ({ captureMode: 'multi', pageIndex, pageCount: 2, pageKind });
+    const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#eee'), hints: hints(1, 'answer_sheet') });
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: hints(2, 'paper') });
+    const sheetPage = page(f.uploads, sheet.assetId, [
+      { role: 'student_work', text: '卡上第④空', number: '13', subpart: '（2）④' },
+      { role: 'teacher_mark', text: '×', number: '13', subpart: '（2）④' },
+      { role: 'student_work', text: '卡上第⑤空', number: '13', subpart: '（2）⑤' },
+      { role: 'teacher_mark', text: '×', number: '13', subpart: '（2）⑤' },
+    ]);
+    const paperPage = page(f.uploads, paper.assetId, [
+      { text: '13. 合成题干', number: '13', subpart: null },
+      { text: '（2）合成小问', number: '13', subpart: '（2）' },
+      { role: 'diagram', text: '合成图', number: '13', subpart: null },
+      { role: 'student_work', text: '纸上第④空', number: '13', subpart: '（2）④' },
+      { role: 'student_work', text: '纸上第⑤空', number: '13', subpart: '（2）⑤' },
+    ]);
+    await extractMaterial(f.store, { extract: async () => ({ ...sheetPage, set: [sheetPage, paperPage] }) }, sheet.job.id, new AbortController().signal);
+    const questions = f.store.listQuestions();
+    const fourth = questions.find(question => question.teacherMarks.some(mark => mark.subpart === '（2）④'))!;
+    const fifth = questions.find(question => question.teacherMarks.some(mark => mark.subpart === '（2）⑤'))!;
+    for (const item of [fourth, fifth]) {
+      expect(item.stem.map(fragment => fragment.text).sort()).toEqual(['（2）合成小问', '13. 合成题干', '合成图'].sort());
+      expect(item.teacherMarks).toHaveLength(1);
+      expect(item.teacherMarks[0]!.text).toBe('×');
+      expect(item.itemId).toBeNull();
+    }
+    expect(fourth.attempts.flatMap(attempt => attempt.fragments.map(fragment => fragment.text)).sort()).toEqual(['卡上第④空', '纸上第④空']);
+    expect(fifth.attempts.flatMap(attempt => attempt.fragments.map(fragment => fragment.text)).sort()).toEqual(['卡上第⑤空', '纸上第⑤空']);
+    const pending = notYetIncluded(f.store).flatMap(group => group.questions.map(question => question.id));
+    expect(pending).toEqual(expect.arrayContaining([fourth.id, fifth.id]));
+    const pairing = readIntakePairing(f.store, questions);
+    expect(pairing.verdicts.get(fourth.id)).toBe('wrong');
+    expect(pairing.verdicts.get(fifth.id)).toBe('wrong');
+    expect(pairing.unmatchedMarks.filter(mark => mark.number === '13')).toEqual([]);
+  });
+
+  it('does not put back an unmatched answer-sheet item the student removed', async () => {
+    const f = await fixture();
+    const hints = (pageIndex: number, pageKind: 'answer_sheet' | 'paper'): CaptureHints => ({ captureMode: 'multi', pageIndex, pageCount: 2, pageKind });
+    const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#eee'), hints: hints(1, 'answer_sheet') });
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: hints(2, 'paper') });
+    const sheetPage = page(f.uploads, sheet.assetId, [{ role: 'teacher_mark', text: '×', number: '4' }]);
+    const paperPage = page(f.uploads, paper.assetId, [{ text: '9. 合成题干。', number: '9' }]);
+    await extractMaterial(f.store, { extract: async () => ({ ...sheetPage, set: [sheetPage, paperPage] }) }, sheet.job.id, new AbortController().signal);
+    const orphan = f.store.listQuestions().find(question => question.number === '4')!;
+    expect(readIntakePairing(f.store, f.store.listQuestions()).unmatchedMarks.map(mark => mark.number)).toContain('4');
+    excludeQuestions(f.store, [{ questionId: orphan.id, revision: orphan.revision }]);
+    expect(readIntakePairing(f.store, f.store.listQuestions()).unmatchedMarks.map(mark => mark.number)).not.toContain('4');
   });
 
   it('still extracts the paper pages when the answer-sheet locate is invalid', async () => {

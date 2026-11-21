@@ -176,7 +176,7 @@ function questionForCandidate(candidate: IntakeCandidate, questions: QuestionBun
 }
 
 /** Attach answer-sheet verdicts to the candidates of one photo. Joined right items are not offered as wrong. */
-function applyAnswerSheetPairing(candidates: IntakeCandidate[], pairing: IntakePairing, questions: QuestionBundle[], assetId: string): IntakeCandidate[] {
+function applyAnswerSheetPairing(candidates: IntakeCandidate[], pairing: IntakePairing, questions: QuestionBundle[], assetId: string, intents: Map<string, boolean>): IntakeCandidate[] {
   const seen = new Set<string>();
   const paired = candidates.flatMap(candidate => {
     const question = questionForCandidate(candidate, questions);
@@ -193,7 +193,7 @@ function applyAnswerSheetPairing(candidates: IntakeCandidate[], pairing: IntakeP
     return [{ ...candidate, label: shown, verdict: mark?.verdict ?? verdict ?? 'unclear', pairing: mark || unmatched ? 'unmatched' as const : 'joined' as const }];
   });
   for (const mark of pairing.unmatchedMarks) {
-    if (mark.assetId !== assetId || seen.has(mark.questionId) || mark.verdict === 'right') continue;
+    if (mark.assetId !== assetId || seen.has(mark.questionId) || mark.verdict === 'right' || intents.get(mark.questionId) === false) continue;
     paired.push({ id: `${mark.questionId}:${mark.revision}`, label: pairingCandidateLabel(mark.heading, 'unmatched-mark'), excerpt: mark.text.slice(0, 60), crop: `/s/materials/fragments/${mark.fragmentId}/crop?revision=${mark.fragmentRevision}`, verdict: mark.verdict, pairing: 'unmatched' });
   }
   return paired;
@@ -532,7 +532,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       const questions: IntakeQuestion[] = (included.get(asset.id) ?? []).map(q => ({ id: q.itemId!, excerpt: stemFirstSentence(q, 60), chapter: (() => { try { return categoryForItem(q.itemId!).chapter || '未分类'; } catch { return q.subject ?? '未分类'; } })(), thumb: cropOf(q) ?? `/s/img/item/${q.itemId}?s=thumb` }));
       const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q) }));
       if (preview) candidates.push(...previewCandidates(preview, all, intents));
-      const paired = applyAnswerSheetPairing(candidates, pairing, listed, asset.id);
+      const paired = applyAnswerSheetPairing(candidates, pairing, listed, asset.id, intents);
       const state = processing ? (preview ? (preview.phase === 'located' ? 'located' : 'enriching') : 'finding') : failed ? 'failed' : other ? 'unsupported' : paired.length ? 'needsPick' : 'done';
       const correct = all.filter(q => assetOf(q) === asset.id && markedRight(q)).length;
       const filedFromSheet = questions.some(item => listed.some(q => q.itemId === item.id && pairing.verdicts.get(q.id) === 'wrong'));
