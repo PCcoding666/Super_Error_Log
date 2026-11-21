@@ -17,7 +17,8 @@
 
 ### server
 
-- 等价于 `npm run verify`（typecheck、build、test、test:e2e），拆成独立步骤，红了一眼就知道是哪一步。
+- 等价于 `npm run verify`（`lint:mistakes`、typecheck、build、test、test:e2e），拆成独立步骤，红了一眼就知道是哪一步。
+- `lint:mistakes` 在 typecheck 之前跑，不需要浏览器。它只拦这仓库里已经反复出现过的错：继续新增旧 SSR 页面或路由、`TEXT PRIMARY KEY` 漏写 `NOT NULL`、代码里写死本机路径或直接读取 `.env`、帮助页和质量证据里未登记的图片、Playwright 重新依赖本机代理、真实模式静默退回 mock、上传路由还没确定就走多页。基线在 `scripts/lint/`。学生端新界面写在 `client/`，新接口写在 `src/web/api.ts`。不要为了让检查变绿去扩大基线。
 - 全程 `SEL_AI_MODE=mock`。不需要、也不读取任何 AI 密钥，不会发出真实模型请求。测试里出现的 key 都是合成的假值，请求都打到本机的假服务；在禁止一切对外网络的沙箱里跑 Vitest，668 个用例照样全过。
 - **Chromium 必须在 Vitest 之前装好。** `tests/globalSetup.ts` 在干净的 checkout 里会调用 `generateFixtures()`（用 Chromium 渲染合成试卷），生成 A4 PDF 的 `src/services/pdfService.ts` 也用 Chromium。把安装步骤挪到 `npm test` 之后，`npm test` 会在 globalSetup 直接报 `Executable doesn't exist`。
 - `npm ci` 前设了 `NPM_CONFIG_REPLACE_REGISTRY_HOST=always`：`package-lock.json` 里全部下载地址都指向 `registry.npmmirror.com`（国内镜像），这样 CI 改从 `registry.npmjs.org` 下载。锁文件里的 sha512 校验照常执行，装到的内容不变。哪天锁文件重新生成、地址变成官方源，这一行可以删。
@@ -68,6 +69,7 @@ macOS runner 在私有仓库按 10 倍计费，所以 `ios-unit` 只在下面两
 
 ```sh
 npm ci
+npm run lint:mistakes
 npm run typecheck && npm run build
 npx playwright install --with-deps chromium   # 必须在 npm test 之前
 SEL_AI_MODE=mock npm test

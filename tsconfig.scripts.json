@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": [
+    "scripts/repeatMistakes.ts",
+    "scripts/check-repeat-mistakes.ts",
+    "scripts/repeatMistakes.test.ts"
+  ]
+}
