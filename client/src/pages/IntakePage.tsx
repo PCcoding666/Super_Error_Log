@@ -105,6 +105,9 @@ export function IntakePage(): ReactNode {
   const selectLimit = data?.mode === 'legacy' ? INTAKE_SELECT_LIMIT.legacy : INTAKE_SELECT_LIMIT.materials;
   const renderedPhotos = listReady ? (filter.enabled ? current : [...current, ...earlier]) : [];
   const finding = renderedPhotos.some(photo => ['finding', 'located', 'enriching'].includes(photo.state));
+  // Say "finding" until a page is actually on screen. Judging copy starts after that.
+  const locating = finding || uploading || awaitingUpload || (!!data?.busy && renderedPhotos.length === 0);
+  const judging = !!data?.busy && !locating;
   const visibleKeys = new Set(renderedPhotos.flatMap(photo => photo.candidates.map(candidate => intakePickKey(photo.id, candidate.id))));
   const countedPicks = Object.fromEntries(Object.entries(picked).map(([id, set]) => [id, [...set]]));
   for (const photo of renderedPhotos) countedPicks[photo.id] = [...new Set([...(countedPicks[photo.id] ?? []), ...photo.candidates.filter(c => c.submitted).map(c => c.id)])];
@@ -344,7 +347,7 @@ export function IntakePage(): ReactNode {
     <IonContent fullscreen className="intake" ref={setContent}>
       <div className="intake-top">
         <h1>录入</h1>
-        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : !listReady ? '正在查找…' : filter.enabled ? (busy && finding ? 'AI 正在找题' : busy && !found ? '正在判断对错' : data?.total ? `这一天上传了 ${data.total} 张` : '这一天没有上传的材料') : busy && finding ? 'AI 正在找题' : busy && !found ? '正在判断对错' : found ? `找到 ${found} 道，已加入错题本 · 不相关的可以删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
+        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : !listReady ? '正在查找…' : filter.enabled ? (locating ? 'AI 正在找题' : judging && !found ? '正在判断对错' : data?.total ? `这一天上传了 ${data.total} 张` : '这一天没有上传的材料') : locating ? 'AI 正在找题' : judging && !found ? '正在判断对错' : found ? `找到 ${found} 道，已加入错题本 · 不相关的可以删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
       </div>
       <IonList inset lines="full" className="intake-filter">
         <IonItem>
