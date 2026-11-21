@@ -1,10 +1,11 @@
 import { IonButton, IonCheckbox, IonContent, IonIcon, IonItem, IonItemOption, IonItemOptions, IonItemSliding, IonLabel, IonList, IonPage, IonSpinner, IonToast, IonToggle } from '@ionic/react';
 import { checkmark } from 'ionicons/icons';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { initialUploadDayFilter, intakeListParams, intakeResponseMatches, intakeWaitsForUpload, reduceUploadDayFilter } from '../../../src/materials/dayFilter';
 import type { IntakeCandidate, IntakeCandidateDetail, IntakePhoto } from '../../../src/web/apiTypes';
 import { INTAKE_SELECT_LIMIT, intakePickKey, pagePickState, prunePhotoPicks, selectDisplayedPage, selectionCountText, selectionTotals } from '../../../src/web/intakeSelection';
+import { canAddCandidate, focusScrollPlan, orderCandidates, outcomeLabel, pageNote, processLabel, shouldPreselect } from '../lib/intakeVerdict';
 import { CandidateDetailModal } from '../components/CandidateDetailModal';
 import { CaptureDock } from '../components/CaptureDock';
 import { useCaptureSession } from '../lib/captureSession';
@@ -23,7 +24,6 @@ function timeLabel(iso: string): string {
   return sameDay ? `今天 ${time}` : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
 }
 
-const CANDIDATE_STATUS = { preliminary: '待识别 · 可先看图勾选', verifying: '校验中', verified: '已校验', needs_review: '识别仍有不确定处' };
 const MATERIALS_CANDIDATE = /^([A-Za-z0-9_-]{1,80}):([0-9]{1,9})$/;
 
 type DetailRequest = {
@@ -54,6 +54,10 @@ export function IntakePage(): ReactNode {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const contentRef = useRef<HTMLIonContentElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const [dockPad, setDockPad] = useState(0);
+  const touched = useRef(new Set<string>());
+  const seenFocus = useRef(new Set<string>());
   const scrollerRef = useRef<HTMLElement | null>(null);
   const liveScroll = useRef(0);
   const savedScroll = useRef(0);
@@ -103,7 +107,10 @@ export function IntakePage(): ReactNode {
   const renderedPhotos = listReady ? (filter.enabled ? current : [...current, ...earlier]) : [];
   const visibleKeys = new Set(renderedPhotos.flatMap(photo => photo.candidates.map(candidate => intakePickKey(photo.id, candidate.id))));
   const countedPicks = Object.fromEntries(Object.entries(picked).map(([id, set]) => [id, [...set]]));
-  for (const photo of renderedPhotos) countedPicks[photo.id] = [...new Set([...(countedPicks[photo.id] ?? []), ...photo.candidates.filter(c => c.submitted).map(c => c.id)])];
+  for (const photo of renderedPhotos) {
+    const blocked = new Set(orderCandidates(photo.candidates).filter(row => !canAddCandidate(row.verdict)).map(row => row.candidate.id));
+    countedPicks[photo.id] = [...new Set([...(countedPicks[photo.id] ?? []), ...photo.candidates.filter(candidate => candidate.submitted).map(candidate => candidate.id)])].filter(id => !blocked.has(id));
+  }
   const totals = selectionTotals(countedPicks, visibleKeys);
   const selectedText = selectionCountText(totals.total, listReady ? totals.hidden : 0);
 
@@ -117,6 +124,61 @@ export function IntakePage(): ReactNode {
       return Object.fromEntries(Object.entries(result.picks).map(([id, ids]) => [id, new Set(ids)]));
     });
   }, [data, listReady]);
+
+  useEffect(() => {
+    if (!listReady || !data) return;
+    setPicked(currentPicks => {
+      let changed = false;
+      const next: Record<string, Set<string>> = { ...currentPicks };
+      for (const photo of data.photos) {
+        const set = new Set(next[photo.id] ?? []);
+        let photoChanged = false;
+        for (const row of orderCandidates(photo.candidates)) {
+          if (!shouldPreselect(row.candidate, touched.current.has(intakePickKey(photo.id, row.candidate.id)))) continue;
+          if (set.has(row.candidate.id) || set.size >= selectLimit) continue;
+          set.add(row.candidate.id);
+          photoChanged = true;
+        }
+        if (photoChanged) {
+          next[photo.id] = set;
+          changed = true;
+        }
+      }
+      return changed ? next : currentPicks;
+    });
+  }, [data, listReady, selectLimit]);
+
+  useLayoutEffect(() => {
+    const node = bottomRef.current;
+    if (!node) return;
+    const apply = (): void => {
+      const height = Math.ceil(node.getBoundingClientRect().height);
+      const pad = height > 0 ? height + 12 : 0;
+      setDockPad(current => current === pad ? current : pad);
+      contentRef.current?.style.setProperty('--intake-dock', `${Math.max(pad, 320)}px`);
+    };
+    apply();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(apply);
+    // Border box includes padding, so safe-area changes are measured. Content-box would miss them.
+    try { observer.observe(node, { box: 'border-box' }); }
+    catch { observer.observe(node); }
+    return () => observer.disconnect();
+  }, [capture.pages.length, selectedText, listReady]);
+
+  useEffect(() => {
+    if (!listReady) return;
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-intake-focus="wrong"]')];
+    const plan = focusScrollPlan(rows.map(row => row.dataset.candidateId ?? ''), seenFocus.current);
+    for (const id of plan.remember) seenFocus.current.add(id);
+    const row = plan.target ? rows.find(item => item.dataset.candidateId === plan.target) : undefined;
+    if (!row) return;
+    const bar = document.querySelector('.intake-bottom');
+    const barTop = bar?.getBoundingClientRect().top ?? window.innerHeight;
+    const box = row.getBoundingClientRect();
+    const visible = box.height > 0 && box.top >= 0 && box.bottom <= barTop - 4;
+    if (!visible) row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [data, listReady, dockPad]);
 
   const remove = async (itemId: string): Promise<void> => {
     try { const result = await api.discard([itemId]); if (result.failed[0]) setToast(result.failed[0].message); }
@@ -152,7 +214,8 @@ export function IntakePage(): ReactNode {
     });
   };
   const include = async (photo: IntakePhoto): Promise<void> => {
-    const ids = [...(picked[photo.id] ?? [])];
+    const addable = new Set(orderCandidates(photo.candidates).filter(row => canAddCandidate(row.verdict)).map(row => row.candidate.id));
+    const ids = [...(picked[photo.id] ?? [])].filter(id => addable.has(id));
     if (!ids.length) return;
     if (ids.length > selectLimit) {
       setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
@@ -168,6 +231,7 @@ export function IntakePage(): ReactNode {
     await reload();
   };
   const setPick = (photoId: string, id: string, selected: boolean): void => {
+    touched.current.add(intakePickKey(photoId, id));
     const prev = picked[photoId] ?? new Set<string>();
     if (selected && !prev.has(id) && prev.size >= selectLimit) {
       setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
@@ -183,7 +247,8 @@ export function IntakePage(): ReactNode {
     });
   };
   const togglePage = (photo: IntakePhoto): void => {
-    const displayed = photo.candidates.filter(candidate => !candidate.submitted).map(candidate => candidate.id);
+    const displayed = orderCandidates(photo.candidates).filter(row => canAddCandidate(row.verdict) && !row.candidate.submitted).map(row => row.candidate.id);
+    for (const id of displayed) touched.current.add(intakePickKey(photo.id, id));
     const selected = [...(picked[photo.id] ?? [])];
     const result = selectDisplayedPage(selected, displayed, selectLimit, pagePickState(selected, displayed) === 'all' ? 'none' : 'all');
     if (result.truncated) setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
@@ -231,9 +296,12 @@ export function IntakePage(): ReactNode {
 
   const renderPhoto = (photo: IntakePhoto, index: number): ReactNode => {
     const shownNumber = filter.enabled || current.length <= 1 ? photo.number : index + 1;
-    const displayed = photo.candidates.filter(candidate => !candidate.submitted).map(candidate => candidate.id);
-    const selected = [...(picked[photo.id] ?? [])];
+    const ordered = orderCandidates(photo.candidates);
+    const displayed = ordered.filter(row => canAddCandidate(row.verdict) && !row.candidate.submitted).map(row => row.candidate.id);
+    const addable = new Set(ordered.filter(row => canAddCandidate(row.verdict)).map(row => row.candidate.id));
+    const selected = [...(picked[photo.id] ?? [])].filter(id => addable.has(id));
     const pickState = pagePickState(selected, displayed);
+    const hasFocus = ordered.some(row => row.focus);
     return <section key={photo.id} className="intake-photo" data-testid={`photo-row-${photo.number}`} data-state={photo.state}>
       <IonList inset lines="full">
         <IonItem lines="full" className="intake-head" detail={false}>
@@ -260,22 +328,36 @@ export function IntakePage(): ReactNode {
           <IonItemOptions side="end"><IonItemOption color="danger" data-testid="question-swipe-delete" onClick={() => void remove(question.id)}>删除</IonItemOption></IonItemOptions>
         </IonItemSliding>)}
         {photo.candidates.length ? <>
-          <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p>{photo.progress ? '可以先看图勾出做错的题，校验通过后加入错题本。' : '这页没有批改痕迹，勾出做错的题'}</p></IonLabel></IonItem>
+          <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p data-testid="intake-page-note">{pageNote(!!photo.progress, hasFocus)}</p></IonLabel></IonItem>
           <div className="intake-candidates">
-            {photo.candidates.map(candidate => <div key={candidate.id} className="intake-candidate" data-testid="pick-candidate">
-              <IonCheckbox
+            {ordered.map(row => {
+              const candidate = row.candidate;
+              const outcome = outcomeLabel(row.verdict);
+              const process = outcome ? null : processLabel(candidate.status);
+              const addableRow = canAddCandidate(row.verdict);
+              const checked = candidate.submitted || (picked[photo.id]?.has(candidate.id) ?? false);
+              return <div
+                key={candidate.id}
+                className={['intake-candidate', row.focus ? 'intake-candidate-focus' : '', row.verdict === 'right' ? 'intake-candidate-right' : ''].filter(Boolean).join(' ')}
+                data-testid="pick-candidate"
+                data-candidate-id={candidate.id}
+                data-verdict={row.verdict ?? 'none'}
+                data-intake-focus={row.focus ? 'wrong' : undefined}
+              >
+              {addableRow ? <IonCheckbox
                 className="intake-check"
-                checked={candidate.submitted || (picked[photo.id]?.has(candidate.id) ?? false)}
+                checked={checked}
                 disabled={candidate.submitted}
                 aria-label={`选择${candidate.label}`}
                 data-testid="pick-checkbox"
-                onIonChange={event => setPick(photo.id, candidate.id, event.detail.checked)}
-              />
+                onIonChange={event => { if (event.detail.checked !== checked) setPick(photo.id, candidate.id, event.detail.checked); }}
+              /> : <span className="intake-check-spacer" aria-hidden="true" />}
               {candidate.crop ? <img className="row-thumb" src={candidate.crop} alt="" loading="lazy" /> : null}
               <div className="intake-candidate-text">
                 <h3>{candidate.excerpt || candidate.label}</h3>
                 {candidate.excerpt ? <p>{candidate.label}</p> : null}
-                {candidate.status ? <p>{CANDIDATE_STATUS[candidate.status]}</p> : null}
+                {outcome ? <p className="intake-outcome" data-testid="candidate-outcome">{outcome}</p> : null}
+                {process ? <p>{process}</p> : null}
                 {candidate.submitted ? <p>{(photo.progress?.stage === 'done' || photo.state === 'failed') && candidate.status !== 'verified' ? '已选，暂未收录；请重试或补拍清楚的照片。' : '已选，校验通过后加入'}</p> : null}
               </div>
               <button
@@ -292,11 +374,12 @@ export function IntakePage(): ReactNode {
                 aria-label={`删除${candidate.label}，不加入错题本`}
                 onClick={() => confirmDelete({ kind: 'candidates', photoId: photo.id, ids: [candidate.id] })}
               >删除</button>
-            </div>)}
+            </div>;
+            })}
           </div>
           <div className="intake-actions">
-            <IonButton fill="clear" color="danger" size="default" disabled={!(picked[photo.id]?.size)} data-testid="candidate-delete-selected" onClick={() => confirmDelete({ kind: 'candidates', photoId: photo.id, ids: [...(picked[photo.id] ?? [])] })}>删除所选</IonButton>
-            <IonButton size="default" disabled={!(picked[photo.id]?.size)} onClick={() => void include(photo)} data-testid="pick-submit">加入{picked[photo.id]?.size ? ` ${picked[photo.id]!.size} 道` : ''}</IonButton>
+            <IonButton fill="clear" color="danger" size="default" disabled={!selected.length} data-testid="candidate-delete-selected" onClick={() => confirmDelete({ kind: 'candidates', photoId: photo.id, ids: selected })}>删除所选</IonButton>
+            <IonButton size="default" disabled={!selected.length} onClick={() => void include(photo)} data-testid="pick-submit">加入{selected.length ? ` ${selected.length} 道` : ''}</IonButton>
           </div>
         </> : null}
         {photo.failure ? <IonItem lines="none" className="intake-failure">
@@ -307,6 +390,10 @@ export function IntakePage(): ReactNode {
       </IonList>
     </section>;
   };
+
+  const openRow = detailRequest
+    ? orderCandidates(photos.find(photo => photo.id === detailRequest.photoId)?.candidates ?? []).find(row => row.candidate.id === detailRequest.candidateId)
+    : undefined;
 
   return <IonPage>
     <IonContent fullscreen className="intake" ref={setContent}>
@@ -345,8 +432,8 @@ export function IntakePage(): ReactNode {
         <IonButton fill="clear" disabled={!data?.hasMore} data-testid="day-filter-next" onClick={() => dispatchFilter({ type: 'page', page: filter.page + 1 })}>下一页</IonButton>
       </div> : null}
       {earlier.length ? <details className="intake-earlier"><summary>更早的 {earlier.length} 张</summary>{earlier.map(renderPhoto)}</details> : null}
-      <div className={capture.pages.length ? 'bottom-space intake-space tall' : 'bottom-space intake-space'} />
-      <div className="intake-bottom">
+      <div className="bottom-space intake-space" data-testid="intake-scroll-pad" style={dockPad > 0 ? { height: dockPad } : undefined} />
+      <div className="intake-bottom" ref={bottomRef}>
         <p className="intake-selected" role="status" data-testid="intake-selected">{selectedText}</p>
         <IonButton expand="block" shape="round" size="large" onClick={() => { uploader.finishBatch(); navigate('/', { replace: true }); }} data-testid="intake-done"><IonIcon icon={checkmark} slot="start" />完成</IonButton>
         <CaptureDock placement="inline" />
@@ -362,6 +449,8 @@ export function IntakePage(): ReactNode {
         selected={detailRequest ? (picked[detailRequest.photoId]?.has(detailRequest.candidateId) || photos.some(p => p.id === detailRequest.photoId && p.candidates.some(c => c.id === detailRequest.candidateId && c.submitted))) : false}
         terminal={!!detailRequest && photos.some(p => p.id === detailRequest.photoId && (p.progress?.stage === 'done' || p.state === 'failed'))}
         submitted={!!detailRequest && photos.some(p => p.id === detailRequest.photoId && p.candidates.some(c => c.id === detailRequest.candidateId && c.submitted))}
+        verdict={openRow?.verdict ?? null}
+        addable={!openRow || canAddCandidate(openRow.verdict)}
         onToggleSelected={selected => { if (detailRequest) setPick(detailRequest.photoId, detailRequest.candidateId, selected); }}
         onRequestClose={requestCloseDetail}
         onClosed={closeDetail}
