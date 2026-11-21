@@ -55,17 +55,24 @@ function Images(props: { crop: string | null; source: string | null; figures?: {
   </div>;
 }
 
+const VERDICT_NOTE: Record<NonNullable<IntakeCandidateDetail['verdict']>, string> = {
+  wrong: '这道看起来做错了。确认后可以加入错题本。',
+  partial: '这道有一部分做错了。确认后可以加入错题本。',
+  right: '这道看起来做对了。',
+  confirm: '还不能判断对错，请对照原图确认。',
+};
+
 function Recognized(props: { detail: IntakeCandidateDetail }): ReactNode {
   const text = questionText(props.detail.stem);
   const notes = readableUncertainties(props.detail.stem);
-  const unsure = props.detail.stem.some(fragment => fragment.check !== 'passed' || fragment.uncertainties.length > 0);
   const diagram = props.detail.figures.length > 0 || props.detail.stem.some(fragment => fragment.role === 'diagram' || fragment.requiresDiagram);
+  const verdict = props.detail.verdict;
   return <>
-    {props.detail.status && props.detail.status !== 'verified' ? <p className="item-hint tone-orange">{props.detail.status === 'needs_review' ? '识别仍有不确定处，请以原图为准。' : '题目仍在识别和校验，可以先看图勾选。'}</p> : null}
+    {props.detail.status === 'preliminary' || props.detail.status === 'verifying' ? <p className="item-hint">题目仍在识别和校验，可以先看图勾选。</p> : null}
+    {verdict ? <p className={`item-hint intake-verdict ${verdict}`} data-testid={verdict === 'confirm' ? 'candidate-uncertain' : 'candidate-verdict'}>{VERDICT_NOTE[verdict]}</p> : null}
     <h3>识别出的题目</h3>
     {text ? <div className="item-stem candidate-stem" data-testid="candidate-stem"><StemText text={text} /></div> : <p className="muted" data-testid="candidate-stem-empty">还没有识别出题目文字。</p>}
     {diagram ? <p className="muted">{props.detail.figures.length ? '这道题有图，请对照上面的题目裁图、题目图形和来源页。' : '这道题有图，请对照上面的裁图和来源页。'}</p> : null}
-    {unsure ? <p className="item-hint tone-orange" data-testid="candidate-uncertain">识别还有不确定处，请对照原图。</p> : null}
     {notes.map(note => <p key={note} className="muted">{note}</p>)}
     {props.detail.work.length ? <section data-testid="candidate-work"><h3>你写的</h3>{props.detail.work.map((line, index) => <p key={`${line.label ?? ''}-${index}`}>{line.label ? `${line.label}：` : ''}{line.text}</p>)}</section> : null}
     {props.detail.marks.length ? <section data-testid="candidate-mark"><h3>批改痕迹</h3>{props.detail.marks.map((line, index) => <p key={index}>{line.text}</p>)}</section> : null}
@@ -124,14 +131,14 @@ export function CandidateDetailModal(props: {
       <div className="candidate-select">
         <IonCheckbox
           checked={props.selected}
-          disabled={props.submitted}
+          disabled={props.submitted || props.detail?.verdict === 'right'}
           aria-label="勾选这道题"
           data-testid="detail-select"
           onIonChange={event => { if (event.detail.checked !== props.selected) props.onToggleSelected(event.detail.checked); }}
         />
         <div>
           <b>勾选这道题</b>
-          <p className="muted">{props.submitted ? (props.terminal && props.detail?.status !== 'verified' ? '已保存选择，但暂未收录。请重试或补拍清楚的照片。' : '已保存选择，校验通过后会加入错题本。') : '只是勾选，还不会加入错题本。'}</p>
+          <p className="muted">{props.detail?.verdict === 'right' ? '这道做对了，不会当作错题加入。' : props.submitted ? (props.terminal && props.detail?.status !== 'verified' ? '已保存选择，但暂未收录。请重试或补拍清楚的照片。' : '已保存选择，校验通过后会加入错题本。') : '只是勾选，还不会加入错题本。'}</p>
         </div>
       </div>
     </div></IonContent>

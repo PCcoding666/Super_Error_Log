@@ -23,7 +23,8 @@ function timeLabel(iso: string): string {
   return sameDay ? `今天 ${time}` : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
 }
 
-const CANDIDATE_STATUS = { preliminary: '待识别 · 可先看图勾选', verifying: '校验中', verified: '已校验', needs_review: '识别仍有不确定处' };
+const CANDIDATE_STATUS = { preliminary: '待识别 · 可先看图勾选', verifying: '校验中', verified: '已校验' };
+const VERDICT_LABEL = { wrong: '做错了', partial: '部分做错', right: '做对了', confirm: '请确认' };
 const MATERIALS_CANDIDATE = /^([A-Za-z0-9_-]{1,80}):([0-9]{1,9})$/;
 
 type DetailRequest = {
@@ -60,6 +61,8 @@ export function IntakePage(): ReactNode {
   // Freeze only while the sheet is open. A press that turns into a scroll must keep updating.
   const scrollFrozen = useRef(false);
   const detailToken = useRef(0);
+  // A student uncheck must survive the next poll. Preselected ids are suggestions, not a saved choice.
+  const rejectedPicks = useRef(new Set<string>());
   const setContent = useCallback((node: HTMLIonContentElement | null) => {
     contentRef.current = node;
     if (!node) return;
@@ -101,6 +104,10 @@ export function IntakePage(): ReactNode {
   const capture = useCaptureSession();
   const selectLimit = data?.mode === 'legacy' ? INTAKE_SELECT_LIMIT.legacy : INTAKE_SELECT_LIMIT.materials;
   const renderedPhotos = listReady ? (filter.enabled ? current : [...current, ...earlier]) : [];
+  const finding = renderedPhotos.some(photo => ['finding', 'located', 'enriching'].includes(photo.state));
+  // Say "finding" until a page is actually on screen. Judging copy starts after that.
+  const locating = finding || uploading || awaitingUpload || (!!data?.busy && renderedPhotos.length === 0);
+  const judging = !!data?.busy && !locating;
   const visibleKeys = new Set(renderedPhotos.flatMap(photo => photo.candidates.map(candidate => intakePickKey(photo.id, candidate.id))));
   const countedPicks = Object.fromEntries(Object.entries(picked).map(([id, set]) => [id, [...set]]));
   for (const photo of renderedPhotos) countedPicks[photo.id] = [...new Set([...(countedPicks[photo.id] ?? []), ...photo.candidates.filter(c => c.submitted).map(c => c.id)])];
@@ -113,10 +120,27 @@ export function IntakePage(): ReactNode {
     setPicked(currentPicks => {
       const flat = Object.fromEntries(Object.entries(currentPicks).map(([id, set]) => [id, [...set]]));
       const result = prunePhotoPicks(flat, data.photos.map(photo => ({ id: photo.id, candidateIds: photo.candidates.map(candidate => candidate.id) })), !data.filter);
-      if (!result.changed) return currentPicks;
-      return Object.fromEntries(Object.entries(result.picks).map(([id, ids]) => [id, new Set(ids)]));
+      const next = Object.fromEntries(Object.entries(result.picks).map(([id, ids]) => [id, new Set(ids)]));
+      let changed = result.changed;
+      for (const photo of data.photos) {
+        const set = next[photo.id] ?? new Set<string>();
+        for (const candidate of photo.candidates) {
+          const key = intakePickKey(photo.id, candidate.id);
+          if (candidate.verdict === 'right') {
+            if (set.delete(candidate.id)) changed = true;
+            continue;
+          }
+          if (!candidate.preselected || candidate.submitted || rejectedPicks.current.has(key) || set.has(candidate.id)) continue;
+          if (set.size >= selectLimit) continue;
+          set.add(candidate.id);
+          changed = true;
+        }
+        next[photo.id] = set;
+      }
+      if (!changed) return currentPicks;
+      return next;
     });
-  }, [data, listReady]);
+  }, [data, listReady, selectLimit]);
 
   const remove = async (itemId: string): Promise<void> => {
     try { const result = await api.discard([itemId]); if (result.failed[0]) setToast(result.failed[0].message); }
@@ -169,10 +193,14 @@ export function IntakePage(): ReactNode {
   };
   const setPick = (photoId: string, id: string, selected: boolean): void => {
     const prev = picked[photoId] ?? new Set<string>();
-    if (selected && !prev.has(id) && prev.size >= selectLimit) {
+    if (prev.has(id) === selected) return;
+    if (selected && prev.size >= selectLimit) {
       setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
       return;
     }
+    const key = intakePickKey(photoId, id);
+    if (selected) rejectedPicks.current.delete(key);
+    else rejectedPicks.current.add(key);
     setPicked(currentPicks => {
       const set = currentPicks[photoId] ?? new Set<string>();
       if (set.has(id) === selected) return currentPicks;
@@ -183,9 +211,15 @@ export function IntakePage(): ReactNode {
     });
   };
   const togglePage = (photo: IntakePhoto): void => {
-    const displayed = photo.candidates.filter(candidate => !candidate.submitted).map(candidate => candidate.id);
+    const displayed = photo.candidates.filter(candidate => !candidate.submitted && candidate.verdict !== 'right').map(candidate => candidate.id);
     const selected = [...(picked[photo.id] ?? [])];
-    const result = selectDisplayedPage(selected, displayed, selectLimit, pagePickState(selected, displayed) === 'all' ? 'none' : 'all');
+    const clearing = pagePickState(selected, displayed) === 'all';
+    for (const id of displayed) {
+      const key = intakePickKey(photo.id, id);
+      if (clearing) rejectedPicks.current.add(key);
+      else rejectedPicks.current.delete(key);
+    }
+    const result = selectDisplayedPage(selected, displayed, selectLimit, clearing ? 'none' : 'all');
     if (result.truncated) setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
     setPicked(currentPicks => ({ ...currentPicks, [photo.id]: new Set(result.ids) }));
   };
@@ -231,7 +265,7 @@ export function IntakePage(): ReactNode {
 
   const renderPhoto = (photo: IntakePhoto, index: number): ReactNode => {
     const shownNumber = filter.enabled || current.length <= 1 ? photo.number : index + 1;
-    const displayed = photo.candidates.filter(candidate => !candidate.submitted).map(candidate => candidate.id);
+    const displayed = photo.candidates.filter(candidate => !candidate.submitted && candidate.verdict !== 'right').map(candidate => candidate.id);
     const selected = [...(picked[photo.id] ?? [])];
     const pickState = pagePickState(selected, displayed);
     return <section key={photo.id} className="intake-photo" data-testid={`photo-row-${photo.number}`} data-state={photo.state}>
@@ -248,7 +282,7 @@ export function IntakePage(): ReactNode {
             aria-label={pickState === 'all' ? `取消全选第 ${shownNumber} 张` : `全选第 ${shownNumber} 张`}
             onClick={() => togglePage(photo)}
           >{pickState === 'all' ? '取消全选' : '全选本页'}</button> : null}
-          {['finding', 'located', 'enriching'].includes(photo.state) ? <IonSpinner slot="end" name="lines-small" /> : null}
+          {['finding', 'located', 'enriching'].includes(photo.state) || photo.grading ? <IonSpinner slot="end" name="lines-small" /> : null}
         </IonItem>
         {photo.questions.map(question => <IonItemSliding key={question.id}>
           <IonItem button detail={false} className="intake-row" data-testid="intake-question" onClick={() => navigate(`/q/${question.id}`)}>
@@ -260,22 +294,23 @@ export function IntakePage(): ReactNode {
           <IonItemOptions side="end"><IonItemOption color="danger" data-testid="question-swipe-delete" onClick={() => void remove(question.id)}>删除</IonItemOption></IonItemOptions>
         </IonItemSliding>)}
         {photo.candidates.length ? <>
-          <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p>{photo.progress ? '可以先看图勾出做错的题，校验通过后加入错题本。' : '这页没有批改痕迹，勾出做错的题'}</p></IonLabel></IonItem>
+          <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p>{photo.candidates.some(candidate => candidate.preselected) ? '做错的题已勾选，确认后加入错题本。' : photo.grading ? '题目先列在这里。判断完成后，做错的会勾上。' : photo.progress ? '可以先看图勾出做错的题，校验通过后加入错题本。' : '勾出做错的题，确认后加入错题本。'}</p></IonLabel></IonItem>
           <div className="intake-candidates">
-            {photo.candidates.map(candidate => <div key={candidate.id} className="intake-candidate" data-testid="pick-candidate">
-              <IonCheckbox
+            {photo.candidates.map(candidate => <div key={candidate.id} className={`intake-candidate${candidate.verdict ? ` is-${candidate.verdict}` : ''}`} data-testid="pick-candidate" data-verdict={candidate.verdict ?? ''}>
+              {candidate.verdict === 'right' ? null : <IonCheckbox
                 className="intake-check"
                 checked={candidate.submitted || (picked[photo.id]?.has(candidate.id) ?? false)}
                 disabled={candidate.submitted}
                 aria-label={`选择${candidate.label}`}
                 data-testid="pick-checkbox"
                 onIonChange={event => setPick(photo.id, candidate.id, event.detail.checked)}
-              />
+              />}
               {candidate.crop ? <img className="row-thumb" src={candidate.crop} alt="" loading="lazy" /> : null}
               <div className="intake-candidate-text">
                 <h3>{candidate.excerpt || candidate.label}</h3>
                 {candidate.excerpt ? <p>{candidate.label}</p> : null}
-                {candidate.status ? <p>{CANDIDATE_STATUS[candidate.status]}</p> : null}
+                {candidate.status === 'preliminary' || candidate.status === 'verifying' ? <p>{CANDIDATE_STATUS[candidate.status]}</p> : null}
+                {candidate.verdict ? <p className={`intake-verdict ${candidate.verdict}`} data-testid="candidate-verdict">{VERDICT_LABEL[candidate.verdict]}</p> : null}
                 {candidate.submitted ? <p>{(photo.progress?.stage === 'done' || photo.state === 'failed') && candidate.status !== 'verified' ? '已选，暂未收录；请重试或补拍清楚的照片。' : '已选，校验通过后加入'}</p> : null}
               </div>
               <button
@@ -312,7 +347,7 @@ export function IntakePage(): ReactNode {
     <IonContent fullscreen className="intake" ref={setContent}>
       <div className="intake-top">
         <h1>录入</h1>
-        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : !listReady ? '正在查找…' : filter.enabled ? (busy ? 'AI 正在找题' : data?.total ? `这一天上传了 ${data.total} 张` : '这一天没有上传的材料') : busy ? 'AI 正在找题' : found ? `找到 ${found} 道，已加入错题本 · 不相关的可以删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
+        <p className="muted" role="status">{pendingUploads.length ? `正在上传 · 还剩 ${pendingUploads.filter(entry => entry.state !== 'failed').length} 张` : !listReady ? '正在查找…' : filter.enabled ? (locating ? 'AI 正在找题' : judging && !found ? '正在判断对错' : data?.total ? `这一天上传了 ${data.total} 张` : '这一天没有上传的材料') : locating ? 'AI 正在找题' : judging && !found ? '正在判断对错' : found ? `找到 ${found} 道，已加入错题本 · 不相关的可以删掉` : current.length ? '这一批没有新增错题' : '还没有录入'}</p>
       </div>
       <IonList inset lines="full" className="intake-filter">
         <IonItem>

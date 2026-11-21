@@ -31,8 +31,9 @@
 .tone-orange { color: #974b06; }
 .bottom-space { height: 240px; }
 .bottom-space.tall { height: 420px; }
-.intake-space { height: 220px; }
-.intake-space.tall { height: 460px; }
+/* Fixed intake bar: status line, 完成, and 新增. The last question must scroll clear of it. */
+.intake-space { height: calc(340px + env(safe-area-inset-bottom, 0px)); }
+.intake-space.tall { height: calc(580px + env(safe-area-inset-bottom, 0px)); }
 .problem { margin: 16px 20px; padding: 14px 16px; background: var(--ion-item-background); border-radius: 16px; }
 
 /* ---------- 错题本（根） ---------- */
@@ -197,6 +198,14 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .intake-candidate-text { flex: 1; min-width: 0; }
 .intake-candidate-text h3 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .intake-candidate-text p { margin: 2px 0 0; font-size: 14px; color: var(--sel-muted); }
+.intake-candidate.is-wrong { box-shadow: inset 3px 0 0 #d7282f; }
+.intake-candidate.is-partial { box-shadow: inset 3px 0 0 #974b06; }
+.intake-candidate.is-right { box-shadow: inset 3px 0 0 #1f7a3a; }
+.intake-verdict { font-weight: 600; }
+.intake-verdict.wrong { color: #d7282f; }
+.intake-verdict.partial { color: #974b06; }
+.intake-verdict.right { color: #1f7a3a; }
+.intake-verdict.confirm { color: var(--sel-muted); font-weight: 500; }
 .intake-selected { margin: 0 4px 8px; text-align: center; font-size: 14px; line-height: 1.4; color: var(--sel-muted); }
 .candidate-detail { padding: 8px 20px 32px; }
 .candidate-detail h2 { margin: 4px 0 8px; font-size: 22px; font-weight: 700; }

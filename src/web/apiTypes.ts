@@ -144,6 +144,9 @@ export interface IntakeQuestion {
   thumb: string;
 }
 
+/** Teacher mark or grade, for the intake list. confirm means the student still has to judge. */
+export type IntakeVerdict = 'wrong' | 'partial' | 'right' | 'confirm';
+
 export interface IntakeCandidate {
   /** 识别出的候选题 id（旧流程为识别任务里的题 id，材料流程为 questionId:revision 或稳定的 fragmentId:sourceRevision）。 */
   id: string;
@@ -152,6 +155,13 @@ export interface IntakeCandidate {
   status?: 'preliminary' | 'verifying' | 'verified' | 'needs_review';
   /** Selection submitted to the server; waits for trustworthy final evidence. */
   submitted?: boolean;
+  /**
+   * Server judgment. wrong/partial are suggestions until the student confirms.
+   * right is visible and is not a mistake. confirm is still undecided.
+   */
+  verdict?: IntakeVerdict;
+  /** Highlight only. Never written into the notebook until the student confirms. */
+  preselected?: boolean;
   /** 裁图；材料流程没有裁图时为 null。 */
   crop: string | null;
 }
@@ -177,6 +187,8 @@ export interface IntakeCandidateDetail {
   subject: string | null;
   stem: IntakeCandidateFragment[];
   status?: IntakeCandidate['status'];
+  verdict?: IntakeCandidate['verdict'];
+  preselected?: boolean;
   /** 题目区域裁图；没有时为 null。框保持定位结果，不并入旁边的图。 */
   crop: string | null;
   /** 已关联的题目图形，各自仍是自己的裁图。没有关联图形时为空。 */
@@ -210,6 +222,8 @@ export interface IntakePhoto {
   state: IntakePhotoState;
   statusText: string;
   progress?: { stage: 'located' | 'enriching' | 'done'; total: number; verified: number; firstBatchCount: number; tLocateDoneMs: number; tFirstSelectableMs: number | null; tFullExtractMs: number | null };
+  /** Answer/grade jobs for this page are still queued or running. The question list is already usable. */
+  grading?: boolean;
   /** 已经在错题本里的题。 */
   questions: IntakeQuestion[];
   /** 没有批改痕迹的页：等学生勾选的候选题。 */

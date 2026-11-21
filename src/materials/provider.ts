@@ -503,10 +503,10 @@ export function createMaterialActionProvider(options: MaterialProviderOptions, b
             const fragments=[...snapshot.stem,...snapshot.work];
             if(!snapshot.work.length||fragments.length>32||fragments.reduce((n,f)=>n+f.text.length,0)+snapshot.answers.reduce((n,a)=>n+a.text.length,0)>40000)
                 throw new MaterialProviderError('unsupported','题目和作答超过处理上限。',false);
-            return binding.request(`material-grade-v1:${snapshot.basisKey}`,async (requestSignal,beforeRequest)=>{
+            return binding.request(`material-grade-v1:${snapshot.provisional?'provisional:':''}${snapshot.basisKey}`,async (requestSignal,beforeRequest)=>{
                 const combined=AbortSignal.any([signal,requestSignal]);combined.throwIfAborted();
                 const run={stage:'material_grade' as const,model:'synthetic-mock',durationMs:0,promptTokens:null,completionTokens:null,maxTokens:4096,thinking:false as const,promptVersion:'material-grade-v1'};
-                if(options.mode==='mock')return validateMaterialGrade({result:'uncertain',findings:[{fragmentIds:snapshot.work.map(f=>f.fragmentId),text:'合成测试批改建议，无法确定真实正确性。'}],score:null,run},snapshot);
+                if(options.mode==='mock')return validateMaterialGrade({result:'uncertain',findings:[{fragmentIds:snapshot.work.map(f=>f.fragmentId),text:'合成测试批改建议，无法确定真实正确性。'}],score:null,run},snapshot,{provisional:snapshot.provisional===true});
                 const content:unknown[]=[{type:'text',text:JSON.stringify({operation:'grade',...snapshot,schema:{questionId:snapshot.questionId,attemptId:snapshot.attemptId,basisKey:snapshot.basisKey,result:'correct|partial|incorrect|uncertain',findings:[{fragmentIds:['所选work的真实片段ID'],text:'简短依据'}],score:'null 或 {earned,total,rubricFragmentIds}，只允许题干明确评分条件，不允许仅凭总分'}})}];
                 await actionImages(binding,fragments,content,f=>f.role==='diagram'||f.role==='student_work'||f.role==='correction');
                 try {
@@ -516,13 +516,15 @@ export function createMaterialActionProvider(options: MaterialProviderOptions, b
                     // With a single selected work fragment a finding can only be about that fragment; otherwise it must say which.
                     const only=snapshot.work.length===1?snapshot.work[0]!.fragmentId:null;
                     const findings=Array.isArray(value.findings)&&only?value.findings.map(f=>f&&typeof f==='object'&&!Array.isArray(f)&&(f as Record<string,unknown>).fragmentIds===undefined?{...f,fragmentIds:[only]}:f):value.findings;
-                    return validateMaterialGrade({...value,findings,run:{...response.run,promptVersion:'material-grade-v1.1'}} as MaterialGradeOutput,snapshot);
+                    return validateMaterialGrade({...value,findings,run:{...response.run,promptVersion:'material-grade-v1.1'}} as MaterialGradeOutput,snapshot,{provisional:snapshot.provisional===true});
                 }catch(error){combined.throwIfAborted();throw classify(error);}
             });
         } };
 }
 
-export type MaterialGradeInput={questionId:string;attemptId:string;basisKey:string;stem:Fragment[];work:Fragment[];answers:ReferenceAnswer[]};
+export type MaterialGradeInput={questionId:string;attemptId:string;basisKey:string;stem:Fragment[];work:Fragment[];answers:ReferenceAnswer[];
+ /** Intake may keep a wrong/right/partial result when the text is readable but not fully verified. Workspace grading omits this. */
+ provisional?:boolean};
 export type MaterialGradeOutput=Pick<Grade,'result'|'findings'|'score'|'run'>;
 export interface MaterialGradingProvider extends MaterialAnswerProvider {grade(input:MaterialGradeInput,signal:AbortSignal):Promise<MaterialGradeOutput>}
 type ParsedScoringRubric = { criteria: { condition:string; points:number }[]; total:number };
@@ -550,7 +552,7 @@ function parseScoringRubric(f:Fragment):ParsedScoringRubric|null {
  return Number.isFinite(total)?{criteria,total}:null;
 }
 export function hasScoringCriteria(f:Fragment):boolean {return parseScoringRubric(f)!==null;}
-export function validateMaterialGrade(value:MaterialGradeOutput,input:{stem:Fragment[];work:Fragment[]}):MaterialGradeOutput {
+export function validateMaterialGrade(value:MaterialGradeOutput,input:{stem:Fragment[];work:Fragment[]},options?:{provisional?:boolean}):MaterialGradeOutput {
  const v=record(value);if(!['correct','partial','incorrect','uncertain'].includes(String(v.result))||!Array.isArray(v.findings)||!v.findings.length||v.findings.length>128)return invalid();
  const findings=v.findings.map(raw=>{const f=record(raw),ids=list(f.fragmentIds),text=str(f.text,4000);if(!text.trim()||!ids.length||new Set(ids).size!==ids.length||ids.some(id=>!input.work.some(w=>w.fragmentId===id)))return invalid();return {fragmentIds:ids,text};});
  const run=record(v.run);if(run.stage!=='material_grade')return invalid();
@@ -561,7 +563,10 @@ export function validateMaterialGrade(value:MaterialGradeOutput,input:{stem:Frag
   const total=rubric.reduce((sum,r)=>sum+(r?.total??0),0);
   if(ids.length&&new Set(ids).size===ids.length&&rubric.every(r=>r!==null)&&Math.abs(total-raw.total)<1e-8)score={earned:raw.earned,total:raw.total,rubricFragmentIds:ids};
  }
- const uncertain=[...input.stem,...input.work].some(f=>f.check!=='passed'||f.uncertainties.length);
+ // Strict grading cannot claim wrong or right unless every fragment passed with no uncertainties.
+ // A provisional intake grade may keep that claim when the text is readable (passed or low) and nothing blocks it.
+ const blocksJudgment=(f:Fragment)=>options?.provisional?f.check==='failed'||f.check==='unchecked'||f.uncertainties.includes('missing_diagram'):f.check!=='passed'||f.uncertainties.length>0;
+ const uncertain=[...input.stem,...input.work].some(blocksJudgment);
  return {result:uncertain?'uncertain':value.result,findings,score:uncertain||value.result==='uncertain'?null:score,run:value.run};
 }
 async function actionImages(binding:MaterialActionBinding,fragments:Fragment[],content:unknown[],include:(f:Fragment)=>boolean):Promise<void>{
