@@ -169,6 +169,28 @@ function dismissedPreviewFragments(store:MaterialStore):Set<string> {
  for(const progress of readIntakeProgress(store).values()) for(const id of progress.dismissed??[]) ids.add(id);
  return ids;
 }
+const INTAKE_NOTE_PREFIX = 'AI 判断：';
+const INTAKE_NOTE_LABEL = { incorrect: '做错', partial: '部分做错', correct: '做对', uncertain: '还不能判断对错' } as const;
+/** The judgment a student can read in 备注 after the notebook item exists. Intake rows do not show this text. */
+function intakeJudgmentNote(question: import('./contracts.js').QuestionBundle): string | null {
+ if (decisiveTeacherMark(question)) return null;
+ const grades = question.grades.filter(grade => !grade.stale && grade.source === 'intake');
+ const decided = grades.filter(grade => grade.result === 'incorrect' || grade.result === 'partial' || grade.result === 'correct');
+ const chosen = decided.length ? (decided.every(grade => grade.result === decided[0]!.result) ? decided[0] : undefined) : grades.find(grade => grade.result === 'uncertain');
+ if (!chosen) return null;
+ const reason = chosen.findings.map(finding => finding.text.trim()).find(Boolean) ?? '';
+ const text = reason ? `${INTAKE_NOTE_PREFIX}${INTAKE_NOTE_LABEL[chosen.result]}\n${reason}` : `${INTAKE_NOTE_PREFIX}${INTAKE_NOTE_LABEL[chosen.result]}`;
+ return text.length > 1000 ? text.slice(0, 1000) : text;
+}
+/** Fill an empty 备注, or replace an earlier intake judgment. A note the student wrote stays. */
+function rememberIntakeJudgment(store: MaterialStore, itemId: string, question: import('./contracts.js').QuestionBundle): void {
+ const text = intakeJudgmentNote(question);
+ if (!text) return;
+ const current = store.db.prepare('SELECT text FROM item_note WHERE item_id=?').get(itemId) as { text: string } | undefined;
+ if (current && !current.text.startsWith(INTAKE_NOTE_PREFIX)) return;
+ if (current?.text === text) return;
+ store.db.prepare('INSERT INTO item_note(item_id, text, updated_at) VALUES (?,?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text, updated_at=excluded.updated_at').run(itemId, text, now());
+}
 /** Called at mutation boundaries, never by material GETs. No mastery or evidence writes. */
 export function syncMaterialLearning(store:MaterialStore):void {
  store.transaction(()=>{
@@ -200,6 +222,7 @@ export function syncMaterialLearning(store:MaterialStore):void {
    }else{
     store.db.prepare('UPDATE error_item SET text_excerpt=?,subject=?,knowledge_tags=?,updated_at=? WHERE id=?').run(questionExcerpt(assembledQuestionTexts(store,q).join('\n\n')),q.subject,JSON.stringify(q.tags),now(),itemId);
    }
+   rememberIntakeJudgment(store, itemId, q);
   }
  });
 }

@@ -18,7 +18,7 @@ import { extractMaterial } from '../../src/materials/extraction.js';
 import { intakeVerdict, requestGrades, requestIntakeGrades, gradeQuestion } from '../../src/materials/grading.js';
 import { createMaterialActionProvider, validateMaterialGrade } from '../../src/materials/provider.js';
 import { flushIntakeSelections, readIntakeProgress } from '../../src/materials/intakeProgress.js';
-import { markedRight, notYetIncluded, syncMaterialLearning } from '../../src/materials/learning.js';
+import { includeQuestions, markedRight, notYetIncluded, syncMaterialLearning } from '../../src/materials/learning.js';
 import { readQuestion } from '../../src/materials/queries.js';
 import { MobileRecognitionService, MobileRequestError } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
@@ -94,7 +94,7 @@ async function settled(jobs: MaterialJobs, id: string) {
   throw new Error('not settled');
 }
 
-type Candidate = { id: string; excerpt: string; verdict: string; preselected?: boolean; submitted?: boolean };
+type Candidate = { id: string; label: string; excerpt: string; verdict: string; preselected?: boolean; submitted?: boolean };
 type Intake = { busy: boolean; photos: { id: string; state: string; candidates: Candidate[]; questions: { id: string; excerpt: string }[] }[] };
 
 it('keeps a provisional result only when the stem and work are readable', () => {
@@ -229,17 +229,32 @@ it('grades an unmarked page after extract, preselects wrong items, and files not
   flushIntakeSelections(store, saved.assetId);
   expect((db.prepare('SELECT count(*) n FROM error_item').get() as { n: number }).n).toBe(1);
   const wrong = byExcerpt.get('STEM-WRONG')!;
+  for (const candidate of graded.candidates) expect(`${candidate.label}\n${candidate.excerpt}`).not.toMatch(/做错|做对|请确认|部分做错/);
   const detail = await fetch(`${base}/s/api/intake/candidates/${wrong.id.split(':')[0]}?revision=${wrong.id.split(':')[1]}`, { headers: { accept: 'application/json' } });
   expect(detail.status).toBe(200);
-  expect(await detail.json()).toMatchObject({ verdict: 'wrong', preselected: true });
+  const detailBody = await detail.json() as { verdict: string; preselected?: boolean; label: string; grades: unknown[] };
+  expect(detailBody).toMatchObject({ verdict: 'wrong', preselected: true, grades: [] });
+  expect(detailBody.label).not.toMatch(/做错|做对|请确认|部分做错/);
   const selected = await fetch(`${base}/s/api/intake/photos/${saved.assetId}/select`, {
     method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ ids: [wrong.id] }),
   });
   expect(selected.status).toBe(200);
   expect(await selected.json()).toMatchObject({ included: 1 });
   const questions = store.listQuestions();
-  expect(questions.find(question => question.stem.some(fragment => fragment.text.includes('STEM-WRONG')))?.itemId).toBeTruthy();
-  expect(questions.find(question => question.stem.some(fragment => fragment.text.includes('STEM-RIGHT')))?.itemId).toBeNull();
+  const filed = questions.find(question => question.stem.some(fragment => fragment.text.includes('STEM-WRONG')))!;
+  expect(filed.itemId).toBeTruthy();
+  const note = () => (store.db.prepare('SELECT text FROM item_note WHERE item_id=?').get(filed.itemId) as { text: string } | undefined)?.text ?? '';
+  expect(note()).toContain('AI 判断：做错');
+  expect(note()).toContain('Synthetic comparison only.');
+  store.db.prepare('UPDATE item_note SET text=? WHERE item_id=?').run('学生自己的备注', filed.itemId);
+  syncMaterialLearning(store);
+  expect(note()).toBe('学生自己的备注');
+  const right = questions.find(question => question.stem.some(fragment => fragment.text.includes('STEM-RIGHT')))!;
+  expect(right.itemId).toBeNull();
+  expect(includeQuestions(store, [{ questionId: right.id, revision: right.revision }])).toEqual({ included: 1, skipped: 0 });
+  const rightNote = store.db.prepare('SELECT text FROM item_note WHERE item_id=?').get(store.getQuestion(right.id)!.itemId) as { text: string };
+  expect(rightNote.text).toContain('AI 判断：做对');
+  expect(rightNote.text).toContain('Synthetic comparison only.');
   expect(questions.find(question => question.stem.some(fragment => fragment.text.includes('STEM-PARTIAL')))?.itemId).toBeNull();
   expect(questions.find(question => question.stem.some(fragment => fragment.text.includes('STEM-TICK')))?.itemId).toBeNull();
   expect(markedRight(questions.find(question => question.stem.some(fragment => fragment.text.includes('STEM-TICK')))!)).toBe(true);

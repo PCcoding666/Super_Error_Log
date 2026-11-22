@@ -104,7 +104,7 @@ function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandida
     })),
     marks: question.teacherMarks.filter(fragment => fragment.text.trim()).map(fragment => ({ text: fragment.text })),
     answers,
-    grades: question.grades.map(grade => ({
+    grades: question.grades.filter(grade => grade.source !== 'intake').map(grade => ({
       result: grade.result,
       findings: grade.findings.map(finding => finding.text).filter(text => text.trim()),
       score: grade.score && Number.isFinite(grade.score.earned) && Number.isFinite(grade.score.total)
