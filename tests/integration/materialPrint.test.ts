@@ -458,3 +458,26 @@ it('blocks unresolved original legacy reference conflicts and freezes a subseque
     expect((f.db.prepare('SELECT snapshot_json FROM v2_print_snapshot WHERE packet_id=?').get(id) as { snapshot_json: string }).snapshot_json).toBe(pendingBytes);
     expect(frozen(id)).toBe(pendingBasis);
 });
+
+    it('prints a paired subpart with its shared stem, diagram, and link basis', async () => {
+        const f = await fixture(), paper = await f.asset('#cccccc', true), sheet = await f.asset('#dddddd', true);
+        const capture = f.db.prepare('SELECT capture_id FROM material_asset WHERE id=?').get(paper.id) as { capture_id: string };
+        f.db.prepare('UPDATE material_asset SET capture_id=?, hints_json=? WHERE id=?').run(capture.capture_id, JSON.stringify({ captureMode: 'multi', pageIndex: 1, pageCount: 2, pageKind: 'paper' }), paper.id);
+        f.db.prepare('UPDATE material_asset SET capture_id=?, hints_json=? WHERE id=?').run(capture.capture_id, JSON.stringify({ captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' }), sheet.id);
+        const documentId = `set_${capture.capture_id}`;
+        f.db.prepare('INSERT INTO material_document(id,owner_id,clues_json) VALUES (?,?,?)').run(documentId, f.store.studentId, '{}');
+        const parent = f.store.createQuestion({ documentId, number: '16', subject: '数学' }).id;
+        const child = f.store.createQuestion({ documentId, number: '16', subject: '数学' }).id;
+        const shared = f.add(paper, 'question', '合成共用题干。', { number: '16', subpart: null }, parent);
+        const diagram = f.add(paper, 'diagram', '合成共用图', { number: '16', subpart: null, box: { x: .1, y: .1, width: .3, height: .3 } }, parent);
+        f.add(paper, 'question', '合成小问题干。', { number: '16', subpart: '(2)' }, child);
+        f.add(sheet, 'teacher_mark', '×', { number: '16', subpart: '(2)' }, child);
+        const item = setQuestionIncluded(f.store, child, true, f.store.getQuestion(child)!.revision).itemId!;
+        const input = getLearningPrintInput(item)!;
+        expect(input.context.questionText.indexOf('合成共用题干。')).toBeGreaterThanOrEqual(0);
+        expect(input.context.questionText.indexOf('合成共用题干。')).toBeLessThan(input.context.questionText.indexOf('合成小问题干。'));
+        expect(input.questionRegions.map(region => region.fragmentId)).toContain(shared.fragmentId);
+        expect(input.diagramRegions.map(region => region.fragmentId)).toContain(diagram.fragmentId);
+        f.store.linkFragment(shared.fragmentId, shared.revision, { questionId: parent, attemptId: null });
+        expect(getLearningPrintInput(item)!.basisKey).not.toBe(input.basisKey);
+    });

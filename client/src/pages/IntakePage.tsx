@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { initialUploadDayFilter, intakeListParams, intakeResponseMatches, intakeWaitsForUpload, reduceUploadDayFilter } from '../../../src/materials/dayFilter';
 import type { IntakeCandidate, IntakeCandidateDetail, IntakeGroup, IntakePhoto } from '../../../src/web/apiTypes';
 import { INTAKE_SELECT_LIMIT, intakePickKey, pagePickState, prunePhotoPicks, selectDisplayedPage, selectionCountText, selectionTotals } from '../../../src/web/intakeSelection';
-import { canAddCandidate, groupNote, isFocusVerdict, readVerdict, shouldPreselect } from '../lib/intakeVerdict';
+import { canAddCandidate, failedGroupPhotos, groupNote, isFocusVerdict, readVerdict, shouldPreselect } from '../lib/intakeVerdict';
 import { CandidateDetailModal } from '../components/CandidateDetailModal';
 import { CaptureDock } from '../components/CaptureDock';
 import { useCaptureSession } from '../lib/captureSession';
@@ -338,6 +338,7 @@ export function IntakePage(): ReactNode {
     const displayed = addable.map(candidate => candidate.id);
     const pickState = pagePickState(selected.map(candidate => candidate.id), displayed);
     const hasFocus = group.candidates.some(candidate => isFocusVerdict(readVerdict(candidate.verdict)));
+    const failedPhotos = failedGroupPhotos(group.photoIds, photos);
     const toggleGroup = (): void => {
       const clearing = pickState === 'all';
       const byPhoto = new Map<string, string[]>();
@@ -398,6 +399,10 @@ export function IntakePage(): ReactNode {
             onClick={toggleGroup}
           >{pickState === 'all' ? '取消全选' : '全选本题'}</button> : null}
         </IonItem>
+        {failedPhotos.map(photo => <IonItem key={photo.id} lines="none" className="intake-failure" data-testid="intake-group-failure">
+          <IonLabel className="ion-text-wrap"><p className="tone-red">{photo.failure?.detail}</p></IonLabel>
+          {photo.failure?.retryable ? <IonButton slot="end" fill="clear" data-testid="intake-group-retry" onClick={() => { void api.retry(photo.id).then(reload).catch(caught => setToast(caught instanceof Error ? caught.message : '没重试成功')); }}>重试</IonButton> : null}
+        </IonItem>)}
         {group.questions.map(question => <IonItemSliding key={question.id}>
           <IonItem button detail={false} className="intake-row" data-testid="intake-question" onClick={() => navigate(`/q/${question.id}`)}>
             <img slot="start" className="row-thumb" src={question.thumb} alt="" loading="lazy" />

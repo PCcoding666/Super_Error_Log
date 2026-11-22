@@ -21,6 +21,12 @@ export function groupNote(hasFocus: boolean): string {
   return hasFocus ? '做错的题排在前面，勾上就能加入错题本。' : '勾出做错的题';
 }
 
+/** A grouped photo card is hidden, so its failure and retry stay on the question card. */
+export function failedGroupPhotos<T extends { id: string; failure: unknown }>(photoIds: readonly string[], photos: readonly T[]): T[] {
+  const ids = new Set(photoIds);
+  return photos.filter(photo => ids.has(photo.id) && photo.failure != null);
+}
+
 /** Honor a server preselection until the student toggles that row. */
 export function shouldPreselect(
   candidate: { verdict?: unknown; preselected?: unknown; submitted?: boolean },
