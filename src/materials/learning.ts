@@ -98,9 +98,19 @@ export function teacherMarkMeansRight(raw:string,fullMarks:number|null=null):boo
  const scored=/^[√✓✔☑]\s*(?:得\s*)?[+＋]?\s*(\d+(?:\.\d+)?)\s*分?$/u.exec(text);
  return !!scored&&fullMarks!==null&&Number(scored[1])>=fullMarks;
 }
-/** Every certain teacher mark on the question is a tick, and no current AI grade says otherwise. */
+/** A high-confidence teacher mark on this question. Intake grades are ignored so a later model result cannot override the mark. */
+export function decisiveTeacherMark(q:import('./contracts.js').QuestionBundle):'wrong'|'right'|null {
+ const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
+ const certain=(f:import('./contracts.js').Fragment)=>f.check==='passed'&&!f.uncertainties.length;
+ if(q.teacherMarks.some(f=>certain(f)&&teacherMarkMeansWrong(f.text,full)))return 'wrong';
+ if(q.teacherMarks.length&&q.teacherMarks.every(f=>certain(f)&&teacherMarkMeansRight(f.text,full)))return 'right';
+ return null;
+}
+/** Every certain teacher mark is a tick, and no current workspace grade says otherwise.
+ * An intake-origin grade is only a suggestion and must not pull a ticked question back into the wrong list.
+ * Paired sets pass the answer-sheet marks; the default is the marks already on the question. */
 export function markedRight(q:import('./contracts.js').QuestionBundle, marks:import('./contracts.js').Fragment[]=q.teacherMarks):boolean {
- if(!marks.length||q.grades.some(g=>!g.stale&&g.result!=='correct'))return false;
+ if(!marks.length||q.grades.some(g=>!g.stale&&g.source!=='intake'&&g.result!=='correct'))return false;
  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
  return marks.every(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansRight(f.text,full));
 }
@@ -145,9 +155,9 @@ export function verifiedMaterialStem(q:import('./contracts.js').QuestionBundle, 
 }
 function automaticMistake(store:MaterialStore,questionId:string):boolean {
  const q=readQuestion(store,questionId)!;
-  if(!verifiedMaterialStem(q,expectedIntakeStem(store,q))) return false;
+ if(!verifiedMaterialStem(q,expectedIntakeStem(store,q))) return false;
  if(sheetVerdict(store,q)) return false;
- if(q.grades.some(g=>!g.stale&&(g.result==='incorrect'||g.result==='partial'||(!!g.score&&typeof g.score.total==="number"&&g.score.total>0&&g.score.earned<g.score.total)))) return true;
+ if(q.grades.some(g=>!g.stale&&g.source!=='intake'&&(g.result==='incorrect'||g.result==='partial'||(!!g.score&&typeof g.score.total==="number"&&g.score.total>0&&g.score.earned<g.score.total)))) return true;
  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
  const marks=decisiveMarks(store,q);
  return marks.some(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansWrong(f.text,full));
@@ -158,6 +168,28 @@ function dismissedPreviewFragments(store:MaterialStore):Set<string> {
  const ids=new Set<string>();
  for(const progress of readIntakeProgress(store).values()) for(const id of progress.dismissed??[]) ids.add(id);
  return ids;
+}
+const INTAKE_NOTE_PREFIX = 'AI 判断：';
+const INTAKE_NOTE_LABEL = { incorrect: '做错', partial: '部分做错', correct: '做对', uncertain: '还不能判断对错' } as const;
+/** The judgment a student can read in 备注 after the notebook item exists. Intake rows do not show this text. */
+function intakeJudgmentNote(store: MaterialStore, question: import('./contracts.js').QuestionBundle): string | null {
+ if (questionIntakeVerdict(store, question).verdict !== 'confirm') return null;
+ const grades = question.grades.filter(grade => !grade.stale && grade.source === 'intake');
+ const decided = grades.filter(grade => grade.result === 'incorrect' || grade.result === 'partial' || grade.result === 'correct');
+ const chosen = decided.length ? (decided.every(grade => grade.result === decided[0]!.result) ? decided[0] : undefined) : grades.find(grade => grade.result === 'uncertain');
+ if (!chosen) return null;
+ const reason = chosen.findings.map(finding => finding.text.trim()).find(Boolean) ?? '';
+ const text = reason ? `${INTAKE_NOTE_PREFIX}${INTAKE_NOTE_LABEL[chosen.result]}\n${reason}` : `${INTAKE_NOTE_PREFIX}${INTAKE_NOTE_LABEL[chosen.result]}`;
+ return text.length > 1000 ? text.slice(0, 1000) : text;
+}
+/** Fill an empty 备注, or replace an earlier intake judgment. A note the student wrote stays. */
+function rememberIntakeJudgment(store: MaterialStore, itemId: string, question: import('./contracts.js').QuestionBundle): void {
+ const text = intakeJudgmentNote(store, question);
+ if (!text) return;
+ const current = store.db.prepare('SELECT text FROM item_note WHERE item_id=?').get(itemId) as { text: string } | undefined;
+ if (current && !current.text.startsWith(INTAKE_NOTE_PREFIX)) return;
+ if (current?.text === text) return;
+ store.db.prepare('INSERT INTO item_note(item_id, text, updated_at) VALUES (?,?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text, updated_at=excluded.updated_at').run(itemId, text, now());
 }
 /** Called at mutation boundaries, never by material GETs. No mastery or evidence writes. */
 export function syncMaterialLearning(store:MaterialStore):void {
@@ -190,6 +222,7 @@ export function syncMaterialLearning(store:MaterialStore):void {
    }else{
     store.db.prepare('UPDATE error_item SET text_excerpt=?,subject=?,knowledge_tags=?,updated_at=? WHERE id=?').run(questionExcerpt(assembledQuestionTexts(store,q).join('\n\n')),q.subject,JSON.stringify(q.tags),now(),itemId);
    }
+   rememberIntakeJudgment(store, itemId, q);
   }
  });
 }

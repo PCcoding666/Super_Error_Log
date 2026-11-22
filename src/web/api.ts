@@ -34,6 +34,7 @@ import { directCorrection, getEvidenceView } from '../v2/correctionService.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
 import { canRecover } from '../mobile/contracts.js';
+import { intakeGradesPending, intakeVerdict } from '../materials/grading.js';
 import { excludeQuestions, includeQuestions, inclusionIntents, markedRight, materialIntakeSummary, notYetIncluded, setQuestionIncluded, sortQuestions, unplacedMaterial } from '../materials/learning.js';
 import { ASSET_PAGE_SIZE, createdAtRangeSql, DayFilterError, instantInRange, parseAssetDayFilter, type AssetDayFilter } from '../materials/dayFilter.js';
 import { unsupportedSubject, UNSUPPORTED_SUBJECT_MESSAGE } from '../materials/subjects.js';
@@ -449,7 +450,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const toPhoto = (photo: PhotoView): IntakePhoto => {
       const questions: IntakeQuestion[] = (byJob.get(photo.jobId) ?? []).map(item => ({ id: item.id, excerpt: item.questionExcerpt ?? '', chapter: item.chapter || '未分类', thumb: `/s/img/item/${item.id}?s=thumb` }));
       const candidates: IntakeCandidate[] = photo.state === 'needsPick' || (photo.job && !photo.pickDone)
-        ? (photo.job?.questions ?? []).filter(q => q.status === 'unselected').map(q => ({ id: q.id, label: `第 ${q.number} 题`, excerpt: '', crop: `/s/img/cand/${photo.jobId}/${q.id}?s=list` }))
+        ? (photo.job?.questions ?? []).filter(q => q.status === 'unselected').map(q => ({ id: q.id, label: `第 ${q.number} 题`, excerpt: '', crop: `/s/img/cand/${photo.jobId}/${q.id}?s=list`, verdict: 'confirm' as const, preselected: false }))
         : [];
       // Skipping a candidate moves it off `unselected`, which used to make the whole page look finished
       // while the other candidates were still waiting. Keep the page in the pick state when nothing was filed.
@@ -504,8 +505,8 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       const processing = job?.state === 'queued' || job?.state === 'running';
       const failed = job?.state === 'failed' || job?.state === 'interrupted';
       const questions: IntakeQuestion[] = (included.get(asset.id) ?? []).map(q => ({ id: q.itemId!, excerpt: stemFirstSentence(q, 60), chapter: (() => { try { return categoryForItem(q.itemId!).chapter || '未分类'; } catch { return q.subject ?? '未分类'; } })(), thumb: cropOf(q) ?? `/s/img/item/${q.itemId}?s=thumb` }));
-      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q) }));
-      if (preview) candidates.push(...previewCandidates(preview, all, intents));
+      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q), ...intakeVerdict(q, store) }));
+      if (preview) candidates.push(...previewCandidates(preview, all, intents, store));
       const state = processing ? (preview ? (preview.phase === 'located' ? 'located' : 'enriching') : 'finding') : failed ? 'failed' : other ? 'unsupported' : candidates.length ? 'needsPick' : 'done';
       const correct = all.filter(q => assetOf(q) === asset.id && markedRight(q)).length;
       const statusText = state === 'located' ? '已找到题目 · 可以先勾选' : state === 'enriching' ? '正在识别和校验 · 可以先勾选' : state === 'finding' ? 'AI 正在找题' : state === 'failed' ? '没整理成功' : state === 'unsupported' ? `${other}：${UNSUPPORTED_SUBJECT_MESSAGE}`
@@ -519,9 +520,14 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const listedIds = filter
       ? new Set((store.db.prepare(`SELECT id FROM material_asset WHERE owner_id=?${range.sql}`).all(store.studentId, ...range.params) as { id: string }[]).map(row => row.id))
       : null;
-    const busy = listedIds
+    const visibleQuestions = new Set(all.filter(question => {
+      const asset = assetOf(question);
+      return !!asset && (!listedIds || listedIds.has(asset));
+    }).map(question => question.id));
+    const busy = (listedIds
       ? jobs.some(job => !!job.asset_id && listedIds.has(job.asset_id) && (job.state === 'queued' || job.state === 'running'))
-      : jobs.some(job => job.state === 'queued' || job.state === 'running');
+      : jobs.some(job => job.state === 'queued' || job.state === 'running'))
+      || intakeGradesPending(store, visibleQuestions);
     const listed = new Set(assets.map(asset => asset.id));
     const listedQuestions = all.filter(question => [...question.stem, ...question.teacherMarks, ...question.attempts.flatMap(attempt => attempt.fragments)].some(fragment => listed.has(fragment.assetId)));
     const filedQuestions = photos.flatMap(photo => photo.questions);
