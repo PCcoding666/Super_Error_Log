@@ -18,15 +18,7 @@ export function canAddCandidate(verdict: IntakeVerdict | null): boolean {
   return verdict !== 'right';
 }
 
-export function outcomeLabel(verdict: IntakeVerdict | null): string | null {
-  if (verdict === 'wrong') return '做错';
-  if (verdict === 'partial') return '部分做错';
-  if (verdict === 'right') return '做对';
-  if (verdict === 'confirm') return '请确认';
-  return null;
-}
-
-/** In-progress copy only. A finished row with no verdict stays blank. */
+/** In-progress copy only. A finished row stays blank; a verdict is not written onto the row. */
 export function processLabel(status: string | undefined): string | null {
   if (status === 'preliminary') return '可以先看图勾选';
   if (status === 'verifying') return '还在整理，可以先勾选';
@@ -39,13 +31,10 @@ export function pageNote(hasProgress: boolean, hasFocus: boolean): string {
   return '这页没有批改痕迹，勾出做错的题';
 }
 
-export function detailLead(verdict: IntakeVerdict | null, status: string | undefined): { text: string; tone: 'focus' | 'quiet' } | null {
-  if (verdict === 'wrong') return { text: '做错。勾上就能加入错题本。', tone: 'focus' };
-  if (verdict === 'partial') return { text: '部分做错。勾上就能加入错题本。', tone: 'focus' };
-  if (verdict === 'right') return { text: '做对。这道不会加入错题本。', tone: 'quiet' };
-  if (verdict === 'confirm') return { text: '请确认是不是做错了。', tone: 'quiet' };
+/** Detail only repeats in-progress copy. A verdict is not announced in the sheet. */
+export function detailLead(status: string | undefined): string | null {
   const process = processLabel(status);
-  return process ? { text: `${process}。`, tone: 'quiet' } : null;
+  return process ? `${process}。` : null;
 }
 
 export interface OrderedCandidate<T> {

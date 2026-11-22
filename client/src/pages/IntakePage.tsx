@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { initialUploadDayFilter, intakeListParams, intakeResponseMatches, intakeWaitsForUpload, reduceUploadDayFilter } from '../../../src/materials/dayFilter';
 import type { IntakeCandidate, IntakeCandidateDetail, IntakePhoto } from '../../../src/web/apiTypes';
 import { INTAKE_SELECT_LIMIT, intakePickKey, pagePickState, prunePhotoPicks, selectDisplayedPage, selectionCountText, selectionTotals } from '../../../src/web/intakeSelection';
-import { canAddCandidate, focusScrollPlan, orderCandidates, outcomeLabel, pageNote, processLabel, shouldPreselect } from '../lib/intakeVerdict';
+import { canAddCandidate, focusScrollPlan, orderCandidates, pageNote, processLabel, shouldPreselect } from '../lib/intakeVerdict';
 import { CandidateDetailModal } from '../components/CandidateDetailModal';
 import { CaptureDock } from '../components/CaptureDock';
 import { useCaptureSession } from '../lib/captureSession';
@@ -332,8 +332,7 @@ export function IntakePage(): ReactNode {
           <div className="intake-candidates">
             {ordered.map(row => {
               const candidate = row.candidate;
-              const outcome = outcomeLabel(row.verdict);
-              const process = outcome ? null : processLabel(candidate.status);
+              const process = processLabel(candidate.status);
               const addableRow = canAddCandidate(row.verdict);
               const checked = candidate.submitted || (picked[photo.id]?.has(candidate.id) ?? false);
               return <div
@@ -356,7 +355,6 @@ export function IntakePage(): ReactNode {
               <div className="intake-candidate-text">
                 <h3>{candidate.excerpt || candidate.label}</h3>
                 {candidate.excerpt ? <p>{candidate.label}</p> : null}
-                {outcome ? <p className="intake-outcome" data-testid="candidate-outcome">{outcome}</p> : null}
                 {process ? <p>{process}</p> : null}
                 {candidate.submitted ? <p>{(photo.progress?.stage === 'done' || photo.state === 'failed') && candidate.status !== 'verified' ? '已选，暂未收录；请重试或补拍清楚的照片。' : '已选，校验通过后加入'}</p> : null}
               </div>
@@ -449,7 +447,6 @@ export function IntakePage(): ReactNode {
         selected={detailRequest ? (picked[detailRequest.photoId]?.has(detailRequest.candidateId) || photos.some(p => p.id === detailRequest.photoId && p.candidates.some(c => c.id === detailRequest.candidateId && c.submitted))) : false}
         terminal={!!detailRequest && photos.some(p => p.id === detailRequest.photoId && (p.progress?.stage === 'done' || p.state === 'failed'))}
         submitted={!!detailRequest && photos.some(p => p.id === detailRequest.photoId && p.candidates.some(c => c.id === detailRequest.candidateId && c.submitted))}
-        verdict={openRow?.verdict ?? null}
         addable={!openRow || canAddCandidate(openRow.verdict)}
         onToggleSelected={selected => { if (detailRequest) setPick(detailRequest.photoId, detailRequest.candidateId, selected); }}
         onRequestClose={requestCloseDetail}

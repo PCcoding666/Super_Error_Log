@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  canAddCandidate, detailLead, focusScrollPlan, orderCandidates, outcomeLabel, pageNote, processLabel, readVerdict, shouldPreselect,
+  canAddCandidate, detailLead, focusScrollPlan, orderCandidates, pageNote, processLabel, readVerdict, shouldPreselect,
 } from '../../client/src/lib/intakeVerdict.js';
 
 const banned = '不确定处';
@@ -14,11 +14,6 @@ describe('intake verdict presentation', () => {
     expect(readVerdict('confirm')).toBe('confirm');
     expect(readVerdict('needs_review')).toBeNull();
     expect(readVerdict(undefined)).toBeNull();
-    expect(outcomeLabel(null)).toBeNull();
-    expect(outcomeLabel('wrong')).toBe('做错');
-    expect(outcomeLabel('partial')).toBe('部分做错');
-    expect(outcomeLabel('right')).toBe('做对');
-    expect(outcomeLabel('confirm')).toBe('请确认');
   });
 
   it('keeps printed order when the page has no wrong verdict', () => {
@@ -82,28 +77,33 @@ describe('intake verdict presentation', () => {
     expect(processLabel(undefined)).toBeNull();
   });
 
-  it('never uses recognition-confidence wording in intake copy', () => {
+  it('never stamps a row or detail sheet with an AI verdict, or with recognition-confidence wording', () => {
     const lines = [
-      outcomeLabel('wrong'), outcomeLabel('partial'), outcomeLabel('right'), outcomeLabel('confirm'),
       processLabel('preliminary'), processLabel('verifying'),
-      pageNote(false, false), pageNote(true, false), pageNote(true, true),
-      detailLead('wrong', 'needs_review')?.text,
-      detailLead('partial', 'needs_review')?.text,
-      detailLead('right', 'verified')?.text,
-      detailLead('confirm', 'needs_review')?.text,
-      detailLead(null, 'preliminary')?.text,
-      detailLead(null, 'needs_review')?.text,
+      processLabel('needs_review'), processLabel('verified'),
+      detailLead('preliminary'), detailLead('verifying'), detailLead('needs_review'), detailLead('verified'),
     ];
-    for (const line of lines) expect(line ?? '').not.toContain(banned);
-    expect(detailLead(null, 'needs_review')).toBeNull();
-    expect(detailLead('confirm', 'needs_review')?.text).toBe('请确认是不是做错了。');
-    expect(detailLead('wrong', 'needs_review')?.tone).toBe('focus');
+    for (const line of lines) {
+      expect(line ?? '').not.toContain(banned);
+      expect(line ?? '').not.toContain('部分做错');
+      expect(line ?? '').not.toContain('做对');
+      expect(line ?? '').not.toContain('请确认');
+    }
+    expect(detailLead('needs_review')).toBeNull();
+    expect(detailLead('preliminary')).toBe('可以先看图勾选。');
+    expect(pageNote(true, true)).toContain('排在前面');
+    expect(pageNote(true, true)).not.toContain('部分做错');
+    expect(pageNote(true, true)).not.toContain('做对');
+    expect(pageNote(true, true)).not.toContain('请确认');
+    const rowStamps = ['部分做错', '做对', '请确认'];
     for (const file of [
       'client/src/lib/intakeVerdict.ts',
       'client/src/pages/IntakePage.tsx',
       'client/src/components/CandidateDetailModal.tsx',
     ]) {
-      expect(readFileSync(file, 'utf8')).not.toContain(banned);
+      const source = readFileSync(file, 'utf8');
+      expect(source).not.toContain(banned);
+      for (const stamp of rowStamps) expect(source).not.toContain(stamp);
     }
   });
 });

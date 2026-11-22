@@ -1,7 +1,7 @@
 import { IonButton, IonButtons, IonCheckbox, IonContent, IonHeader, IonModal, IonSpinner, IonTitle, IonToolbar } from '@ionic/react';
 import type { ReactNode } from 'react';
 import type { IntakeCandidateDetail, IntakeCandidateFragment } from '../../../src/web/apiTypes';
-import { detailLead, type IntakeVerdict } from '../lib/intakeVerdict';
+import { detailLead } from '../lib/intakeVerdict';
 import { StemText } from './StemText';
 
 const GRADE_RESULT: Record<IntakeCandidateDetail['grades'][number]['result'], string> = {
@@ -56,13 +56,13 @@ function Images(props: { crop: string | null; source: string | null; figures?: {
   </div>;
 }
 
-function Recognized(props: { detail: IntakeCandidateDetail; verdict: IntakeVerdict | null }): ReactNode {
+function Recognized(props: { detail: IntakeCandidateDetail }): ReactNode {
   const text = questionText(props.detail.stem);
   const notes = readableUncertainties(props.detail.stem);
-  const lead = detailLead(props.verdict, props.detail.status);
+  const lead = detailLead(props.detail.status);
   const diagram = props.detail.figures.length > 0 || props.detail.stem.some(fragment => fragment.role === 'diagram' || fragment.requiresDiagram);
   return <>
-    {lead ? <p className={lead.tone === 'focus' ? 'item-hint tone-red' : 'item-hint'} data-testid="candidate-outcome">{lead.text}</p> : null}
+    {lead ? <p className="item-hint">{lead}</p> : null}
     <h3>题目</h3>
     {text ? <div className="item-stem candidate-stem" data-testid="candidate-stem"><StemText text={text} /></div> : <p className="muted" data-testid="candidate-stem-empty">还没有读出题目文字。</p>}
     {diagram ? <p className="muted">{props.detail.figures.length ? '这道题有图，请对照上面的题目裁图、题目图形和来源页。' : '这道题有图，请对照上面的裁图和来源页。'}</p> : null}
@@ -95,7 +95,6 @@ export function CandidateDetailModal(props: {
   selected: boolean;
   submitted?: boolean;
   terminal?: boolean;
-  verdict?: IntakeVerdict | null;
   /** Right answers stay visible and are not offered for the notebook. */
   addable?: boolean;
   onToggleSelected: (selected: boolean) => void;
@@ -122,7 +121,7 @@ export function CandidateDetailModal(props: {
         : props.error ? <p className="tone-red" role="alert" data-testid="candidate-detail-error">{props.error}</p>
           : props.detail ? <>
             <Images crop={props.detail.crop} source={props.detail.source} figures={props.detail.figures} />
-            <Recognized detail={props.detail} verdict={props.verdict ?? null} />
+            <Recognized detail={props.detail} />
           </> : null}
       {props.addable === false ? null : <div className="candidate-select">
         <IonCheckbox

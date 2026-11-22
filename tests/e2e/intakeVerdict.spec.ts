@@ -1,4 +1,6 @@
 /** Intake list presentation: outcome copy, wrong-row focus, and clearance above the fixed bar. */
+import fs from 'node:fs';
+import path from 'node:path';
 import sharp from 'sharp';
 import { expect, test, type Page } from '@playwright/test';
 import { materialGateway } from '../helpers/materialGateway.js';
@@ -113,20 +115,31 @@ test('wrong verdicts are distinct and come first, and right rows stay off the ad
     await expect(rows).toHaveCount(8, { timeout: 30_000 });
     await expect(page.locator('ion-content.intake')).not.toContainText('不确定');
     await expect(page.getByTestId('intake-page-note')).toContainText('排在前面');
-    await expect(rows.nth(0)).toContainText('部分做错');
-    await expect(rows.nth(1)).toContainText('做错');
-    await expect(rows.nth(1)).not.toContainText('部分做错');
-    await expect(rows.nth(2)).toContainText('做对');
-    await expect(rows.nth(3)).toContainText('请确认');
     const text = await rows.allTextContents();
+    for (const line of text) {
+      expect(line).not.toContain('做错');
+      expect(line).not.toContain('做对');
+      expect(line).not.toContain('请确认');
+    }
     expect(text.map(line => line.match(/第 \d+ 题/)?.[0])).toEqual(['第 1 题', '第 8 题', '第 2 题', '第 3 题', '第 4 题', '第 5 题', '第 6 题', '第 7 题']);
 
     const focus = page.locator('[data-intake-focus="wrong"]');
     await expect(focus).toHaveCount(2);
-    const focusShadow = await focus.first().evaluate(element => getComputedStyle(element).boxShadow);
-    const quietShadow = await rows.nth(4).evaluate(element => getComputedStyle(element).boxShadow);
-    expect(focusShadow).not.toBe('none');
-    expect(focusShadow).not.toBe(quietShadow);
+    await expect(rows.nth(0)).toHaveClass(/intake-candidate-focus/);
+    await expect(rows.nth(1)).toHaveClass(/intake-candidate-focus/);
+    await expect(rows.nth(2)).toHaveClass(/intake-candidate-right/);
+    await expect(rows.nth(2)).toHaveAttribute('data-verdict', 'right');
+    const focusBg = await focus.first().evaluate(element => getComputedStyle(element).backgroundColor);
+    const plainBg = await rows.nth(4).evaluate(element => getComputedStyle(element).backgroundColor);
+    expect(focusBg).not.toBe(plainBg);
+    await page.locator('ion-content.intake').evaluate(async element => {
+      const scroller = await (element as HTMLElement & { getScrollElement: () => Promise<HTMLElement> }).getScrollElement();
+      scroller.scrollTop = 0;
+    });
+    if (fs.existsSync('/opt/cursor')) {
+      fs.mkdirSync('/opt/cursor/artifacts', { recursive: true });
+      await page.screenshot({ path: path.join('/opt/cursor/artifacts', 'intake-mixed-verdicts.png') });
+    }
     const focusBox = await focus.first().boundingBox();
     const bar = await page.locator('.intake-bottom').boundingBox();
     expect(focusBox).toBeTruthy();
@@ -143,13 +156,17 @@ test('wrong verdicts are distinct and come first, and right rows stay off the ad
 
     await page.getByRole('button', { name: '查看第 2 题的详情' }).click();
     const sheet = page.getByTestId('candidate-detail-sheet');
-    await expect(sheet).toContainText('做对');
+    await expect(sheet).not.toContainText('做错');
+    await expect(sheet).not.toContainText('做对');
+    await expect(sheet).not.toContainText('请确认');
     await expect(sheet).not.toContainText('不确定');
     await expect(sheet.getByTestId('detail-select')).toHaveCount(0);
     await page.getByTestId('candidate-detail-close').click();
 
     await page.getByRole('button', { name: '查看第 8 题的详情' }).click();
-    await expect(sheet).toContainText('做错');
+    await expect(sheet).not.toContainText('做错');
+    await expect(sheet).not.toContainText('做对');
+    await expect(sheet).not.toContainText('请确认');
     await expect(sheet).not.toContainText('不确定');
     await expect(sheet.getByTestId('detail-select')).toBeVisible();
     await page.getByTestId('candidate-detail-close').click();
@@ -158,6 +175,7 @@ test('wrong verdicts are distinct and come first, and right rows stay off the ad
     await expect(page.getByTestId('intake-question')).toHaveCount(1, { timeout: 20_000 });
     await expect(page.getByRole('checkbox', { name: '选择第 8 题' })).toBeVisible();
     await expect(page.getByRole('checkbox', { name: '选择第 8 题' })).not.toBeChecked();
-    await expect(page.getByText('做对', { exact: true })).toBeVisible();
+    await expect(page.locator('[data-verdict="right"]')).toBeVisible();
+    await expect(page.locator('[data-verdict="right"]')).not.toContainText('做对');
   } finally { await g.close(); }
 });
