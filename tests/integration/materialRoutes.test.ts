@@ -352,6 +352,11 @@ it('summarizes failed photos at the top, retries all retryable ones in one tap, 
  f.db.prepare("UPDATE material_job SET state='failed',error=? WHERE id=?").run(JSON.stringify({code:'invalid_image',message:'坏图',retryable:false}),job);
  html=await(await fetch(f.base+'/materials')).text();expect(html).toContain('其中 1 张看不清或格式不对，请重拍这几张。');expect(html).not.toContain('一键重新整理');
  expect((await f.form('/materials/jobs/retry-all',[['namespace',f.namespace],['requestId',randomUUID()]])).headers.get('location')).toBe('/s/materials?retried=0');
+ f.db.prepare("UPDATE material_job SET state='failed',error=? WHERE id=?").run(JSON.stringify({code:'invalid_output',message:'结构不对',retryable:true}),job);
+ html=await(await fetch(f.base+'/materials')).text();expect(html).toContain('一键重新整理');expect(html).not.toContain('看不清或格式不对');
+ f.db.prepare("UPDATE material_job SET state='failed',error=? WHERE id=?").run(JSON.stringify({code:'source_mismatch',message:'来源不一致',retryable:false}),job);
+ html=await(await fetch(f.base+'/materials')).text();expect(html).toContain('其中 1 张看不清或格式不对，请重拍这几张。');expect(html).not.toContain('一键重新整理');
+ expect((await f.form('/materials/jobs/retry-all',[['namespace',f.namespace],['requestId',randomUUID()]])).headers.get('location')).toBe('/s/materials?retried=0');
  f.db.prepare("UPDATE material_job SET state='succeeded',error=NULL WHERE id=?").run(job);
  f.db.prepare('UPDATE material_asset SET extraction_json=? WHERE id=?').run(JSON.stringify({assetId:f.assetId,revision:1,document:{title:null,subject:'高三英语',date:null,printedCode:null,page:1},fragments:[],warnings:['unsupported_subject'],runs:[]}),f.assetId);
  html=await(await fetch(f.base+'/materials')).text();expect(html).toContain('目前只支持数学、物理、化学。');expect(html).toContain('照片 1（英语）不会整理成错题');expect(html).not.toContain('没整理成功');

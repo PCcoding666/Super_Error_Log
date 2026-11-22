@@ -151,6 +151,6 @@ it.each(['question','basis','attempt','fragments'] as const)('still rejects an a
     if(field==='attempt')return 'attemptId' in result?{...result,attemptId:'another-attempt'}:result;
     return 'fragmentIds' in result?{...result,fragmentIds:(result.fragmentIds as string[]).slice(1)}:result;
   });
-  if(field!=='attempt')await expect(f.answer()).rejects.toMatchObject({code:'invalid_output'});
-  if(field!=='fragments')await expect(f.grade()).rejects.toMatchObject({code:'invalid_output'});
+  if(field!=='attempt')await expect(f.answer()).rejects.toMatchObject({code:'invalid_output',retryable:true});
+  if(field!=='fragments')await expect(f.grade()).rejects.toMatchObject({code:'invalid_output',retryable:true});
 });

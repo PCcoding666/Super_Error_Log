@@ -8,7 +8,7 @@ import type { CaptureHints, JobTicket, MaterialJobKind } from './contracts.js';
 import { MaterialStore } from './store.js';
 
 type JobRow = JobTicket & { request_id: string; question_id: string | null; asset_id: string | null; basis_key: string; input_json: string; error: string | null };
-/** `detail`: head of a model body that failed validation (invalid_output); stays in this student's job record, never in logs or responses. */
+/** `detail`: head of a model body that failed validation (`invalid_output` or `source_mismatch`); stays in this student's job record, never in logs or responses. */
 type Failure = { code: string; message: string; retryable: boolean; detail?: string };
 export type MaterialStage = { round: number; attempts: number; state: 'running' | 'succeeded' | 'failed'; result?: unknown; error?: Failure; nextAttemptAt?: number };
 export type MaterialExecution = { stages: Record<string, MaterialStage>; retryRequestIds: string[] };

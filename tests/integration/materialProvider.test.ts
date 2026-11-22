@@ -117,7 +117,16 @@ describe('grounded material provider protocol', () => {
     expect(f.requests).toHaveLength(5);
   });
 
-  it.each(['source', 'box', 'duplicate', 'number', 'page', 'page_order', 'role', 'reference'])('rejects invalid %s before a checkpoint can become successful', async fault => {
+  it.each([
+    ['source', 'source_mismatch', false],
+    ['box', 'invalid_output', true],
+    ['duplicate', 'invalid_output', true],
+    ['number', 'invalid_output', true],
+    ['page', 'invalid_output', true],
+    ['page_order', 'invalid_output', true],
+    ['role', 'invalid_output', true],
+    ['reference', 'invalid_output', true],
+  ] as const)('rejects invalid %s before a checkpoint can become successful', async (fault, code, retryable) => {
     const f = await local((body, res) => {
       const value = response(body) as any;
       if (context(body).operation === 'locate') {
@@ -133,7 +142,7 @@ describe('grounded material provider protocol', () => {
     });
     let checkpoints = 0;
     const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source: { ...source, sourceHash: 'original-upload-hash' }, request: async (_key, invoke) => { const result = await invoke(new AbortController().signal); checkpoints++; return result; } });
-    await expect(provider.extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
+    await expect(provider.extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code, retryable });
     expect(checkpoints).toBe(fault === 'reference' ? 1 : 0);
   });
 
@@ -153,14 +162,19 @@ describe('grounded material provider protocol', () => {
     expect(f.requests[0]!.messages[0]!.content).toContain('不要外包schema');
   });
 
-  it.each(['two-roles', 'mirrored-key', 'wrapped-key', 'wrapped-source'])('still rejects %s after unwrapping', async fault => {
+  it.each([
+    ['two-roles', 'invalid_output', true],
+    ['mirrored-key', 'invalid_output', true],
+    ['wrapped-key', 'invalid_output', true],
+    ['wrapped-source', 'source_mismatch', false],
+  ] as const)('still rejects %s after unwrapping', async (fault, code, retryable) => {
     const f = await local((body, res) => {
       const c = context(body);
       if (c.operation === 'locate') send(res, { document, candidates: [{ ...candidate('q', 'question', 0), role: fault === 'two-roles' ? ['question', 'student_work'] : 'question' }], warnings: [] });
       else if (c.operation === 'read') send(res, { items: [{ key: fault === 'mirrored-key' ? 'another' : c.candidate!.key, text: 'visible', uncertainties: [] }] });
       else send(res, { schema: { candidateKey: fault === 'wrapped-key' ? 'another' : c.candidate!.key, ...(fault === 'wrapped-source' ? { source: { ...source, sourceHash: 'invented' } } : {}), check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] } });
     });
-    await expect(createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+    await expect(createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code, retryable });
   });
 
   it('retains failed and low verification rather than treating HTTP success as evidence', async () => {
@@ -255,7 +269,7 @@ describe('grounded material provider protocol', () => {
     expect(result.warnings).toEqual([]);
     expect(result.fragments.map(x => [x.text, x.check, x.uncertainties])).toEqual([['visible q', 'passed', []]]);
     const g = await local((body, res) => send(res, { ...response(body), warnings: 'none' }));
-    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: true });
   });
 
   // 2026-11-07 真实照片端到端：两张 3024×4032 的 iPhone 照片按 4096 长边一起送定位，预留超过 MAX_INPUT_TOKEN_RESERVATION，组提交必然失败。
@@ -318,7 +332,7 @@ describe('grounded material provider protocol', () => {
     await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({
       assetId: source.assetId, revision: 1, bytes: await image(), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 },
       pages: [{ assetId: 'paper', pageIndex: 1, pageKind: 'paper', bytes: await image() }, { assetId: source.assetId, pageIndex: 2, pageKind: null, bytes: await image() }],
-    }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+    }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: true });
   });
   // 2026-11-07 真实照片端到端：verify 回了裸的一元素数组；多页定位的结果以 Map 写进检查点后回放成 {}。
   it('unwraps a bare one-item list around any stage object and keeps set locate results JSON-checkpointable', async () => {
@@ -338,7 +352,7 @@ describe('grounded material provider protocol', () => {
     expect(result.fragments.map(x => [x.role, x.check])).toEqual([['question', 'passed']]);
     // A list of several objects is still not the requested object.
     const g = await local((body, res) => send(res, context(body).operation === 'locate' ? [response(body), response(body)] : response(body)));
-    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: true });
   });
   // 2026-11-07 真实照片端到端：第二页定位的框 x 0.18 + width 0.83 = 1.01，整页被拒。
   it('clamps a box that overshoots the page edge by a hair and still rejects a box well outside', async () => {
@@ -346,7 +360,14 @@ describe('grounded material provider protocol', () => {
     const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
     expect(result.fragments[0]!.box).toEqual({ x: 0.18, y: 0.04, width: 0.82, height: 0.11 });
     const g = await local((body, res) => send(res, response(body, [{ ...candidate('q', 'question'), box: { x: 0.5, y: 0.04, width: 0.6, height: 0.11 } }])));
-    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: true });
+  });
+  it('treats a model body that is not JSON as a retryable invalid_output', async () => {
+    const f = await local((_body, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{' } }] }));
+    });
+    await expect(createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: true });
   });
   // Codex review on #122: a resumed job must not bind an old read / passed check to a region a new locate moved.
   it('keys read and verify checkpoints by the candidate region, so a moved box cannot reuse an old check', async () => {
@@ -410,13 +431,13 @@ describe('grounded material provider protocol', () => {
       if (c.operation === 'read') send(res, { candidateKey: 'invented', text: 'x', uncertainties: [] });
       else send(res, response(body, [candidate('q', 'question')]));
     });
-    await expect(createMaterialProvider({ mode: 'openai', chat: questionOnly.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
+    await expect(createMaterialProvider({ mode: 'openai', chat: questionOnly.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: true });
     const withDiagram = await local((body, res) => {
       const c = context(body);
       if (c.operation === 'read' && c.candidate?.key === 'd') send(res, { candidateKey: 'invented', text: 'x', uncertainties: [] });
       else send(res, response(body, [candidate('q', 'question', 0), candidate('d', 'diagram', 1)]));
     });
-    await expect(createMaterialProvider({ mode: 'openai', chat: withDiagram.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
+    await expect(createMaterialProvider({ mode: 'openai', chat: withDiagram.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: true });
   });
 });
 function fModels() { return { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' }; }
