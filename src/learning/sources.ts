@@ -4,6 +4,7 @@ import { getDb } from '../db/connection.js';
 import { getEvidence } from '../services/evidenceService.js';
 import { MaterialStore } from '../materials/store.js';
 import { effectiveQuestionStem, readQuestion } from '../materials/queries.js';
+import { assembledQuestionTexts } from '../materials/answerSheet.js';
 import { inclusionIntent, materialPracticeEligible, questionIncluded, learningObservationFragments } from '../materials/learning.js';
 import { createHash } from 'node:crypto';
 import { selectedAnswerIds } from '../materials/answers.js';
@@ -32,7 +33,7 @@ export function getLearningContext(itemId:string):{revision:number;context:Learn
  const store=materialStoreForItem(itemId)!,q=readQuestion(store,source.questionId);if(!q||q.missing.includes('stem')||!SUBJECTS.includes(q.subject as Subject))return null;
  const stem=effectiveQuestionStem(store,q.id);
  const fragments=learningObservationFragments(store,q.id);
- const context:LearningContext={questionNumber:q.number??'未标号',questionText:stem.filter(f=>f.role==='question').map(f=>f.text).join('\n\n'),
+ const context:LearningContext={questionNumber:q.number??'未标号',questionText:assembledQuestionTexts(store,q).join('\n\n')||stem.filter(f=>f.role==='question').map(f=>f.text).join('\n\n'),
   subject:q.subject as Subject,chapter:'',knowledgeTags:q.tags,questionType:'',requiresDiagram:stem.some(f=>f.requiresDiagram),
   observations:fragments.filter(f=>f.text.trim()).map(f=>({id:f.fragmentId,kind:f.role==='teacher_mark'?'teacher_note':f.role==='student_work'||f.role==='correction'||f.role==='reference_answer'?f.role:'unknown',text:f.text,regionId:null,confidence:f.check==='passed'?1:0})),
   uncertainties:[...new Set([...q.unresolved,...q.missing.filter(m=>m!=='work'),...[...stem,...fragments].flatMap(f=>f.uncertainties)])]};

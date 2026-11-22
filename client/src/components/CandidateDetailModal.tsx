@@ -95,6 +95,8 @@ export function CandidateDetailModal(props: {
   selected: boolean;
   submitted?: boolean;
   terminal?: boolean;
+  /** Right answers stay visible and are not offered for the notebook. */
+  addable?: boolean;
   onToggleSelected: (selected: boolean) => void;
   /** Hide the sheet. Scroll is restored from `onClosed`, after the sheet has finished leaving. */
   onRequestClose: () => void;
@@ -121,7 +123,7 @@ export function CandidateDetailModal(props: {
             <Images crop={props.detail.crop} source={props.detail.source} figures={props.detail.figures} />
             <Recognized detail={props.detail} />
           </> : null}
-      <div className="candidate-select">
+      {props.addable === false ? null : <div className="candidate-select">
         <IonCheckbox
           checked={props.selected}
           disabled={props.submitted}
@@ -133,7 +135,7 @@ export function CandidateDetailModal(props: {
           <b>勾选这道题</b>
           <p className="muted">{props.submitted ? (props.terminal && props.detail?.status !== 'verified' ? '已保存选择，但暂未收录。请重试或补拍清楚的照片。' : '已保存选择，校验通过后会加入错题本。') : '只是勾选，还不会加入错题本。'}</p>
         </div>
-      </div>
+      </div>}
     </div></IonContent>
   </IonModal>;
 }

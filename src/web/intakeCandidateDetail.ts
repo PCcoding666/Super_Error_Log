@@ -1,6 +1,7 @@
+import { contextQuestions, questionInPairedSet } from '../materials/answerSheet.js';
 import { findPreview } from '../materials/intakeProgress.js';
 import { previewCrop, previewStatus } from './intakeProgressView.js';
-import type { QuestionBundle, ReferenceAnswer } from '../materials/contracts.js';
+import type { Fragment, QuestionBundle, ReferenceAnswer } from '../materials/contracts.js';
 import { learningObservationFragments } from '../materials/learning.js';
 import { readQuestion } from '../materials/queries.js';
 import type { MaterialStore } from '../materials/store.js';
@@ -44,9 +45,22 @@ function diagramFigures<T extends { fragmentId: string; role: string; number: st
     .map(fragment => ({ crop: url(fragment) }));
 }
 
+function assembledStem(store: MaterialStore, question: QuestionBundle): Fragment[] {
+  const parents = questionInPairedSet(store, question) ? contextQuestions(question, store.listQuestions()) : [];
+  const seen = new Set<string>();
+  const stem: Fragment[] = [];
+  for (const fragment of [...parents.flatMap(parent => parent.stem), ...question.stem]) {
+    if (seen.has(fragment.fragmentId)) continue;
+    seen.add(fragment.fragmentId);
+    stem.push(fragment);
+  }
+  return stem;
+}
+
 function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandidateDetail {
-  const primary = question.stem.find(fragment => fragment.role === 'question') ?? question.stem[0] ?? null;
-  const stem: IntakeCandidateFragment[] = question.stem
+  const visible = assembledStem(store, question);
+  const primary = visible.find(fragment => fragment.role === 'question') ?? question.stem.find(fragment => fragment.role === 'question') ?? visible[0] ?? question.stem[0] ?? null;
+  const stem: IntakeCandidateFragment[] = visible
     .filter(fragment => fragment.role === 'question' || fragment.role === 'diagram')
     .map(fragment => ({
       role: fragment.role === 'diagram' ? 'diagram' : 'question',
@@ -78,7 +92,7 @@ function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandida
     subject: question.subject,
     stem,
     crop: primary ? `/s/materials/fragments/${primary.fragmentId}/crop?revision=${primary.revision}` : null,
-    figures: primary ? diagramFigures(primary, question.stem, item => `/s/materials/fragments/${item.fragmentId}/crop?revision=${item.revision}`) : [],
+    figures: visible.filter(fragment => fragment.role === 'diagram' && fragment.fragmentId !== primary?.fragmentId).map(fragment => ({ crop: `/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}` })),
     source: primary ? `/s/materials/assets/${primary.assetId}/image` : null,
     work: question.attempts.flatMap(attempt => attempt.fragments.flatMap((fragment): IntakeCandidateDetail['work'] => {
       if (!fragment.text.trim()) return [];

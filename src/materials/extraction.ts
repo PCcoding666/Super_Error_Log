@@ -8,7 +8,7 @@ import { MaterialStore } from './store.js';
 import { reconcileAsset } from './matching.js';
 import type { MaterialJobs } from './jobs.js';
 import type { MaterialUploads } from './uploads.js';
-import { assertMaterialProviderConfigured, createMaterialProvider, PartialMaterialExtractionError, validateMaterialExtraction, type ExtractedMaterial, type MaterialProvider, type MaterialProviderOptions } from './provider.js';
+import { assertMaterialProviderConfigured, createMaterialProvider, MaterialProviderError, PartialMaterialExtractionError, validateMaterialExtraction, type ExtractedMaterial, type MaterialProvider, type MaterialProviderOptions } from './provider.js';
 
 type Input = { asset_id: string; revision: number; sourceHash: string; storage_path: string; hints_json: string };
 function input(store: MaterialStore, jobId: string): Input {
@@ -48,25 +48,51 @@ function jobRole(store: MaterialStore, jobId: string): string | undefined {
   } catch { return undefined; }
 }
 
-/** Followers the lead did not write stay retryable instead of queued forever. A retry reads that page alone. */
-function settleUncoveredFollowers(store: MaterialStore, leadAssetId: string, covered: ReadonlySet<string>): void {
+function jobInput(raw: string): Record<string, unknown> {
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  } catch { return {}; }
+}
+
+/**
+ * A page the combined call did not write is queued for an isolated extract.
+ * The job runner starts that extract on the admission queue. set_page_missing is
+ * only for a page that already had its isolated attempt and is still uncovered.
+ */
+function armUncoveredFollowers(store: MaterialStore, leadAssetId: string, covered: ReadonlySet<string>): void {
   const owner = store.db.prepare('SELECT capture_id FROM material_asset WHERE owner_id=? AND id=?').get(store.studentId, leadAssetId) as { capture_id: string } | undefined;
   if (!owner) return;
-  const rows = store.db.prepare(`SELECT j.id, j.input_json, j.asset_id AS assetId FROM material_job j
+  const rows = store.db.prepare(`SELECT j.id, j.state, j.input_json, j.asset_id AS assetId FROM material_job j
     JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
-    WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=? AND j.state IN ('queued','interrupted')`).all(store.studentId, owner.capture_id) as { id: string; input_json: string; assetId: string }[];
+    WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=? AND j.state IN ('queued','running','interrupted')`).all(store.studentId, owner.capture_id) as { id: string; state: string; input_json: string; assetId: string }[];
   for (const row of rows) {
-    if (row.assetId === leadAssetId || covered.has(row.assetId)) continue;
-    let input: Record<string, unknown> = {};
-    try {
-      const value = JSON.parse(row.input_json) as unknown;
-      input = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-    } catch { input = {}; }
-    if (input.deferred === true || input.setRole !== 'follow') continue;
+    if (covered.has(row.assetId)) continue;
+    const input = jobInput(row.input_json);
+    if (row.assetId === leadAssetId) {
+      if (input.isolatedAttempted === true) continue;
+      input.isolateLead = true;
+      store.db.prepare('UPDATE material_job SET input_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=? AND state IN (\'queued\',\'running\',\'interrupted\')')
+        .run(JSON.stringify(input), store.studentId, row.id);
+      continue;
+    }
+    if (row.state === 'running') continue;
+    if (input.deferred === true) continue;
+    if (input.setRole !== 'follow' && input.isolatedFallback !== 'pending') continue;
+    if (input.isolatedAttempted === true) {
+      delete input.deferred;
+      delete input.setRole;
+      delete input.isolateLead;
+      store.db.prepare(`UPDATE material_job SET state='failed', error=?, input_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=? AND state IN ('queued','interrupted')`)
+        .run(JSON.stringify(SET_PAGE_MISSING), JSON.stringify(input), store.studentId, row.id);
+      continue;
+    }
     delete input.deferred;
     delete input.setRole;
-    store.db.prepare(`UPDATE material_job SET state='failed', error=?, input_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=? AND state IN ('queued','interrupted')`)
-      .run(JSON.stringify(SET_PAGE_MISSING), JSON.stringify(input), store.studentId, row.id);
+    delete input.isolateLead;
+    input.isolatedFallback = 'pending';
+    store.db.prepare(`UPDATE material_job SET input_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=? AND state IN ('queued','interrupted')`)
+      .run(JSON.stringify(input), store.studentId, row.id);
   }
 }
 
@@ -108,7 +134,12 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
       for (const extraction of bundle) {
         const page = pages.find(item => item.assetId === extraction.assetId);
         const pageSource = page ? { assetId: page.assetId, revision: page.revision ?? row.revision, sourceHash: page.sourceHash ?? row.sourceHash } : source;
-        validateMaterialExtraction(extraction, pageSource);
+        try { validateMaterialExtraction(extraction, pageSource); }
+        catch (error) {
+          // One page that fails structure checks must not roll back the pages that passed.
+          if (error instanceof MaterialProviderError) continue;
+          throw error;
+        }
         // A recovered sibling (for example a diagram) can improve completeness. Preserve
         // historical fragment evidence and append only an actual content change.
         extraction.fragments = extraction.fragments.map(fragment => {
@@ -127,8 +158,9 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
       return wrote;
     });
     if (!persisted) return;
+    if (persisted.length === 0) throw new MaterialProviderError('invalid_output', '材料提取结果未通过来源或结构校验。', false);
     for (const assetId of persisted) covered.add(assetId);
-    const storedBundle = bundle.map(extraction => {
+    const storedBundle = bundle.filter(extraction => persisted.includes(extraction.assetId)).map(extraction => {
       const stored = { ...extraction }; delete (stored as ExtractedMaterial).set;
       return stored;
     });
@@ -143,7 +175,7 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
     for (const extraction of storedBundle) completeIntakeProgress(store, jobId, extraction, !!partial);
     if (partial) throw partial.failure;
   } finally {
-    if (leadRun && !signal.aborted) settleUncoveredFollowers(store, row.asset_id, covered);
+    if (leadRun && !signal.aborted) armUncoveredFollowers(store, row.asset_id, covered);
   }
 }
 

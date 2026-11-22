@@ -1,9 +1,16 @@
+import { normalizeSubpart, pairingForAsset } from './answerSheet.js';
 import { syncMaterialLearning } from './learning.js';
 import { newId } from '../db/connection.js';
 import type { CaptureHints, DocumentClues, Extraction, Fragment, QuestionBundle } from './contracts.js';
 import type { MaterialStore } from './store.js';
 import { answerBasis, currentLink, latestFragments, readQuestion, resolveQuestionId } from './queries.js';
 import { intakeGroupKey, isRejectedQuestion } from './regionPolicy.js';
+
+/** Paired sets keep each blank separate. A worksheet still groups a printed number together. */
+function groupKey(fragment: { fragmentId: string; number: string | null; subpart: string | null; role: string; uncertainties: readonly string[] }, paired: boolean): string {
+  if (!paired || isRejectedQuestion(fragment) || fragment.number === null) return intakeGroupKey(fragment);
+  return `number:${fragment.number}\0${normalizeSubpart(fragment.subpart) ?? ''}`;
+}
 
 type Asset = { id:string; document_id:string|null; hints_json:string; extraction_json:string|null };
 export function materialAsset(store:MaterialStore,id:string):Asset {
@@ -51,14 +58,14 @@ function compatible(store:MaterialStore,q:QuestionBundle,fragments:Fragment[],ex
   // provisional material; an unrelated unscoped annotation cannot widen it.
   const stems=existing.filter(f=>f.role==='question');
   const work=existing.filter(f=>f.role==='student_work'||f.role==='correction');
-  const scopeEvidence=stems.length?stems:work.length?work:existing.filter(f=>f.role==='diagram'||f.role==='reference_answer');
+  const scopeEvidence=stems.length?stems:work.length?work:existing.filter(f=>f.role==='diagram'||f.role==='reference_answer'||f.role==='teacher_mark');
   for (const f of fragments) {
-    if (existing.some(e=>e.role==='question'&&f.role==='question'&&e.subpart===f.subpart&&e.text.trim()!==f.text.trim())) return false;
+    if (existing.some(e=>e.role==='question'&&f.role==='question'&&normalizeSubpart(e.subpart)===normalizeSubpart(f.subpart)&&e.text.trim()!==f.text.trim())) return false;
     if ((f.role==='student_work'||f.role==='correction')&&!explicitAttempt&&existing.some(e=>e.role==='student_work'&&e.assetId!==f.assetId)) return false;
     // Null never covers a named scope (or vice versa). An explicit selected
     // attempt can carry a user-authorized continuation across subparts.
     const scopedMaterial=f.role!=='teacher_mark'&&f.role!=='unknown'||f.subpart!==null;
-    if (!explicitAttempt&&existing.length&&scopedMaterial&&!scopeEvidence.some(e=>e.subpart===f.subpart)) return false;
+    if (!explicitAttempt&&existing.length&&scopedMaterial&&!scopeEvidence.some(e=>normalizeSubpart(e.subpart)===normalizeSubpart(f.subpart))) return false;
   }
   return true;
 }
@@ -147,9 +154,10 @@ export function reconcileAsset(store:MaterialStore,assetId:string):{linked:numbe
     if (documentId!==asset.document_id) store.db.prepare('UPDATE material_asset SET document_id=? WHERE owner_id=? AND id=?').run(documentId,store.studentId,assetId);
     let linked=0; const pending=new Set<string>();
     const completions:(()=>void)[]=[];
+    const paired = pairingForAsset(store, assetId) === 'paired';
     const groups=new Map<string,Fragment[]>();
     for (const fragment of fragments) {
-      const key=intakeGroupKey(fragment);
+      const key=groupKey(fragment, paired);
       groups.set(key,[...(groups.get(key)??[]),fragment]);
     }
     for (const group of groups.values()) {
@@ -174,7 +182,13 @@ export function reconcileAsset(store:MaterialStore,assetId:string):{linked:numbe
         else { questionId=explicit.id; selectedAttempt=hints.attemptId; }
       }
       if (!questionId && !reason && documentId && first.number!==null) {
-        const candidates=store.listQuestions().filter(q=>q.documentId===documentId&&q.number===first.number);
+        const wanted = normalizeSubpart(first.subpart);
+        const candidates=store.listQuestions().filter(q=>{
+          if (q.documentId!==documentId||q.number!==first.number) return false;
+          if (!paired) return true;
+          const stem = q.stem.find(fragment => fragment.role==='question') ?? q.stem[0] ?? q.teacherMarks[0] ?? q.attempts.flatMap(attempt => attempt.fragments)[0];
+          return normalizeSubpart(stem?.subpart ?? null) === wanted;
+        });
         // Content filtering must never turn two competing same-number candidates into a fake unique match.
         if (candidates.length===1&&compatible(store,candidates[0]!,group,selectedAttempt)) questionId=candidates[0]!.id;
         else if (candidates.length) reason='association';
