@@ -154,6 +154,29 @@ export interface IntakeCandidate {
   submitted?: boolean;
   /** 裁图；材料流程没有裁图时为 null。 */
   crop: string | null;
+  /** Present on question-grouped rows. Right rows stay visible and are not added. */
+  verdict?: 'wrong' | 'partial' | 'right' | 'confirm';
+  /** Wrong and partial rows start checked until the student toggles them. */
+  preselected?: boolean;
+  /** Photo that owns the row when it is shown on a question card. */
+  photoId?: string;
+}
+
+export interface IntakeGroupThumb {
+  src: string;
+  pageKind: 'paper' | 'answer_sheet';
+}
+
+/** One printed question assembled from an answer sheet and the paper pages that carry it. */
+export interface IntakeGroup {
+  id: string;
+  title: string;
+  /** For example 答题卡 + 试卷第 6、7 页. */
+  status: string;
+  thumbs: IntakeGroupThumb[];
+  photoIds: string[];
+  questions: IntakeQuestion[];
+  candidates: IntakeCandidate[];
 }
 
 /** 候选详情里的一段题干或图。只描述已经识别出来的内容。 */
@@ -222,6 +245,11 @@ export interface IntakeResponse {
   /** 材料流程的草稿命名空间：上传时放在 x-draft-namespace 头里。 */
   draftNamespace: string | null;
   photos: IntakePhoto[];
+  /**
+   * Paper + answer-sheet sets, grouped by printed question number.
+   * Absent for same-page worksheets, which stay on `photos`.
+   */
+  groups?: IntakeGroup[];
   /** 还有照片在找题：客户端据此轮询。 */
   busy: boolean;
   /**

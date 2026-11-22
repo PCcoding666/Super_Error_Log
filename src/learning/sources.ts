@@ -4,6 +4,7 @@ import { getDb } from '../db/connection.js';
 import { getEvidence } from '../services/evidenceService.js';
 import { MaterialStore } from '../materials/store.js';
 import { effectiveQuestionStem, readQuestion } from '../materials/queries.js';
+import { assembledQuestionTexts, contextQuestions, questionInPairedSet } from '../materials/answerSheet.js';
 import { inclusionIntent, materialPracticeEligible, questionIncluded, learningObservationFragments } from '../materials/learning.js';
 import { createHash } from 'node:crypto';
 import { selectedAnswerIds } from '../materials/answers.js';
@@ -32,7 +33,7 @@ export function getLearningContext(itemId:string):{revision:number;context:Learn
  const store=materialStoreForItem(itemId)!,q=readQuestion(store,source.questionId);if(!q||q.missing.includes('stem')||!SUBJECTS.includes(q.subject as Subject))return null;
  const stem=effectiveQuestionStem(store,q.id);
  const fragments=learningObservationFragments(store,q.id);
- const context:LearningContext={questionNumber:q.number??'未标号',questionText:stem.filter(f=>f.role==='question').map(f=>f.text).join('\n\n'),
+ const context:LearningContext={questionNumber:q.number??'未标号',questionText:assembledQuestionTexts(store,q).join('\n\n')||stem.filter(f=>f.role==='question').map(f=>f.text).join('\n\n'),
   subject:q.subject as Subject,chapter:'',knowledgeTags:q.tags,questionType:'',requiresDiagram:stem.some(f=>f.requiresDiagram),
   observations:fragments.filter(f=>f.text.trim()).map(f=>({id:f.fragmentId,kind:f.role==='teacher_mark'?'teacher_note':f.role==='student_work'||f.role==='correction'||f.role==='reference_answer'?f.role:'unknown',text:f.text,regionId:null,confidence:f.check==='passed'?1:0})),
   uncertainties:[...new Set([...q.unresolved,...q.missing.filter(m=>m!=='work'),...[...stem,...fragments].flatMap(f=>f.uncertainties)])]};
@@ -80,6 +81,23 @@ export interface LearningPrintInput {
     badge: 'ok' | 'low';
 }
 const regionOf = (f: SourceRegion): SourceRegion => ({ assetId: f.assetId, fragmentId: f.fragmentId, revision: f.revision, box: f.box, sourceHash: f.sourceHash });
+/** Parent stem and diagrams first, then this blank. A worksheet keeps only its own stem. */
+function assembledPrintStem(store: MaterialStore, question: NonNullable<ReturnType<typeof readQuestion>>): Fragment[] {
+  const own = effectiveQuestionStem(store, question.id);
+  if (!questionInPairedSet(store, question)) return own;
+  const seen = new Set<string>();
+  const assembled: Fragment[] = [];
+  for (const source of [...contextQuestions(question, store.listQuestions()), question]) {
+    const stem = source.id === question.id ? own : effectiveQuestionStem(store, source.id);
+    for (const fragment of stem) {
+      if (fragment.role !== 'question' && fragment.role !== 'diagram') continue;
+      if (seen.has(fragment.fragmentId)) continue;
+      seen.add(fragment.fragmentId);
+      assembled.push(fragment);
+    }
+  }
+  return assembled;
+}
 const printOrder = (a: Fragment, b: Fragment) => (a.page ?? 0) - (b.page ?? 0) || a.assetId.localeCompare(b.assetId) || a.order - b.order || a.fragmentId.localeCompare(b.fragmentId);
 const redactRoles = new Set(['student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown']);
 function mappedPrintQuestion(store: MaterialStore, itemId: string) {
@@ -203,8 +221,9 @@ export function getLearningPrintInput(itemId: string): LearningPrintInput | null
     else {
         if (!q || q.missing.includes('stem') || q.missing.includes('diagram') || q.unresolved.length)
             return null;
-        fragments = effectiveQuestionStem(store, q.id);
+        fragments = assembledPrintStem(store, q);
     }
+    const materialText = fragments.filter(f => f.role === 'question').map(f => f.text).join('\n\n');
     // Legacy original warnings retain their old behavior; new supplements need their own checks.
     if (fragments.some(f => !['passed', 'low'].includes(f.check) || f.uncertainties.includes('missing_diagram')))
         return null;
@@ -220,7 +239,7 @@ export function getLearningPrintInput(itemId: string): LearningPrintInput | null
     if (source.kind === 'legacy' && fragments.length)
         context = { ...context, questionText: [context.questionText, ...fragments.filter(f => f.role === 'question').map(f => f.text)].join('\n\n'), requiresDiagram: context.requiresDiagram || fragments.some(f => f.requiresDiagram) };
     if (source.kind === 'material')
-        context = { ...context, questionText: fragments.filter(f => f.role === 'question').map(f => f.text).join('\n\n') };
+        context = { ...context, questionText: materialText, requiresDiagram: context.requiresDiagram || fragments.some(f => f.requiresDiagram) };
     const assets = [...new Set([...questionRegions, ...diagramRegions].map(r => r.assetId))];
     for (const asset of assets) {
         for (const f of latestFragments(store, asset))

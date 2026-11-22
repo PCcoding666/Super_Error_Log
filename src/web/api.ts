@@ -39,6 +39,14 @@ import { ASSET_PAGE_SIZE, createdAtRangeSql, DayFilterError, instantInRange, par
 import { unsupportedSubject, UNSUPPORTED_SUBJECT_MESSAGE } from '../materials/subjects.js';
 import type { MaterialJobs } from '../materials/jobs.js';
 import type { QuestionBundle } from '../materials/contracts.js';
+
+function questionOnPhoto(question: QuestionBundle, photoId: string): boolean {
+  const stem = question.stem.find(fragment => fragment.role === 'question');
+  if (stem) return stem.assetId === photoId;
+  return question.stem.some(fragment => fragment.assetId === photoId)
+    || question.teacherMarks.some(fragment => fragment.assetId === photoId)
+    || question.attempts.some(attempt => attempt.fragments.some(fragment => fragment.assetId === photoId));
+}
 import { dayOrdinal, localDayText } from '../domain/calendarDay.js';
 import { COOKIE, readCookies, readPhotoMarks, setCookie, clearCookie, writePhotoMarks } from './session.js';
 import { matchesNotebook, NOTEBOOK_STATUS_GROUPS, notebookStatusFilter, notebookStatusGroup, resolveNotebookStage, stagesInScope } from './notebook.js';
@@ -46,6 +54,7 @@ import { loadPhotos, type PhotoView, type WebContext } from './state.js';
 import { detailPhotos } from './detailPhotos.js';
 import { stemFirstSentence } from './views/materials.js';
 import { readIntakeCandidateDetail } from './intakeCandidateDetail.js';
+import { buildIntakeGroups } from './intakeGroups.js';
 import { INTAKE_SELECT_LIMIT } from './intakeSelection.js';
 import type {
   DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemAnswerPhoto, ItemDetailResponse, ItemInsight, ItemTrace,
@@ -513,8 +522,26 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const busy = listedIds
       ? jobs.some(job => !!job.asset_id && listedIds.has(job.asset_id) && (job.state === 'queued' || job.state === 'running'))
       : jobs.some(job => job.state === 'queued' || job.state === 'running');
+    const listed = new Set(assets.map(asset => asset.id));
+    const listedQuestions = all.filter(question => [...question.stem, ...question.teacherMarks, ...question.attempts.flatMap(attempt => attempt.fragments)].some(fragment => listed.has(fragment.assetId)));
+    const filedQuestions = photos.flatMap(photo => photo.questions);
+    const filedByQuestion = new Map<string, string>();
+    for (const question of listedQuestions) if (question.itemId) filedByQuestion.set(question.id, question.itemId);
+    const groups = buildIntakeGroups(store, listedQuestions, filedQuestions, filedByQuestion);
+    for (const group of groups) {
+      for (const candidate of group.candidates) {
+        // Right rows stay on the question card only. A photo list must not offer them for the notebook.
+        if (candidate.verdict === 'right') continue;
+        const photo = photos.find(item => item.id === candidate.photoId);
+        if (!photo) continue;
+        const existing = photo.candidates.find(item => item.id === candidate.id);
+        if (existing) { existing.verdict = candidate.verdict; existing.preselected = candidate.preselected; existing.photoId = candidate.photoId; }
+        else photo.candidates.push(candidate);
+      }
+    }
     return {
       mode: 'materials', draftNamespace: store.getWorkspace().draftNamespace, photos, busy,
+      ...(groups.length ? { groups } : {}),
       ...(filter ? dayFilterBody(filter, page, total) : {}),
     };
   };
@@ -562,7 +589,11 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       const previewPicks = picks.filter(p => p.questionId.startsWith('mfr_'));
       const questions = new Map(store.listQuestions().map(q => [q.id, q]));
       const regular = picks.filter(p => !p.questionId.startsWith('mfr_'));
-      const owned = regular.filter(p => questions.get(p.questionId)?.stem.some(f => f.role === 'question' && f.assetId === photoId));
+      const owned = regular.filter(p => {
+        const question = questions.get(p.questionId);
+        // A blank whose stem is not in the upload stays on the list; it is not filed as an invented question.
+        return !!question && questionOnPhoto(question, photoId) && !question.missing.includes('stem');
+      });
       const saved = includeQuestions(store, owned);
       const early = selectPreviewCandidates(store, photoId, previewPicks);
       return { ok: true, included: saved.included + early.included, pending: early.pending, skipped: saved.skipped + early.skipped + regular.length - owned.length };
@@ -611,8 +642,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       for (const pick of regular) {
         const question = questions.get(pick.questionId);
         if (!question) { failed.push({ id: pick.clientId, message: '题目不存在。' }); continue; }
-        const asset = question.stem.find(fragment => fragment.role === 'question')?.assetId ?? question.stem[0]?.assetId ?? null;
-        if (asset !== photoId) { failed.push({ id: pick.clientId, message: '这道题不在这张照片上。' }); continue; }
+        if (!questionOnPhoto(question, photoId)) { failed.push({ id: pick.clientId, message: '这道题不在这张照片上。' }); continue; }
         if (question.itemId) { failed.push({ id: pick.clientId, message: '这道题已经在错题本里。' }); continue; }
         accepted.push(pick);
       }

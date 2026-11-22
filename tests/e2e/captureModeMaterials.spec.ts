@@ -140,7 +140,7 @@ test('材料流程的多页一次提交，两张照片共用一个拍摄批次',
   const captureIds = uploads.map(body => body.match(/cap_[0-9a-f]{16}/)?.[0]);
   expect(captureIds[0]).toBeTruthy();
   expect(captureIds[1]).toBe(captureIds[0]);
-  await expect(page.locator('section.intake-photo')).toHaveCount(2, { timeout: 30_000 });
+  await expect(page.locator('section.intake-question, section.intake-photo').first()).toBeVisible({ timeout: 30_000 });
 });
 
 test('单页和相册都先选模式，录入页同样不常驻模式条，托盘改回单页时不另开一次上传', async ({ page, gateway }) => {
