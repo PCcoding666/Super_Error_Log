@@ -1,6 +1,7 @@
 import { contextQuestions, isContextQuestion, pageKindOf, questionInPairedSet, questionSubpart } from '../materials/answerSheet.js';
 import type { CaptureHints, QuestionBundle } from '../materials/contracts.js';
-import { inclusionIntents, questionIntakeVerdict } from '../materials/learning.js';
+import { intakeVerdict } from '../materials/grading.js';
+import { inclusionIntents } from '../materials/learning.js';
 import type { MaterialStore } from '../materials/store.js';
 import { stemFirstSentence } from './views/materials.js';
 import type { IntakeCandidate, IntakeGroup, IntakeQuestion } from './apiTypes.js';
@@ -90,7 +91,7 @@ export function buildIntakeGroups(store: MaterialStore, questions: readonly Ques
       .sort((a, b) => Number(b.pageKind === 'answer_sheet') - Number(a.pageKind === 'answer_sheet') || (a.printedPage ?? a.pageIndex ?? 0) - (b.printedPage ?? b.pageIndex ?? 0) || a.id.localeCompare(b.id));
     const candidates: IntakeCandidate[] = [];
     const questionsInGroup: IntakeQuestion[] = [];
-    const ordered = rows.map(question => ({ question, verdict: questionIntakeVerdict(store, question) }))
+    const ordered = rows.map(question => ({ question, verdict: intakeVerdict(question, store) }))
       .sort((a, b) => {
         const focus = (verdict: string) => verdict === 'wrong' || verdict === 'partial';
         return Number(focus(b.verdict.verdict)) - Number(focus(a.verdict.verdict))

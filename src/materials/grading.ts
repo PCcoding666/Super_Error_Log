@@ -1,4 +1,4 @@
-import { decisiveTeacherMark, inclusionIntent, syncMaterialLearning } from './learning.js';
+import { decisiveTeacherMark, inclusionIntent, questionIntakeVerdict, syncMaterialLearning } from './learning.js';
 import { createHash } from 'node:crypto';
 import { newId } from '../db/connection.js';
 import { MobileRequestError } from '../mobile/service.js';
@@ -115,13 +115,20 @@ function applicableGrade(question: QuestionBundle): Grade | undefined {
   return decided.every(grade => grade.result === decided[0]!.result) ? decided[0] : undefined;
 }
 
-/** Server-owned page verdict. Teacher marks win. A missing or unfinished grade stays confirm. */
-export function intakeVerdict(question?: QuestionBundle): { verdict: IntakeVerdict; preselected: boolean } {
+/** Server-owned page verdict. Teacher marks win. A missing or unfinished grade stays confirm.
+ * Pass the store so a paired answer sheet (including a partial deduction) wins over an intake grade.
+ * Without a store, only the marks already on the question are considered. */
+export function intakeVerdict(question?: QuestionBundle, store?: MaterialStore): { verdict: IntakeVerdict; preselected: boolean } {
   const confirm = { verdict: 'confirm' as const, preselected: false };
   if (!question) return confirm;
-  const mark = decisiveTeacherMark(question);
-  if (mark === 'wrong') return { verdict: 'wrong', preselected: true };
-  if (mark === 'right') return { verdict: 'right', preselected: false };
+  if (store) {
+    const teacher = questionIntakeVerdict(store, question);
+    if (teacher.verdict !== 'confirm') return teacher;
+  } else {
+    const mark = decisiveTeacherMark(question);
+    if (mark === 'wrong') return { verdict: 'wrong', preselected: true };
+    if (mark === 'right') return { verdict: 'right', preselected: false };
+  }
   if (!intakeProvisionalReady(question)) return confirm;
   const grade = applicableGrade(question);
   if (grade?.result === 'incorrect') return { verdict: 'wrong', preselected: true };
@@ -187,7 +194,7 @@ function intakeGradeAlreadyCovered(store: MaterialStore, questionId: string, bas
 }
 
 function enqueueIntakeGrade(store: MaterialStore, jobs: MaterialJobs, question: QuestionBundle): void {
-  if (question.itemId || unsupportedSubject(question.subject) || inclusionIntent(store, question.id) === false || decisiveTeacherMark(question)) return;
+  if (question.itemId || unsupportedSubject(question.subject) || inclusionIntent(store, question.id) === false || questionIntakeVerdict(store, question).verdict !== 'confirm') return;
   const ready = intakeGradeInput(store, question);
   if (!ready || intakeGradeAlreadyCovered(store, question.id, ready.basis.basisKey)) return;
   jobs.enqueue('grade', question.id, intakeGradeRequestId(question.id, ready.basis.basisKey), ready.basis.basisKey, {

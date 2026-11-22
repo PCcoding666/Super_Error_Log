@@ -505,8 +505,8 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       const processing = job?.state === 'queued' || job?.state === 'running';
       const failed = job?.state === 'failed' || job?.state === 'interrupted';
       const questions: IntakeQuestion[] = (included.get(asset.id) ?? []).map(q => ({ id: q.itemId!, excerpt: stemFirstSentence(q, 60), chapter: (() => { try { return categoryForItem(q.itemId!).chapter || '未分类'; } catch { return q.subject ?? '未分类'; } })(), thumb: cropOf(q) ?? `/s/img/item/${q.itemId}?s=thumb` }));
-      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q), ...intakeVerdict(q) }));
-      if (preview) candidates.push(...previewCandidates(preview, all, intents));
+      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q), ...intakeVerdict(q, store) }));
+      if (preview) candidates.push(...previewCandidates(preview, all, intents, store));
       const state = processing ? (preview ? (preview.phase === 'located' ? 'located' : 'enriching') : 'finding') : failed ? 'failed' : other ? 'unsupported' : candidates.length ? 'needsPick' : 'done';
       const correct = all.filter(q => assetOf(q) === asset.id && markedRight(q)).length;
       const statusText = state === 'located' ? '已找到题目 · 可以先勾选' : state === 'enriching' ? '正在识别和校验 · 可以先勾选' : state === 'finding' ? 'AI 正在找题' : state === 'failed' ? '没整理成功' : state === 'unsupported' ? `${other}：${UNSUPPORTED_SUBJECT_MESSAGE}`

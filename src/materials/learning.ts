@@ -172,8 +172,8 @@ function dismissedPreviewFragments(store:MaterialStore):Set<string> {
 const INTAKE_NOTE_PREFIX = 'AI 判断：';
 const INTAKE_NOTE_LABEL = { incorrect: '做错', partial: '部分做错', correct: '做对', uncertain: '还不能判断对错' } as const;
 /** The judgment a student can read in 备注 after the notebook item exists. Intake rows do not show this text. */
-function intakeJudgmentNote(question: import('./contracts.js').QuestionBundle): string | null {
- if (decisiveTeacherMark(question)) return null;
+function intakeJudgmentNote(store: MaterialStore, question: import('./contracts.js').QuestionBundle): string | null {
+ if (questionIntakeVerdict(store, question).verdict !== 'confirm') return null;
  const grades = question.grades.filter(grade => !grade.stale && grade.source === 'intake');
  const decided = grades.filter(grade => grade.result === 'incorrect' || grade.result === 'partial' || grade.result === 'correct');
  const chosen = decided.length ? (decided.every(grade => grade.result === decided[0]!.result) ? decided[0] : undefined) : grades.find(grade => grade.result === 'uncertain');
@@ -184,7 +184,7 @@ function intakeJudgmentNote(question: import('./contracts.js').QuestionBundle): 
 }
 /** Fill an empty 备注, or replace an earlier intake judgment. A note the student wrote stays. */
 function rememberIntakeJudgment(store: MaterialStore, itemId: string, question: import('./contracts.js').QuestionBundle): void {
- const text = intakeJudgmentNote(question);
+ const text = intakeJudgmentNote(store, question);
  if (!text) return;
  const current = store.db.prepare('SELECT text FROM item_note WHERE item_id=?').get(itemId) as { text: string } | undefined;
  if (current && !current.text.startsWith(INTAKE_NOTE_PREFIX)) return;
