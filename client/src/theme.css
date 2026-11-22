@@ -187,6 +187,8 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
   padding: 4px 8px 8px; background: var(--ion-item-background);
 }
 .intake-candidates { background: var(--ion-item-background); }
+.intake-thumbs { display: flex; gap: 4px; }
+.intake-thumbs img { width: 36px; height: 48px; object-fit: cover; border-radius: 6px; background: #e5e5ea; }
 .intake-candidate {
   display: flex; align-items: center; gap: 8px; min-height: 64px;
   padding: 8px 8px 8px 4px; background: var(--ion-item-background); border-top: 1px solid var(--sel-line);

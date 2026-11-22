@@ -379,31 +379,40 @@ export function createMaterialProvider(options: MaterialProviderOptions, binding
       const pageList = prepared.map(item => ({ assetId: item.pageSource.assetId, revision: item.pageSource.revision, sourceHash: item.pageSource.sourceHash, pageIndex: item.page.pageIndex, pageKind: item.page.pageKind }));
       const kindOf = (page: MaterialPageImage): string => page.pageKind === 'paper' ? '试卷' : page.pageKind === 'answer_sheet' ? '答题卡' : '未标注';
       const locatedPages: Record<string, ReturnType<typeof inventory>> = {};
+      const failedLocate = new Set<string>();
       for (const current of prepared) {
         if (current.page.assetId !== input.assetId && (current.page.revision === undefined || !current.page.sourceHash)) continue;
         const labels = prepared.map(item => `第 ${item.page.pageIndex} 页，${kindOf(item.page)}，${item === current ? '当前页' : '同一提交的其他页'}`);
-        const located = await invoke('material_extract', `locate-set:${current.pageSource.assetId}`, 'locate-set', {
-          hints: input.hints,
-          submission: { ...submission, pageIndex: current.page.pageIndex, pageKind: current.page.pageKind ?? null, instruction: MULTI_PAGE_LOCATE_NOTE },
-          pages: pageList,
-          schema: { pages: [{ assetId: 'string', document: documentSchema, candidates: [candidateSchema], warnings: ['string'] }] },
-        }, setImages, v => inventorySet(v, pageRefs), labels, current.pageSource, options.chat!.timeoutMs * Math.min(prepared.length, SET_LOCATE_TIMEOUT_PAGES));
-        // The call is about the current page; keep its inventory, and any other page's only when nothing better has it yet.
-        for (const [assetId, found] of Object.entries(located)) if (assetId === current.pageSource.assetId || !locatedPages[assetId]) locatedPages[assetId] = found;
+        try {
+          const located = await invoke('material_extract', `locate-set:${current.pageSource.assetId}`, 'locate-set', {
+            hints: input.hints,
+            submission: { ...submission, pageIndex: current.page.pageIndex, pageKind: current.page.pageKind ?? null, instruction: MULTI_PAGE_LOCATE_NOTE },
+            pages: pageList,
+            schema: { pages: [{ assetId: 'string', document: documentSchema, candidates: [candidateSchema], warnings: ['string'] }] },
+          }, setImages, v => inventorySet(v, pageRefs), labels, current.pageSource, options.chat!.timeoutMs * Math.min(prepared.length, SET_LOCATE_TIMEOUT_PAGES));
+          // The call is about the current page; keep its inventory, and any other page's only when nothing better has it yet.
+          for (const [assetId, found] of Object.entries(located)) if (assetId === current.pageSource.assetId || !locatedPages[assetId]) locatedPages[assetId] = found;
+        } catch (error) {
+          // One page's locate or validation must not drop the pages that did come back.
+          if (signal.aborted || !(error instanceof MaterialProviderError)) throw error;
+          if (!locatedPages[current.pageSource.assetId]) failedLocate.add(current.pageSource.assetId);
+        }
       }
       const extractions: Extraction[] = []; let failure: MaterialProviderError | undefined;
       for (const item of prepared) {
         if (item.page.assetId !== input.assetId && (item.page.revision === undefined || !item.page.sourceHash)) continue;
+        if (failedLocate.has(item.pageSource.assetId) && !locatedPages[item.pageSource.assetId]) continue;
         const found = locatedPages[item.pageSource.assetId] ?? { document: { title: null, subject: null, date: null, printedCode: null, page: item.page.pageIndex || null }, candidates: [], warnings: [] };
         const pageHints: CaptureHints = { ...input.hints, pageIndex: item.page.pageIndex, pageKind: item.page.pageKind ?? undefined };
         try { extractions.push(await finishPage(item.pageSource, item.bytes, found, pageHints, true)); }
         catch (error) {
-          if (!(error instanceof PartialMaterialExtractionError)) throw error;
-          extractions.push(error.extraction); failure ??= error.failure;
+          if (error instanceof PartialMaterialExtractionError) { extractions.push(error.extraction); failure ??= error.failure; continue; }
+          if (signal.aborted || !(error instanceof MaterialProviderError)) throw error;
+          failure ??= error;
         }
       }
       const lead = extractions.find(item => item.assetId === source.assetId) ?? extractions[0];
-      if (!lead) return invalid();
+      if (!lead) throw failure ?? invalid();
       lead.runs = [...runs];
       const result: ExtractedMaterial = { ...lead, set: extractions };
       if (failure) throw new PartialMaterialExtractionError(result, failure);

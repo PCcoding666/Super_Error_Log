@@ -1,3 +1,4 @@
+import { assembledQuestionTexts, decisiveMarks, pageKindOf, questionInPairedSet } from './answerSheet.js';
 import { expectedIntakeStem, readIntakeProgress } from './intakeProgressState.js';
 import { SUBJECTS, type Subject } from '../domain/types.js';
 import { newId, now } from '../db/connection.js';
@@ -68,6 +69,27 @@ export function teacherMarkMeansWrong(raw:string,fullMarks:number|null=null):boo
  if(bare&&fullMarks!==null)return Number(bare[1])<fullMarks;
  return false;
 }
+/** Crosses and the word for wrong are wrong. Half marks, deductions, and partial credit are partial. */
+export function markOutcome(raw: string, fullMarks: number | null = null): 'wrong' | 'partial' | 'right' | null {
+  if (teacherMarkMeansRight(raw, fullMarks)) return 'right';
+  if (!teacherMarkMeansWrong(raw, fullMarks)) return null;
+  const text = raw.trim().replace(/[。.!！,，;；]+$/u, '').replace(/\s+/gu, ' ');
+  if (/^[×✗✘╳✕❌]/u.test(text) || /^[Xx](?:\s|$)/u.test(text) || /^(?:错|错误|答错|做错|不对|不正确|答案错误|错了|未答|没做|空)$/u.test(text)) return 'wrong';
+  return 'partial';
+}
+/** What intake should do with this question. A blank with no stem in the upload stays confirm. */
+export function questionIntakeVerdict(store: MaterialStore, q: import('./contracts.js').QuestionBundle): { verdict: 'wrong' | 'partial' | 'right' | 'confirm'; preselected: boolean } {
+  const stem = q.stem.filter(f => f.role === 'question' && f.text.trim());
+  if (!stem.length || q.missing.includes('stem')) return { verdict: 'confirm', preselected: false };
+  const full = fullMarksOf(stem.map(f => f.text).join('\n'));
+  const outcomes = decisiveMarks(store, q)
+    .filter(f => f.check === 'passed' && !f.uncertainties.length)
+    .map(f => markOutcome(f.text, full));
+  if (outcomes.includes('wrong')) return { verdict: 'wrong', preselected: true };
+  if (outcomes.includes('partial')) return { verdict: 'partial', preselected: true };
+  if (outcomes.length > 0 && outcomes.every(outcome => outcome === 'right')) return { verdict: 'right', preselected: false };
+  return { verdict: 'confirm', preselected: false };
+}
 /** A tick on its own (optionally with full marks), or the plain word for "right". Never a half tick. */
 export function teacherMarkMeansRight(raw:string,fullMarks:number|null=null):boolean {
  const text=raw.trim().replace(/[。.!！,，;；]+$/u,'').replace(/\s+/gu,' ');
@@ -77,10 +99,16 @@ export function teacherMarkMeansRight(raw:string,fullMarks:number|null=null):boo
  return !!scored&&fullMarks!==null&&Number(scored[1])>=fullMarks;
 }
 /** Every certain teacher mark on the question is a tick, and no current AI grade says otherwise. */
-export function markedRight(q:import('./contracts.js').QuestionBundle):boolean {
- if(!q.teacherMarks.length||q.grades.some(g=>!g.stale&&g.result!=='correct'))return false;
+export function markedRight(q:import('./contracts.js').QuestionBundle, marks:import('./contracts.js').Fragment[]=q.teacherMarks):boolean {
+ if(!marks.length||q.grades.some(g=>!g.stale&&g.result!=='correct'))return false;
  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
- return q.teacherMarks.every(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansRight(f.text,full));
+ return marks.every(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansRight(f.text,full));
+}
+/** A reliable answer-sheet tick, cross, or deduction. The student confirms it; it is not filed by itself. */
+function sheetVerdict(store:MaterialStore,q:import('./contracts.js').QuestionBundle):boolean {
+ if(!questionInPairedSet(store,q))return false;
+ const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
+ return q.teacherMarks.some(f=>pageKindOf(store,f.assetId)==='answer_sheet'&&f.check==='passed'&&!f.uncertainties.length&&(teacherMarkMeansWrong(f.text,full)||teacherMarkMeansRight(f.text,full)));
 }
 /** Photo material without a printed number or stem (work, marks, corrections): the model saw it on the page
  * but could not place it. It stays where it is (no inferred association) and is summarized per photo instead
@@ -117,10 +145,12 @@ export function verifiedMaterialStem(q:import('./contracts.js').QuestionBundle, 
 }
 function automaticMistake(store:MaterialStore,questionId:string):boolean {
  const q=readQuestion(store,questionId)!;
- if(!verifiedMaterialStem(q,expectedIntakeStem(store,q))) return false;
+  if(!verifiedMaterialStem(q,expectedIntakeStem(store,q))) return false;
+ if(sheetVerdict(store,q)) return false;
  if(q.grades.some(g=>!g.stale&&(g.result==='incorrect'||g.result==='partial'||(!!g.score&&typeof g.score.total==="number"&&g.score.total>0&&g.score.earned<g.score.total)))) return true;
  const full=fullMarksOf(q.stem.filter(f=>f.role==='question').map(f=>f.text).join('\n'));
- return q.teacherMarks.some(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansWrong(f.text,full));
+ const marks=decisiveMarks(store,q);
+ return marks.some(f=>f.check==='passed'&&!f.uncertainties.length&&teacherMarkMeansWrong(f.text,full));
 }
 export function questionIncluded(store:MaterialStore,questionId:string):boolean { return inclusionIntent(store,questionId)??automaticMistake(store,questionId); }
 /** Fragment ids the student removed from a preview before that question could be filed. */
@@ -155,10 +185,10 @@ export function syncMaterialLearning(store:MaterialStore):void {
     const anchor=store.db.prepare(`SELECT s.id,s.batch_id FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.owner_id=? AND a.id=?`).get(store.studentId,stem[0]!.assetId) as {id:string;batch_id:string};
     const index=(store.db.prepare('SELECT COALESCE(MAX(item_index),0)+1 n FROM error_item WHERE asset_id=?').get(anchor.id) as {n:number}).n;
     itemId=newId('itm');
-    store.db.prepare(`INSERT INTO error_item(id,student_id,batch_id,asset_id,item_index,subject,knowledge_tags,status,text_excerpt,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(itemId,store.studentId,anchor.batch_id,anchor.id,index,q.subject,JSON.stringify(q.tags),'ready_for_reflection',questionExcerpt(stem.map(f=>f.text).join('\n\n')),now(),now());
+    store.db.prepare(`INSERT INTO error_item(id,student_id,batch_id,asset_id,item_index,subject,knowledge_tags,status,text_excerpt,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(itemId,store.studentId,anchor.batch_id,anchor.id,index,q.subject,JSON.stringify(q.tags),'ready_for_reflection',questionExcerpt(assembledQuestionTexts(store,q).join('\n\n')),now(),now());
     store.db.prepare('INSERT INTO material_item_link(owner_id,question_id,item_id) VALUES (?,?,?)').run(store.studentId,q.id,itemId);
    }else{
-    store.db.prepare('UPDATE error_item SET text_excerpt=?,subject=?,knowledge_tags=?,updated_at=? WHERE id=?').run(questionExcerpt(stem.map(f=>f.text).join('\n\n')),q.subject,JSON.stringify(q.tags),now(),itemId);
+    store.db.prepare('UPDATE error_item SET text_excerpt=?,subject=?,knowledge_tags=?,updated_at=? WHERE id=?').run(questionExcerpt(assembledQuestionTexts(store,q).join('\n\n')),q.subject,JSON.stringify(q.tags),now(),itemId);
    }
   }
  });
