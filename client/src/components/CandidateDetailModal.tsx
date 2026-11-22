@@ -1,6 +1,7 @@
 import { IonButton, IonButtons, IonCheckbox, IonContent, IonHeader, IonModal, IonSpinner, IonTitle, IonToolbar } from '@ionic/react';
 import type { ReactNode } from 'react';
 import type { IntakeCandidateDetail, IntakeCandidateFragment } from '../../../src/web/apiTypes';
+import { detailLead } from '../lib/intakeVerdict';
 import { StemText } from './StemText';
 
 const GRADE_RESULT: Record<IntakeCandidateDetail['grades'][number]['result'], string> = {
@@ -19,7 +20,7 @@ function readableUncertainties(stem: IntakeCandidateFragment[]): string[] {
   for (const fragment of stem) {
     for (const item of fragment.uncertainties) {
       const text = item.trim();
-      if (!text || /^[a-z0-9_]+$/i.test(text) || notes.includes(text)) continue;
+      if (!text || text.includes('不确定') || /^[a-z0-9_]+$/i.test(text) || notes.includes(text)) continue;
       notes.push(text);
     }
   }
@@ -58,14 +59,13 @@ function Images(props: { crop: string | null; source: string | null; figures?: {
 function Recognized(props: { detail: IntakeCandidateDetail }): ReactNode {
   const text = questionText(props.detail.stem);
   const notes = readableUncertainties(props.detail.stem);
-  const unsure = props.detail.stem.some(fragment => fragment.check !== 'passed' || fragment.uncertainties.length > 0);
+  const lead = detailLead(props.detail.status);
   const diagram = props.detail.figures.length > 0 || props.detail.stem.some(fragment => fragment.role === 'diagram' || fragment.requiresDiagram);
   return <>
-    {props.detail.status && props.detail.status !== 'verified' ? <p className="item-hint tone-orange">{props.detail.status === 'needs_review' ? '识别仍有不确定处，请以原图为准。' : '题目仍在识别和校验，可以先看图勾选。'}</p> : null}
-    <h3>识别出的题目</h3>
-    {text ? <div className="item-stem candidate-stem" data-testid="candidate-stem"><StemText text={text} /></div> : <p className="muted" data-testid="candidate-stem-empty">还没有识别出题目文字。</p>}
+    {lead ? <p className="item-hint">{lead}</p> : null}
+    <h3>题目</h3>
+    {text ? <div className="item-stem candidate-stem" data-testid="candidate-stem"><StemText text={text} /></div> : <p className="muted" data-testid="candidate-stem-empty">还没有读出题目文字。</p>}
     {diagram ? <p className="muted">{props.detail.figures.length ? '这道题有图，请对照上面的题目裁图、题目图形和来源页。' : '这道题有图，请对照上面的裁图和来源页。'}</p> : null}
-    {unsure ? <p className="item-hint tone-orange" data-testid="candidate-uncertain">识别还有不确定处，请对照原图。</p> : null}
     {notes.map(note => <p key={note} className="muted">{note}</p>)}
     {props.detail.work.length ? <section data-testid="candidate-work"><h3>你写的</h3>{props.detail.work.map((line, index) => <p key={`${line.label ?? ''}-${index}`}>{line.label ? `${line.label}：` : ''}{line.text}</p>)}</section> : null}
     {props.detail.marks.length ? <section data-testid="candidate-mark"><h3>批改痕迹</h3>{props.detail.marks.map((line, index) => <p key={index}>{line.text}</p>)}</section> : null}
@@ -112,8 +112,8 @@ export function CandidateDetailModal(props: {
       <h2>{props.title}</h2>
       {showLegacy ? <>
         <Images crop={props.legacy!.crop} source={props.legacy!.source} />
-        <h3>识别出的题目</h3>
-        <p className="muted" data-testid="candidate-stem-empty">还没有识别出题目文字。</p>
+        <h3>题目</h3>
+        <p className="muted" data-testid="candidate-stem-empty">还没有读出题目文字。</p>
         <p className="muted" data-testid="candidate-traces-empty">还没有作答或批改记录。</p>
         <h3>已有的答案和判断</h3>
         <p className="muted" data-testid="candidate-judgment-empty">还没有答案或判断。</p>
