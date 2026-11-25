@@ -70,27 +70,34 @@ describe('material extraction persistence', () => {
     expect(f.db.prepare('SELECT count(*) n FROM material_fragment').get()).toMatchObject({ n: 0 });
   });
 
-  it('preserves verified siblings and reconciles partial material before retrying only unfinished requests', async () => {
-    const f = await fixture(); let failSecond = true; const seen: string[] = []; const reconciled: number[] = [];
+  it('keeps a verified sibling when another question verify exhausts its budget, without failing the page', async () => {
+    const f = await fixture(); const seen: string[] = []; const reconciled: number[] = [];
     const server = http.createServer(async (req, res) => {
       let raw = ''; for await (const chunk of req) raw += chunk;
       const body = JSON.parse(raw); const c = JSON.parse(body.messages[1].content[0].text); const { operation, source, candidate } = c;
       seen.push(`${operation}:${candidate?.key ?? ''}`);
-      if (operation === 'verify' && candidate.key === 'second' && failSecond) { res.statusCode = 503; res.end('{}'); return; }
+      if (operation === 'verify' && candidate.key === 'second') { res.statusCode = 503; res.end('{}'); return; }
       const value = operation === 'locate' ? { source, document: { title: null, subject: null, date: null, printedCode: null, page: 1 }, candidates: ['first', 'second'].map((key, i) => ({ key, role: 'question', box: { x: 0, y: i / 2, width: 1, height: .5 }, number: String(i + 1), subpart: null, page: 1, order: i, requiresDiagram: false })), warnings: [] } : operation === 'read' ? { source, candidateKey: candidate.key, text: `Synthetic ${candidate.key}`, uncertainties: [] } : { source, candidateKey: candidate.key, check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] };
       res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(value) } }] }));
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
     registerMaterialExtraction(f.store, f.jobs, f.uploads, { mode: 'openai', chat: { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`, apiKey: 'synthetic', timeoutMs: 1000, bailianOnly: false, models: { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' } } }, (_asset, extraction) => { reconciled.push(extraction.fragments.length); });
-    const saved = await f.uploads.save(f.input); await expect.poll(() => f.jobs.get(saved.job.id)?.state).toBe('failed');
+    const saved = await f.uploads.save(f.input); await expect.poll(() => f.jobs.get(saved.job.id)?.state).toBe('succeeded');
     const partial = f.db.prepare('SELECT extraction_json,status FROM material_asset WHERE id=?').get(saved.assetId) as { extraction_json: string; status: string };
-    expect(partial.status).toBe('partial'); expect(JSON.parse(partial.extraction_json).fragments).toHaveLength(1);
-    expect(JSON.parse(partial.extraction_json).warnings).toContain('fragment_unavailable:second:provider_unavailable');
-    expect(f.db.prepare('SELECT count(*) n FROM material_fragment').get()).toMatchObject({ n: 1 }); expect(reconciled).toEqual([1]);
-    failSecond = false; f.jobs.retry(saved.job.id, randomUUID()); await expect.poll(() => f.jobs.get(saved.job.id)?.state).toBe('succeeded');
-    expect(f.db.prepare('SELECT count(*) n FROM material_fragment').get()).toMatchObject({ n: 2 }); expect(reconciled).toEqual([1, 2]);
-    expect(seen.filter(k => k === 'locate:')).toHaveLength(1); expect(seen.filter(k => k === 'read:first')).toHaveLength(1); expect(seen.filter(k => k === 'verify:first')).toHaveLength(1); expect(seen.filter(k => k === 'read:second')).toHaveLength(1); expect(seen.filter(k => k === 'verify:second')).toHaveLength(4);
+    const extraction = JSON.parse(partial.extraction_json);
+    expect(partial.status).toBe('partial');
+    expect(extraction.fragments).toHaveLength(2);
+    expect(extraction.fragments.find((item: { number: string }) => item.number === '1').check).toBe('passed');
+    expect(extraction.fragments.find((item: { number: string }) => item.number === '2').check).toBe('failed');
+    expect(extraction.warnings).toContain('fragment_unavailable:second:provider_unavailable');
+    expect(f.db.prepare('SELECT count(*) n FROM material_fragment').get()).toMatchObject({ n: 2 });
+    expect(reconciled).toEqual([2]);
+    expect(seen.filter(k => k === 'locate:')).toHaveLength(1);
+    expect(seen.filter(k => k === 'read:first')).toHaveLength(1);
+    expect(seen.filter(k => k === 'verify:first')).toHaveLength(1);
+    expect(seen.filter(k => k === 'read:second')).toHaveLength(1);
+    expect(seen.filter(k => k === 'verify:second')).toHaveLength(3);
   });
 
   it('persists a question when only an auxiliary read is invalid and does not offer retry', async () => {
@@ -118,7 +125,7 @@ describe('material extraction persistence', () => {
     await expect.poll(() => f.jobs.get(saved.job.id)?.state).toBe('succeeded');
     const row = f.db.prepare('SELECT extraction_json,status FROM material_asset WHERE id=?').get(saved.assetId) as { extraction_json: string; status: string };
     const extraction = JSON.parse(row.extraction_json);
-    expect(row.status).toBe('extracted');
+    expect(row.status).toBe('partial');
     expect(extraction.warnings).toContain('fragment_unavailable:mark:invalid_output');
     expect(extraction.fragments.find((item: { role: string }) => item.role === 'question')).toMatchObject({ check: 'low', uncertainties: ['missing_diagram'] });
     expect(extraction.fragments.find((item: { role: string }) => item.role === 'teacher_mark')).toMatchObject({ check: 'failed' });
@@ -153,15 +160,16 @@ describe('material extraction persistence', () => {
     expect(f.db.prepare('SELECT extraction_json FROM material_asset WHERE id=?').get(saved.assetId)).toMatchObject({ extraction_json: null });
   });
 
-  it.each(['transient', 'invalid_output'])('binds every actual HTTP request and reuses checkpoints after %s failure', async failureKind => {
-    const f = await fixture(); let verificationFails = true; const seen: string[] = []; let jobId = '';
+  it.each(['transient', 'invalid_output'])('retries one fragment verify and reuses the locate and read checkpoints after %s', async failureKind => {
+    const f = await fixture(); let verifyAttempts = 0; const seen: string[] = []; let jobId = '';
     const server = http.createServer(async (req, res) => {
       let raw = ''; for await (const chunk of req) raw += chunk;
       const body = JSON.parse(raw); const context = JSON.parse(body.messages.find((m: any) => m.role === 'user').content.find((p: any) => p.type === 'text').text);
       const { operation, source, candidate } = context; seen.push(operation);
       const stages = Object.values(f.jobs.execution(jobId).stages); expect(stages.filter(s => s.state === 'running')).toHaveLength(1);
       expect(stages.some(s => s.attempts >= 1)).toBe(true);
-      if (operation === 'verify' && verificationFails) {
+      if (operation === 'verify' && verifyAttempts < 2) {
+        verifyAttempts += 1;
         if (failureKind === 'transient') { res.statusCode = 503; res.end('{}'); }
         else res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ source, candidateKey: 'invented' }) } }] }));
         return;
@@ -173,12 +181,12 @@ describe('material extraction persistence', () => {
     cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
     const saved = await f.uploads.save(f.input); jobId = saved.job.id;
     registerMaterialExtraction(f.store, f.jobs, f.uploads, { mode: 'openai', chat: { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`, apiKey: 'synthetic', timeoutMs: 1000, bailianOnly: false, models: { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' } } });
-    await f.jobs.resume(); await expect.poll(() => f.jobs.get(jobId)?.state).toBe('failed');
-    const failedCalls = failureKind === 'transient' ? ['locate', 'read', 'verify', 'verify', 'verify'] : ['locate', 'read', 'verify'];
-    expect(seen).toEqual(failedCalls);
-    verificationFails = false; f.jobs.retry(jobId, randomUUID()); await expect.poll(() => f.jobs.get(jobId)?.state).toBe('succeeded');
-    expect(seen).toEqual([...failedCalls, 'verify']);
-    const row = f.db.prepare('SELECT extraction_json FROM material_asset WHERE id=?').get(saved.assetId) as { extraction_json: string };
-    expect(JSON.parse(row.extraction_json).fragments[0].sourceHash).toBe(f.uploads.source(saved.assetId).sourceHash);
+    await f.jobs.resume(); await expect.poll(() => f.jobs.get(jobId)?.state).toBe('succeeded');
+    expect(seen).toEqual(['locate', 'read', 'verify', 'verify', 'verify']);
+    const row = f.db.prepare('SELECT extraction_json,status FROM material_asset WHERE id=?').get(saved.assetId) as { extraction_json: string; status: string };
+    const extraction = JSON.parse(row.extraction_json);
+    expect(row.status).toBe('extracted');
+    expect(extraction.fragments[0].check).toBe('passed');
+    expect(extraction.fragments[0].sourceHash).toBe(f.uploads.source(saved.assetId).sourceHash);
   });
 });

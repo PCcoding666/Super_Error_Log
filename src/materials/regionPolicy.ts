@@ -59,3 +59,78 @@ function sitsBeside(question: SideRegion, diagram: SideRegion): boolean {
   if (!(overlap > 0 && smaller > 0 && overlap >= smaller * 0.5)) return false;
   return diagram.box.x >= question.box.x + question.box.width - 0.02;
 }
+
+const OPTION_CLAUSE = /^[（(]?[A-DＡ-Ｄ][)）.．、]\s*\S/u;
+
+/** Text that is only choice lines (A. … B. …), with no stem sentence left beside them. */
+export function isOptionOnlyText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 4_000) return false;
+  const clauses = trimmed.split(/\n+/u).flatMap(line => line.split(/(?=(?:^|\s)[（(]?[A-DＡ-Ｄ][)）.．、])/u)).map(clause => clause.trim()).filter(Boolean);
+  return clauses.length > 0 && clauses.every(clause => OPTION_CLAUSE.test(clause));
+}
+
+type CheckName = 'passed' | 'low' | 'failed' | 'unchecked';
+type OptionRow = {
+  role: string;
+  text: string;
+  number: string | null;
+  subpart: string | null;
+  page: number | null;
+  order?: number;
+  check?: CheckName;
+  uncertainties?: string[];
+};
+const CHECK_RANK: Record<CheckName, number> = { failed: 0, unchecked: 1, low: 2, passed: 3 };
+
+function sameQuestion(a: OptionRow, b: OptionRow): boolean {
+  return a.role === 'question' && b.role === 'question' && a.number !== null && a.number === b.number && (a.subpart ?? null) === (b.subpart ?? null) && (a.page ?? null) === (b.page ?? null);
+}
+
+/** The options row stays stored. It is not its own card when this question already has a stem, or an earlier options row. */
+export function coveredOptionRow(fragment: OptionRow, fragments: readonly OptionRow[]): boolean {
+  if (fragment.role !== 'question' || fragment.number === null || !isOptionOnlyText(fragment.text)) return false;
+  const group = fragments.filter(item => sameQuestion(fragment, item));
+  if (group.length < 2) return false;
+  const stem = group.find(item => !isOptionOnlyText(item.text));
+  if (stem) return stem !== fragment;
+  const host = [...group].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))[0];
+  return host !== fragment;
+}
+
+function weaken(host: OptionRow, option: OptionRow): void {
+  const uncertainties = [...new Set([...(host.uncertainties ?? []), ...(option.uncertainties ?? [])])];
+  const hostCheck = host.check ?? 'unchecked';
+  const optionCheck = option.check ?? 'unchecked';
+  const worse = CHECK_RANK[hostCheck] <= CHECK_RANK[optionCheck] ? hostCheck : optionCheck;
+  host.check = worse === 'passed' && uncertainties.length > 0 ? 'low' : worse;
+  host.uncertainties = uncertainties;
+}
+
+/**
+ * An options-only row with the same printed number stays on that question.
+ * Its own check is kept. A real stem does not absorb that text, so a passed stem
+ * cannot launder an unchecked or failed options line. Several options-only rows
+ * share their text on the earliest row, and that row's check is no stronger than any of them.
+ */
+export function mergeOptionOnlyFragments<T extends OptionRow>(fragments: T[]): T[] {
+  const groups = new Map<string, T[]>();
+  for (const fragment of fragments) {
+    if (fragment.role !== 'question' || fragment.number === null) continue;
+    const key = `${fragment.number}\0${fragment.subpart ?? ''}\0${fragment.page ?? ''}`;
+    groups.set(key, [...(groups.get(key) ?? []), fragment]);
+  }
+  for (const group of groups.values()) {
+    const optionRows = group.filter(fragment => isOptionOnlyText(fragment.text));
+    const stem = group.find(fragment => !isOptionOnlyText(fragment.text));
+    if (stem || optionRows.length < 2) continue;
+    const host = [...optionRows].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))[0]!;
+    for (const option of optionRows) {
+      if (option === host) continue;
+      const extra = option.text.trim();
+      if (extra && !host.text.includes(extra)) host.text = `${host.text.trim()}\n${extra}`;
+      weaken(host, option);
+    }
+  }
+  return fragments;
+}
