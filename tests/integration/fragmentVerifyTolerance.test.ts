@@ -77,7 +77,8 @@ it('keeps usable questions, a teacher mark, and one card when some verify payloa
     } else if (operation === 'verify' && candidate?.key === 'q2') {
       value = [
         { candidateKey: 'q2', check: 'passed', uncertainties: [] },
-        { role: 'teacher_mark', number: '2', text: '错', bbox: { x: 0.82, y: 0.30, width: 0.08, height: 0.05 } },
+        { role: 'teacher_mark', number: '2', text: '错', check: 'passed', uncertainties: [], bbox: { x: 0.82, y: 0.30, width: 0.08, height: 0.05 } },
+        { role: 'student_work', number: '2', text: '未核的笔迹', bbox: { x: 0.2, y: 0.44, width: 0.2, height: 0.04 } },
       ];
     } else if (operation === 'verify' && candidate?.key === 'q3') {
       value = { nope: true };
@@ -101,9 +102,12 @@ it('keeps usable questions, a teacher mark, and one card when some verify payloa
   const extraction = JSON.parse(row.extraction_json) as { fragments: { role: string; number: string | null; text: string; check: string }[]; warnings: string[] };
   expect(row.status).toBe('partial');
   expect(extraction.warnings).toContain('fragment_unavailable:q3:invalid_output');
-  expect(extraction.fragments.filter(fragment => fragment.role === 'question' && fragment.number === '1')).toHaveLength(1);
-  expect(extraction.fragments.find(fragment => fragment.role === 'question' && fragment.number === '1')!.text).toContain('A. 2  B. 4  C. 6  D. 8');
+  const questionOne = extraction.fragments.filter(fragment => fragment.role === 'question' && fragment.number === '1');
+  expect(questionOne).toHaveLength(2);
+  expect(questionOne.find(fragment => fragment.text.includes('Synthetic stem'))).toMatchObject({ check: 'passed' });
+  expect(questionOne.find(fragment => fragment.text.includes('A. 2'))).toMatchObject({ text: 'A. 2  B. 4  C. 6  D. 8', check: 'passed' });
   expect(extraction.fragments.find(fragment => fragment.role === 'teacher_mark')).toMatchObject({ text: '错', number: '2', check: 'passed' });
+  expect(extraction.fragments.find(fragment => fragment.role === 'student_work' && fragment.text === '未核的笔迹')).toMatchObject({ check: 'unchecked' });
   expect(extraction.fragments.find(fragment => fragment.role === 'student_work' && fragment.number === '2')!.check).toBe('passed');
   expect(extraction.fragments.find(fragment => fragment.role === 'question' && fragment.number === '3')!.check).toBe('failed');
   expect(calls.filter(call => call === 'verify:q3')).toHaveLength(3);

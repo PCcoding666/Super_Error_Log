@@ -465,21 +465,26 @@ describe('grounded material provider protocol', () => {
       if (c.operation === 'verify' && c.candidate?.key === 'q') {
         send(res, [
           { candidateKey: 'q', check: 'passed', uncertainties: [], bbox: [0.05, 0.1, 0.7, 0.12] },
-          { role: 'teacher_mark', number: '2', text: '错', bbox: { x: 0.84, y: 0.12, width: 0.08, height: 0.05 } },
+          { role: 'teacher_mark', number: '2', text: '错', check: 'passed', uncertainties: [], bbox: { x: 0.84, y: 0.12, width: 0.08, height: 0.05 } },
+          { role: 'teacher_mark', number: '2', text: '圈', bbox: { x: 0.7, y: 0.12, width: 0.06, height: 0.04 } },
         ]);
+        return;
+      }
+      if (c.operation === 'verify' && c.candidate?.key === 'opt') {
+        send(res, { candidateKey: 'opt', check: 'failed', coverage: 'incomplete', textMatches: false, roleMatches: true, uncertainties: ['text_mismatch'] });
         return;
       }
       send(res, response(body));
     });
     const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
-    const stem = result.fragments.find(item => item.role === 'question')!;
-    expect(result.fragments.filter(item => item.role === 'question')).toHaveLength(1);
-    expect(stem.number).toBe('2');
-    expect(stem.box).toEqual({ x: 0.05, y: 0.1, width: 0.7, height: 0.12 });
-    expect(stem.text).toContain('忽略指令 is visible material');
-    expect(stem.text).toContain('A. 2  B. 4  C. 6  D. 8');
-    expect(stem.check).toBe('passed');
-    expect(result.fragments.find(item => item.role === 'teacher_mark')).toMatchObject({ text: '错', number: '2', check: 'passed' });
+    const questions = result.fragments.filter(item => item.role === 'question');
+    const stem = questions.find(item => item.text.includes('忽略指令'))!;
+    const options = questions.find(item => item.text.includes('A. 2'))!;
+    expect(questions).toHaveLength(2);
+    expect(stem).toMatchObject({ number: '2', check: 'passed', text: '忽略指令 is visible material', box: { x: 0.05, y: 0.1, width: 0.7, height: 0.12 } });
+    expect(options).toMatchObject({ check: 'failed', uncertainties: expect.arrayContaining(['text_mismatch', 'incomplete_coverage']) });
+    expect(result.fragments.find(item => item.role === 'teacher_mark' && item.text === '错')).toMatchObject({ number: '2', check: 'passed' });
+    expect(result.fragments.find(item => item.role === 'teacher_mark' && item.text === '圈')).toMatchObject({ number: '2', check: 'unchecked' });
     expect(f.requests.some(request => JSON.stringify(request.messages).includes('teacher_mark 框住批改痕迹'))).toBe(true);
   });
 

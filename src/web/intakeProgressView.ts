@@ -3,7 +3,7 @@ import { intakeVerdict } from '../materials/grading.js';
 import type { SavedIntakeProgress } from '../materials/intakeProgress.js';
 import type { MaterialStore } from '../materials/store.js';
 import { markedRight, verifiedMaterialStem } from '../materials/learning.js';
-import { selectableQuestion } from '../materials/regionPolicy.js';
+import { coveredOptionRow, selectableQuestion } from '../materials/regionPolicy.js';
 import { unsupportedSubject } from '../materials/subjects.js';
 import type { IntakeCandidate, IntakePhoto } from './apiTypes.js';
 
@@ -18,7 +18,7 @@ export function previewStatus(progress: SavedIntakeProgress, fragment: Fragment,
 export function previewCandidates(progress: SavedIntakeProgress, questions: QuestionBundle[], intents: Map<string, boolean>, store?: MaterialStore): IntakeCandidate[] {
   if (unsupportedSubject(progress.extraction.document.subject)) return [];
   const dismissed = new Set(progress.dismissed ?? []);
-  return progress.extraction.fragments.filter(f => selectableQuestion(f) && !dismissed.has(f.fragmentId)).flatMap(fragment => {
+  return progress.extraction.fragments.filter(f => selectableQuestion(f) && !dismissed.has(f.fragmentId) && !coveredOptionRow(f, progress.extraction.fragments)).flatMap(fragment => {
     const q = questions.find(q => q.stem.some(f => f.fragmentId === fragment.fragmentId));
     if (q && (q.itemId || intents.get(q.id) === false || (!progress.selected.includes(fragment.fragmentId) && markedRight(q)))) return [];
     return [{ id: `${fragment.fragmentId}:${progress.extraction.revision}`, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',

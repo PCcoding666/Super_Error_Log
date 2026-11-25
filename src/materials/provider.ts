@@ -250,7 +250,8 @@ function recoverMarks(value: unknown, candidate: Candidate): RecoveredRegion[] {
     const uncertainties = item.uncertainties === undefined || item.uncertainties === null ? [] : Array.isArray(item.uncertainties) && item.uncertainties.length <= 128 && item.uncertainties.every(entry => typeof entry === 'string' && entry.length <= 1000) ? item.uncertainties as string[] : null;
     if (!uncertainties) continue;
     const stated = item.check;
-    const check: Fragment['check'] = stated === 'failed' ? 'failed' : (stated === 'passed' || stated === undefined) && uncertainties.length === 0 ? 'passed' : 'low';
+    // A box and a label are not a verification. Only an explicit passed check with no uncertainties is passed.
+    const check: Fragment['check'] = stated === 'failed' ? 'failed' : stated === 'passed' && uncertainties.length === 0 ? 'passed' : stated === 'passed' || stated === 'low' ? 'low' : 'unchecked';
     found.push({
       role: item.role as RecoveredRegion['role'],
       box: parsed,
