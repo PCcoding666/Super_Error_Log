@@ -150,7 +150,10 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
           store.putFragment(next); return next;
         });
         const { set: _set, ...stored } = extraction as ExtractedMaterial;
-        store.db.prepare('UPDATE material_asset SET extraction_json=?,status=? WHERE owner_id=? AND id=?').run(JSON.stringify(stored), partial ? 'partial' : 'extracted', store.studentId, extraction.assetId);
+        // A fragment the model could not verify stays on the page. The asset is partial,
+        // and the job still finishes so the student list can show the questions that were boxed.
+        const fragmentGaps = extraction.warnings.some(warning => warning.startsWith('fragment_unavailable:'));
+        store.db.prepare('UPDATE material_asset SET extraction_json=?,status=? WHERE owner_id=? AND id=?').run(JSON.stringify(stored), partial || fragmentGaps ? 'partial' : 'extracted', store.studentId, extraction.assetId);
         const summary = JSON.stringify({ assetId: extraction.assetId, revision: pageSource.revision, sourceHash: pageSource.sourceHash, partial: !!partial });
         if (extraction.assetId === row.asset_id) store.db.prepare('UPDATE material_job SET result_json=? WHERE owner_id=? AND id=?').run(summary, store.studentId, jobId);
         else store.db.prepare(`UPDATE material_job SET state='succeeded', error=NULL, result_json=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND asset_id=? AND kind='extract' AND id!=? AND state IN ('queued','interrupted')`).run(summary, store.studentId, extraction.assetId, jobId);

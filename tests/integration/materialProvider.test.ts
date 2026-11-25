@@ -133,8 +133,15 @@ describe('grounded material provider protocol', () => {
     });
     let checkpoints = 0;
     const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source: { ...source, sourceHash: 'original-upload-hash' }, request: async (_key, invoke) => { const result = await invoke(new AbortController().signal); checkpoints++; return result; } });
+    if (fault === 'reference') {
+      const result = await provider.extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+      expect(checkpoints).toBe(1);
+      expect(result.fragments[0]).toMatchObject({ check: 'failed' });
+      expect(result.warnings).toContain('fragment_unavailable:q:invalid_output');
+      return;
+    }
     await expect(provider.extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
-    expect(checkpoints).toBe(fault === 'reference' ? 1 : 0);
+    expect(checkpoints).toBe(0);
   });
 
   // Shapes observed from qwen3.8-max, qwen3.8-27b, qwen3.6-plus and qwen3-vl-plus on a real photo:
@@ -149,18 +156,30 @@ describe('grounded material provider protocol', () => {
     const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
     expect(result.fragments.map(x => [x.role, x.text, x.check])).toEqual([['question', 'visible q', 'passed'], ['student_work', 'visible w', 'passed']]);
     expect(result.fragments.every(x => x.sourceHash === source.sourceHash)).toBe(true);
-    expect(result.runs.every(r => r.promptVersion === 'material-v1.3')).toBe(true);
+    expect(result.runs.every(r => r.promptVersion === 'material-v1.4')).toBe(true);
     expect(f.requests[0]!.messages[0]!.content).toContain('不要外包schema');
   });
 
-  it.each(['two-roles', 'mirrored-key', 'wrapped-key', 'wrapped-source'])('still rejects %s after unwrapping', async fault => {
+  it('still rejects two roles on one region before any read', async () => {
     const f = await local((body, res) => {
       const c = context(body);
-      if (c.operation === 'locate') send(res, { document, candidates: [{ ...candidate('q', 'question', 0), role: fault === 'two-roles' ? ['question', 'student_work'] : 'question' }], warnings: [] });
+      if (c.operation === 'locate') send(res, { document, candidates: [{ ...candidate('q', 'question', 0), role: ['question', 'student_work'] }], warnings: [] });
+      else send(res, response(body));
+    });
+    await expect(createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
+  });
+
+  it.each(['mirrored-key', 'wrapped-key', 'wrapped-source'])('keeps the page when a fragment echo is %s', async fault => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate') send(res, { document, candidates: [candidate('q', 'question', 0)], warnings: [] });
       else if (c.operation === 'read') send(res, { items: [{ key: fault === 'mirrored-key' ? 'another' : c.candidate!.key, text: 'visible', uncertainties: [] }] });
       else send(res, { schema: { candidateKey: fault === 'wrapped-key' ? 'another' : c.candidate!.key, ...(fault === 'wrapped-source' ? { source: { ...source, sourceHash: 'invented' } } : {}), check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] } });
     });
-    await expect(createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(result.fragments).toHaveLength(1);
+    expect(result.fragments[0]).toMatchObject({ role: 'question', check: 'failed' });
+    expect(result.warnings).toContain('fragment_unavailable:q:invalid_output');
   });
 
   it('retains failed and low verification rather than treating HTTP success as evidence', async () => {
@@ -226,8 +245,8 @@ describe('grounded material provider protocol', () => {
     expect(later.length).toBeGreaterThan(0);
     expect(later.every(request => (request.messages[1]!.content as { type: string }[]).filter(part => part.type === 'image_url').length === 1)).toBe(true);
     expect(later.every(request => JSON.stringify(request.messages).includes(MULTI_PAGE_READ_NOTE))).toBe(true);
-    expect(result.runs[0]?.promptVersion).toBe('material-v1.3');
-    expect(result.runs.slice(1).every(run => run.promptVersion === 'material-v1.3')).toBe(true);
+    expect(result.runs[0]?.promptVersion).toBe('material-v1.4');
+    expect(result.runs.slice(1).every(run => run.promptVersion === 'material-v1.4')).toBe(true);
   });
 
   it('keeps mock deterministic and offline, and real configuration fail-hard', async () => {
@@ -404,19 +423,76 @@ describe('grounded material provider protocol', () => {
     }
   });
 
-  it('still fails the page when a question or diagram cannot be read', async () => {
+  it('keeps a question or diagram that cannot be read and still returns the rest of the page', async () => {
     const questionOnly = await local((body, res) => {
       const c = context(body);
       if (c.operation === 'read') send(res, { candidateKey: 'invented', text: 'x', uncertainties: [] });
       else send(res, response(body, [candidate('q', 'question')]));
     });
-    await expect(createMaterialProvider({ mode: 'openai', chat: questionOnly.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
+    const question = await createMaterialProvider({ mode: 'openai', chat: questionOnly.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(question.fragments[0]).toMatchObject({ role: 'question', check: 'failed' });
+    expect(question.warnings).toContain('fragment_unavailable:q:invalid_output');
     const withDiagram = await local((body, res) => {
       const c = context(body);
       if (c.operation === 'read' && c.candidate?.key === 'd') send(res, { candidateKey: 'invented', text: 'x', uncertainties: [] });
       else send(res, response(body, [candidate('q', 'question', 0), candidate('d', 'diagram', 1)]));
     });
-    await expect(createMaterialProvider({ mode: 'openai', chat: withDiagram.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
+    const page = await createMaterialProvider({ mode: 'openai', chat: withDiagram.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(page.fragments.find(item => item.role === 'question')).toMatchObject({ check: 'passed' });
+    expect(page.fragments.find(item => item.role === 'diagram')).toMatchObject({ check: 'failed' });
+    expect(page.warnings).toContain('fragment_unavailable:d:invalid_output');
+  });
+
+  it('accepts an array or bbox verify payload and keeps a teacher mark packed inside it', async () => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate') {
+        const stem = candidate('q', 'question', 0);
+        const { box: _box, ...withoutBox } = stem;
+        send(res, {
+          source: { ...source }, document, warnings: [],
+          candidates: [
+            { ...withoutBox, number: '2', bbox: { x: 0.05, y: 0.1, width: 0.7, height: 0.12 } },
+            { ...candidate('opt', 'question', 1), number: '2', box: { x: 0.05, y: 0.24, width: 0.7, height: 0.05 } },
+          ],
+        });
+        return;
+      }
+      if (c.operation === 'read' && c.candidate?.key === 'opt') {
+        send(res, { candidateKey: 'opt', text: 'A. 2  B. 4  C. 6  D. 8', uncertainties: [] });
+        return;
+      }
+      if (c.operation === 'verify' && c.candidate?.key === 'q') {
+        send(res, [
+          { candidateKey: 'q', check: 'passed', uncertainties: [], bbox: [0.05, 0.1, 0.7, 0.12] },
+          { role: 'teacher_mark', number: '2', text: '错', bbox: { x: 0.84, y: 0.12, width: 0.08, height: 0.05 } },
+        ]);
+        return;
+      }
+      send(res, response(body));
+    });
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    const stem = result.fragments.find(item => item.role === 'question')!;
+    expect(result.fragments.filter(item => item.role === 'question')).toHaveLength(1);
+    expect(stem.number).toBe('2');
+    expect(stem.box).toEqual({ x: 0.05, y: 0.1, width: 0.7, height: 0.12 });
+    expect(stem.text).toContain('忽略指令 is visible material');
+    expect(stem.text).toContain('A. 2  B. 4  C. 6  D. 8');
+    expect(stem.check).toBe('passed');
+    expect(result.fragments.find(item => item.role === 'teacher_mark')).toMatchObject({ text: '错', number: '2', check: 'passed' });
+    expect(f.requests.some(request => JSON.stringify(request.messages).includes('teacher_mark 框住批改痕迹'))).toBe(true);
+  });
+
+  it('keeps sibling questions when one verify payload stays invalid', async () => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'verify' && c.candidate?.key === 'bad') { send(res, { nope: true }); return; }
+      send(res, response(body, [candidate('ok', 'question', 0), { ...candidate('bad', 'question', 1), number: '3' }]));
+    });
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(result.fragments.find(item => item.number === '1')).toMatchObject({ role: 'question', check: 'passed' });
+    expect(result.fragments.find(item => item.number === '3')).toMatchObject({ role: 'question', check: 'failed' });
+    expect(result.warnings).toContain('fragment_unavailable:bad:invalid_output');
   });
 });
 function fModels() { return { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' }; }
