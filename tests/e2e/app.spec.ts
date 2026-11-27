@@ -42,36 +42,33 @@ test('配对后看到错题本，拍照进入录入态，自动收录的题左�
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await pair(page);
   await expect(page.getByTestId('subject-switch')).toContainText('数学');
-  await expect(page.getByTestId('next-step-primary')).toBeVisible();
   await expect(page.getByTestId('corner-search')).toBeVisible();
-  await expect(page.getByTestId('capture-camera')).toBeVisible();
-  await expect(page.getByTestId('capture-album')).toBeVisible();
-  const library = page.locator('#library-input');
+  await expect(page.locator('[data-testid="capture-add"]:visible')).toContainText('新增');
+  await expect(page.getByTestId('capture-album')).toHaveCount(0);
+  await expect(page.getByTestId('next-step-primary')).toHaveCount(0);
   const camera = page.locator('#camera-input');
-  await expect(library).toHaveAttribute('accept', 'image/*');
-  await expect(library).toHaveAttribute('multiple', '');
-  await expect(library).not.toHaveAttribute('capture');
-  await expect(camera).toHaveAttribute('capture', 'environment');
-  await expect(camera).not.toHaveAttribute('multiple');
-  // 右下角和空态上的相册框要有真实面积。裁成 1px 再脚本 click()，小米 WebView 不会弹出相册。
-  for (const input of [library, page.getByTestId('capture-album').locator('input')]) {
-    const box = await input.boundingBox();
-    expect(box?.width ?? 0).toBeGreaterThan(40);
-    expect(box?.height ?? 0).toBeGreaterThan(40);
-  }
-  // 点右下角相册圆钮本身会打开系统选择器，而不是靠脚本去点一个看不见的框。
+  await expect(camera).toHaveAttribute('accept', 'image/*');
+  await expect(camera).toHaveAttribute('multiple', '');
+  await expect(camera).not.toHaveAttribute('capture');
+  await expect(page.locator('#library-input')).toHaveCount(0);
+  // 入口铺满按钮。裁成 1px 再脚本 click()，小米 WebView 不会弹出相册。
+  const box = await camera.boundingBox();
+  expect(box?.width ?? 0).toBeGreaterThan(40);
+  expect(box?.height ?? 0).toBeGreaterThan(40);
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    library.click(),
+    camera.click(),
   ]);
   expect(chooser.isMultiple()).toBe(true);
   // 一张有批改痕迹（偏红）、一张没有（偏蓝）。
   await chooser.setFiles([await synthetic('#efb7b2'), await synthetic('#b0d3e0')]);
   await expect.poll(() => url(page)).toBe('/s/new');
-  await expect(page.getByTestId('intake-album').locator('input')).not.toHaveAttribute('capture');
-  await expect(page.getByTestId('intake-camera').locator('input')).toHaveAttribute('capture', 'environment');
-  const intakeAlbum = await page.getByTestId('intake-album').locator('input').boundingBox();
-  expect(intakeAlbum?.width ?? 0).toBeGreaterThan(40);
+  await expect(page.getByTestId('intake-album')).toHaveCount(0);
+  const intakeCamera = page.locator('[data-testid="capture-add"]:visible input').last();
+  await expect(intakeCamera).not.toHaveAttribute('capture');
+  await expect(intakeCamera).toHaveAttribute('multiple', '');
+  const intakeBox = await intakeCamera.boundingBox();
+  expect(intakeBox?.width ?? 0).toBeGreaterThan(40);
   const marked = page.locator('section.intake-photo[data-state="done"]');
   await expect(marked).toHaveCount(1, { timeout: 40_000 });
   await expect(marked.getByTestId('intake-question')).toHaveCount(3);
@@ -303,6 +300,37 @@ test('详情页：立体图由程序画，能拖动旋转', async ({ page }) => 
   await expect.poll(() => figure.locator('#s circle').first().getAttribute('cx')).not.toBe(before);
 });
 
+test('设置齿轮：点图标本身、筛选菜单还开着、以及菜单收起之后，都会进入设置', async ({ page }) => {
+  await pair(page);
+  const gear = page.getByTestId('settings-link');
+  // routerLink 会渲染成 <a>。iOS 上点按可以只剩按下态、click 不到这个锚点。必须是 button。
+  await expect.poll(() => gear.evaluate(element => element.shadowRoot?.querySelector('.button-native')?.tagName)).toBe('BUTTON');
+  const icon = gear.locator('ion-icon');
+  const box = await icon.boundingBox();
+  expect(box).toBeTruthy();
+  // 菜单盖住齿轮（全屏遮罩在深色底上几乎看不见）。点图标中心仍应进入设置。
+  await openMenu(page);
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await expect.poll(() => url(page)).toBe('/s/me');
+  await page.goBack();
+  await expect(gear).toBeVisible();
+  await openMenu(page);
+  // 点遮罩本身收起菜单。点页面坐标在 Chromium 上会打到 popover 宿主而不是 backdrop，菜单不收。
+  await page.locator('ion-popover.filter-popover ion-backdrop').click();
+  await expect(page.locator('ion-popover.filter-popover')).toBeHidden();
+  // click 被丢掉时（只剩 pointerdown/pointerup）也要能打开。
+  const again = await gear.locator('ion-icon').boundingBox();
+  expect(again).toBeTruthy();
+  await page.evaluate(({ x, y }) => {
+    const target = document.elementFromPoint(x, y);
+    if (!target) throw new Error('齿轮上没有元素');
+    const event = (type: string) => new PointerEvent(type, { bubbles: true, composed: true, cancelable: true, pointerId: 1, pointerType: 'touch', button: 0, clientX: x, clientY: y });
+    target.dispatchEvent(event('pointerdown'));
+    target.dispatchEvent(event('pointerup'));
+  }, { x: again!.x + again!.width / 2, y: again!.y + again!.height / 2 });
+  await expect.poll(() => url(page)).toBe('/s/me');
+});
+
 test('设置页：学段、练习即将推出、添加到主屏幕；刷新深链接仍是单页应用', async ({ page }) => {
   await pair(page);
   await page.getByTestId('settings-link').click();
@@ -347,7 +375,7 @@ test.describe('安卓桌面图标壳', () => {
   test('点相册两秒内页面没被盖住也没选到文件，就提示换手机浏览器打开；manifest 给安卓的是 browser', async ({ page }) => {
     await pair(page);
     // Playwright 拦下文件选择器、页面不会被盖住——正好就是小米「添加到桌面」壳的样子。
-    await page.locator('#library-input').click();
+    await page.locator('#camera-input').click();
     const hint = page.locator('ion-toast.chooser-blocked');
     await expect(hint).toBeVisible({ timeout: 5000 });
     await expect(hint).toContainText('打不开相册');

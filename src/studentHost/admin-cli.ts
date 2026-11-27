@@ -3,9 +3,13 @@
  *   sudo -u supererrorlog env SEL_STUDENT_HOST_DIR=/var/lib/super-error-log/student-host node dist/studentHost/admin-cli.js <命令>
  * 没有设置 SEL_STUDENT_HOST_DIR、目录不存在、或者目录里没有 registry.db 时**拒绝运行**（以前会悄悄新建一个空库，发出生产里用不了的码）。
  *
- *   create [role]                         新建学生空间（上限见 registry）并生成第一个邀请码；role 缺省 student
- *   invite <studentId>                    给同一学生补一个邀请码（旧码继续有效）
- *   reset-invitation <studentId>          核验后找回：换码并撤销旧码及会话，不删除学习数据；停用的账号也用它恢复
+ *   create [role] [--qr] [--origin URL]   新建学生空间（上限见 registry）并生成第一个邀请码；role 缺省 student
+ *   invite <studentId> [--qr] [--origin URL]
+ *                                         给同一学生补一个邀请码（旧码继续有效）
+ *   reset-invitation <studentId> [--qr] [--origin URL]
+ *                                         核验后找回：换码并撤销旧码及会话，不删除学习数据；停用的账号也用它恢复
+ *   发码的三个命令都会同时打印预填码的登录链接 <公网入口>/s/?code=…（打开是填好码的登录页，学生点按钮才兑换）；
+ *   --qr 在终端再画一个二维码（纯 TS 编码，见 qr.ts）；公网入口来自 --origin，否则 SEL_PUBLIC_ORIGIN，缺省 study 域名。
  *   lookup <name> <phone>                 按完整姓名 + 手机号定位账号（不返回码）
  *   lookup <姓名片段 | 手机尾号4位>        模糊查找，列出候选（姓名打码、只显示尾号）
  *   list                                  列出学生（姓名、手机尾号、状态；不含任何码/令牌）
@@ -27,9 +31,58 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { formatInviteCode, normalizeInviteCode, RegistryError, StudentRegistry } from './registry.js';
 import { AdminAuth } from '../admin/auth.js';
+import { DEFAULT_PUBLIC_ORIGIN, loginLink, resolvePublicOrigin } from './inviteLink.js';
+import { encodeQr, qrTerminalLines } from './qr.js';
 
-const USAGE = `用法：admin-cli.ts create [${ACCOUNT_ROLES.join('|')}] | invite <studentId> | reset-invitation <studentId> | list | lookup <name> <phone> | lookup <姓名片段|手机尾号4位> | set-role <studentId> <role> | revoke-sessions <studentId> | disable <studentId> | delete <studentId> --confirm | export <studentId> <outDir> | registration-code create [--uses N] [--days D] [备注] | registration-code list | registration-code revoke <编号> | admin-password
-（必须设置 SEL_STUDENT_HOST_DIR，且与运行中的服务相同）`;
+const USAGE = `用法：admin-cli.ts create [${ACCOUNT_ROLES.join('|')}] [--qr] [--origin URL] | invite <studentId> [--qr] [--origin URL] | reset-invitation <studentId> [--qr] [--origin URL] | list | lookup <name> <phone> | lookup <姓名片段|手机尾号4位> | set-role <studentId> <role> | revoke-sessions <studentId> | disable <studentId> | delete <studentId> --confirm | export <studentId> <outDir> | registration-code create [--uses N] [--days D] [备注] | registration-code list | registration-code revoke <编号> | admin-password
+（必须设置 SEL_STUDENT_HOST_DIR，且与运行中的服务相同；--qr 在终端画登录链接的二维码，--origin / SEL_PUBLIC_ORIGIN 指定公网入口，缺省 ${DEFAULT_PUBLIC_ORIGIN}）`;
+
+/** 发码命令共用的链接参数。--origin 后面缺值或跟了另一个参数时返回 null（调用方报错，不发码）。 */
+interface LinkFlags { qr: boolean; origin: string | undefined; rest: string[] }
+function parseLinkFlags(args: string[]): LinkFlags | null {
+  const rest: string[] = [];
+  let qr = false;
+  let origin: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === '--qr') { qr = true; continue; }
+    if (arg === '--origin') {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) return null;
+      origin = value;
+      i += 1;
+      continue;
+    }
+    rest.push(arg);
+  }
+  return { qr, origin, rest };
+}
+
+/** 先把公网入口定下来（不合法就不发码）；返回 null 时已经打印了原因。 */
+function resolveOriginOrExplain(flags: LinkFlags): string | null {
+  try {
+    return resolvePublicOrigin(process.env, flags.origin);
+  } catch (error) {
+    console.error(`参数不对：${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+/**
+ * 打印新邀请码、预填码的登录链接，按需打印终端二维码。
+ * 链接和二维码里就是这枚码——与码一样只显示这一次，不写日志、不落盘。
+ */
+function printInvitation(out: (line: string) => void, heading: string, invitation: { code: string; expiresAt: Date }, origin: string, qr: boolean): void {
+  const link = loginLink(origin, invitation.code);
+  out(`${heading}（只显示这一次，60 天有效，可重复登录，到 ${invitation.expiresAt.toISOString()}）：${invitation.code}`);
+  out(`登录链接（打开是填好码的登录页，学生点「进入我的错题本」才兑换；链接里就是这枚码，同样别外传）：${link}`);
+  if (qr) {
+    out('二维码（手机相机扫一下，就是上面这条链接）：');
+    for (const line of qrTerminalLines(encodeQr(link).modules)) out(line);
+  } else {
+    out(`提示：加 --qr 可在终端画出这条链接的二维码；公网入口用 --origin 或 SEL_PUBLIC_ORIGIN 改（现在是 ${origin}）。`);
+  }
+}
 
 /** 姓名打码：只留第一个字（模糊查找时给候选，避免整屏都是全名）。 */
 function maskName(name: string): string {
@@ -105,26 +158,39 @@ export function runAdminCli(argv: string[], out: (line: string) => void = consol
         } finally { auth.close(); }
       }
       case 'create': {
-        if (rest.length > 1) return argError('create 最多带一个身份参数。');
-        const role = parseRoleArg(rest[0]);
-        if (role === null) return argError(`身份只能是 ${ACCOUNT_ROLES.join(' / ')}（${Object.values(ACCOUNT_ROLE_LABELS).join('/')}），收到「${rest[0]}」。`);
+        const flags = parseLinkFlags(rest);
+        if (!flags) return argError('--origin 后面要跟公网入口地址，例如 --origin https://study.example.com。');
+        if (flags.rest.length > 1) return argError('create 最多带一个身份参数。');
+        const role = parseRoleArg(flags.rest[0]);
+        if (role === null) return argError(`身份只能是 ${ACCOUNT_ROLES.join(' / ')}（${Object.values(ACCOUNT_ROLE_LABELS).join('/')}），收到「${flags.rest[0]}」。`);
+        const origin = resolveOriginOrExplain(flags);
+        if (origin === null) return 2;
         const { studentId } = registry.createStudent(role);
-        const { code, expiresAt } = registry.issueInvitation(studentId);
+        const invitation = registry.issueInvitation(studentId);
         out(`学生已创建：${studentId}（身份：${ACCOUNT_ROLE_LABELS[role]}）`);
-        out(`邀请码（只显示这一次，60 天有效，可重复登录，到 ${expiresAt.toISOString()}）：${code}`);
+        printInvitation(out, '邀请码', invitation, origin, flags.qr);
         return 0;
       }
       case 'invite': {
-        const studentId = rest[0] ?? '';
-        const { code, expiresAt } = registry.issueInvitation(studentId);
-        out(`学生 ${studentId} 的新邀请码（只显示这一次，60 天有效，可重复登录，到 ${expiresAt.toISOString()}）：${code}`);
+        const flags = parseLinkFlags(rest);
+        if (!flags) return argError('--origin 后面要跟公网入口地址，例如 --origin https://study.example.com。');
+        if (flags.rest.length > 1) return argError('invite 只要一个学生 ID。');
+        const origin = resolveOriginOrExplain(flags);
+        if (origin === null) return 2;
+        const studentId = flags.rest[0] ?? '';
+        const invitation = registry.issueInvitation(studentId);
+        printInvitation(out, `学生 ${studentId} 的新邀请码`, invitation, origin, flags.qr);
         return 0;
       }
       case 'reset-invitation': {
-        if (rest.length !== 1) return argError('reset-invitation 需要学生 ID；请先核验申请者本人。');
-        const { code, expiresAt } = registry.resetInvitation(rest[0]!);
+        const flags = parseLinkFlags(rest);
+        if (!flags) return argError('--origin 后面要跟公网入口地址，例如 --origin https://study.example.com。');
+        if (flags.rest.length !== 1) return argError('reset-invitation 需要学生 ID；请先核验申请者本人。');
+        const origin = resolveOriginOrExplain(flags);
+        if (origin === null) return 2;
+        const invitation = registry.resetInvitation(flags.rest[0]!);
         out('原邀请码和登录会话已失效；学习记录保留。');
-        out('新邀请码（只显示这一次，60 天有效，可重复登录，到 ' + expiresAt.toISOString() + '）：' + code);
+        printInvitation(out, '新邀请码', invitation, origin, flags.qr);
         return 0;
       }
       case 'lookup': {

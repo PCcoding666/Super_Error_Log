@@ -5,6 +5,8 @@ data-e2e/
 fixtures/assets/
 test-results/
 playwright-report/
+# Local verify-sel runs: synthetic server state, browser session, and evidence.
+artifacts/verify-sel/
 *.log
 
 .env

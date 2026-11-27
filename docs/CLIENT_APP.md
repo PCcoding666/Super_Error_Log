@@ -31,6 +31,10 @@
 
 下发：worker 在 `/s/`、`/s/new`、`/s/me`、`/s/q/:id` 返回页面壳（登录之后）；网关和 worker 共用的公开静态路由 `/s/app/assets/<file>` 返回指纹资源，长期缓存。
 
+压缩：`vite build` 结束时把 `assets/` 里 1 KB 以上的 `.js`、`.css`、`.svg`、`.json` 预先压好，`.br` 和 `.gz` 放在原文件旁边（`client/vite.config.ts` 的 `precompress`；watch 模式不压）。`sendClientAsset` 按请求的 `Accept-Encoding` 选 br 或 gzip，回 `content-encoding` 和 `vary: accept-encoding`；没有压缩件或浏览器不接受时发原文件。压缩件本身不能直接请求（404）。主脚本约 1.5 MB，gzip 后约 340 KB，br 后约 260 KB。Caddy 没有开 `encode`，接口的 JSON 仍然不压缩。
+
+骨架：首页和详情页在第一份数据返回前先画占位（`home-skeleton`、`item-skeleton`，样式是 `theme.css` 的 `.sk-*`）；数据到了换成内容，出错时让位给 `Problem`。之后的刷新保留旧数据，不再显示骨架。
+
 ## 接口（/s/api）
 
 | 方法 路径 | 说明 |
@@ -48,6 +52,7 @@
 | GET `/settings` / POST `/settings/grade` | 学段、邀请码信息、版本；选学段（新账号的门槛也走它） |
 | GET `/intake` | 录入态：每张照片的状态、已收录的题、等勾选的候选题；旧流程和材料流程同一形状 |
 | POST `/intake/photos/:id/select` `{ids}` | 勾选加入（旧流程题 id；材料流程 `questionId:revision`） |
+| POST `/intake/photos/:id/dismiss-candidates` `{ids}` | 从录入列表去掉还没进错题本的候选题，不收录。材料流程记下「不收录」或从预选里拿掉；旧流程把仍是 `unselected` 的题标成 `skipped`，不精读、不建题。已经在错题本里的题不走这里，仍用 `/items/discard` |
 | POST `/intake/photos/:id/retry` / `/dismiss` | 重试识别 / 不要这张（后者仅旧流程） |
 | POST `/client-log` `{events:[{kind,code,message,route,rid,cid,status,retryable,build,online,visible,component}]}` | 浏览器端出错上报；最多 20 条，只收白名单字段并截短，每条写一行 `sel_client_event` 日志并记进互动记录 `web_error …#client:类别:错误码`。新账号没选学段也放行 |
 

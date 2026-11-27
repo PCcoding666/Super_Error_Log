@@ -294,18 +294,26 @@ export function InstallPage(props: { invitation?: boolean } = {}): ReactNode {
   return (
     <Page title="放到主屏幕" bar={bar}>
       <h1>放到主屏幕</h1>
-      <p className="lead">放到主屏幕以后，错题本会像 App 一样全屏打开，不用每次找网址。</p>
-      <section className="card">
-        <h2 className="card-title">在 Safari 里，四步</h2>
+      <p className="lead">放到主屏幕以后，错题本一点就开，不用每次找网址。要在浏览器里做：微信里打开的，先点右上角「…」→「在浏览器打开」（iPhone 上叫「在 Safari 中打开」）。</p>
+      <section className="card" data-testid="install-ios">
+        <h2 className="card-title">iPhone · Safari，四步</h2>
         <ol className="steps-text">
-          <li>用 <b>Safari</b> 打开错题本（微信里打开的先点右上角「…」→「在 Safari 中打开」）。</li>
+          <li>用 <b>Safari</b> 打开错题本。</li>
           <li>点屏幕下方的「分享」按钮（方框里一个向上的箭头）。</li>
           <li>往下找「添加到主屏幕」，点它，再点右上角「添加」。</li>
           <li>以后从主屏幕上的「错题本」图标打开。</li>
         </ol>
       </section>
+      <section className="card" data-testid="install-android">
+        <h2 className="card-title">安卓 · Chrome，三步</h2>
+        <ol className="steps-text">
+          <li>用 <b>Chrome</b>（或手机自带的浏览器）打开错题本。</li>
+          <li>点右上角「⋮」，选「添加到主屏幕」（有的叫「安装应用」或「添加到桌面」），再点「添加」。</li>
+          <li>以后从桌面图标打开。安卓上它打开的还是浏览器页面——这样拍照和相册才能正常用。</li>
+        </ol>
+      </section>
       <p className="hint">{props.invitation
-        ? '如果从主屏幕打开后要你登录，重新输入自己的邀请码就好，学习记录都还在。'
+        ? '如果从主屏幕打开后要你登录，重新输入自己的邀请码就好（或者再扫一次老师给的二维码），学习记录都还在。'
         : '如果主屏幕上的错题本打开后让你重新连接，请大人再给一个新链接，粘贴进去就好。'}</p>
     </Page>
   );

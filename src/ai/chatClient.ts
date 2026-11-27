@@ -28,6 +28,8 @@ export interface ChatOptions { baseUrl: string; apiKey: string; models: Record<s
 export interface Message { role: 'system' | 'user'; content: unknown }
 export const PROMPT_VERSION = 'evidence-v1-20260907';
 export const MAX_INPUT_TOKEN_RESERVATION = 100_000;
+/** Tokens reserved for one image in checkInput: 16x16 patches plus a fixed allowance. Callers that batch several images size them against this. */
+export function reserveImageTokens(width: number, height: number): number { return Math.ceil(width / 16) * Math.ceil(height / 16) + 1024; }
 const MAX_RESPONSE_BYTES = 2_000_000;
 const TOKEN_PLAN_ENDPOINT = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
 /** Only transport/provider failures may use the backup, never local validation or budgets. */
@@ -79,7 +81,7 @@ async function checkInput(messages: Message[]): Promise<void> {
           try {
             const meta = await sharp(bytes, { limitInputPixels: 40_000_000 }).metadata();
             if (!meta.width || !meta.height || !['jpeg', 'png', 'webp'].includes(meta.format ?? '')) throw new Error();
-            reserved += Math.ceil(meta.width / 16) * Math.ceil(meta.height / 16) + 1024;
+            reserved += reserveImageTokens(meta.width, meta.height);
           } catch { throw new AiError('unsupported', '模型图片无法读取或像素过大'); }
         } else throw new AiError('unsupported', '不支持的模型输入类型');
       }

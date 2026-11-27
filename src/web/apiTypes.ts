@@ -47,7 +47,7 @@ export interface NotebookResponse {
   shown: number;
   todo: number;
   groups: NotebookGroup[];
-  /** 还在找题的照片数：空状态时提示「AI 还在找题」。 */
+  /** 还在找题的数量：旧照片仍在识别，加上材料里最新一条提取为排队或进行中的份数。失败的不算。空状态时提示「AI 还在找题」。 */
   finding: number;
   /** 照片里还有没收进错题本的题（材料流程）。 */
   pendingIntake: number;
@@ -134,7 +134,7 @@ export interface SettingsResponse {
 /** 拍照上传该走哪套端点：旧识别流程（/s/capture）还是材料流程（/s/materials/*）。 */
 export interface UploadModeResponse { mode: 'legacy' | 'materials'; draftNamespace: string | null }
 
-export type IntakePhotoState = 'finding' | 'done' | 'needsPick' | 'failed' | 'unsupported';
+export type IntakePhotoState = 'finding' | 'located' | 'enriching' | 'done' | 'needsPick' | 'failed' | 'unsupported';
 
 export interface IntakeQuestion {
   /** 错题本里的题目 id（itm_…）。 */
@@ -144,13 +144,42 @@ export interface IntakeQuestion {
   thumb: string;
 }
 
+/** 学生看到的对错。confirm 表示还不能标成对或错。和识别 status 是两件事。 */
+export type IntakeVerdict = 'wrong' | 'partial' | 'right' | 'confirm';
+
 export interface IntakeCandidate {
-  /** 识别出的候选题 id（旧流程为识别任务里的题 id，材料流程为 questionId:revision）。 */
+  /** 识别出的候选题 id（旧流程为识别任务里的题 id，材料流程为 questionId:revision 或稳定的 fragmentId:sourceRevision）。 */
   id: string;
   label: string;
   excerpt: string;
+  status?: 'preliminary' | 'verifying' | 'verified' | 'needs_review';
+  /** Selection submitted to the server; waits for trustworthy final evidence. */
+  submitted?: boolean;
   /** 裁图；材料流程没有裁图时为 null。 */
   crop: string | null;
+  /** 老师的批改优先于 AI。错和部分对会预先勾上；对的题仍可见，但不走加入错题本。 */
+  verdict?: IntakeVerdict;
+  /** Wrong and partial rows start checked until the student toggles them. */
+  preselected?: boolean;
+  /** Photo that owns the row when it is shown on a question card. */
+  photoId?: string;
+}
+
+export interface IntakeGroupThumb {
+  src: string;
+  pageKind: 'paper' | 'answer_sheet';
+}
+
+/** One printed question assembled from an answer sheet and the paper pages that carry it. */
+export interface IntakeGroup {
+  id: string;
+  title: string;
+  /** For example 答题卡 + 试卷第 6、7 页. */
+  status: string;
+  thumbs: IntakeGroupThumb[];
+  photoIds: string[];
+  questions: IntakeQuestion[];
+  candidates: IntakeCandidate[];
 }
 
 /** 候选详情里的一段题干或图。只描述已经识别出来的内容。 */
@@ -173,8 +202,13 @@ export interface IntakeCandidateDetail {
   label: string;
   subject: string | null;
   stem: IntakeCandidateFragment[];
-  /** 题目区域裁图；没有时为 null。 */
+  status?: IntakeCandidate['status'];
+  verdict: IntakeVerdict;
+  preselected?: boolean;
+  /** 题目区域裁图；没有时为 null。框保持定位结果，不并入旁边的图。 */
   crop: string | null;
+  /** 已关联的题目图形，各自仍是自己的裁图。没有关联图形时为空。 */
+  figures: { crop: string }[];
   /** 来源整页；没有时为 null。 */
   source: string | null;
   work: { text: string; label: string | null }[];
@@ -203,6 +237,7 @@ export interface IntakePhoto {
   full: string;
   state: IntakePhotoState;
   statusText: string;
+  progress?: { stage: 'located' | 'enriching' | 'done'; total: number; verified: number; firstBatchCount: number; tLocateDoneMs: number; tFirstSelectableMs: number | null; tFullExtractMs: number | null };
   /** 已经在错题本里的题。 */
   questions: IntakeQuestion[];
   /** 没有批改痕迹的页：等学生勾选的候选题。 */
@@ -215,6 +250,11 @@ export interface IntakeResponse {
   /** 材料流程的草稿命名空间：上传时放在 x-draft-namespace 头里。 */
   draftNamespace: string | null;
   photos: IntakePhoto[];
+  /**
+   * Paper + answer-sheet sets, grouped by printed question number.
+   * Absent for same-page worksheets, which stay on `photos`.
+   */
+  groups?: IntakeGroup[];
   /** 还有照片在找题：客户端据此轮询。 */
   busy: boolean;
   /**

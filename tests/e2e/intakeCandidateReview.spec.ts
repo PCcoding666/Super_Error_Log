@@ -30,8 +30,12 @@ async function login(page: Page, base: string, code: string): Promise<void> {
 }
 
 async function uploadOne(page: Page, file: { name: string; mimeType: string; buffer: Buffer }, fromIntake: boolean): Promise<void> {
-  await page.getByTestId(fromIntake ? 'intake-album' : 'next-step-primary').click();
-  await page.getByTestId('capture-mode-single').locator('input').setInputFiles(file);
+  const add = page.locator('[data-testid="capture-add"]:visible').last();
+  if (await add.locator('input').count() === 0) {
+    await add.click();
+    await page.getByTestId('capture-mode-single').click();
+  }
+  await page.locator('#camera-input:visible').setInputFiles(file);
   if (!fromIntake) await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
 }
 
@@ -65,8 +69,10 @@ test('students can select one source page and review an unsaved candidate withou
     ] },
   ] });
   const selectPosts: string[] = [];
+  const imageUrls: string[] = [];
   page.on('request', request => {
     if (request.method() === 'POST' && /\/intake\/photos\/[^/]+\/select$/.test(new URL(request.url()).pathname)) selectPosts.push(request.postData() ?? '');
+    if (request.resourceType() === 'image') imageUrls.push(request.url());
   });
   try {
     await login(page, g.base, g.codes[0]!);
@@ -106,7 +112,18 @@ test('students can select one source page and review an unsaved candidate withou
     await expect(sheet).toContainText('照片里的');
     await expect(sheet.getByRole('button', { name: /生成|问 AI/ })).toHaveCount(0);
     await expect(sheet.locator('img[alt="题目裁图"]')).toBeVisible();
+    await expect(sheet.locator('img[alt="来源页"]')).toHaveCount(0);
+    await expect.poll(async () => sheet.locator('img[alt="题目裁图"]').getAttribute('src')).toContain('s=big');
+    const rawOriginal = (url: string): boolean => {
+      const parsed = new URL(url);
+      return /\/materials\/assets\/[^/]+\/image$/.test(parsed.pathname) && !parsed.searchParams.has('s');
+    };
+    expect(imageUrls.filter(rawOriginal)).toEqual([]);
+    await sheet.getByTestId('candidate-source-toggle').click();
     await expect(sheet.locator('img[alt="来源页"]')).toBeVisible();
+    await expect(sheet.locator('img[alt="来源页"]')).toHaveAttribute('src', /[?&]s=big(?:&|$)/);
+    await expect(sheet.getByRole('link', { name: '查看原图' })).toHaveAttribute('href', /\/materials\/assets\/[^/]+\/image$/);
+    expect(imageUrls.filter(rawOriginal)).toEqual([]);
     await expect(sheet.getByRole('checkbox', { name: '勾选这道题' })).not.toBeChecked();
     expect(selectPosts).toEqual([]);
     expect((await g.snapshot()).material_job).toHaveLength(jobsBefore);
@@ -121,7 +138,8 @@ test('students can select one source page and review an unsaved candidate withou
     await expect(sheet).toBeHidden();
 
     await pageA.getByRole('button', { name: '查看第 2 题的详情' }).click();
-    await expect(sheet.getByTestId('candidate-uncertain')).toBeVisible();
+    await expect(sheet.getByTestId('candidate-uncertain')).toHaveCount(0);
+    await expect(sheet).not.toContainText('不确定');
     await expect(sheet.getByTestId('candidate-judgment-empty')).toHaveText('还没有答案或判断。');
     await expect(sheet).not.toContainText('blurry');
     await expect(sheet).not.toContainText('PAGE-A-ANSWER');
@@ -279,7 +297,8 @@ test('a legacy candidate opens details from the crop it already has and does not
     await page.goto(link.replace('https://study.pccoding666.com', base));
     await page.getByTestId('next-step-primary').click();
     await page.waitForURL(/\/s\/\?paired=1$/);
-    await page.locator('#library-input').setInputFiles(await jpeg({ r: 176, g: 211, b: 224 }));
+    await expect(page.locator('[data-testid="capture-dock"]:visible')).toHaveAttribute('data-capture-route', 'legacy');
+    await page.locator('[data-testid="capture-add"]:visible input').setInputFiles(await jpeg({ r: 176, g: 211, b: 224 }));
     await expect.poll(() => new URL(page.url()).pathname).toBe('/s/new');
     const unmarked = page.locator('section.intake-photo[data-state="needsPick"]');
     await expect(unmarked.getByTestId('pick-candidate')).toHaveCount(3, { timeout: 40_000 });
@@ -287,7 +306,7 @@ test('a legacy candidate opens details from the crop it already has and does not
     page.on('request', request => { if (request.method() === 'POST') posts.push(new URL(request.url()).pathname); });
     await unmarked.getByRole('button', { name: '查看第 4 题的详情' }).click();
     const sheet = page.getByTestId('candidate-detail-sheet');
-    await expect(sheet.getByTestId('candidate-stem-empty')).toHaveText('还没有识别出题目文字。');
+    await expect(sheet.getByTestId('candidate-stem-empty')).toHaveText('还没有读出题目文字。');
     await expect(sheet.getByTestId('candidate-judgment-empty')).toHaveText('还没有答案或判断。');
     await expect(sheet.getByTestId('candidate-traces-empty')).toBeVisible();
     await expect(sheet.locator('img[alt="题目裁图"]')).toBeVisible();

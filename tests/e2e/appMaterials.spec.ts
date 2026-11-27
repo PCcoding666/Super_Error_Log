@@ -48,14 +48,15 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await page.getByRole('button', { name: '初中', exact: true }).click();
   await expect(page.getByTestId('empty-notebook')).toBeVisible();
   // 首次从首页选照片：上传队列先问 /s/api/upload，材料空间不接受旧的 /s/capture。
-  // 材料首页不常驻模式条。点相册后再选单页，文件框就是这一下点到的那一个。
+  // 先打开模式层，选单页，再把文件交给「开始」。
   const legacyUploads: string[] = [];
   page.on('request', request => { if (request.method() === 'POST' && /\/s\/capture$/.test(request.url())) legacyUploads.push(request.url()); });
   const dock = page.locator('[data-testid="capture-dock"]:visible');
-  await expect(dock).toHaveAttribute('data-capture-choice', 'choice');
+  await expect(dock).toHaveAttribute('data-capture-choice', 'sheet');
   await expect(page.getByTestId('capture-mode-bar')).toHaveCount(0);
-  await page.getByTestId('next-step-primary').click();
-  await page.getByTestId('capture-mode-single').locator('input').setInputFiles([await jpeg()]);
+  await page.locator('[data-testid="capture-add"]:visible').last().click();
+  await page.getByTestId('capture-mode-single').click();
+  await page.locator('#camera-input').setInputFiles([await jpeg()]);
   await expect.poll(() => url(page)).toBe('/s/new');
   // 合成提取：一道题「1 + 1 = ?」带作答和参考答案，没有老师批改痕迹 → 等学生勾选。
   const photo = page.locator('section.intake-photo[data-state="needsPick"]');
@@ -80,10 +81,16 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await page.getByTestId('item-card').first().click();
   await expect(page.getByTestId('question-text')).toContainText('1 + 1');
   const detailPhoto = page.locator('.item-photo img').first();
-  await expect(detailPhoto).toHaveAttribute('src', /\/s\/materials\/assets\/[^/]+\/image$/);
+  await expect(detailPhoto).toHaveAttribute('src', /\/s\/materials\/assets\/[^/]+\/image\?s=big$/);
   await expect(page.getByTestId('item-photo-note')).toContainText('整张照片');
-  // 合成原图高 320。题目裁框只占页高的三分之一，整页才到得了 300。
+  // 合成原图高 320，宽 240，显示尺寸不会再缩小。题目裁框只占页高的三分之一，整页才到得了 300。
   await expect.poll(() => detailPhoto.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight >= 300)).toBe(true);
+  await page.getByTestId('item-photo').click();
+  const viewer = page.locator('ion-modal.photo-viewer img');
+  await expect(viewer).toBeVisible();
+  await expect(viewer).toHaveAttribute('src', /\/s\/materials\/assets\/[^/]+\/image$/);
+  await page.getByTestId('photo-back').click();
+  await expect(viewer).toBeHidden();
   // 材料流程的题：你写的来自作答片段；照片里的参考答案和 AI 解答放在「正确答案」里。
   await expect(page.getByTestId('item-work')).toHaveCount(1);
   await expect(page.getByTestId('item-answer')).toContainText('AI 解答，仅供参考', { timeout: 20_000 });

@@ -8,7 +8,8 @@ import type { CaptureHints, JobTicket, MaterialJobKind } from './contracts.js';
 import { MaterialStore } from './store.js';
 
 type JobRow = JobTicket & { request_id: string; question_id: string | null; asset_id: string | null; basis_key: string; input_json: string; error: string | null };
-type Failure = { code: string; message: string; retryable: boolean };
+/** `detail`: head of a model body that failed validation (invalid_output); stays in this student's job record, never in logs or responses. */
+type Failure = { code: string; message: string; retryable: boolean; detail?: string };
 export type MaterialStage = { round: number; attempts: number; state: 'running' | 'succeeded' | 'failed'; result?: unknown; error?: Failure; nextAttemptAt?: number };
 export type MaterialExecution = { stages: Record<string, MaterialStage>; retryRequestIds: string[] };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -18,7 +19,8 @@ const ticket = (row: JobTicket): JobTicket => ({ id: row.id, kind: row.kind, sta
 function failure(error: unknown): Failure {
   const candidate = error as Partial<Failure> | null;
   const code = typeof candidate?.code === 'string' ? candidate.code : 'internal';
-  return { code: typeof candidate?.code === 'string' ? candidate.code : 'internal', message: typeof candidate?.message === 'string' ? candidate.message : '处理暂未完成。', retryable: candidate?.retryable === true && !['internal', 'storage_unavailable', 'invalid_image'].includes(code) };
+  const detail = typeof candidate?.detail === 'string' && candidate.detail ? candidate.detail.slice(0, 4000) : undefined;
+  return { code: typeof candidate?.code === 'string' ? candidate.code : 'internal', message: typeof candidate?.message === 'string' ? candidate.message : '处理暂未完成。', retryable: candidate?.retryable === true && !['internal', 'storage_unavailable', 'invalid_image'].includes(code), ...(detail ? { detail } : {}) };
 }
 function paused(): MobileRequestError { return new MobileRequestError(503, 'service_paused', '处理服务已暂停，请稍后重试。', SERVICE_PAUSED_RETRY_SECONDS); }
 
@@ -179,16 +181,17 @@ export class MaterialJobs {
     const rows = this.store.db.prepare("SELECT * FROM material_job WHERE owner_id=? AND state IN ('queued','running','interrupted')").all(this.store.studentId) as JobRow[];
     for (const row of rows) {
       if (this.held(row)) continue;
-      if (this.follower(row)) {
+      if (this.follower(row) || this.isolatedPending(row)) {
         const saved = row.asset_id ? this.store.db.prepare('SELECT extraction_json FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { extraction_json: string | null } | undefined : undefined;
         if (saved?.extraction_json) this.transition(row.id, 'succeeded', null);
-        else if (this.leadTerminal(row)) this.failMissing(row.id);
+        else if (!this.follower(row) || this.leadTerminal(row)) this.markPendingIsolated(row.id);
         continue;
       }
       if (!this.occupancy.has(row.id)) { this.admission?.noteExistingOccupancy(); this.occupancy.add(row.id); }
       if (this.deferred(row)) this.clearDeferred(row.id);
       this.schedule(row.id);
     }
+    this.pumpWaiting();
   }
 
   async stop(): Promise<void> {
@@ -301,7 +304,7 @@ export class MaterialJobs {
       if (input.setRole === 'follow') {
         const saved = row.asset_id ? this.store.db.prepare('SELECT extraction_json FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { extraction_json: string | null } | undefined : undefined;
         if (saved?.extraction_json) this.transition(row.id, 'succeeded', null);
-        else this.failMissing(row.id);
+        else this.markPendingIsolated(row.id);
         continue;
       }
       if (!this.deferred(row) && (this.occupancy.has(row.id) || !pending(row.state))) { accepted = true; continue; }
@@ -315,6 +318,8 @@ export class MaterialJobs {
       this.schedule(row.id);
       accepted = true;
     }
+    const captureId = rows.find(row => row.asset_id)?.asset_id ? this.captureOf(rows.find(row => row.asset_id)!.id) : null;
+    if (captureId) this.pumpCapture(captureId);
     return { accepted, queued };
   }
   /** Keep an already chosen lead. Pages that are already running on their own are left alone. */
@@ -380,10 +385,10 @@ export class MaterialJobs {
     delete input.deferred;
     this.writeInput(id, input);
   }
-  private schedule(id: string): void {
+  private schedule(id: string): 'queued' | 'already_queued' | 'stopped' | 'skipped' {
     const row = this.require(id);
-    if (this.stopped || !pending(row.state) || !this.handlers.has(row.kind)) return;
-    this.scheduler.enqueueExternalWork(`material:${this.store.studentId}:${id}`, async signal => {
+    if (this.stopped || !pending(row.state) || !this.handlers.has(row.kind)) return 'skipped';
+    return this.scheduler.enqueueExternalWork(`material:${this.store.studentId}:${id}`, async signal => {
       if (this.stopped) return;
       const work = this.run(id, AbortSignal.any([signal, this.shutdown.signal]));
       this.active.set(id, work);
@@ -399,30 +404,122 @@ export class MaterialJobs {
       signal.throwIfAborted(); this.transition(id, 'running', null);
       await handler(id, signal); signal.throwIfAborted();
       // A handler may atomically mark a result stale when its dependency revision changed.
-      if (this.require(id).state === 'running') this.transition(id, 'succeeded', null);
+      if (this.require(id).state === 'running') {
+        if (this.shouldIsolateLead(id)) {
+          this.markPendingIsolated(id);
+          this.transition(id, 'queued', null);
+        } else if (this.inputOf(this.require(id)).isolatedAttempted === true && !this.hasExtraction(id)) this.transition(id, 'failed', SET_PAGE_MISSING);
+        else this.transition(id, 'succeeded', null);
+      }
     } catch (error) {
-      if (pending(this.require(id).state)) this.transition(id, signal.aborted ? 'interrupted' : 'failed', signal.aborted ? { code: 'interrupted', message: '处理已中断，已完成结果仍然保留。', retryable: true } : failure(error));
+      if (pending(this.require(id).state)) {
+        if (signal.aborted) this.transition(id, 'interrupted', { code: 'interrupted', message: '处理已中断，已完成结果仍然保留。', retryable: true });
+        else if (this.shouldIsolateLead(id)) {
+          this.markPendingIsolated(id);
+          this.transition(id, 'queued', null);
+        } else this.transition(id, 'failed', failure(error));
+      }
     } finally {
-      // A page can join while the lead's write is already done. Settle it once the lead is actually finished.
-      this.settleFinishedLead(id);
+      const captureId = this.captureOf(id);
+      // Free the lead slot before uncovered pages take one. Otherwise a full queue of 1 never starts them.
       this.signals.delete(id); this.release(id);
+      this.pumpWaiting();
+      // A page that must read itself cannot reuse the callback that is still finishing.
+      if (captureId && pending(this.require(id).state) && this.isolatedPending(this.require(id))) {
+        setTimeout(() => { if (!this.stopped) this.pumpWaiting(); }, 0);
+      }
     }
   }
-  /** The lead reached a terminal state. Covered followers are done; the rest can be retried alone. */
-  private settleFinishedLead(id: string): void {
-    const row = this.row(id);
-    if (!row?.asset_id || this.inputOf(row).setRole !== 'lead' || pending(row.state)) return;
+  private captureOf(jobId: string): string | null {
+    const row = this.row(jobId);
+    if (!row?.asset_id) return null;
     const asset = this.store.db.prepare('SELECT capture_id FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { capture_id: string } | undefined;
-    if (!asset) return;
-    const followers = this.store.db.prepare(`SELECT j.id, j.asset_id FROM material_job j
-      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
-      WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=? AND j.state IN ('queued','interrupted')`).all(this.store.studentId, asset.capture_id) as { id: string; asset_id: string }[];
-    for (const follower of followers) {
-      if (this.inputOf(this.require(follower.id)).setRole !== 'follow') continue;
-      const saved = this.store.db.prepare('SELECT extraction_json FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, follower.asset_id) as { extraction_json: string | null } | undefined;
-      if (saved?.extraction_json) this.transition(follower.id, 'succeeded', null);
-      else this.failMissing(follower.id);
+    return asset?.capture_id ?? null;
+  }
+  private hasExtraction(jobId: string): boolean {
+    const row = this.row(jobId);
+    if (!row?.asset_id) return false;
+    const saved = this.store.db.prepare('SELECT extraction_json FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, row.asset_id) as { extraction_json: string | null } | undefined;
+    return !!saved?.extraction_json;
+  }
+  private isolatedPending(row: { input_json: string }): boolean {
+    const input = this.inputOf(row);
+    return input.isolatedFallback === 'pending' || input.isolateLead === true;
+  }
+  /** The combined call did not write this page. One isolated read is allowed; it is not another set lead. */
+  private shouldIsolateLead(id: string): boolean {
+    const row = this.require(id);
+    const input = this.inputOf(row);
+    return input.isolateLead === true && input.isolatedAttempted !== true && !this.hasExtraction(id);
+  }
+  private markPendingIsolated(id: string): void {
+    const row = this.require(id);
+    if (!pending(row.state)) return;
+    const input = this.inputOf(row);
+    delete input.setRole;
+    delete input.deferred;
+    delete input.isolateLead;
+    input.isolatedFallback = 'pending';
+    this.writeInput(id, input);
+  }
+  /** Start one isolated extract if a slot is free. A full queue leaves the page pending instead of set_page_missing. */
+  private startIsolated(id: string): void {
+    const row = this.row(id);
+    if (!row?.asset_id || !pending(row.state)) return;
+    if (this.captureAbandoned(row.asset_id)) return;
+    if (this.hasExtraction(id)) { this.transition(id, 'succeeded', null); return; }
+    const input = this.inputOf(row);
+    if (input.isolatedFallback === 'running') return;
+    if (input.isolatedAttempted === true) { this.failMissing(id); return; }
+    if (!this.handlers.has(row.kind)) { this.markPendingIsolated(id); return; }
+    if (!this.occupancy.has(id)) {
+      if (this.admission && !this.admission.tryAcquireJobCapacity().accepted) { this.markPendingIsolated(id); return; }
+      this.occupancy.add(id);
     }
+    delete input.setRole;
+    delete input.deferred;
+    delete input.isolateLead;
+    input.isolatedFallback = 'running';
+    input.isolatedAttempted = true;
+    this.writeInput(id, input);
+    // The lead's own callback is still in flight, so the same key cannot be queued yet.
+    if (this.schedule(id) === 'queued') return;
+    delete input.isolatedAttempted;
+    input.isolatedFallback = 'pending';
+    this.writeInput(id, input);
+    if (this.occupancy.delete(id)) this.admission?.releaseJobCapacity();
+  }
+  private captureAbandoned(assetId: string): boolean {
+    const asset = this.store.db.prepare('SELECT capture_id FROM material_asset WHERE owner_id=? AND id=?').get(this.store.studentId, assetId) as { capture_id: string } | undefined;
+    if (!asset) return false;
+    return this.capturePhase(asset.capture_id) === 'abandoned';
+  }
+  private leadIsTerminal(captureId: string, jobId: string): boolean {
+    const lead = this.appointedLead(captureId);
+    if (!lead || lead.id === jobId) return !lead;
+    return !pending(lead.state);
+  }
+  /** Uncovered pages of one set read themselves, one at a time, so a later page can join what the previous page saved. */
+  private pumpCapture(captureId: string): void {
+    if (this.capturePhase(captureId) === 'abandoned') return;
+    const rows = this.store.db.prepare(`SELECT j.id, j.state, j.input_json FROM material_job j
+      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
+      WHERE j.owner_id=? AND j.kind='extract' AND a.capture_id=? AND j.state IN ('queued','running','interrupted')`).all(this.store.studentId, captureId) as { id: string; state: string; input_json: string }[];
+    if (rows.some(row => row.state === 'running' || this.inputOf(row).isolatedFallback === 'running')) return;
+    for (const row of rows) {
+      const input = this.inputOf(row);
+      const ready = input.isolatedFallback === 'pending' || input.isolateLead === true || (input.setRole === 'follow' && this.leadIsTerminal(captureId, row.id));
+      if (!ready) continue;
+      this.startIsolated(row.id);
+      return;
+    }
+  }
+  private pumpWaiting(): void {
+    const rows = this.store.db.prepare(`SELECT DISTINCT a.capture_id AS captureId FROM material_job j
+      JOIN material_asset a ON a.owner_id=j.owner_id AND a.id=j.asset_id
+      WHERE j.owner_id=? AND j.kind='extract' AND j.state IN ('queued','interrupted')
+        AND (json_extract(j.input_json,'$.isolatedFallback') = 'pending' OR json_extract(j.input_json,'$.isolateLead') = 1 OR json_extract(j.input_json,'$.setRole') = 'follow')`).all(this.store.studentId) as { captureId: string }[];
+    for (const row of rows) this.pumpCapture(row.captureId);
   }
   private row(id: string): JobRow | undefined { return this.store.db.prepare('SELECT * FROM material_job WHERE owner_id=? AND id=?').get(this.store.studentId, id) as JobRow | undefined; }
   private require(id: string): JobRow { const row = this.row(id); if (!row) throw new MobileRequestError(404, 'not_found', '材料任务不存在。'); return row; }

@@ -34,7 +34,6 @@ export function SettingsPage(): ReactNode {
         <IonListHeader className="group-label">应用</IonListHeader>
         <IonList inset lines="full">
           <IonItem href="/s/install" detail data-testid="settings-install"><IonLabel>添加到主屏幕</IonLabel></IonItem>
-          <IonItem><IonLabel>服务</IonLabel><IonNote slot="end" color="success" data-testid="connection-ok">已连接</IonNote></IonItem>
         </IonList>
         {data.invitation ? <>
           <IonListHeader className="group-label">账号</IonListHeader>

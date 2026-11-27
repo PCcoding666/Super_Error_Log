@@ -62,6 +62,27 @@ const TYPE_POOL = ['计算题', '选择题', '填空题', '证明题', '实验�
  * Deterministic mock：优先命中 fixture 清单（文件名精确匹配），
  * 否则由内容哈希派生稳定结果；支持 SEL_MOCK_FAULT 注入故障（测试用）。
  */
+/**
+ * Help-page captures only. When SEL_HELP_REAL_ANSWERS points at a JSON file of
+ * { includes, answer, solution, mistake? }, a stem that contains `includes` gets that
+ * answer instead of the mock explanation. Unset (tests, demo, production mock) is unchanged.
+ */
+function scriptedHelpInsight(questionText: string): Insight | null {
+  const file = process.env.SEL_HELP_REAL_ANSWERS?.trim();
+  if (!file) return null;
+  const items = JSON.parse(fs.readFileSync(file, 'utf8')) as Array<{ includes?: string; answer?: string; solution?: string; mistake?: string | null }>;
+  const hit = items.find(item => item.includes && questionText.includes(item.includes));
+  if (!hit) return null;
+  return validateInsight({
+    answer: hit.answer,
+    solution: hit.solution,
+    mistake: hit.mistake ?? null,
+    cause: null,
+    uncertain: null,
+    figure: null,
+  });
+}
+
 export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionProvider, CoachProvider, InsightProvider {
   readonly name = 'mock';
   private manifest: Map<string, FixtureManifestItem> | null = null;
@@ -211,6 +232,10 @@ export class MockAiProvider implements AiProvider, FollowupProvider, CorrectionP
   /** 确定性详情页解答：解题过程覆盖 Markdown 列表、加粗、表格和 LaTeX 公式，附一张会运行脚本的交互图；有学生原作才推测错因。 */
   async explainItem(request: InsightRequest): Promise<StageResult<Insight>> {
     const e = validateLearningContext(request.context);
+    const scripted = scriptedHelpInsight(e.questionText);
+    if (scripted) {
+      return { value: scripted, run: { stage: 'explain', model: 'help-real-paper', durationMs: 0, promptTokens: null, completionTokens: null, maxTokens: 0, thinking: false, promptVersion: 'help-real-paper' } };
+    }
     const work = e.observations.find(o => o.kind === 'student_work');
     const value = validateInsight({
       answer: `【mock】第 ${e.questionNumber} 题参考答案`,

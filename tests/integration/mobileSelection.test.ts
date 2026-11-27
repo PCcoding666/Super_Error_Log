@@ -39,7 +39,7 @@ beforeAll(() => {
 // 桥接用例使用共享测试库：每个用例清空业务表，保留学生档案。
 beforeEach(() => {
   const database = getDb();
-  for (const table of ['mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo']) {
+  for (const table of ['material_link_event', 'material_item_link', 'material_legacy_map', 'material_fragment', 'material_asset', 'material_capture', 'mobile_item_link', 'evidence_record', 'error_diagnosis', 'error_item', 'asset_origin', 'source_asset', 'source_batch', 'v2_photo']) {
     database.prepare(`DELETE FROM ${table}`).run();
   }
 });
@@ -98,7 +98,7 @@ async function setup(vision: MobileVisionBoundary, dataDir?: string, v2 = false)
   await new Promise<void>(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const request: RequestFn = (url, init = {}) => fetch(`${base}${url}`, { ...init, headers: { authorization: `Bearer ${token}`, ...init.headers } });
-  return { root, app, server, base, request };
+  return { root, app, server, base, request, service: app.locals.mobileRecognitionService as MobileRecognitionService };
 }
 
 /** 云端模式（容量账目真实生效）。 */
@@ -411,5 +411,38 @@ describe('v2.1a 桥接与计数', () => {
     expect(week.itemCount).toBe(3);
     expect(week.manuallySelected).toBe(2);
     void base;
+  });
+
+  it('dismissing an unselected candidate does not read it or file it, and leaves the others to be selected', async () => {
+    const vision = new SelectVision();
+    vision.candidates = [candidate('1', 'marked_wrong'), candidate('2', 'unmarked'), candidate('3', 'unmarked')];
+    const { request, service } = await setup(vision, undefined, true);
+    const accepted = await json(await submit(request, await jpeg()));
+    const job = await waitFor(request, accepted.job.id, 'completed');
+    expect(vision.questionCalls).toEqual(['1']);
+    expect((await request(`/v2/photos/${job.id}/register`, { method: 'POST' })).status).toBe(200);
+    const week1 = await json(await request('/v2/week'));
+    expect(week1.items).toHaveLength(1);
+    const unselected = job.questions.filter((question: { status: string }) => question.status === 'unselected');
+    expect(unselected).toHaveLength(2);
+    const dropped = unselected[0].id as string;
+    const kept = unselected[1].id as string;
+    expect((await service.dismissUnselected(job.id, [dropped])).dismissed).toEqual([dropped]);
+    expect(vision.questionCalls).toEqual(['1']);
+    const after = await json(await request(`/v1/recognitions/${job.id}`));
+    expect(after.job.questions.find((question: { id: string }) => question.id === dropped)).toMatchObject({ status: 'skipped' });
+    expect(after.job.questions.find((question: { id: string }) => question.id === dropped).selectedByStudent).not.toBe(true);
+    expect(after.job.questions.find((question: { id: string }) => question.id === kept).status).toBe('unselected');
+    const week2 = await json(await request('/v2/week'));
+    expect(week2.items).toHaveLength(1);
+    expect(week2.photos.find((photo: { jobId: string }) => photo.jobId === job.id)).toMatchObject({ itemCount: 1, unselectedCount: 1 });
+    const selected = await select(request, job.id, [dropped, kept]);
+    expect(selected.status).toBe(200);
+    await waitFor(request, job.id, 'completed');
+    expect([...vision.questionCalls].sort()).toEqual(['1', unselected[1].number].sort());
+    const week3 = await json(await request('/v2/week'));
+    expect(week3.items).toHaveLength(2);
+    const links = getDb().prepare('SELECT question_id FROM mobile_item_link WHERE job_id = ?').all(job.id) as { question_id: string }[];
+    expect(links.map(link => link.question_id)).not.toContain(dropped);
   });
 });

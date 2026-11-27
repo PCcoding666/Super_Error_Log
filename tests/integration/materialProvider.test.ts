@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import sharp from 'sharp';
-import { MULTI_PAGE_LOCATE_NOTE, MULTI_PAGE_READ_NOTE, createMaterialProvider, type MaterialRequestExecutor, type MaterialSource } from '../../src/materials/provider.js';
+import { MULTI_PAGE_LOCATE_NOTE, MULTI_PAGE_READ_NOTE, SET_LOCATE_MAX_EDGE, createMaterialProvider, fitSetPagesToBudget, type MaterialRequestExecutor, type MaterialSource } from '../../src/materials/provider.js';
+import { MAX_INPUT_TOKEN_RESERVATION, reserveImageTokens } from '../../src/ai/chatClient.js';
 import { assertV2AiConfigured } from '../../src/v2/aiConfigGuard.js';
 
 const cleanup: (() => Promise<void>)[] = [];
@@ -36,6 +37,28 @@ function response(body: Request, candidates = [candidate('q', 'question')]) {
 const direct: MaterialRequestExecutor = async (_key, invoke) => invoke(new AbortController().signal);
 
 describe('grounded material provider protocol', () => {
+  it('publishes located crops before slow read and unchecked text before verify, without extra calls', async () => {
+    let releaseRead!: () => void;
+    const f = await local((body, res) => {
+      if (context(body).operation === 'read') releaseRead = () => send(res, response(body));
+      else send(res, response(body));
+    });
+    const snapshots: any[] = [];
+    const provider = createMaterialProvider({ mode: 'openai', chat: { ...f.chat, timeoutMs: 10000 } }, { source, request: direct });
+    const running = provider.extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {},
+      onProgress: (progress: unknown) => { snapshots.push(structuredClone(progress)); },
+    } as Parameters<typeof provider.extract>[0], new AbortController().signal);
+    await expect.poll(() => !!releaseRead).toBe(true);
+    try {
+      expect(snapshots[0]).toMatchObject({ phase: 'located', extraction: { fragments: [{ role: 'question', text: '', check: 'unchecked' }] } });
+      expect(f.requests.map(body => context(body).operation)).toEqual(['locate', 'read']);
+    } finally { releaseRead(); await running; }
+    expect(snapshots.some(p => p.phase === 'enriching' && p.extraction.fragments[0].text && p.extraction.fragments[0].check === 'unchecked')).toBe(true);
+    expect(snapshots.at(-1).extraction.fragments[0].check).toBe('passed');
+    expect(new Set(snapshots.map(p => p.extraction.fragments[0].fragmentId)).size).toBe(1);
+    expect(f.requests).toHaveLength(3);
+  });
+
   it('extracts mixed roles without promoting a label to evidence', async () => {
     const roles = ['question', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'diagram'];
     const f = await local((body, res) => send(res, response(body, roles.map((r, i) => candidate(String(i), r, i)))));
@@ -110,8 +133,15 @@ describe('grounded material provider protocol', () => {
     });
     let checkpoints = 0;
     const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source: { ...source, sourceHash: 'original-upload-hash' }, request: async (_key, invoke) => { const result = await invoke(new AbortController().signal); checkpoints++; return result; } });
+    if (fault === 'reference') {
+      const result = await provider.extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+      expect(checkpoints).toBe(1);
+      expect(result.fragments[0]).toMatchObject({ check: 'failed' });
+      expect(result.warnings).toContain('fragment_unavailable:q:invalid_output');
+      return;
+    }
     await expect(provider.extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
-    expect(checkpoints).toBe(fault === 'reference' ? 1 : 0);
+    expect(checkpoints).toBe(0);
   });
 
   // Shapes observed from qwen3.8-max, qwen3.8-27b, qwen3.6-plus and qwen3-vl-plus on a real photo:
@@ -126,18 +156,30 @@ describe('grounded material provider protocol', () => {
     const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
     expect(result.fragments.map(x => [x.role, x.text, x.check])).toEqual([['question', 'visible q', 'passed'], ['student_work', 'visible w', 'passed']]);
     expect(result.fragments.every(x => x.sourceHash === source.sourceHash)).toBe(true);
-    expect(result.runs.every(r => r.promptVersion === 'material-v1.1')).toBe(true);
+    expect(result.runs.every(r => r.promptVersion === 'material-v1.4')).toBe(true);
     expect(f.requests[0]!.messages[0]!.content).toContain('不要外包schema');
   });
 
-  it.each(['two-roles', 'mirrored-key', 'wrapped-key', 'wrapped-source'])('still rejects %s after unwrapping', async fault => {
+  it('still rejects two roles on one region before any read', async () => {
     const f = await local((body, res) => {
       const c = context(body);
-      if (c.operation === 'locate') send(res, { document, candidates: [{ ...candidate('q', 'question', 0), role: fault === 'two-roles' ? ['question', 'student_work'] : 'question' }], warnings: [] });
+      if (c.operation === 'locate') send(res, { document, candidates: [{ ...candidate('q', 'question', 0), role: ['question', 'student_work'] }], warnings: [] });
+      else send(res, response(body));
+    });
+    await expect(createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output', retryable: false });
+  });
+
+  it.each(['mirrored-key', 'wrapped-key', 'wrapped-source'])('keeps the page when a fragment echo is %s', async fault => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate') send(res, { document, candidates: [candidate('q', 'question', 0)], warnings: [] });
       else if (c.operation === 'read') send(res, { items: [{ key: fault === 'mirrored-key' ? 'another' : c.candidate!.key, text: 'visible', uncertainties: [] }] });
       else send(res, { schema: { candidateKey: fault === 'wrapped-key' ? 'another' : c.candidate!.key, ...(fault === 'wrapped-source' ? { source: { ...source, sourceHash: 'invented' } } : {}), check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] } });
     });
-    await expect(createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(result.fragments).toHaveLength(1);
+    expect(result.fragments[0]).toMatchObject({ role: 'question', check: 'failed' });
+    expect(result.warnings).toContain('fragment_unavailable:q:invalid_output');
   });
 
   it('retains failed and low verification rather than treating HTTP success as evidence', async () => {
@@ -160,12 +202,15 @@ describe('grounded material provider protocol', () => {
 
   it('sends every page of one multi-page submission to one locate and keeps each crop on its own page', async () => {
     const f = await local((body, res) => {
-      const operation = context(body).operation;
-      if (operation === 'locate-set') {
-        send(res, { pages: [{ assetId: source.assetId, source: { ...source }, document, candidates: [candidate('q', 'question')], warnings: [] }] });
+      const c = context(body);
+      if (c.operation === 'locate-set') {
+        // Answer for the page marked current only, as the note asks; the paper page gets its own candidate.
+        const current = (c as { submission?: { pageIndex?: number } }).submission?.pageIndex === 1 ? { assetId: 'paper', key: 'paper-q' } : { assetId: source.assetId, key: 'q' };
+        send(res, { pages: [{ assetId: current.assetId, document, candidates: [candidate(current.key, 'question')], warnings: [] }] });
         return;
       }
-      send(res, response(body));
+      // Reads and verifications echo the page they were asked about (the paper page has its own source identity).
+      send(res, { ...response(body), source: c.source });
     });
     const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct });
     const paper = await image();
@@ -174,10 +219,18 @@ describe('grounded material provider protocol', () => {
       assetId: source.assetId, revision: 1, bytes: sheet,
       hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' },
       pages: [
-        { assetId: 'paper', pageIndex: 1, pageKind: 'paper', bytes: paper },
+        { assetId: 'paper', pageIndex: 1, pageKind: 'paper', bytes: paper, revision: 1, sourceHash: 'paper-hash' },
         { assetId: source.assetId, pageIndex: 2, pageKind: 'answer_sheet', bytes: sheet },
       ],
     }, new AbortController().signal);
+    // Each page ends up with its own inventory, so the paper page is extracted too.
+    expect(result.set?.map(page => [page.assetId, page.fragments.length])).toEqual(expect.arrayContaining([['paper', 1], [source.assetId, 1]]));
+    // One locate per page, each carrying the whole set and naming a different current page.
+    const locates = f.requests.filter(request => context(request).operation === 'locate-set');
+    expect(locates).toHaveLength(2);
+    expect(f.requests.slice(0, 2)).toEqual(locates);
+    const currents = locates.map(request => (request.messages[1]!.content as { type: string; text?: string }[]).filter(part => part.type === 'text').map(part => part.text ?? '').filter(label => label.includes('当前页')).join(''));
+    expect(currents[0]).toContain('第 1 页'); expect(currents[1]).toContain('第 2 页');
     const parts = f.requests[0]!.messages[1]!.content as { type: string; text?: string }[];
     const text = parts.filter(part => part.type === 'text').map(part => part.text ?? '').join('\n');
     expect(parts.filter(part => part.type === 'image_url')).toHaveLength(2);
@@ -188,12 +241,12 @@ describe('grounded material provider protocol', () => {
     expect(text).not.toMatch(/初中|高中|小学/);
     expect(MULTI_PAGE_LOCATE_NOTE).not.toMatch(/初中|高中|小学/);
     expect(MULTI_PAGE_READ_NOTE).toContain('中学');
-    const later = f.requests.slice(1);
+    const later = f.requests.slice(2);
     expect(later.length).toBeGreaterThan(0);
     expect(later.every(request => (request.messages[1]!.content as { type: string }[]).filter(part => part.type === 'image_url').length === 1)).toBe(true);
     expect(later.every(request => JSON.stringify(request.messages).includes(MULTI_PAGE_READ_NOTE))).toBe(true);
-    expect(result.runs[0]?.promptVersion).toBe('material-v1.2');
-    expect(result.runs.slice(1).every(run => run.promptVersion === 'material-v1.2')).toBe(true);
+    expect(result.runs[0]?.promptVersion).toBe('material-v1.4');
+    expect(result.runs.slice(1).every(run => run.promptVersion === 'material-v1.4')).toBe(true);
   });
 
   it('keeps mock deterministic and offline, and real configuration fail-hard', async () => {
@@ -208,6 +261,243 @@ describe('grounded material provider protocol', () => {
     const { material_verify: _missing, ...models } = { ...fModels() };
     expect(() => createMaterialProvider({ mode: 'openai', chat: { baseUrl: 'http://127.0.0.1/v1', apiKey: 'synthetic', timeoutMs: 1000, bailianOnly: false, models } }, { source, request: direct })).toThrow('MATERIAL_VERIFY');
     expect(() => assertV2AiConfigured({ aiMode: 'bailian', aiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', aiApiKey: 'synthetic', aiModels: { followup: 'm', correct: 'm', coach: 'm' } })).toThrow('MATERIAL_EXTRACT');
+  });
+  // 2026-11-07 真实照片端到端：qwen3.8-27b 在温度 0 下对两张整页定位都省略了 warnings，整张照片被判 invalid_output，重试无效。
+  it('treats omitted warnings and uncertainties as none, still rejecting a present non-list', async () => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate') send(res, { document: { ...document, title: null }, candidates: [{ ...candidate('q', 'question', 0), role: ['question'] }] });
+      else if (c.operation === 'read') send(res, { source: { ...source }, candidateKey: c.candidate!.key, text: 'visible q', uncertainties: null });
+      else send(res, { source: { ...source }, candidateKey: c.candidate!.key, check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true });
+    });
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(result.warnings).toEqual([]);
+    expect(result.fragments.map(x => [x.text, x.check, x.uncertainties])).toEqual([['visible q', 'passed', []]]);
+    const g = await local((body, res) => send(res, { ...response(body), warnings: 'none' }));
+    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+  });
+
+  // 2026-11-07 真实照片端到端：两张 3024×4032 的 iPhone 照片按 4096 长边一起送定位，预留超过 MAX_INPUT_TOKEN_RESERVATION，组提交必然失败。
+  it('shrinks the pages of one multi-page locate to fit the input reservation, gives that call more time, and keeps full-size pages for reads', async () => {
+    const phone = (background: string) => sharp({ create: { width: 3024, height: 4032, channels: 3, background } }).jpeg({ quality: 60 }).toBuffer();
+    const [paper, sheet] = await Promise.all([phone('#fff'), phone('#eee')]);
+    const f = await local((body, res) => {
+      // Slower than one single-call timeout (1000 ms in this fixture): a two-page locate is allowed two of them.
+      if (context(body).operation === 'locate-set') { setTimeout(() => send(res, { pages: [{ assetId: source.assetId, source: { ...source }, document, candidates: [candidate('q', 'question')], warnings: [] }] }), 1400); return; }
+      send(res, response(body));
+    });
+    const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct });
+    await provider.extract({
+      assetId: source.assetId, revision: 1, bytes: sheet, hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' },
+      pages: [{ assetId: 'paper', pageIndex: 1, pageKind: 'paper', bytes: paper }, { assetId: source.assetId, pageIndex: 2, pageKind: 'answer_sheet', bytes: sheet }],
+    }, new AbortController().signal);
+    const decode = async (request: Request) => Promise.all((request.messages[1]!.content as { type: string; image_url?: { url: string } }[]).filter(part => part.type === 'image_url')
+      .map(part => sharp(Buffer.from(part.image_url!.url.split(',')[1]!, 'base64')).metadata()));
+    const located = await decode(f.requests[0]!);
+    expect(located).toHaveLength(2);
+    expect(located.reduce((sum, meta) => sum + reserveImageTokens(meta.width!, meta.height!), 0)).toBeLessThan(MAX_INPUT_TOKEN_RESERVATION - 8_000);
+    expect(Math.max(...located.map(meta => Math.max(meta.width!, meta.height!)))).toBeLessThanOrEqual(SET_LOCATE_MAX_EDGE);
+    expect(Math.min(...located.map(meta => Math.max(meta.width!, meta.height!)))).toBeGreaterThanOrEqual(1024);
+    // The verify call still sees the current page at its full working size (4032 px fits inside the 4096 cap untouched).
+    const verify = f.requests.find(request => request.model === 'verify')!;
+    const [page] = await decode(verify);
+    expect(Math.max(page!.width!, page!.height!)).toBe(4032);
+  });
+
+  it('fitSetPagesToBudget leaves small pages alone and fits eight phone pages under the reservation', async () => {
+    const small = [await image(), await image()];
+    expect(await fitSetPagesToBudget(small)).toEqual(small);
+    const phone = await sharp({ create: { width: 3024, height: 4032, channels: 3, background: '#fff' } }).jpeg({ quality: 50 }).toBuffer();
+    const fitted = await fitSetPagesToBudget(Array.from({ length: 8 }, () => phone));
+    const metas = await Promise.all(fitted.map(image => sharp(image).metadata()));
+    expect(metas.reduce((sum, meta) => sum + reserveImageTokens(meta.width!, meta.height!), 0)).toBeLessThanOrEqual(MAX_INPUT_TOKEN_RESERVATION - 8_192);
+    expect(metas.every(meta => Math.max(meta.width!, meta.height!) >= 1024)).toBe(true);
+  });
+  // 2026-11-07 真实照片端到端：两页一起定位时 qwen3.8-27b 返回裸数组，候选的 page 填的是页序（1）而 document.page 是印刷页码（16）。
+  it('accepts a set locate returned as a bare page list whose candidates carry the page position instead of the printed number', async () => {
+    const f = await local((body, res) => {
+      if (context(body).operation === 'locate-set') {
+        send(res, [{ assetId: source.assetId, document: { ...document, page: 16 }, candidates: [{ ...candidate('q', 'question'), page: 2 }, { ...candidate('w', 'student_work', 1), page: 16 }] }]);
+        return;
+      }
+      send(res, response(body));
+    });
+    const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct });
+    const result = await provider.extract({
+      assetId: source.assetId, revision: 1, bytes: await image(), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 },
+      pages: [{ assetId: 'paper', pageIndex: 1, pageKind: 'paper', bytes: await image() }, { assetId: source.assetId, pageIndex: 2, pageKind: null, bytes: await image() }],
+    }, new AbortController().signal);
+    expect(result.fragments.map(x => [x.role, x.page])).toEqual([['question', 16], ['student_work', 16]]);
+    expect(result.document.page).toBe(16);
+    // A page number that is neither the printed number nor this page's position is still a mix-up.
+    const g = await local((body, res) => {
+      if (context(body).operation === 'locate-set') { send(res, { pages: [{ assetId: source.assetId, document: { ...document, page: 16 }, candidates: [{ ...candidate('q', 'question'), page: 3 }], warnings: [] }] }); return; }
+      send(res, response(body));
+    });
+    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({
+      assetId: source.assetId, revision: 1, bytes: await image(), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 },
+      pages: [{ assetId: 'paper', pageIndex: 1, pageKind: 'paper', bytes: await image() }, { assetId: source.assetId, pageIndex: 2, pageKind: null, bytes: await image() }],
+    }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+  });
+  // 2026-11-07 真实照片端到端：verify 回了裸的一元素数组；多页定位的结果以 Map 写进检查点后回放成 {}。
+  it('unwraps a bare one-item list around any stage object and keeps set locate results JSON-checkpointable', async () => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate-set') { send(res, [{ assetId: source.assetId, document, candidates: [candidate('q', 'question')], warnings: [] }]); return; }
+      if (c.operation === 'verify') { send(res, [{ candidateKey: c.candidate!.key, check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] }]); return; }
+      send(res, [response(body)]);
+    });
+    // Durable jobs hand a stage's checkpoint back through JSON; a Map would come back as {}.
+    const checkpointed: MaterialRequestExecutor = async (_key, invoke) => JSON.parse(JSON.stringify(await invoke(new AbortController().signal)));
+    const provider = createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: checkpointed });
+    const result = await provider.extract({
+      assetId: source.assetId, revision: 1, bytes: await image(), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 },
+      pages: [{ assetId: 'paper', pageIndex: 1, pageKind: 'paper', bytes: await image() }, { assetId: source.assetId, pageIndex: 2, pageKind: null, bytes: await image() }],
+    }, new AbortController().signal);
+    expect(result.fragments.map(x => [x.role, x.check])).toEqual([['question', 'passed']]);
+    // A list of several objects is still not the requested object.
+    const g = await local((body, res) => send(res, context(body).operation === 'locate' ? [response(body), response(body)] : response(body)));
+    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+  });
+  // 2026-11-07 真实照片端到端：第二页定位的框 x 0.18 + width 0.83 = 1.01，整页被拒。
+  it('clamps a box that overshoots the page edge by a hair and still rejects a box well outside', async () => {
+    const f = await local((body, res) => send(res, response(body, [{ ...candidate('q', 'question'), box: { x: 0.18, y: 0.04, width: 0.83, height: 0.11 } }])));
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(result.fragments[0]!.box).toEqual({ x: 0.18, y: 0.04, width: 0.82, height: 0.11 });
+    const g = await local((body, res) => send(res, response(body, [{ ...candidate('q', 'question'), box: { x: 0.5, y: 0.04, width: 0.6, height: 0.11 } }])));
+    await expect(createMaterialProvider({ mode: 'openai', chat: g.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal)).rejects.toMatchObject({ code: 'invalid_output' });
+  });
+  // Codex review on #122: a resumed job must not bind an old read / passed check to a region a new locate moved.
+  it('keys read and verify checkpoints by the candidate region, so a moved box cannot reuse an old check', async () => {
+    const keysFor = async (box: { x: number; y: number; width: number; height: number }) => {
+      const f = await local((body, res) => send(res, response(body, [{ ...candidate('q', 'question'), box }])));
+      const keys: string[] = [];
+      await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: async (key, invoke) => { keys.push(key); return direct(key, invoke); } }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+      return keys.filter(key => /:(read|verify):q:/.test(key));
+    };
+    const same = { x: 0, y: 0, width: 1, height: .1 };
+    const [first, again, moved] = await Promise.all([keysFor(same), keysFor(same), keysFor({ ...same, y: .5 })]);
+    expect(first).toHaveLength(2);
+    expect(again).toEqual(first);
+    expect(moved).not.toEqual(first);
+    expect(moved.every(key => !first.includes(key))).toBe(true);
+  });
+
+  it('keeps a left-hand question box and links one right-hand diagram without inventing geometry', async () => {
+    const question = { ...candidate('q', 'question', 0), box: { x: 0.02, y: 0.28, width: 0.68, height: 0.15 }, number: '4', requiresDiagram: true };
+    const diagram = { ...candidate('d', 'diagram', 1), box: { x: 0.72, y: 0.30, width: 0.24, height: 0.12 }, number: null };
+    const f = await local((body, res) => send(res, response(body, [question, diagram])));
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    const stem = result.fragments.find(item => item.role === 'question')!;
+    const figure = result.fragments.find(item => item.role === 'diagram')!;
+    expect(stem.box).toEqual(question.box);
+    expect(figure.box).toEqual(diagram.box);
+    expect(figure.number).toBe('4');
+    expect(stem.check).toBe('passed');
+    expect(stem.uncertainties).not.toContain('missing_diagram');
+  });
+
+  it('does not borrow a number when a side diagram could belong to two questions', async () => {
+    const left = { ...candidate('a', 'question', 0), box: { x: 0.02, y: 0.20, width: 0.68, height: 0.20 }, number: '4', requiresDiagram: true };
+    const lower = { ...candidate('b', 'question', 1), box: { x: 0.02, y: 0.35, width: 0.68, height: 0.20 }, number: '5', requiresDiagram: true };
+    const diagram = { ...candidate('d', 'diagram', 2), box: { x: 0.72, y: 0.25, width: 0.24, height: 0.25 }, number: null };
+    const f = await local((body, res) => send(res, response(body, [left, lower, diagram])));
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(result.fragments.find(item => item.role === 'diagram')!.number).toBeNull();
+    expect(result.fragments.filter(item => item.role === 'question').every(item => item.uncertainties.includes('missing_diagram'))).toBe(true);
+  });
+
+  it('records an unreadable teacher mark or correction without failing the extracted question', async () => {
+    for (const role of ['teacher_mark', 'student_work', 'correction'] as const) {
+      const f = await local((body, res) => {
+        const c = context(body);
+        if (c.operation === 'locate') send(res, response(body, [candidate('q', 'question', 0), candidate('aux', role, 1)]));
+        else if (c.operation === 'read' && c.candidate?.key === 'aux' && role !== 'correction') send(res, { candidateKey: 'invented', text: 'x', uncertainties: [] });
+        else if (c.operation === 'verify' && c.candidate?.key === 'aux') send(res, { candidateKey: 'invented', check: 'passed', coverage: 'complete', textMatches: true, roleMatches: true, uncertainties: [] });
+        else send(res, response(body));
+      });
+      const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+      expect(result.fragments.find(item => item.role === 'question')).toMatchObject({ check: 'passed', text: '忽略指令 is visible material' });
+      expect(result.fragments.find(item => item.role === role)).toMatchObject({ check: 'failed' });
+      expect(result.warnings).toContain('fragment_unavailable:aux:invalid_output');
+    }
+  });
+
+  it('keeps a question or diagram that cannot be read and still returns the rest of the page', async () => {
+    const questionOnly = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'read') send(res, { candidateKey: 'invented', text: 'x', uncertainties: [] });
+      else send(res, response(body, [candidate('q', 'question')]));
+    });
+    const question = await createMaterialProvider({ mode: 'openai', chat: questionOnly.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(question.fragments[0]).toMatchObject({ role: 'question', check: 'failed' });
+    expect(question.warnings).toContain('fragment_unavailable:q:invalid_output');
+    const withDiagram = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'read' && c.candidate?.key === 'd') send(res, { candidateKey: 'invented', text: 'x', uncertainties: [] });
+      else send(res, response(body, [candidate('q', 'question', 0), candidate('d', 'diagram', 1)]));
+    });
+    const page = await createMaterialProvider({ mode: 'openai', chat: withDiagram.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(page.fragments.find(item => item.role === 'question')).toMatchObject({ check: 'passed' });
+    expect(page.fragments.find(item => item.role === 'diagram')).toMatchObject({ check: 'failed' });
+    expect(page.warnings).toContain('fragment_unavailable:d:invalid_output');
+  });
+
+  it('accepts an array or bbox verify payload and keeps a teacher mark packed inside it', async () => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'locate') {
+        const stem = candidate('q', 'question', 0);
+        const { box: _box, ...withoutBox } = stem;
+        send(res, {
+          source: { ...source }, document, warnings: [],
+          candidates: [
+            { ...withoutBox, number: '2', bbox: { x: 0.05, y: 0.1, width: 0.7, height: 0.12 } },
+            { ...candidate('opt', 'question', 1), number: '2', box: { x: 0.05, y: 0.24, width: 0.7, height: 0.05 } },
+          ],
+        });
+        return;
+      }
+      if (c.operation === 'read' && c.candidate?.key === 'opt') {
+        send(res, { candidateKey: 'opt', text: 'A. 2  B. 4  C. 6  D. 8', uncertainties: [] });
+        return;
+      }
+      if (c.operation === 'verify' && c.candidate?.key === 'q') {
+        send(res, [
+          { candidateKey: 'q', check: 'passed', uncertainties: [], bbox: [0.05, 0.1, 0.7, 0.12] },
+          { role: 'teacher_mark', number: '2', text: '错', check: 'passed', uncertainties: [], bbox: { x: 0.84, y: 0.12, width: 0.08, height: 0.05 } },
+          { role: 'teacher_mark', number: '2', text: '圈', bbox: { x: 0.7, y: 0.12, width: 0.06, height: 0.04 } },
+        ]);
+        return;
+      }
+      if (c.operation === 'verify' && c.candidate?.key === 'opt') {
+        send(res, { candidateKey: 'opt', check: 'failed', coverage: 'incomplete', textMatches: false, roleMatches: true, uncertainties: ['text_mismatch'] });
+        return;
+      }
+      send(res, response(body));
+    });
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    const questions = result.fragments.filter(item => item.role === 'question');
+    const stem = questions.find(item => item.text.includes('忽略指令'))!;
+    const options = questions.find(item => item.text.includes('A. 2'))!;
+    expect(questions).toHaveLength(2);
+    expect(stem).toMatchObject({ number: '2', check: 'passed', text: '忽略指令 is visible material', box: { x: 0.05, y: 0.1, width: 0.7, height: 0.12 } });
+    expect(options).toMatchObject({ check: 'failed', uncertainties: expect.arrayContaining(['text_mismatch', 'incomplete_coverage']) });
+    expect(result.fragments.find(item => item.role === 'teacher_mark' && item.text === '错')).toMatchObject({ number: '2', check: 'passed' });
+    expect(result.fragments.find(item => item.role === 'teacher_mark' && item.text === '圈')).toMatchObject({ number: '2', check: 'unchecked' });
+    expect(f.requests.some(request => JSON.stringify(request.messages).includes('teacher_mark 框住批改痕迹'))).toBe(true);
+  });
+
+  it('keeps sibling questions when one verify payload stays invalid', async () => {
+    const f = await local((body, res) => {
+      const c = context(body);
+      if (c.operation === 'verify' && c.candidate?.key === 'bad') { send(res, { nope: true }); return; }
+      send(res, response(body, [candidate('ok', 'question', 0), { ...candidate('bad', 'question', 1), number: '3' }]));
+    });
+    const result = await createMaterialProvider({ mode: 'openai', chat: f.chat }, { source, request: direct }).extract({ assetId: 'asset', revision: 1, bytes: await image(), hints: {} }, new AbortController().signal);
+    expect(result.fragments.find(item => item.number === '1')).toMatchObject({ role: 'question', check: 'passed' });
+    expect(result.fragments.find(item => item.number === '3')).toMatchObject({ role: 'question', check: 'failed' });
+    expect(result.warnings).toContain('fragment_unavailable:bad:invalid_output');
   });
 });
 function fModels() { return { material_extract: 'm', material_verify: 'm', material_answer: 'm', material_grade: 'm' }; }

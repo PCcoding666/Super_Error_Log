@@ -48,6 +48,8 @@ export function PickLabel(props: {
   inputLabel?: string;
   /** Route known when this label was rendered. Unknown and legacy commits are 单页. */
   route?: CaptureRouteKind | null;
+  /** iOS: one input. The system sheet already offers the camera and the library. */
+  combined?: boolean;
   /**
    * Set only when this label itself is the mode choice (the sheet). Omitted labels follow the open tray.
    * Written when a file arrives, not when the picker merely opens, so cancelling does not persist 多页.
@@ -62,19 +64,19 @@ export function PickLabel(props: {
   const onChange = usePickFiles(props.route ?? null, props.mode);
   const stopSession = useRef<(() => void) | null>(null);
   useEffect(() => () => { stopSession.current?.(); stopSession.current = null; }, []);
-  const album = props.kind === 'album';
+  const album = props.kind === 'album' || props.combined === true;
   return <label className={props.className} data-testid={props.testId}>
     {props.children}
     <input
       id={props.inputId}
       data-testid={props.inputId}
-      data-kind={props.kind}
+      data-kind={props.combined ? 'combined' : props.kind}
       className="file-hit"
       type="file"
       accept={ACCEPT}
       multiple={album}
       capture={album ? undefined : 'environment'}
-      aria-label={props.inputLabel ?? (album ? '从相册选择' : '拍照')}
+      aria-label={props.inputLabel ?? (props.combined ? '拍照或从相册选择' : album ? '从相册选择' : '拍照')}
       onClick={event => {
         props.onArm?.();
         watchChooser(event.currentTarget);

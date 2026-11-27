@@ -80,7 +80,7 @@ export function readSourceBytes(store: MaterialStore, region: Pick<SourceRegion,
         throw new Error('原图 hash 核对失败');
     return bytes;
 }
-export async function readNormalizedSource(store: MaterialStore, region: SourceRegion): Promise<Buffer> {
+export async function readNormalizedSource(store: MaterialStore, region: Pick<SourceRegion, 'assetId' | 'sourceHash'>): Promise<Buffer> {
     const bytes = readSourceBytes(store, region);
     const normalized = await normalizePhoto(bytes);
     const result = await sharp(normalized).resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer();

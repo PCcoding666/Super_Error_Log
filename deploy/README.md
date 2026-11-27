@@ -85,7 +85,15 @@ SEL_AI_MODEL=<模型名>
 # 可选（2026-10-03 起）：配对二维码里发给手机的入口。缺省发 IP 直连 https://8.163.96.197；
 # 只允许这两个值之一，其他值启动即失败。兑换时两个入口都接受。见 §9。
 # SEL_MOBILE_PAIRING_URL=https://study.pccoding666.com
+# 可选（2026-11-01 起）：admin-cli create / invite / reset-invitation 打印的学生登录链接（/s/?code=…）与 --qr 二维码用的公网入口。
+# 只要 http(s)://主机[:端口]；缺省 https://study.pccoding666.com。每次运行也可以用 --origin 指定。
+# SEL_PUBLIC_ORIGIN=https://study.pccoding666.com
+# 可选（2026-11-01 起）：公开说明页 /help/ 的联系方式。没设就不显示对应那一行，不要把个人信息写进代码或仓库。
+# SEL_HELP_CONTACT_WECHAT=
+# SEL_HELP_CONTACT_EMAIL=
 ```
+
+发邀请码（`admin-cli create` / `invite <studentId>` / `reset-invitation <studentId>`）时会同时打印一条预填码的登录链接 `https://study.pccoding666.com/s/?code=XXXX-XXXX-XXXX`，加 `--qr` 还会在终端画出这条链接的二维码（纯代码实现，不新增依赖）。学生扫码或点链接打开的是**填好码的登录页**，点「进入我的错题本」才兑换；打开链接本身不建会话，链接预览、误点都不会把码用掉。链接和二维码里就是这枚邀请码，与码同样只在终端显示一次，不要发到群里。已登录的学生在「设置 → 我的邀请码」里也能看到同一条链接和二维码，换手机时扫一下就行。给老师看的完整流程（生成、发放、微信里怎么办、放到桌面、换手机、隐私）见 [老师发码指南](../docs/product/TEACHER_INVITE_GUIDE.md)。
 
 参考 `.env.example`；缺任何必填项服务启动会直接失败（fail-hard，不静默降级 mock）。
 `SEL_MOBILE_HOST` 只允许 `127.0.0.1`——公网入口只有 Caddy。

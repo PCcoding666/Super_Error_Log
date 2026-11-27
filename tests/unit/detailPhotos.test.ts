@@ -16,15 +16,15 @@ describe('detailPhotos', () => {
       { assetId: 'page-a', role: 'student_work' },
     ]);
     expect(photos).toEqual([
-      { url: '/s/materials/assets/page-a/image', fullUrl: '/s/materials/assets/page-a/image', title: '原图' },
-      { url: '/s/materials/assets/page-b/image', fullUrl: '/s/materials/assets/page-b/image', title: '原图' },
+      { url: '/s/materials/assets/page-a/image?s=big', fullUrl: '/s/materials/assets/page-a/image', title: '原图' },
+      { url: '/s/materials/assets/page-b/image?s=big', fullUrl: '/s/materials/assets/page-b/image', title: '原图' },
     ]);
     expect(photos.every(photo => !photo.url.includes('/crop'))).toBe(true);
   });
 
   it('uses the only fragment page when the stem itself was not found', () => {
     expect(detailPhotos('itm_cccccccccccccccc', 'material', [{ assetId: 'work-page', role: 'student_work' }])).toEqual([
-      { url: '/s/materials/assets/work-page/image', fullUrl: '/s/materials/assets/work-page/image', title: '原图' },
+      { url: '/s/materials/assets/work-page/image?s=big', fullUrl: '/s/materials/assets/work-page/image', title: '原图' },
     ]);
   });
 

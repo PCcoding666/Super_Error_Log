@@ -1,0 +1,593 @@
+[
+  {
+    "assetId": "mas_b704a70e2c5b3a3c",
+    "document": {
+      "title": null,
+      "subject": null,
+      "date": null,
+      "printedCode": null,
+      "page": 16
+    },
+    "candidates": [
+      {
+        "key": "p1-c1",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.28,
+          "y": 0.11,
+          "width": 0.59,
+          "height": 0.09
+        },
+        "number": null,
+        "subpart": null,
+        "page": 1,
+        "order": 0,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c2",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.28,
+          "y": 0.13,
+          "width": 0.49,
+          "height": 0.05
+        },
+        "number": null,
+        "subpart": null,
+        "page": 1,
+        "order": 1,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c3",
+        "role": [
+          "teacher_mark"
+        ],
+        "box": {
+          "x": 0.62,
+          "y": 0.13,
+          "width": 0.16,
+          "height": 0.04
+        },
+        "number": null,
+        "subpart": null,
+        "page": 1,
+        "order": 2,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c4",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.24,
+        "y": 0.23,
+          "width": 0.62,
+          "height": 0.03
+        },
+        "number": "1",
+        "subpart": null,
+        "page": 1,
+        "order": 3,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c5",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.79,
+          "y": 0.23,
+          "width": 0.05,
+          "height": 0.03
+        },
+        "number": "1",
+        "subpart": null,
+        "page": 1,
+        "order": 4,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c6",
+        "role": [
+          "teacher_mark"
+        ],
+        "box": {
+          "x": 0.84,
+          "y": 0.23,
+          "width": 0.04,
+          "height": 0.03
+        },
+        "number": "1",
+        "subpart": null,
+        "page": 1,
+        "order": 5,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c7",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.24,
+          "y": 0.27,
+          "width": 0.54,
+          "height": 0.03
+        },
+        "number": "2",
+        "subpart": null,
+        "page": 1,
+        "order": 6,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c8",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.74,
+          "y": 0.27,
+          "width": 0.04,
+          "height": 0.03
+        },
+        "number": "2",
+        "subpart": null,
+        "page": 1,
+        "order": 7,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c9",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.24,
+          "y": 0.30,
+          "width": 0.64,
+          "height": 0.03
+        },
+        "number": "3",
+        "subpart": null,
+        "page": 1,
+        "order": 8,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c10",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.82,
+          "y": 0.29,
+          "width": 0.06,
+          "height": 0.04
+        },
+        "number": "3",
+        "subpart": null,
+        "page": 1,
+        "order": 9,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c11",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.24,
+          "y": 0.33,
+          "width": 0.61,
+          "height": 0.03
+        },
+        "number": "4",
+        "subpart": null,
+        "page": 1,
+        "order": 10,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c12",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.24,
+          "y": 0.35,
+          "width": 0.54,
+          "height": 0.03
+        },
+        "number": "4",
+        "subpart": "(1)",
+        "page": 1,
+        "order": 11,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c13",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.48,
+          "y": 0.35,
+          "width": 0.16,
+          "height": 0.03
+        },
+        "number": "4",
+        "subpart": "(2)",
+        "page": 1,
+        "order": 12,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c14",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.71,
+          "y": 0.35,
+          "width": 0.08,
+          "height": 0.03
+        },
+        "number": "4",
+        "subpart": "(3)",
+        "page": 1,
+        "order": 13,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c15",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.23,
+          "y": 0.37,
+          "width": 0.22,
+          "height": 0.12
+        },
+        "number": "4",
+        "subpart": "(1)",
+        "page": 1,
+        "order": 14,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c16",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.48,
+          "y": 0.37,
+          "width": 0.22,
+          "height": 0.14
+        },
+        "number": "4",
+        "subpart": "(2)",
+        "page": 1,
+        "order": 15,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c17",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.71,
+          "y": 0.37,
+          "width": 0.20,
+          "height": 0.14
+        },
+        "number": "4",
+        "subpart": "(3)",
+        "page": 1,
+        "order": 16,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c18",
+        "role": [
+          "teacher_mark"
+        ],
+        "box": {
+          "x": 0.48,
+          "y": 0.40,
+          "width": 0.22,
+          "height": 0.11
+        },
+        "number": "4",
+        "subpart": "(2)",
+        "page": 1,
+        "order": 17,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c19",
+        "role": [
+          "teacher_mark"
+        ],
+        "box": {
+          "x": 0.71,
+          "y": 0.37,
+          "width": 0.20,
+          "height": 0.14
+        },
+        "number": "4",
+        "subpart": "(3)",
+        "page": 1,
+        "order": 18,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c20",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.19,
+          "y": 0.51,
+          "width": 0.79,
+          "height": 0.04
+        },
+        "number": "5",
+        "subpart": null,
+        "page": 1,
+        "order": 19,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c21",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.27,
+          "y": 0.53,
+          "width": 0.04,
+          "height": 0.03
+        },
+        "number": "5",
+        "subpart": null,
+        "page": 1,
+        "order": 20,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c22",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.75,
+          "y": 0.52,
+          "width": 0.05,
+          "height": 0.03
+        },
+        "number": "5",
+        "subpart": null,
+        "page": 1,
+        "order": 21,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c23",
+        "role": [
+          "teacher_mark"
+        ],
+        "box": {
+          "x": 0.75,
+          "y": 0.51,
+          "width": 0.05,
+          "height": 0.04
+        },
+        "number": "5",
+        "subpart": null,
+        "page": 1,
+        "order": 22,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c24",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.19,
+          "y": 0.55,
+          "width": 0.63,
+          "height": 0.03
+        },
+        "number": "6",
+        "subpart": null,
+        "page": 1,
+        "order": 23,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c25",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.65,
+          "y": 0.55,
+          "width": 0.04,
+          "height": 0.03
+        },
+        "number": "6",
+        "subpart": null,
+        "page": 1,
+        "order": 24,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c26",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.76,
+          "y": 0.55,
+          "width": 0.05,
+          "height": 0.03
+        },
+        "number": "6",
+        "subpart": null,
+        "page": 1,
+        "order": 25,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c27",
+        "role": [
+          "teacher_mark"
+        ],
+        "box": {
+          "x": 0.76,
+          "y": 0.54,
+          "width": 0.05,
+          "height": 0.04
+        },
+        "number": "6",
+        "subpart": null,
+        "page": 1,
+        "order": 26,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c28",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.19,
+          "y": 0.58,
+          "width": 0.79,
+          "height": 0.04
+        },
+        "number": "7",
+        "subpart": null,
+        "page": 1,
+        "order": 27,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c29",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.33,
+          "y": 0.60,
+          "width": 0.06,
+          "height": 0.03
+        },
+        "number": "7",
+        "subpart": null,
+        "page": 1,
+        "order": 28,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c30",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.19,
+          "y": 0.62,
+          "width": 0.73,
+          "height": 0.03
+        },
+        "number": "8",
+        "subpart": null,
+        "page": 1,
+        "order": 29,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c31",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.19,
+          "y": 0.64,
+          "width": 0.16,
+          "height": 0.03
+        },
+        "number": "8",
+        "subpart": "(1)",
+        "page": 1,
+        "order": 30,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c32",
+        "role": [
+          "question"
+        ],
+        "box": {
+          "x": 0.19,
+          "y": 0.68,
+          "width": 0.31,
+          "height": 0.03
+        },
+        "number": "8",
+        "subpart": "(2)",
+        "page": 1,
+        "order": 31,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c33",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.16,
+          "y": 0.70,
+          "width": 0.25,
+          "height": 0.20
+        },
+        "number": "8",
+        "subpart": "(1)",
+        "page": 1,
+        "order": 32,
+        "requiresDiagram": false
+      },
+      {
+        "key": "p1-c34",
+        "role": [
+          "student_work"
+        ],
+        "box": {
+          "x": 0.51,
+          "y": 0.65,
+          "width": 0.35,
+          "height": 0.25
+        },
+        "number": "8",
+        "subpart": "(2)",
+        "page": 1,
+        "order": 33,
+        "requiresDiagram": false
+      }
+    ],
+    "warnings": []
+  }
+]
