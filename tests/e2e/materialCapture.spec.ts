@@ -110,7 +110,8 @@ test('new queue normalizes a 48MP image to a real bounded JPEG and tags remain o
         }).observeMaterial({ type: blob.type, width: image.width, height: image.height }); image.close(); });
     } send.call(this, data); }; });
     await page.locator('#camera-input').setInputFiles({ name: '48mp.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 8064, height: 6048, channels: 3, background: '#bbb' } }).jpeg().toBuffer() });
-    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible();
+    // Decoding and resizing an 8064×6048 frame can take longer than the default 5s on CI.
+    await expect(page.getByText('照片已保存，可以先离开', { exact: true })).toBeVisible({ timeout: 30_000 });
     expect(observed).toEqual({ type: 'image/jpeg', width: 4096, height: 3072 });
 });
 test('IndexedDB refusal visibly falls back to sequential direct upload without dropping a multi-selection', async ({ page, gateway }) => {
