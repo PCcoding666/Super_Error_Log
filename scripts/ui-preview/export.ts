@@ -6,21 +6,19 @@ import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
-import { cards, FIXTURE_DATE, FIXTURE_WEEK, items, photo, SCENARIOS } from './fixtures.js';
+import { cards, items, photo, SCENARIOS } from './fixtures.js';
 
 const [sourceArg, outputArg] = process.argv.slice(2);
 if (!sourceArg || !outputArg) throw new Error('Internal usage: export.ts SOURCE OUT');
 const source = resolve(sourceArg), output = resolve(outputArg);
 const load = (file: string) => import(pathToFileURL(join(source, file)).href);
-const [today, photos, itemViews, practice, login, assets, weekPlan] = await Promise.all([
+const [today, photos, itemViews, practice, login, assets] = await Promise.all([
   load('src/web/views/today.tsx'), load('src/web/views/photos.tsx'), load('src/web/views/items.tsx'),
-  load('src/web/views/practice.tsx'), load('src/studentHost/loginView.tsx'), load('src/web/assets.ts'), load('src/web/weekPlan.ts'),
+  load('src/web/views/practice.tsx'), load('src/studentHost/loginView.tsx'), load('src/web/assets.ts'),
 ]);
 const bar = { caption: '本周合成示例 · 约 1 分钟', primary: { title: '选这周要练的题', key: 'choose', href: '/s/choose' }, secondary: [{ title: '再拍一页', key: 'capture', href: '/s/capture' }] };
-const plan = weekPlan.make(weekPlan.makeInput({ weekKey: FIXTURE_WEEK, today: new Date(FIXTURE_DATE), weekPhotoJobIDs: ['demo-photo'], weekItemCount: items.length, localPhotos: [{ number: 1, taskID: 'demo-photo', jobID: 'demo-photo', state: 'needsPick' }] }));
 type Props = {
   login: Parameters<typeof import('../../src/studentHost/loginView.js').LoginPage>[0];
-  today: Parameters<typeof import('../../src/web/views/today.js').TodayPage>[0];
   capture: Parameters<typeof import('../../src/web/views/photos.js').CapturePage>[0];
   photos: Parameters<typeof import('../../src/web/views/photos.js').PhotosPage>[0];
   pick: Parameters<typeof import('../../src/web/views/photos.js').PickPage>[0];
@@ -35,7 +33,6 @@ type Props = {
 };
 const scenes: { [K in keyof Props]: [ComponentType<Props[K]>, Props[K], string] } = {
   login: [login.LoginPage, {}, 'src/studentHost/loginView.tsx#LoginPage'],
-  today: [today.TodayPage, { state: { plan, week: { week: FIXTURE_WEEK, photos: [], items, backlog: [] }, photos: [photo], practices: [], latestDetail: null, preparingPrintID: null, marks: { pickDone: new Set(), dismissed: new Set() }, skips: { steps: new Set(), passedItems: new Set() } }, practiceSlot: '周三晚自习', showInstallHint: true }, 'src/web/views/today.tsx#TodayPage'],
   capture: [photos.CapturePage, { photos: [], next: { title: '勾出错题', href: '/s/photos' }, caption: '拍完以后，看看有哪些错题' }, 'src/web/views/photos.tsx#CapturePage'],
   photos: [photos.PhotosPage, { photos: [photo, { ...photo, jobId: 'demo-finding', number: 2, state: 'finding', job: null }], bar, refresh: true, itemCount: items.length }, 'src/web/views/photos.tsx#PhotosPage'],
   pick: [photos.PickPage, { photo }, 'src/web/views/photos.tsx#PickPage'],
@@ -62,7 +59,7 @@ await copyFile(join(source, 'src/web/examples/capture-question.jpg'), join(outpu
 // Reuse only the audited, network-free sheet enhancer. Upload/AI/session scripts stay excluded.
 const sheetEnhancement = typeof assets.UI_SHEET_SCRIPT === 'string' ? assets.UI_SHEET_SCRIPT : null;
 if (sheetEnhancement) await writeFile(join(output, 'assets/sheet.js'), sheetEnhancement);
-const routes: Record<string, string> = { '/s': 'today', '/s/': 'today', '/s/login': 'login', '/s/settings': 'settings', '/s/capture': 'capture', '/s/photos': 'photos', '/s/photos/demo-photo': 'pick', '/s/items': 'items', '/s/practices': 'practices', '/s/items/demo-linear': 'item', '/s/items/demo-triangle': 'item', '/s/items/demo-fraction': 'item', '/s/choose': 'choose', '/s/why/demo-practice': 'why', '/s/why/demo-practice/demo-linear/confirm': 'confirm', '/s/install': 'install' };
+const routes: Record<string, string> = { '/s/login': 'login', '/s/settings': 'settings', '/s/capture': 'capture', '/s/photos': 'photos', '/s/photos/demo-photo': 'pick', '/s/items': 'items', '/s/practices': 'practices', '/s/items/demo-linear': 'item', '/s/items/demo-triangle': 'item', '/s/items/demo-fraction': 'item', '/s/choose': 'choose', '/s/why/demo-practice': 'why', '/s/why/demo-practice/demo-linear/confirm': 'confirm', '/s/install': 'install' };
 const records = [];
 for (const [id, title] of SCENARIOS) {
   const [Component, props, component] = scenes[id]!;

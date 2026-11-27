@@ -64,7 +64,8 @@
 
 - 已接管：错题本、录入、详情、设置四屏，以及新账号选学段。
 - 仍由服务端页面提供（从单页应用链过去）：`/s/install` 添加到主屏幕说明、`/s/account` 我的邀请码、`/s/materials/questions/:id` 材料与批改来源、登录 / 注册 / 找回。
-- 保留但没有入口：`/s/items`、`/s/photos`、`/s/capture`、`/s/practices`、`/s/choose`、`/s/practice/*`、`/s/why/*`、`/s/print/*`、`/s/record/*` 等旧页面及其测试。练习模块整体按下不表；相关路由和测试等产品决定后再删。
+- 没有路由：以前的「今天」页。不要加回去。
+- 仍挂在服务器上、学生端没有入口、不要扩展：`/s/items`、`/s/photos`、`/s/capture` 页面、`/s/practices`、`/s/choose`、`/s/practice/*`、`/s/why/*`、`/s/print/*`、`/s/record/*`。上传接口 `POST /s/capture` 和材料页还在用。练习在学生端是「即将推出」。这些旧页面不是第二条产品路径。
 - 尚未搬过来：材料流程把待传照片存进 IndexedDB、关页后继续传（`src/web/uploadQueue.ts`）。现在关掉页面会丢还没传完的照片，页面上会说明。
 - 端到端：`tests/e2e/app.spec.ts`（旧流程合成服务器）、`tests/e2e/appMaterials.spec.ts`（邀请码网关 + 材料流程）。
 

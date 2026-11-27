@@ -41,21 +41,10 @@ try {
       captures.push({ scenario: scenario.id, title: scenario.title, version, file: name });
     }
   }
-  if (manifest.sources.after.sheetEnhancementIncluded) {
-    for (const appearance of ['light', 'dark']) {
-      await page.goto(new URL(`after/today.html?theme=${appearance}`, base).href);
-      await ready(page);
-      await page.getByTestId('week-plan-open').click();
-      await page.waitForFunction(() => getComputedStyle(document.querySelector('dialog')).opacity === '1');
-      const name = `after-week-plan-${appearance}.png`;
-      await page.screenshot({ path: path.join(out, name), animations: 'disabled' });
-      captures.push({ scenario: 'week-plan', title: `本周安排 · ${appearance === 'light' ? '浅色' : '深色'}`, version: 'after', file: name });
-    }
-  }
   const report = await browser.newPage({ viewport: { width: 1200, height: 1100 }, deviceScaleFactor: 1, locale: 'zh-CN' });
   watch(report);
   for (const appearance of ['light', 'dark']) {
-    await report.goto(new URL(`?scenario=today&appearance=${appearance}`, base).href);
+    await report.goto(new URL(`?scenario=login&appearance=${appearance}`, base).href);
     for (const frame of report.frames().filter(frame => frame.parentFrame())) await frame.waitForLoadState('load');
     await report.screenshot({ path: path.join(out, `comparison-${appearance}.png`), fullPage: true, animations: 'disabled' });
   }

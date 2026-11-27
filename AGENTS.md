@@ -12,11 +12,11 @@ Primary student surface: mobile browser `/s/`, per-student invitation login, ser
 
 纸错题延迟重做闭环 MVP — TypeScript · Express 5 · node:sqlite · sharp. Production entry: `src/main.ts` (built as `dist/main.js`), with `/s` invitation gateway in `src/studentHost/`. `src/server.ts` / `src/app.ts` are the older local demo. iOS client lives in `iOS/` (Xcode project).
 
-**Student UI (2026-10-23 onward)**: an Ionic React single-page app in `client/` (Vite, iOS mode) served at `/s/`, `/s/new`, `/s/q/:id`, `/s/me`, talking to the JSON API in `src/web/api.ts` (`/s/api`). Read `docs/CLIENT_APP.md` first. The older React 19 SSR pages under `src/web/views/` (form-driven, no hydration) are still served on their old paths (`/s/items`, `/s/photos`, `/s/practice/*`, …) but have no entry points from the app; do not extend them. Practice is "coming soon" and deliberately has no UI.
+**Student UI (2026-10-23 onward)**: an Ionic React single-page app in `client/` (Vite, iOS mode) served at `/s/`, `/s/new`, `/s/q/:id`, `/s/me`, talking to the JSON API in `src/web/api.ts` (`/s/api`). Read `docs/CLIENT_APP.md` first. The older React 19 SSR pages under `src/web/views/` (form-driven, no hydration) are still served on their old paths (`/s/items`, `/s/photos`, `/s/practice/*`, …) but have no entry points from the app; do not extend them. The unrouted Today page has been removed. Practice is "coming soon" and deliberately has no UI. Local proof of the student app is only `.claude/skills/verify-sel/`; `npm run dev` and `npm run web:fake` are not that app.
 
 ## Commands
 
-- `npm run dev` — dev server, port **3100** (not the framework default)
+- `npm run dev` — legacy local demo (`src/server.ts`, port **3100**). Not the invitation student app.
 - `npm run client:watch` — rebuild the Ionic client into `dist/client` on change (the server reads it per request); `npm run client:build` once
 - `npm run typecheck` — server and client
 - `npm run demo` — generate fixtures + dev server; works with no API key (mock AI mode)

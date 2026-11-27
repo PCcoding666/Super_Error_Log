@@ -6,7 +6,7 @@
 
 ## 0. 2026-10-23：学生端换成 Ionic React 单页应用
 
-产品决定这一轮做减法：只保留错题本和录入，练习「即将推出」，没有底部标签栏，界面照 iOS Siri 对话列表的一屏结构。为此学生端界面改成 `client/` 里的 Ionic React 单页应用，由同一个服务器在 `/s/` 下发，数据走 `/s/native`（`src/web/api.ts`）。结构、接口、迁移状态和未搬完的部分见 [学生端单页应用](CLIENT_APP.md)。旧的服务端渲染页面保留在原路径上，没有入口，等练习模块的去留定了再清理。
+产品决定这一轮做减法：只保留错题本和录入，练习「即将推出」，没有底部标签栏，界面照 iOS Siri 对话列表的一屏结构。为此学生端界面改成 `client/` 里的 Ionic React 单页应用，由同一个服务器在 `/s/` 下发，网页数据走 `/s/api`（`src/web/api.ts`）。`/s/native` 只给 iOS 客户端。结构、接口和迁移状态见 [学生端单页应用](CLIENT_APP.md)。「今天」页已经没有路由。其余服务端页面仍挂在 `/s/items`、`/s/photos`、`/s/practice/*` 等旧路径上，只给既有测试用，学生端没有入口，不要扩展，也不要写成使用说明。
 
 2026-10-24：详情页改成五块（你写的、批改痕迹、章节与知识点、正确答案、错因备注），AI 解答（qwen3.8-max、看图、交互图）在后台排队生成，识别结果可改、可拍照录入答案、备注可语音输入。新增三张表，需人工发布；取舍、证据和给服务器 agent 的发布提示词见 [详情页解答验收](quality/2026-10-24-item-detail-insight.md)。
 
@@ -77,12 +77,13 @@
 | `src/mobile/` | 图片识别、先找题后精读、队列/容量/重试、旧原生App API |
 | `src/bridge/recognitionToItems.ts` | 已选/自动识别的题桥接为学习记录，避免重复 |
 | `src/v2/` | 周数据、练习选择、追问、修正、打印快照、回传和总结 |
-| `src/web/router.ts` / `views/` | 当前手机网页路由与SSR页面，无React hydration |
+| `client/` | 当前学生端界面。`/s/`、`/s/new`、`/s/me`、`/s/q/:id` |
 | `src/web/assets.ts` / `clientScript.ts` / `photoUpload.ts` | 静态壳与浏览器渐进增强、图片转换/上传；CSS/JS 内容指纹自动更新缓存 |
 | `src/web/weekPlan.ts` | 今天页和本周各步骤的下一步指引 |
 | `src/ai/asr.ts` | Qwen ASR；密钥留在服务端，转写结果可编辑再提交 |
 | `src/domain/stateMachine.ts` | 延迟重做/掌握规则 |
-| `src/server.ts` / `src/app.ts` | 旧本地Web演示入口；`npm start`仍指向它，不是生产入口 |
+| `src/web/router.ts` / `views/` | 旧服务端页面。没有学生端入口，不要加新页面。网页数据在 `src/web/api.ts` 的 `/s/api` |
+| `src/server.ts` / `src/app.ts` | 旧本地演示。`npm run dev` 和 `npm start` 指向它，不是学生端，也不是生产入口 |
 | `iOS/` | 原生客户端，长期在 `ios/main` 分支维护；2026-10-23 起用邀请码登录（网关 `/s/native`，见 `ios-native-invitation-login.md`） |
 
 学生空间通过独立进程隔离现有全局db/config/provider；不要改成共享进程后仅在少数查询加studentId过滤。`SEL_STUDENT_HOST_ENABLED=1`才启用网关。注册人数和同时存活的进程是两件事：`SEL_MAX_STUDENTS` 缺省 100（注册表打开时读取，见注册说明），同时只留有限个 worker，空闲就退出。视觉调用和重图片处理由父进程排队。其他开关见`.env.example`和`deploy/README.md`。容量改动碰了 `src/studentHost/registry.ts` 和 `src/db/`，自动发布会因迁移保护拒绝，不能绕过；当前生产还是常驻 worker，直到按 [容量说明](quality/2026-10-20-fifty-students.md) 人工发布。
@@ -100,13 +101,7 @@ SEL_AI_MODE=mock npm run verify
 
 先装Chromium再跑Vitest：测试初始化用浏览器生成合成试卷。`NPM_CONFIG_REPLACE_REGISTRY_HOST=always`是仓库CI已有配置，用于将锁文件的镜像地址替换为官方npm源，保留完整性校验。
 
-手机网页外观/流程预览：
-
-```sh
-npm run web:fake
-```
-
-默认3198，控制端口3199，只监听本机；终端给出的链接是**旧单学生配对夹具**，没有新邀请码隔离。别把它当生产入口，也别和完整E2E同时运行（端口会冲突）。
+本机看学生端：只按 `.claude/skills/verify-sel/SKILL.md`，命令是 `npm run verify:sel -- launch`。不要用 `npm run dev`（旧演示，端口 3100，`src/server.ts`）或 `npm run web:fake`（旧单学生夹具，端口 3198，没有邀请码隔离）。`web:fake` 也不要和完整 E2E 同时跑，端口会冲突。
 
 邀请码/上传的真实网关合成测试：
 
