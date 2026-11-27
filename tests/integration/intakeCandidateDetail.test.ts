@@ -15,6 +15,7 @@ import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
 import { createStudentApi } from '../../src/web/api.js';
 import { readQuestion } from '../../src/materials/queries.js';
+import { assetImageUrl, fragmentCropUrl } from '../../src/materials/displayDerivatives.js';
 
 const dir = mkdtempSync(path.join(os.tmpdir(), 'intake-detail-'));
 const db = new DatabaseSync(path.join(dir, 'app.db'));
@@ -76,6 +77,7 @@ db.prepare('INSERT INTO material_grade(id,revision,owner_id,attempt_id,basis_key
   .run(grade.id, 1, 'a', attempt, 'synthetic', '[]', JSON.stringify(grade), 0);
 
 const richRevision = readQuestion(store, richId)!.revision;
+const richCrop = fragmentCropUrl(stem, 'big');
 const plainRevision = readQuestion(store, plainId)!.revision;
 
 addAsset(other, 'asset-b');
@@ -151,8 +153,10 @@ it('returns the stored question, answer and judgment for an unsaved candidate an
   expect(response.body.grades).toEqual([{
     result: 'incorrect', findings: ['移项时符号没有变。'], score: { earned: 2, total: 6 }, stale: false,
   }]);
-  expect(String(response.body.crop)).toMatch(/\/s\/materials\/fragments\/mfr_[0-9a-f]+\/crop\?revision=1/);
-  expect(response.body.source).toBe(`/s/materials/assets/${asset}/image`);
+  expect(response.body.crop).toBe(richCrop);
+  expect(richCrop).toContain('s=big');
+  expect(response.body.source).toBe(assetImageUrl(asset, 'hash', 'big'));
+  expect(String(response.body.source)).toContain('s=big');
   expect(readQuestion(store, richId)!.itemId).toBeNull();
   expect(fingerprint()).toEqual(before);
 });
@@ -177,8 +181,8 @@ it('serves an associated side diagram separately and keeps a missing figure in r
   store.linkFragment(diagram.fragmentId, 1, { questionId: withFigure, attemptId: null });
   const found = await get(`/s/api/intake/candidates/${withFigure}?revision=${readQuestion(store, withFigure)!.revision}`);
   expect(found.status).toBe(200);
-  expect(found.body.crop).toBe(`/s/materials/fragments/${question.fragmentId}/crop?revision=1`);
-  expect(found.body.figures).toEqual([{ crop: `/s/materials/fragments/${diagram.fragmentId}/crop?revision=1` }]);
+  expect(found.body.crop).toBe(fragmentCropUrl(question, 'big'));
+  expect(found.body.figures).toEqual([{ crop: fragmentCropUrl(diagram, 'big') }]);
 
   const missingId = store.createQuestion({ number: '8', subject: '数学' }).id;
   const missing = piece(asset, 'question', '8. synthetic text without a figure', { number: '8', requiresDiagram: true, check: 'low', uncertainties: ['missing_diagram'] });
@@ -186,7 +190,7 @@ it('serves an associated side diagram separately and keeps a missing figure in r
   store.linkFragment(missing.fragmentId, 1, { questionId: missingId, attemptId: null });
   const absent = await get(`/s/api/intake/candidates/${missingId}?revision=${readQuestion(store, missingId)!.revision}`);
   expect(absent.body.figures).toEqual([]);
-  expect(absent.body.crop).toBe(`/s/materials/fragments/${missing.fragmentId}/crop?revision=1`);
+  expect(absent.body.crop).toBe(fragmentCropUrl(missing, 'big'));
   expect(absent.body.stem).toMatchObject([{ check: 'low', requiresDiagram: true, uncertainties: ['missing_diagram'] }]);
 });
 

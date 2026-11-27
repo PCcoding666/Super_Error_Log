@@ -1,4 +1,5 @@
 import type { Fragment, QuestionBundle } from '../materials/contracts.js';
+import { fragmentCropUrl } from '../materials/displayDerivatives.js';
 import { intakeVerdict } from '../materials/grading.js';
 import type { SavedIntakeProgress } from '../materials/intakeProgress.js';
 import type { MaterialStore } from '../materials/store.js';
@@ -6,9 +7,10 @@ import { markedRight, verifiedMaterialStem } from '../materials/learning.js';
 import { coveredOptionRow, selectableQuestion } from '../materials/regionPolicy.js';
 import { unsupportedSubject } from '../materials/subjects.js';
 import type { IntakeCandidate, IntakePhoto } from './apiTypes.js';
+import type { DisplaySize } from './images.js';
 
-export function previewCrop(fragmentId: string, revision: number): string {
-  return `/s/api/intake/candidates/${fragmentId}/crop?revision=${revision}`;
+export function previewCrop(fragment: Fragment, size: DisplaySize): string {
+  return fragmentCropUrl(fragment, size, 'preview');
 }
 export function previewStatus(progress: SavedIntakeProgress, fragment: Fragment, question?: QuestionBundle): NonNullable<IntakeCandidate['status']> {
   if (question && verifiedMaterialStem(question, progress.extraction.fragments.filter(f => (f.role === 'question' || f.role === 'diagram') && (f.fragmentId === fragment.fragmentId || (f.number !== null && f.number === fragment.number))))) return 'verified';
@@ -22,7 +24,7 @@ export function previewCandidates(progress: SavedIntakeProgress, questions: Ques
     const q = questions.find(q => q.stem.some(f => f.fragmentId === fragment.fragmentId));
     if (q && (q.itemId || intents.get(q.id) === false || (!progress.selected.includes(fragment.fragmentId) && markedRight(q)))) return [];
     return [{ id: `${fragment.fragmentId}:${progress.extraction.revision}`, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',
-      excerpt: fragment.text.slice(0, 60), crop: previewCrop(fragment.fragmentId, progress.extraction.revision),
+      excerpt: fragment.text.slice(0, 60), crop: previewCrop(fragment, 'list'),
       status: previewStatus(progress, fragment, q), submitted: progress.selected.includes(fragment.fragmentId), ...intakeVerdict(q, store) }];
   });
 }

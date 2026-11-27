@@ -1,5 +1,6 @@
 import { contextQuestions, isContextQuestion, pageKindOf, questionInPairedSet, questionSubpart } from '../materials/answerSheet.js';
 import type { CaptureHints, QuestionBundle } from '../materials/contracts.js';
+import { assetImageUrl, fragmentCropUrl } from '../materials/displayDerivatives.js';
 import { intakeVerdict } from '../materials/grading.js';
 import { inclusionIntents } from '../materials/learning.js';
 import type { MaterialStore } from '../materials/store.js';
@@ -9,13 +10,14 @@ import type { IntakeCandidate, IntakeGroup, IntakeQuestion } from './apiTypes.js
 type AssetFace = {
   id: string;
   captureId: string;
+  sourceHash: string;
   pageKind: 'paper' | 'answer_sheet' | null;
   pageIndex: number | null;
   printedPage: number | null;
 };
 
 function faces(store: MaterialStore): Map<string, AssetFace> {
-  const rows = store.db.prepare(`SELECT id, capture_id, hints_json, extraction_json FROM material_asset WHERE owner_id=?`).all(store.studentId) as { id: string; capture_id: string; hints_json: string; extraction_json: string | null }[];
+  const rows = store.db.prepare(`SELECT a.id, a.capture_id, a.hints_json, a.extraction_json, s.content_hash FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.owner_id=?`).all(store.studentId) as { id: string; capture_id: string; hints_json: string; extraction_json: string | null; content_hash: string }[];
   const map = new Map<string, AssetFace>();
   for (const row of rows) {
     let hints: CaptureHints = {};
@@ -27,7 +29,7 @@ function faces(store: MaterialStore): Map<string, AssetFace> {
         if (typeof page === 'number' && Number.isSafeInteger(page) && page > 0) printed = page;
       } catch { printed = null; }
     }
-    map.set(row.id, { id: row.id, captureId: row.capture_id, pageKind: hints.pageKind ?? pageKindOf(store, row.id), pageIndex: hints.pageIndex ?? null, printedPage: printed });
+    map.set(row.id, { id: row.id, captureId: row.capture_id, sourceHash: row.content_hash, pageKind: hints.pageKind ?? pageKindOf(store, row.id), pageIndex: hints.pageIndex ?? null, printedPage: printed });
   }
   return map;
 }
@@ -51,7 +53,7 @@ function photoOf(question: QuestionBundle): string | null {
 
 function cropOf(question: QuestionBundle): string | null {
   const fragment = question.stem.find(item => item.role === 'question') ?? question.stem[0] ?? question.teacherMarks[0] ?? question.attempts.flatMap(attempt => attempt.fragments)[0];
-  return fragment ? `/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}` : null;
+  return fragment ? fragmentCropUrl(fragment, 'list') : null;
 }
 
 function statusLine(used: AssetFace[]): string {
@@ -129,7 +131,7 @@ export function buildIntakeGroups(store: MaterialStore, questions: readonly Ques
       id: key,
       title: number ? `第 ${number} 题` : '题号不清',
       status: statusLine(used),
-      thumbs: used.map(face => ({ src: `/s/materials/assets/${face.id}/image`, pageKind: face.pageKind === 'answer_sheet' ? 'answer_sheet' : 'paper' })),
+      thumbs: used.map(face => ({ src: assetImageUrl(face.id, face.sourceHash, 'thumb'), pageKind: face.pageKind === 'answer_sheet' ? 'answer_sheet' : 'paper' })),
       photoIds,
       questions: questionsInGroup,
       candidates,

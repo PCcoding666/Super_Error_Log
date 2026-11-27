@@ -9,6 +9,7 @@ import { MaterialStore } from './store.js';
 import { reconcileAsset } from './matching.js';
 import type { MaterialJobs } from './jobs.js';
 import type { MaterialUploads } from './uploads.js';
+import { persistFragmentCrops } from './displayDerivatives.js';
 import { assertMaterialProviderConfigured, createMaterialProvider, MaterialProviderError, PartialMaterialExtractionError, validateMaterialExtraction, type ExtractedMaterial, type MaterialProvider, type MaterialProviderOptions } from './provider.js';
 
 type Input = { asset_id: string; revision: number; sourceHash: string; storage_path: string; hints_json: string };
@@ -112,13 +113,14 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
   try {
     let result: ExtractedMaterial; let partial: PartialMaterialExtractionError | undefined;
     const sent = leadRun ? pages : undefined;
-    try { result = await provider.extract({ assetId: row.asset_id, revision: row.revision, bytes: await fs.readFile(row.storage_path), hints, pages: sent, onProgress: update => {
+    try { result = await provider.extract({ assetId: row.asset_id, revision: row.revision, bytes: await fs.readFile(row.storage_path), hints, pages: sent, onProgress: async update => {
       signal.throwIfAborted();
       const target = update.extraction.assetId === source.assetId ? source : sent?.find(page => page.assetId === update.extraction.assetId);
       if (!target?.sourceHash) throw new Error('Progress named a page outside this extraction');
       const current = input(store, jobId);
       if (current.revision !== row.revision || current.sourceHash !== row.sourceHash) throw new Error('Extraction source changed');
       saveIntakeProgress(store, jobId, update, target.sourceHash);
+      await persistFragmentCrops(store, update.extraction.fragments);
     } }, signal); }
     catch (error) { if (!(error instanceof PartialMaterialExtractionError)) throw error; partial = error; result = error.extraction; }
     signal.throwIfAborted();
@@ -164,6 +166,9 @@ export async function extractMaterial(store: MaterialStore, provider: MaterialPr
     if (!persisted) return;
     if (persisted.length === 0) throw new MaterialProviderError('invalid_output', '材料提取结果未通过来源或结构校验。', false);
     for (const assetId of persisted) covered.add(assetId);
+    for (const extraction of bundle) {
+      if (persisted.includes(extraction.assetId)) await persistFragmentCrops(store, extraction.fragments);
+    }
     const storedBundle = bundle.filter(extraction => persisted.includes(extraction.assetId)).map(extraction => {
       const stored = { ...extraction }; delete (stored as ExtractedMaterial).set;
       return stored;

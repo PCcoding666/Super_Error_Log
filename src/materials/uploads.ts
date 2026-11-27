@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import path from 'node:path';
 import { newId } from '../db/connection.js';
 import { normalizePhoto } from '../media/images.js';
+import { renderDisplayJpeg } from '../web/images.js';
 import type { AdmissionController } from '../mobile/admission.js';
 import { acquireUploadAdmission, releaseUploadAdmission, type AdmissionReserve } from '../mobile/router.js';
 import { MobileRequestError } from '../mobile/service.js';
@@ -86,12 +87,18 @@ export class MaterialUploads {
         if (rejected) throw new MobileRequestError(rejected.status, rejected.code, rejected.message);
       }
       let normalized: Buffer;
+      let thumb: Buffer;
+      let big: Buffer;
       try {
         const decode = async () => {
           const jpeg = await normalizePhoto(input.bytes);
-          return sharp(jpeg).resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer();
+          const page = await sharp(jpeg).resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer();
+          return { page, thumb: await renderDisplayJpeg(page, 'thumb'), big: await renderDisplayJpeg(page, 'big') };
         };
-        normalized = this.admission ? await this.admission.withImage(decode) : await decode();
+        const rendered = this.admission ? await this.admission.withImage(decode) : await decode();
+        normalized = rendered.page;
+        thumb = rendered.thumb;
+        big = rendered.big;
       }
       catch { throw new MobileRequestError(400, 'invalid_image', '照片无法读取、已损坏或超过像素限制，请补拍。'); }
       await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -99,7 +106,8 @@ export class MaterialUploads {
       try { await fs.access(path.join(finalDirectory, 'original')); await fs.access(path.join(finalDirectory, 'normalized.jpg')); }
       catch {
         staging = path.join(this.directory, `.tmp-${randomUUID()}`); await fs.mkdir(staging, { mode: 0o700 });
-        await write(path.join(staging, 'original'), input.bytes); await write(path.join(staging, 'normalized.jpg'), normalized); await syncDirectory(staging);
+        await write(path.join(staging, 'original'), input.bytes); await write(path.join(staging, 'normalized.jpg'), normalized);
+        await write(path.join(staging, 'thumb.jpg'), thumb); await write(path.join(staging, 'big.jpg'), big); await syncDirectory(staging);
         await fs.rename(staging, finalDirectory); staging = undefined; committedDirectory = finalDirectory; await syncDirectory(this.directory);
       }
       const assetId = newId('mas'); const sourceId = newId('ast');

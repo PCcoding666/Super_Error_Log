@@ -81,10 +81,16 @@ test('邀请码登录后先选学段，拍照收录材料里的题，详情显�
   await page.getByTestId('item-card').first().click();
   await expect(page.getByTestId('question-text')).toContainText('1 + 1');
   const detailPhoto = page.locator('.item-photo img').first();
-  await expect(detailPhoto).toHaveAttribute('src', /\/s\/materials\/assets\/[^/]+\/image$/);
+  await expect(detailPhoto).toHaveAttribute('src', /\/s\/materials\/assets\/[^/]+\/image\?s=big$/);
   await expect(page.getByTestId('item-photo-note')).toContainText('整张照片');
-  // 合成原图高 320。题目裁框只占页高的三分之一，整页才到得了 300。
+  // 合成原图高 320，宽 240，显示尺寸不会再缩小。题目裁框只占页高的三分之一，整页才到得了 300。
   await expect.poll(() => detailPhoto.evaluate((img: HTMLImageElement) => img.complete && img.naturalHeight >= 300)).toBe(true);
+  await page.getByTestId('item-photo').click();
+  const viewer = page.locator('ion-modal.photo-viewer img');
+  await expect(viewer).toBeVisible();
+  await expect(viewer).toHaveAttribute('src', /\/s\/materials\/assets\/[^/]+\/image$/);
+  await page.getByTestId('photo-back').click();
+  await expect(viewer).toBeHidden();
   // 材料流程的题：你写的来自作答片段；照片里的参考答案和 AI 解答放在「正确答案」里。
   await expect(page.getByTestId('item-work')).toHaveCount(1);
   await expect(page.getByTestId('item-answer')).toContainText('AI 解答，仅供参考', { timeout: 20_000 });

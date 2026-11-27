@@ -118,7 +118,7 @@ describe('durable material uploads', () => {
       expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 0 });
       expect(f.db.prepare('SELECT count(*) n FROM material_job').get()).toEqual({ n: 0 }); expect(reserve.handoff).toBe(false);
       const staging = readdirSync(f.uploads.directory)[0]!;
-      expect(staging.startsWith('.tmp-')).toBe(true); expect(readdirSync(path.join(f.uploads.directory, staging)).sort()).toEqual(['normalized.jpg', 'original']);
+      expect(staging.startsWith('.tmp-')).toBe(true); expect(readdirSync(path.join(f.uploads.directory, staging)).sort()).toEqual(['big.jpg', 'normalized.jpg', 'original', 'thumb.jpg']);
     } finally { release?.(); blocked.mockRestore(); }
     const saved = await saving; releaseUploadAdmission(f.admission, reserve);
     expect(reserve.handoff).toBe(true); expect(f.jobs.get(saved.job.id)?.state).toBe('queued');

@@ -1,6 +1,7 @@
 import { contextQuestions, questionInPairedSet } from '../materials/answerSheet.js';
 import { intakeVerdict } from '../materials/grading.js';
 import { findPreview } from '../materials/intakeProgress.js';
+import { assetImageUrl, fragmentCropUrl } from '../materials/displayDerivatives.js';
 import { previewCrop, previewStatus } from './intakeProgressView.js';
 import type { Fragment, QuestionBundle, ReferenceAnswer } from '../materials/contracts.js';
 import { learningObservationFragments } from '../materials/learning.js';
@@ -30,8 +31,8 @@ export function readIntakeCandidateDetail(store: MaterialStore, questionId: stri
     return { ok: true, detail: { id: questionId, revision, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',
       subject: progress.extraction.document.subject, status: previewStatus(progress, fragment, q), ...intakeVerdict(q, store),
       stem: [{ role: 'question', text: fragment.text, number: fragment.number, check: fragment.check, uncertainties: fragment.uncertainties, requiresDiagram: fragment.requiresDiagram }],
-      crop: previewCrop(questionId, revision), figures: diagramFigures(fragment, progress.extraction.fragments, item => previewCrop(item.fragmentId, revision)),
-      source: `/s/materials/assets/${fragment.assetId}/image`, work: [], marks: [], answers: [], grades: [] } };
+      crop: previewCrop(fragment, 'big'), figures: diagramFigures(fragment, progress.extraction.fragments, item => previewCrop(item, 'big')),
+      source: assetImageUrl(fragment.assetId, fragment.sourceHash, 'big'), work: [], marks: [], answers: [], grades: [] } };
   }
   const question = readQuestion(store, questionId);
   if (!question) return { ok: false, status: 404, code: 'not_found', message: '题目不存在。' };
@@ -93,9 +94,9 @@ function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandida
     subject: question.subject,
     ...intakeVerdict(question, store),
     stem,
-    crop: primary ? `/s/materials/fragments/${primary.fragmentId}/crop?revision=${primary.revision}` : null,
-    figures: visible.filter(fragment => fragment.role === 'diagram' && fragment.fragmentId !== primary?.fragmentId).map(fragment => ({ crop: `/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}` })),
-    source: primary ? `/s/materials/assets/${primary.assetId}/image` : null,
+    crop: primary ? fragmentCropUrl(primary, 'big') : null,
+    figures: visible.filter(fragment => fragment.role === 'diagram' && fragment.fragmentId !== primary?.fragmentId).map(fragment => ({ crop: fragmentCropUrl(fragment, 'big') })),
+    source: primary ? assetImageUrl(primary.assetId, primary.sourceHash, 'big') : null,
     work: question.attempts.flatMap(attempt => attempt.fragments.flatMap((fragment): IntakeCandidateDetail['work'] => {
       if (!fragment.text.trim()) return [];
       if (fragment.role === 'student_work') return [{ text: fragment.text, label: null }];

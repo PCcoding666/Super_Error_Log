@@ -14,8 +14,8 @@ export function detailPhotos(itemId: string, sourceKind: 'legacy' | 'material', 
   for (const fragment of shown) {
     if (seen.has(fragment.assetId)) continue;
     seen.add(fragment.assetId);
-    const url = `/s/materials/assets/${fragment.assetId}/image`;
-    photos.push({ url, fullUrl: url, title: '原图' });
+    const url = `/s/materials/assets/${fragment.assetId}/image?s=big`;
+    photos.push({ url, fullUrl: `/s/materials/assets/${fragment.assetId}/image`, title: '原图' });
   }
   if (photos.length) return photos;
   if (sourceKind === 'legacy') {

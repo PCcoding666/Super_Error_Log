@@ -60,6 +60,7 @@ import { TRANSCRIBE_MAX_BYTES, transcribeClip } from '../v2/transcribe.js';
 import { registerStaticAssets } from './staticAssets.js';
 import { CLIENT_SHELL_ROUTES, sendClientShell } from './clientApp.js';
 import { createStudentApi } from './api.js';
+import { fragmentCropUrl } from '../materials/displayDerivatives.js';
 import { displayImage, displaySize } from './images.js';
 import { COOKIE, clearCookie, markInstallHint, readCookies, readPhotoMarks, readSkips, sawInstallHint, setCookie, writePhotoMarks, writeSkips } from './session.js';
 import { actionHref, loadPhotos, loadToday, printStartedAt, type TodayState, type WebContext } from './state.js';
@@ -1202,7 +1203,7 @@ export function createWebClientRouter(options: WebClientOptions): Router {
       const question = materialStoreForItem(itemId)!.getQuestion(source.questionId)!;
       const fragment = question.stem.find(entry => entry.role === 'question');
       if (!fragment) throw new NotFound();
-      response.redirect(303, `/s/materials/fragments/${fragment.fragmentId}/crop?revision=${fragment.revision}`);
+      response.redirect(303, fragmentCropUrl(fragment, displaySize(request.query.s) ?? 'big'));
       return;
     }
     response.type('image/jpeg').send(await displayImage(request.query.scope === 'full' ? await getItemFullCrop(itemId) : await getQuestionCrop(itemId), displaySize(request.query.s)));
