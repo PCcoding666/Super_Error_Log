@@ -26,6 +26,8 @@ export const TRAIL_COOKIE = 'sel_tap';
 const TAP_ROLES = new Set(['primary', 'secondary', 'content', 'top', 'error', 'auto']);
 const TAP_ENTRY = /^([a-z0-9]{1,8})\.([a-z]+)\.([A-Za-z0-9_-]{1,40})@(\/s(?:\/[^\s|@]*)?)$/;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi;
+/** 其余所有 newId() 产出的 ID（mfr_ ast_ mqu_ mdoc_ man_ …：2–5 个小写字母 + 下划线 + 16 位十六进制）一律换成 :id。 */
+const PREFIXED_ID = /\b[a-z]{2,5}_[0-9a-f]{16}\b/g;
 const SAFE_ROUTE = /^\/s(?:\/[A-Za-z0-9:_.-]+)*\/?$/;
 
 /** 写一行（失败不影响页面）。 */
@@ -33,12 +35,17 @@ export function trail(kind: TrailKind, route: string, action: string, deviceId: 
   try { audit(`web_${kind}`, `${route}#${action}`, deviceId ?? undefined); } catch { /* 记录失败不挡学生 */ }
 }
 
-/** 页面路径 → 路由模板：ID 换成占位符；带别的东西（不像路由的）一律记成 `/s/*`。 */
+/**
+ * 页面路径 → 路由模板：ID 换成占位符；带别的东西（不像路由的）一律记成 `/s/*`。
+ * 练习 `:pid`、题目 `:itemId`、照片 / 任务 `:jobId` 保留原名，材料等其他带前缀的 ID 统一 `:id`
+ * （2026-11-07 前材料 ID 原样进了日志，按路由分组统计被打碎）。
+ */
 export function routeTemplate(pathname: string): string {
   const path = pathname.split('?')[0]!.split('#')[0]!
     .replace(/pkt_[0-9a-f]{16}/g, ':pid')
     .replace(/itm_[0-9a-f]{16}/g, ':itemId')
-    .replace(UUID, ':jobId');
+    .replace(UUID, ':jobId')
+    .replace(PREFIXED_ID, ':id');
   return path.length <= 64 && SAFE_ROUTE.test(path) ? path : '/s/*';
 }
 

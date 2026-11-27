@@ -14,6 +14,17 @@ describe('互动记录：路由模板', () => {
     expect(routeTemplate('/s/?printed=1#x')).toBe('/s/');
   });
 
+  it('材料等其他带前缀的 ID 统一换成 :id，不进日志', () => {
+    expect(routeTemplate('/s/materials/fragments/mfr_2e30023498746fbf/crop')).toBe('/s/materials/fragments/:id/crop');
+    expect(routeTemplate('/s/materials/assets/ast_0123456789abcdef/image')).toBe('/s/materials/assets/:id/image');
+    expect(routeTemplate('/s/materials/questions/mqu_0123456789abcdef/answers')).toBe('/s/materials/questions/:id/answers');
+    expect(routeTemplate('/s/api/items/itm_0123456789abcdef/answer-photos/mdoc_0123456789abcdef')).toBe('/s/api/items/:itemId/answer-photos/:id');
+    // 不像 ID 的段（前缀太长、位数不对、大写）原样保留。
+    expect(routeTemplate('/s/materials/answers/import')).toBe('/s/materials/answers/import');
+    expect(routeTemplate('/s/x/abcdefg_0123456789abcdef')).toBe('/s/x/abcdefg_0123456789abcdef');
+    expect(routeTemplate('/s/x/ab_0123')).toBe('/s/x/ab_0123');
+  });
+
   it('不像路由的路径（中文、空格、超长）一律记成 /s/*', () => {
     expect(routeTemplate('/s/我的名字')).toBe('/s/*');
     expect(routeTemplate('/s/a b')).toBe('/s/*');
