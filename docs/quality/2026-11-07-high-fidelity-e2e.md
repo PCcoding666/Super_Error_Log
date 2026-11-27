@@ -118,7 +118,7 @@
 
 ```sh
 npm run build
-# 服务：harness/run-server.sh（数据目录 data/hf-e2e-20261107，按量密钥来自 .env）
+# 服务：harness/run-server.sh（数据目录 data/hf-e2e-20261107）。密钥放在环境变量里，脚本不读取 .env。
 # 代理：node harness/tls-proxy.mjs（证书自签：openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -subj /CN=127.0.0.1 -addext subjectAltName=IP:127.0.0.1）
 SEL_STUDENT_HOST_DIR=$PWD/data/hf-e2e-20261107/student-host node dist/studentHost/admin-cli.js create
 # 驱动（放在带 package.json {"type":"module"} 和 node_modules 软链的目录里）：
@@ -129,7 +129,7 @@ node run.mjs intake --wait=600 ; node run.mjs pick <张号> 1,3 ; node run.mjs c
 node run.mjs notebook --subject=化学 ; node run.mjs detail 0 --subject=化学
 node run.mjs remark 0 --subject=化学 "…" ; node run.mjs edit-stem 0 --subject=化学 "…" ; node run.mjs discard 1 --subject=化学 --restore
 node run.mjs settings --logout
-# 看被拒的原始模型输出：npx tsx harness/replay-locate.mjs <原图> <assetId> <sourceHash> out.json
+# 看被拒的原始模型输出：SEL_AI_API_KEY 已在环境中时，npx tsx harness/replay-locate.mjs <原图> <assetId> <sourceHash> out.json
 ```
 
 ## 8. 修复与复验（同日 17:30，分支 `codex/material-locate-budget`）

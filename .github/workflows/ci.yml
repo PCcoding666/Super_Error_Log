@@ -79,6 +79,9 @@ jobs:
           npm --version
           npm ci
 
+      - name: Lint repeated mistakes
+        run: npm run lint:mistakes
+
       - name: Typecheck
         run: npm run typecheck
 

@@ -1,13 +1,20 @@
 // 重放多页定位（locate-set）：同提示词、同页序、2048 长边；打印原始输出并复刻 inventorySet/inventory 校验。
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
-import { validateBox } from '/Users/chengpeng/MyProject/Super_Error_Log/src/media/images.ts';
-import { MULTI_PAGE_LOCATE_NOTE, MULTI_PAGE_READ_NOTE } from '/Users/chengpeng/MyProject/Super_Error_Log/src/materials/provider.ts';
+import { validateBox } from '../../../../../src/media/images.ts';
+import { MULTI_PAGE_LOCATE_NOTE, MULTI_PAGE_READ_NOTE } from '../../../../../src/materials/provider.ts';
+const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const [assetsFile, outPath] = process.argv.slice(2);
 const assets = fs.readFileSync(assetsFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
-const providerSrc = fs.readFileSync('/Users/chengpeng/MyProject/Super_Error_Log/src/materials/provider.ts', 'utf8');
+const providerSrc = fs.readFileSync(path.join(root, 'src/materials/provider.ts'), 'utf8');
 const SYSTEM = /const SYSTEM = `([\s\S]*?)`;/.exec(providerSrc)[1];
-const apiKey = /^SEL_AI_API_KEY=(.*)$/m.exec(fs.readFileSync('/Users/chengpeng/MyProject/Super_Error_Log/.env', 'utf8'))[1].trim();
+const apiKey = process.env.SEL_AI_API_KEY?.trim();
+if (!apiKey) {
+  console.error('Set SEL_AI_API_KEY in the environment. This script does not read .env files.');
+  process.exit(1);
+}
 const ROLES = ['question', 'diagram', 'student_work', 'correction', 'teacher_mark', 'reference_answer', 'unknown'];
 const candidateSchema = { key: 'unique string', role: ROLES, box: { x: '0..1', y: '0..1', width: '>0', height: '>0' }, number: 'printed question number|null', subpart: 'printed subpart|null', page: 'positive integer|null', order: 'unique increasing nonnegative integer', requiresDiagram: 'boolean' };
 const documentSchema = { title: 'string|null', subject: 'string|null', date: 'string|null', printedCode: 'string|null', page: 'positive integer|null' };
