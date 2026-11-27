@@ -575,6 +575,7 @@ export function IntakePage(): ReactNode {
         loading={detailLoading}
         error={detailError}
         detail={detailBody}
+        previewCrop={detailRequest?.mode === 'materials' ? detailRequest.crop : null}
         legacy={detailRequest?.mode === 'legacy' ? { crop: detailRequest.crop, source: detailRequest.source } : null}
         selected={detailRequest ? (picked[detailRequest.photoId]?.has(detailRequest.candidateId) || photos.some(p => p.id === detailRequest.photoId && p.candidates.some(c => c.id === detailRequest.candidateId && c.submitted))) : false}
         terminal={!!detailRequest && photos.some(p => p.id === detailRequest.photoId && (p.progress?.stage === 'done' || p.state === 'failed'))}

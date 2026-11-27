@@ -20,12 +20,13 @@ import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { acquireProcessImage } from '../../src/mobile/admission.js';
 import { createStudentApi } from '../../src/web/api.js';
+import { assetImageUrl, fragmentCropUrl } from '../../src/materials/displayDerivatives.js';
 
 type Progress = { extraction: Extraction; phase: 'located' | 'enriching' };
 type ProgressCallback = (progress: Progress) => void | Promise<void>;
 type Candidate = { id: string; crop: string | null; excerpt: string; status: string; submitted?: boolean };
 type Photo = {
-  id: string; state: string; candidates: Candidate[]; questions: { id: string }[];
+  id: string; state: string; thumb?: string; full?: string; candidates: Candidate[]; questions: { id: string }[];
   progress?: { stage: string; total: number; verified: number };
 };
 type Intake = { busy: boolean; photos: Photo[] };
@@ -120,7 +121,9 @@ async function fixture() {
     return {
       ...saved, owner, fragment, candidateId: `${fragment.fragmentId}:1`, extraction,
       detail: `/s/api/intake/candidates/${fragment.fragmentId}?revision=1`,
-      crop: `/s/api/intake/candidates/${fragment.fragmentId}/crop?revision=1`,
+      crop: fragmentCropUrl(fragment, 'list', 'preview'),
+      detailCrop: fragmentCropUrl(fragment, 'big', 'preview'),
+      source: assetImageUrl(saved.assetId, fragment.sourceHash, 'big'),
       gate: () => gates.get(saved.assetId)!,
       publish: (phase: Progress['phase'], extra: Partial<Fragment> = {}, siblings: Fragment[] = []) => gates.get(saved.assetId)!.publish({ phase, extraction: extraction(extra, siblings) }),
       finish: async (extra: Partial<Fragment> = {}, siblings: Fragment[] = []) => {
@@ -153,6 +156,8 @@ describe('first selectable intake candidates', () => {
       candidates: [{ id: page.candidateId, crop: page.crop, status: 'preliminary' }],
       progress: { stage: 'located', total: 1, verified: 0 },
     });
+    expect(first.photos[0]!.thumb).toContain('s=thumb');
+    expect(first.photos[0]!.full).toMatch(/\/image$/);
     const before = f.evidence();
     expect(Object.values(before)).toEqual(Array(8).fill(0));
     await page.publish('enriching', { text: '1. 求 x 的值。' });
@@ -183,14 +188,16 @@ describe('first selectable intake candidates', () => {
       expect(detail.status).toBe(200);
       expect(detail.headers.get('cache-control')).toContain('no-store');
       expect(await detail.json()).toMatchObject({
-        id: page.fragment.fragmentId, revision: 1, crop: page.crop, source: `/s/materials/assets/${page.assetId}/image`,
+        id: page.fragment.fragmentId, revision: 1, crop: page.detailCrop, source: page.source,
         stem: [{ text: longStem, check: 'unchecked' }], answers: [], grades: [], work: [], marks: [],
       });
-      const crop = await f.get(page.crop);
+      const crop = await f.get(page.detailCrop);
       expect(crop.status).toBe(200);
       expect(crop.headers.get('content-type')).toMatch(/^image\/jpeg/);
-      expect(crop.headers.get('cache-control')).toContain('no-store');
+      expect(crop.headers.get('cache-control')).toBe('private, max-age=31536000, immutable');
       expect(await sharp(Buffer.from(await crop.arrayBuffer())).metadata()).toMatchObject({ width: 120, height: 80 });
+      const uncached = await f.get(page.detailCrop.replace(/[?&]v=[^&]+/, ''));
+      expect(uncached.headers.get('cache-control')).toContain('no-store');
     }
     expect(f.fingerprint()).toEqual(before);
   });
@@ -218,18 +225,31 @@ describe('first selectable intake candidates', () => {
     expect(f.evidence()).toEqual(before);
   });
 
-  it('waits for the shared image permit before serving a preview crop', async () => {
+  it('serves a precomputed preview crop without waiting for the shared image permit', async () => {
     const f = await fixture();
     const page = await f.page();
     await page.publish('located');
+    const release = await acquireProcessImage();
+    try {
+      const crop = await f.get(page.crop);
+      expect(crop.status).toBe(200);
+      expect(crop.headers.get('cache-control')).toContain('immutable');
+      expect(await sharp(Buffer.from(await crop.arrayBuffer())).metadata()).toMatchObject({ width: 120, height: 80 });
+    } finally { release(); }
+  });
+
+  it('waits for the shared image permit when the preview crop has not been written', async () => {
+    const f = await fixture();
+    const page = await f.page();
+    await page.publish('located');
+    const stored = f.db.prepare(`SELECT s.storage_path FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.id=?`).get(page.assetId) as { storage_path: string };
+    rmSync(path.join(path.dirname(stored.storage_path), 'crops'), { recursive: true, force: true });
     const release = await acquireProcessImage();
     const received = new Promise<void>(resolve => f.server.once('request', () => resolve()));
     let settled = false;
     const response = f.get(page.crop).then(response => { settled = true; return response; });
     try {
       await received;
-      // The request reached Express. This bounded negative check only verifies
-      // it cannot finish while another image operation owns the shared permit.
       await new Promise<void>(resolve => setTimeout(resolve, 50));
       expect(settled).toBe(false);
     } finally { release(); }

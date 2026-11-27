@@ -217,6 +217,8 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .candidate-images figure { margin: 0; }
 .candidate-images figcaption { margin-bottom: 4px; font-size: 13px; color: var(--sel-muted); }
 .candidate-images img { display: block; width: 100%; height: auto; border-radius: 12px; background: var(--sel-line); }
+.candidate-source-toggle { display: block; width: 100%; min-height: 44px; border: 0; border-radius: 12px; background: var(--sel-line); color: inherit; font: inherit; }
+.candidate-source-link { display: inline-block; margin-top: 6px; min-height: 44px; line-height: 44px; font-size: 15px; }
 .candidate-stem { margin: 0 0 8px; }
 .candidate-select { display: flex; align-items: flex-start; gap: 12px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--sel-line); }
 .candidate-select p { margin: 2px 0 0; }

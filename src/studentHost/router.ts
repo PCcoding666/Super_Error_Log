@@ -20,6 +20,7 @@
  *     浏览器带来的同名头一律丢弃）。原始 Host 保留。
  *   - 响应 Set-Cookie 只放行业务 cookie（见 BUSINESS_COOKIES），
  *     绝不把内部 sel_device 或 sel_student 发给浏览器；含学生数据的响应一律 no-store。
+ *     带内容哈希的显示用 JPEG（?v= 且 ?s=thumb|list|big）沿用 worker 的 private, max-age, immutable。原图仍是 no-store。
  *   - 请求体流式转发（不解析 multipart）；有限超时；客户端断连取消上游请求（POST 不自动重放）。
  * - 原生 App（iOS，2026-10-23）：/s/native 下的 JSON 接口，不用 cookie、不进网页路由（/s/api 是网页单页应用的
  *     cookie 接口，由 worker 处理，与这里无关）。
@@ -35,6 +36,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import express, { Router, type Request, type Response } from 'express';
 import { isAccountRole } from './accountRole.js';
+import { displayImageCacheAllowed } from './displayImageCache.js';
 import { INVITATION_WARN_MS, RegistryError, StudentRegistry, resolveStudentHostDir } from './registry.js';
 import { AttemptGuard, codeKey, LOGIN_LIMITS, RECOVERY_LIMITS, REGISTRATION_LIMITS, registrationKey } from './attemptGuard.js';
 import { isInAppBrowserAgent } from '../web/inAppBrowser.js';
@@ -839,7 +841,9 @@ export async function createStudentHostGateway(options: StudentHostGatewayOption
           response.append('set-cookie', line);
         }
         const type = String(upstreamResponse.headers['content-type'] ?? '');
-        if (type.includes('text/html') || type.includes('application/json') || type.startsWith('image/')) {
+        const upstreamCache = String(upstreamResponse.headers['cache-control'] ?? '');
+        const keepDisplayCache = type.startsWith('image/') && displayImageCacheAllowed(request.path, request.query, upstreamCache);
+        if (type.includes('text/html') || type.includes('application/json') || (type.startsWith('image/') && !keepDisplayCache)) {
           response.setHeader('cache-control', 'private, no-store');
         }
         // 上游响应中途出错（worker 崩溃/连接被重置）：已写出的部分不能算数，直接断开。

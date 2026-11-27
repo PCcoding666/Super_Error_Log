@@ -37,3 +37,12 @@ export async function displayImage(source: Buffer, size: DisplaySize | null): Pr
   if (cache.size > 300) cache.delete(cache.keys().next().value!);
   return result;
 }
+
+/** A JPEG within the same display bounds. Already-small JPEGs are returned unchanged. */
+export async function renderDisplayJpeg(source: Buffer, size: DisplaySize): Promise<Buffer> {
+  const bound = BOUNDS[size];
+  const meta = await sharp(source, { limitInputPixels: 40_000_000 }).metadata();
+  const fits = (meta.width ?? 0) > 0 && (meta.width ?? 0) <= bound.width && (bound.height === undefined || (meta.height ?? 0) <= bound.height);
+  if (fits && meta.format === 'jpeg') return source;
+  return sharp(source, { limitInputPixels: 40_000_000 }).resize({ width: bound.width, height: bound.height, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+}

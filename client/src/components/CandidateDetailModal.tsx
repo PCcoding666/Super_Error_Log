@@ -1,6 +1,7 @@
 import { IonButton, IonButtons, IonCheckbox, IonContent, IonHeader, IonModal, IonSpinner, IonTitle, IonToolbar } from '@ionic/react';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { IntakeCandidateDetail, IntakeCandidateFragment } from '../../../src/web/apiTypes';
+import { originalImageUrl, withDisplaySize } from '../../../src/web/materialImageUrls';
 import { detailLead } from '../lib/intakeVerdict';
 import { StemText } from './StemText';
 
@@ -31,28 +32,63 @@ function questionText(stem: IntakeCandidateFragment[]): string {
   return stem.filter(fragment => fragment.role === 'question').map(fragment => fragment.text.trim()).filter(Boolean).join('\n\n');
 }
 
-/** List crops are small (`?s=list`). The review image uses the same crop without that size cap. */
-function reviewImage(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url, 'http://local');
-    parsed.searchParams.delete('s');
-    const query = parsed.searchParams.toString();
-    return `${parsed.pathname}${query ? `?${query}` : ''}`;
-  } catch {
-    return url;
-  }
+/** The list already painted `preview`. The detail URL is the same crop at `s=big`, swapped in after it loads. */
+function QuestionCrop(props: { preview: string | null; detail: string | null; pending: boolean }): ReactNode {
+  const detail = withDisplaySize(props.detail, 'big');
+  const [src, setSrc] = useState(props.preview ?? detail);
+  useEffect(() => { setSrc(props.preview ?? detail); }, [props.preview, detail]);
+  useEffect(() => {
+    if (!detail || !props.preview || detail === props.preview) return;
+    let cancelled = false;
+    const image = new Image();
+    image.onload = () => { if (!cancelled) setSrc(detail); };
+    image.src = detail;
+    return () => { cancelled = true; };
+  }, [detail, props.preview]);
+  if (!src) return props.pending ? null : <p className="muted">没有题目裁图。</p>;
+  return <figure><figcaption>题目裁图</figcaption><img src={src} alt="题目裁图" /></figure>;
 }
 
-function Images(props: { crop: string | null; source: string | null; figures?: { crop: string }[] }): ReactNode {
-  const crop = reviewImage(props.crop);
-  const source = reviewImage(props.source);
-  const figures = (props.figures ?? []).map(figure => reviewImage(figure.crop)).filter((url): url is string => !!url);
-  if (!crop && !source && !figures.length) return <p className="muted">没有可看的题目图片。</p>;
+/** The source page stays in the sheet at display size. It is fetched on tap, or after the sheet is scrolled. */
+function SourceFigure(props: { url: string; defer: boolean }): ReactNode {
+  const display = withDisplaySize(props.url, 'big');
+  const original = originalImageUrl(display);
+  const [open, setOpen] = useState(!props.defer);
+  const ref = useRef<HTMLElement | null>(null);
+  useEffect(() => { setOpen(!props.defer); }, [display, props.defer]);
+  useEffect(() => {
+    if (!props.defer || open) return;
+    const content = ref.current?.closest('ion-content') as (HTMLElement & { getScrollElement?: () => Promise<HTMLElement> }) | null;
+    if (!content?.getScrollElement) return;
+    let scrollEl: HTMLElement | null = null;
+    let initial = 0;
+    let disposed = false;
+    const onScroll = () => { if (scrollEl && scrollEl.scrollTop > initial + 24) setOpen(true); };
+    void content.getScrollElement().then(element => {
+      if (disposed) return;
+      scrollEl = element;
+      initial = element.scrollTop;
+      element.addEventListener('scroll', onScroll, { passive: true });
+    }).catch(() => undefined);
+    return () => { disposed = true; scrollEl?.removeEventListener('scroll', onScroll); };
+  }, [props.defer, open, display]);
+  if (!display) return null;
+  return <figure ref={ref}>
+    <figcaption>来源页</figcaption>
+    {open ? <img src={display} alt="来源页" /> : <button type="button" className="candidate-source-toggle" data-testid="candidate-source-toggle" onClick={() => setOpen(true)}>查看来源页</button>}
+    {original ? <a className="candidate-source-link" href={original} target="_blank" rel="noreferrer">查看原图</a> : null}
+  </figure>;
+}
+
+function Images(props: { preview?: string | null; crop: string | null; source: string | null; figures?: { crop: string }[]; deferSource?: boolean; pending?: boolean }): ReactNode {
+  const figures = (props.figures ?? []).map(figure => withDisplaySize(figure.crop, 'big')).filter((url): url is string => !!url);
+  const crop = withDisplaySize(props.crop, 'big');
+  const preview = props.preview ?? null;
+  if (!preview && !crop && !props.source && !figures.length && !props.pending) return <p className="muted">没有可看的题目图片。</p>;
   return <div className="candidate-images">
-    {crop ? <figure><figcaption>题目裁图</figcaption><img src={crop} alt="题目裁图" /></figure> : <p className="muted">没有题目裁图。</p>}
+    <QuestionCrop preview={preview} detail={props.crop} pending={props.pending === true && !preview && !crop} />
     {figures.map(url => <figure key={url}><figcaption>题目图形</figcaption><img src={url} alt="题目图形" data-testid="candidate-figure" /></figure>)}
-    {source ? <figure><figcaption>来源页</figcaption><img src={source} alt="来源页" /></figure> : null}
+    {props.source ? <SourceFigure url={props.source} defer={props.deferSource === true} /> : null}
   </div>;
 }
 
@@ -91,6 +127,8 @@ export function CandidateDetailModal(props: {
   loading: boolean;
   error: string | null;
   detail: IntakeCandidateDetail | null;
+  /** Already-loaded list crop. Materials details paint this before the detail JSON returns. */
+  previewCrop?: string | null;
   legacy: { crop: string | null; source: string | null } | null;
   selected: boolean;
   submitted?: boolean;
@@ -117,12 +155,12 @@ export function CandidateDetailModal(props: {
         <p className="muted" data-testid="candidate-traces-empty">还没有作答或批改记录。</p>
         <h3>已有的答案和判断</h3>
         <p className="muted" data-testid="candidate-judgment-empty">还没有答案或判断。</p>
-      </> : props.loading ? <p className="muted" role="status"><IonSpinner name="lines-small" /> 正在读取这道题…</p>
-        : props.error ? <p className="tone-red" role="alert" data-testid="candidate-detail-error">{props.error}</p>
-          : props.detail ? <>
-            <Images crop={props.detail.crop} source={props.detail.source} figures={props.detail.figures} />
-            <Recognized detail={props.detail} />
-          </> : null}
+      </> : <>
+        <Images preview={props.previewCrop} crop={props.detail?.crop ?? null} source={props.detail?.source ?? null} figures={props.detail?.figures} deferSource pending={props.loading && !props.detail} />
+        {props.loading && !props.detail ? <p className="muted" role="status"><IonSpinner name="lines-small" /> 正在读取这道题…</p>
+          : props.error ? <p className="tone-red" role="alert" data-testid="candidate-detail-error">{props.error}</p>
+            : props.detail ? <Recognized detail={props.detail} /> : null}
+      </>}
       {props.addable === false ? null : <div className="candidate-select">
         <IonCheckbox
           checked={props.selected}

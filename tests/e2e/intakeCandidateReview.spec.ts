@@ -69,8 +69,10 @@ test('students can select one source page and review an unsaved candidate withou
     ] },
   ] });
   const selectPosts: string[] = [];
+  const imageUrls: string[] = [];
   page.on('request', request => {
     if (request.method() === 'POST' && /\/intake\/photos\/[^/]+\/select$/.test(new URL(request.url()).pathname)) selectPosts.push(request.postData() ?? '');
+    if (request.resourceType() === 'image') imageUrls.push(request.url());
   });
   try {
     await login(page, g.base, g.codes[0]!);
@@ -110,7 +112,18 @@ test('students can select one source page and review an unsaved candidate withou
     await expect(sheet).toContainText('照片里的');
     await expect(sheet.getByRole('button', { name: /生成|问 AI/ })).toHaveCount(0);
     await expect(sheet.locator('img[alt="题目裁图"]')).toBeVisible();
+    await expect(sheet.locator('img[alt="来源页"]')).toHaveCount(0);
+    await expect.poll(async () => sheet.locator('img[alt="题目裁图"]').getAttribute('src')).toContain('s=big');
+    const rawOriginal = (url: string): boolean => {
+      const parsed = new URL(url);
+      return /\/materials\/assets\/[^/]+\/image$/.test(parsed.pathname) && !parsed.searchParams.has('s');
+    };
+    expect(imageUrls.filter(rawOriginal)).toEqual([]);
+    await sheet.getByTestId('candidate-source-toggle').click();
     await expect(sheet.locator('img[alt="来源页"]')).toBeVisible();
+    await expect(sheet.locator('img[alt="来源页"]')).toHaveAttribute('src', /[?&]s=big(?:&|$)/);
+    await expect(sheet.getByRole('link', { name: '查看原图' })).toHaveAttribute('href', /\/materials\/assets\/[^/]+\/image$/);
+    expect(imageUrls.filter(rawOriginal)).toEqual([]);
     await expect(sheet.getByRole('checkbox', { name: '勾选这道题' })).not.toBeChecked();
     expect(selectPosts).toEqual([]);
     expect((await g.snapshot()).material_job).toHaveLength(jobsBefore);
