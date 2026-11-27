@@ -66,6 +66,7 @@ npm run demo        # 生成演示夹具并启动（mock 模式，无需 API Key
 
 ## 文档
 
+- [开发日志](docs/DEVELOPMENT_LOG.md)：从最初的读图原型到学生网页版，按时间记录产品取舍、真实题图实验与发布。
 - 产品：`docs/product/`（PRD、页面规格、试点协议、假设登记）
 - 架构：`docs/architecture/`（架构、数据模型、AI Provider 契约）
 - 质量：`docs/quality/`（测试策略、发布检查单）
