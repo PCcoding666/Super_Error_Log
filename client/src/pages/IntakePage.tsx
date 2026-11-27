@@ -3,14 +3,14 @@ import { checkmark } from 'ionicons/icons';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { initialUploadDayFilter, intakeListParams, intakeResponseMatches, intakeWaitsForUpload, reduceUploadDayFilter } from '../../../src/materials/dayFilter';
-import type { IntakeCandidate, IntakeCandidateDetail, IntakeGroup, IntakePhoto } from '../../../src/web/apiTypes';
+import type { IntakeCandidate, IntakeCandidateDetail, IntakeGroup, IntakePhoto, IntakeResponse } from '../../../src/web/apiTypes';
 import { INTAKE_SELECT_LIMIT, intakePickKey, pagePickState, prunePhotoPicks, selectDisplayedPage, selectionCountText, selectionTotals } from '../../../src/web/intakeSelection';
 import { canAddCandidate, failedGroupPhotos, focusScrollPlan, groupNote, orderCandidates, pageNote, processLabel, shouldPreselect } from '../lib/intakeVerdict';
 import { CandidateDetailModal } from '../components/CandidateDetailModal';
 import { CaptureDock } from '../components/CaptureDock';
 import { useCaptureSession } from '../lib/captureSession';
 import { Problem } from '../components/Problem';
-import { api } from '../lib/api';
+import { api, RequestError } from '../lib/api';
 import { presentActionSheet } from '../lib/sheets';
 import { useLoad, useUploads } from '../lib/hooks';
 import { uploader } from '../lib/uploader';
@@ -39,9 +39,43 @@ type DetailRequest = {
 
 /** 录入态：一次上传算一个批次，按照片分段；找到的题默认已在错题本，可以点删除或左滑去掉；没批改痕迹的页勾出做错的题再加入，没勾的也可以单独删掉。 */
 
+type CandidateDeleteBatch = { photoId: string; ids: string[] };
+
 type PendingDelete =
   | { kind: 'question'; id: string }
-  | { kind: 'candidates'; photoId: string; ids: string[] };
+  | { kind: 'candidates'; batches: CandidateDeleteBatch[] };
+
+/** One dismiss request is photo-scoped. A grouped card can select rows from several photos. */
+function batchesByPhoto(selected: readonly { id: string; photoId?: string }[]): CandidateDeleteBatch[] {
+  const byPhoto = new Map<string, string[]>();
+  for (const candidate of selected) {
+    const photoId = candidate.photoId ?? '';
+    if (!photoId) continue;
+    const ids = byPhoto.get(photoId);
+    if (ids) ids.push(candidate.id);
+    else byPhoto.set(photoId, [candidate.id]);
+  }
+  return [...byPhoto].map(([photoId, ids]) => ({ photoId, ids }));
+}
+
+function deleteFailureMessage(removedCount: number, failures: readonly string[]): string {
+  const details = [...new Set(failures.map(message => message.trim()).filter(Boolean))];
+  const detail = details.join(' ') || '请刷新后再试。';
+  if (removedCount > 0) return `已经去掉 ${removedCount} 道。没去掉的还在列表里：${detail}`;
+  return `没有去掉，还在列表里：${detail}`;
+}
+
+/** After a 409, the candidate id may carry a newer revision. Keep the same question on the same photo. */
+function refreshedCandidateId(photoId: string, id: string, fresh: IntakeResponse): string {
+  const parsed = MATERIALS_CANDIDATE.exec(id);
+  if (!parsed) return id;
+  const prefix = `${parsed[1]}:`;
+  const onPhoto = fresh.photos.find(photo => photo.id === photoId)?.candidates.find(candidate => candidate.id.startsWith(prefix));
+  if (onPhoto) return onPhoto.id;
+  const onGroup = fresh.groups?.flatMap(group => group.candidates).find(candidate => (candidate.photoId ?? '') === photoId && candidate.id.startsWith(prefix));
+  return onGroup?.id ?? id;
+}
+
 export function IntakePage(): ReactNode {
   const navigate = useNavigate();
   const uploads = useUploads();
@@ -49,7 +83,13 @@ export function IntakePage(): ReactNode {
   const listParams = intakeListParams(filter);
   const { data, error, reload } = useLoad(() => api.intake(listParams), [listParams.date ?? '', listParams.page ?? '']);
   const [picked, setPicked] = useState<Record<string, Set<string>>>({});
+  const [hiddenCandidates, setHiddenCandidates] = useState<Set<string>>(() => new Set());
   const [toast, setToast] = useState<string | null>(null);
+  const [toastMs, setToastMs] = useState(3000);
+  const notify = (message: string, duration = 3000): void => {
+    setToastMs(duration);
+    setToast(message);
+  };
   const [detailRequest, setDetailRequest] = useState<DetailRequest | null>(null);
   const [detailBody, setDetailBody] = useState<IntakeCandidateDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -93,7 +133,13 @@ export function IntakePage(): ReactNode {
   const batchSize = uploadedIds.size + uploads.filter(entry => !entry.photoId).length;
   // 筛选切换后，上一份结果（全部或另一天）先不要当成这一次的列表。
   const listReady = intakeResponseMatches(filter, data);
-  const photos: IntakePhoto[] = (listReady ? data?.photos : []) ?? [];
+  const sourcePhotos: IntakePhoto[] = (listReady ? data?.photos : []) ?? [];
+  const photos: IntakePhoto[] = hiddenCandidates.size
+    ? sourcePhotos.map(photo => {
+      const candidates = photo.candidates.filter(candidate => !hiddenCandidates.has(candidate.id));
+      return candidates.length === photo.candidates.length ? photo : { ...photo, candidates };
+    })
+    : sourcePhotos;
   // 本批上传的照片在前，其余（历史）折在后面。
   // 本批按拍摄先后排（和学生选照片的顺序一致）；没有本批时只展开最近一张。
   // 按日筛选时服务器已经排好、并且只返回那一天的这一页，不再拆成「本批 / 更早」。
@@ -135,6 +181,7 @@ export function IntakePage(): ReactNode {
         const set = new Set(next[photo.id] ?? []);
         let photoChanged = false;
         for (const row of orderCandidates(photo.candidates)) {
+          if (hiddenCandidates.has(row.candidate.id)) continue;
           if (!shouldPreselect(row.candidate, touched.current.has(intakePickKey(photo.id, row.candidate.id)))) continue;
           if (set.has(row.candidate.id) || set.size >= selectLimit) continue;
           set.add(row.candidate.id);
@@ -147,7 +194,19 @@ export function IntakePage(): ReactNode {
       }
       return changed ? next : currentPicks;
     });
-  }, [data, listReady, selectLimit]);
+  }, [data, hiddenCandidates, listReady, selectLimit]);
+
+  // A reload that still lists an id wins. Ids the server dropped stay hidden until they are gone from this payload.
+  useEffect(() => {
+    if (!data) return;
+    const present = new Set<string>();
+    for (const photo of data.photos) for (const candidate of photo.candidates) present.add(candidate.id);
+    for (const group of data.groups ?? []) for (const candidate of group.candidates) present.add(candidate.id);
+    setHiddenCandidates(current => {
+      if (![...current].some(id => present.has(id))) return current;
+      return new Set([...current].filter(id => !present.has(id)));
+    });
+  }, [data]);
 
   useLayoutEffect(() => {
     const node = bottomRef.current;
@@ -182,31 +241,60 @@ export function IntakePage(): ReactNode {
   }, [data, listReady, dockPad]);
 
   const remove = async (itemId: string): Promise<void> => {
-    try { const result = await api.discard([itemId]); if (result.failed[0]) setToast(result.failed[0].message); }
-    catch (caught) { setToast(caught instanceof Error ? caught.message : '没有移除'); }
+    try { const result = await api.discard([itemId]); if (result.failed[0]) notify(result.failed[0].message); }
+    catch (caught) { notify(caught instanceof Error ? caught.message : '没有移除'); }
     await reload();
+  };
+  const dismissBatch = async (photoId: string, ids: string[]): Promise<{ removed: string[]; failed: { id: string; message: string }[] }> => {
+    try {
+      return await api.dismissCandidates(photoId, ids);
+    } catch (caught) {
+      // A busy list often bumps the revision. Retry once with the id the server now lists.
+      if (!(caught instanceof RequestError) || caught.status !== 409 || caught.code !== 'revision_conflict' || !busy) throw caught;
+      const fresh = await api.intake(listParams);
+      return await api.dismissCandidates(photoId, ids.map(id => refreshedCandidateId(photoId, id, fresh)));
+    }
   };
   const commitDelete = async (pending: PendingDelete): Promise<void> => {
     if (pending.kind === 'question') { await remove(pending.id); return; }
-    try {
-      const result = await api.dismissCandidates(pending.photoId, pending.ids);
-      if (result.failed[0]) setToast(result.failed[0].message);
-      if (result.removed.length) {
-        const gone = new Set(result.removed);
-        setPicked(currentPicks => {
-          const next = new Set(currentPicks[pending.photoId] ?? []);
-          for (const id of gone) next.delete(id);
-          return { ...currentPicks, [pending.photoId]: next };
-        });
+    const removed = new Set<string>();
+    const failures: string[] = [];
+    for (const batch of pending.batches) {
+      if (!batch.photoId || !batch.ids.length) continue;
+      try {
+        const result = await dismissBatch(batch.photoId, batch.ids);
+        for (const id of result.removed) removed.add(id);
+        // HTTP 200 with nothing removed is the usual miss. Do not treat it as success.
+        if (result.failed.length) failures.push(result.failed[0]?.message || '没有去掉');
+      } catch (caught) {
+        failures.push(caught instanceof Error ? caught.message : '没有去掉');
       }
-    } catch (caught) { setToast(caught instanceof Error ? caught.message : '没有去掉'); }
+    }
+    if (removed.size) {
+      setHiddenCandidates(current => {
+        const next = new Set(current);
+        for (const id of removed) next.add(id);
+        return next;
+      });
+      setPicked(currentPicks => {
+        const next = { ...currentPicks };
+        for (const batch of pending.batches) {
+          const set = new Set(next[batch.photoId] ?? []);
+          for (const id of removed) set.delete(id);
+          next[batch.photoId] = set;
+        }
+        return next;
+      });
+    }
+    if (failures.length) notify(deleteFailureMessage(removed.size, failures), 8000);
     await reload();
   };
   const confirmDelete = (pending: PendingDelete): void => {
-    if (pending.kind === 'candidates' && !pending.ids.length) return;
-    const several = pending.kind === 'candidates' && pending.ids.length > 1;
+    const count = pending.kind === 'candidates' ? pending.batches.reduce((sum, batch) => sum + batch.ids.length, 0) : 0;
+    if (pending.kind === 'candidates' && !count) return;
+    const several = count > 1;
     void presentActionSheet({
-      header: pending.kind === 'question' ? '把这道题移出错题本？' : several ? `去掉这 ${pending.ids.length} 道还没加入的题？` : '去掉这道还没加入的题？',
+      header: pending.kind === 'question' ? '把这道题移出错题本？' : several ? `去掉这 ${count} 道还没加入的题？` : '去掉这道还没加入的题？',
       subHeader: pending.kind === 'question' ? '原图保留，移出后可以在错题本撤销。' : '只从录入列表移除，不会加入错题本。',
       buttons: [
         { text: '删除', role: 'destructive', handler: () => { void commitDelete(pending); } },
@@ -219,23 +307,23 @@ export function IntakePage(): ReactNode {
     const ids = [...(picked[photo.id] ?? [])].filter(id => addable.has(id));
     if (!ids.length) return;
     if (ids.length > selectLimit) {
-      setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
+      notify(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
       return;
     }
     try {
       const result = await api.select(photo.id, ids);
-      if (result.pending) setToast(photo.progress?.stage === 'done' || photo.state === 'failed' ? '已保存选择；未通过校验的题暂未收录，请重试或补拍清楚的照片。' : `已保存 ${result.pending} 道选择，校验通过后会加入错题本。`);
-      else if (result.skipped) setToast(`${result.skipped} 道未加入，请查看更新后的题目再试。`);
+      if (result.pending) notify(photo.progress?.stage === 'done' || photo.state === 'failed' ? '已保存选择；未通过校验的题暂未收录，请重试或补拍清楚的照片。' : `已保存 ${result.pending} 道选择，校验通过后会加入错题本。`);
+      else if (result.skipped) notify(`${result.skipped} 道未加入，请查看更新后的题目再试。`);
       setPicked(currentPicks => ({ ...currentPicks, [photo.id]: new Set() }));
     }
-    catch (caught) { setToast(caught instanceof Error ? caught.message : '没加进去'); }
+    catch (caught) { notify(caught instanceof Error ? caught.message : '没加进去'); }
     await reload();
   };
   const setPick = (photoId: string, id: string, selected: boolean): void => {
     touched.current.add(intakePickKey(photoId, id));
     const prev = picked[photoId] ?? new Set<string>();
     if (selected && !prev.has(id) && prev.size >= selectLimit) {
-      setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
+      notify(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
       return;
     }
     setPicked(currentPicks => {
@@ -252,7 +340,7 @@ export function IntakePage(): ReactNode {
     for (const id of displayed) touched.current.add(intakePickKey(photo.id, id));
     const selected = [...(picked[photo.id] ?? [])];
     const result = selectDisplayedPage(selected, displayed, selectLimit, pagePickState(selected, displayed) === 'all' ? 'none' : 'all');
-    if (result.truncated) setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
+    if (result.truncated) notify(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
     setPicked(currentPicks => ({ ...currentPicks, [photo.id]: new Set(result.ids) }));
   };
   const openDetail = (photo: IntakePhoto, candidate: IntakeCandidate, addable = true): void => {
@@ -371,19 +459,19 @@ export function IntakePage(): ReactNode {
                 className="intake-delete-button"
                 data-testid="candidate-delete"
                 aria-label={`删除${candidate.label}，不加入错题本`}
-                onClick={() => confirmDelete({ kind: 'candidates', photoId: photo.id, ids: [candidate.id] })}
+                onClick={() => confirmDelete({ kind: 'candidates', batches: [{ photoId: photo.id, ids: [candidate.id] }] })}
               >删除</button>
             </div>;
             })}
           </div>
           <div className="intake-actions">
-            <IonButton fill="clear" color="danger" size="default" disabled={!selected.length} data-testid="candidate-delete-selected" onClick={() => confirmDelete({ kind: 'candidates', photoId: photo.id, ids: selected })}>删除所选</IonButton>
+            <IonButton fill="clear" color="danger" size="default" disabled={!selected.length} data-testid="candidate-delete-selected" onClick={() => confirmDelete({ kind: 'candidates', batches: [{ photoId: photo.id, ids: selected }] })}>删除所选</IonButton>
             <IonButton size="default" disabled={!selected.length} onClick={() => void include(photo)} data-testid="pick-submit">加入{selected.length ? ` ${selected.length} 道` : ''}</IonButton>
           </div>
         </> : null}
         {photo.failure ? <IonItem lines="none" className="intake-failure">
           <IonLabel className="ion-text-wrap"><p className="tone-red">{photo.failure.detail}</p></IonLabel>
-          {photo.failure.retryable ? <IonButton slot="end" fill="clear" onClick={() => { void api.retry(photo.id).then(reload).catch(caught => setToast(caught instanceof Error ? caught.message : '没重试成功')); }}>重试</IonButton> : null}
+          {photo.failure.retryable ? <IonButton slot="end" fill="clear" onClick={() => { void api.retry(photo.id).then(reload).catch(caught => notify(caught instanceof Error ? caught.message : '没重试成功')); }}>重试</IonButton> : null}
           {data?.mode === 'legacy' ? <IonButton slot="end" fill="clear" color="medium" onClick={() => { void api.dismiss(photo.id).then(reload); }}>不要了</IonButton> : null}
         </IonItem> : null}
       </IonList>
@@ -410,7 +498,7 @@ export function IntakePage(): ReactNode {
         const next = { ...currentPicks };
         for (const [photoId, ids] of byPhoto) {
           const result = selectDisplayedPage([...(currentPicks[photoId] ?? [])], ids, selectLimit, clearing ? 'none' : 'all');
-          if (result.truncated) setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
+          if (result.truncated) notify(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
           next[photoId] = new Set(result.ids);
         }
         return next;
@@ -423,14 +511,14 @@ export function IntakePage(): ReactNode {
         byPhoto.set(candidate.photoId, [...(byPhoto.get(candidate.photoId) ?? []), candidate.id]);
       }
       if ([...byPhoto.values()].some(ids => ids.length > selectLimit)) {
-        setToast(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
+        notify(`一次最多加入 ${selectLimit} 道，多出来的请分批加入。`);
         return;
       }
       try {
         for (const [photoId, ids] of byPhoto) {
           const result = await api.select(photoId, ids);
-          if (result.pending) setToast(`已保存 ${result.pending} 道选择，校验通过后会加入错题本。`);
-          else if (result.skipped) setToast(`${result.skipped} 道未加入，请查看更新后的题目再试。`);
+          if (result.pending) notify(`已保存 ${result.pending} 道选择，校验通过后会加入错题本。`);
+          else if (result.skipped) notify(`${result.skipped} 道未加入，请查看更新后的题目再试。`);
         }
         setPicked(currentPicks => {
           const next = { ...currentPicks };
@@ -440,7 +528,7 @@ export function IntakePage(): ReactNode {
           }
           return next;
         });
-      } catch (caught) { setToast(caught instanceof Error ? caught.message : '没加进去'); }
+      } catch (caught) { notify(caught instanceof Error ? caught.message : '没加进去'); }
       await reload();
     };
     return <section key={group.id} className="intake-photo" data-testid="intake-question-card" data-question={group.title}>
@@ -460,7 +548,7 @@ export function IntakePage(): ReactNode {
         </IonItem>
         {failedPhotos.map(photo => <IonItem key={photo.id} lines="none" className="intake-failure" data-testid="intake-group-failure">
           <IonLabel className="ion-text-wrap"><p className="tone-red">{photo.failure?.detail}</p></IonLabel>
-          {photo.failure?.retryable ? <IonButton slot="end" fill="clear" data-testid="intake-group-retry" onClick={() => { void api.retry(photo.id).then(reload).catch(caught => setToast(caught instanceof Error ? caught.message : '没重试成功')); }}>重试</IonButton> : null}
+          {photo.failure?.retryable ? <IonButton slot="end" fill="clear" data-testid="intake-group-retry" onClick={() => { void api.retry(photo.id).then(reload).catch(caught => notify(caught instanceof Error ? caught.message : '没重试成功')); }}>重试</IonButton> : null}
         </IonItem>)}
         {group.questions.map(question => <IonItemSliding key={question.id}>
           <IonItem button detail={false} className="intake-row" data-testid="intake-question" onClick={() => navigate(`/q/${question.id}`)}>
@@ -501,15 +589,19 @@ export function IntakePage(): ReactNode {
                   {process ? <p>{process}</p> : null}
                 </div>
                 <button type="button" className="intake-detail-button" data-testid="candidate-detail" aria-label={`查看${candidate.label}的详情`} onClick={() => { if (photo) openDetail(photo, candidate, addableRow); }}>查看详情</button>
-                <button type="button" className="intake-delete-button" data-testid="candidate-delete" aria-label={`删除${candidate.label}，不加入错题本`} onClick={() => confirmDelete({ kind: 'candidates', photoId, ids: [candidate.id] })}>删除</button>
+                <button type="button" className="intake-delete-button" data-testid="candidate-delete" aria-label={`删除${candidate.label}，不加入错题本`} onClick={() => confirmDelete({ kind: 'candidates', batches: [{ photoId, ids: [candidate.id] }] })}>删除</button>
               </div>;
             })}
           </div>
           <div className="intake-actions">
             <IonButton fill="clear" color="danger" size="default" disabled={!selected.length} data-testid="candidate-delete-selected" onClick={() => {
-              const photoId = selected[0]?.photoId ?? '';
-              const ids = selected.filter(candidate => candidate.photoId === photoId).map(candidate => candidate.id);
-              confirmDelete({ kind: 'candidates', photoId, ids });
+              const batches = batchesByPhoto(selected);
+              if (!batches.length) return;
+              if (batches.some(batch => batch.ids.length > selectLimit)) {
+                notify(`一次最多去掉 ${selectLimit} 道，多出来的请分批去掉。`);
+                return;
+              }
+              confirmDelete({ kind: 'candidates', batches });
             }}>删除所选</IonButton>
             <IonButton size="default" disabled={!selected.length} onClick={() => void includeGroup()} data-testid="pick-submit">加入{selected.length ? ` ${selected.length} 道` : ''}</IonButton>
           </div>
@@ -518,7 +610,11 @@ export function IntakePage(): ReactNode {
     </section>;
   };
 
-  const groups = listReady ? data?.groups ?? [] : [];
+  const groups = (listReady ? data?.groups ?? [] : []).map(group => {
+    if (!hiddenCandidates.size) return group;
+    const candidates = group.candidates.filter(candidate => !hiddenCandidates.has(candidate.id));
+    return candidates.length === group.candidates.length ? group : { ...group, candidates };
+  });
   const groupedPhotoIds = new Set(groups.flatMap(group => group.photoIds));
   const currentIds = new Set(current.map(photo => photo.id));
   const currentGroups = groups.filter(group => group.photoIds.some(id => currentIds.has(id)));
@@ -568,7 +664,7 @@ export function IntakePage(): ReactNode {
         <IonButton expand="block" shape="round" size="large" onClick={() => { uploader.finishBatch(); navigate('/', { replace: true }); }} data-testid="intake-done"><IonIcon icon={checkmark} slot="start" />完成</IonButton>
         <CaptureDock placement="inline" />
       </div>
-      <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
+      <IonToast isOpen={!!toast} message={toast ?? ''} duration={toastMs} onDidDismiss={() => setToast(null)} />
       <CandidateDetailModal
         open={!!detailRequest}
         title={detailRequest?.label ?? '题目'}
