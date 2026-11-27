@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { initialUploadDayFilter, intakeListParams, intakeResponseMatches, intakeWaitsForUpload, reduceUploadDayFilter } from '../../../src/materials/dayFilter';
 import type { IntakeCandidate, IntakeCandidateDetail, IntakeGroup, IntakePhoto, IntakeResponse } from '../../../src/web/apiTypes';
 import { INTAKE_SELECT_LIMIT, intakePickKey, pagePickState, prunePhotoPicks, selectDisplayedPage, selectionCountText, selectionTotals } from '../../../src/web/intakeSelection';
+import { applyCandidateHide, createDeleteQueue, deleteFailureMessage, matchDismissResult, reconcileHidden, restoreCandidateHide, type CandidateDeleteBatch } from '../lib/intakeDelete';
 import { canAddCandidate, failedGroupPhotos, focusScrollPlan, groupNote, orderCandidates, pageNote, processLabel, shouldPreselect } from '../lib/intakeVerdict';
 import { CandidateDetailModal } from '../components/CandidateDetailModal';
 import { CaptureDock } from '../components/CaptureDock';
@@ -39,8 +40,6 @@ type DetailRequest = {
 
 /** 录入态：一次上传算一个批次，按照片分段；找到的题默认已在错题本，可以点删除或左滑去掉；没批改痕迹的页勾出做错的题再加入，没勾的也可以单独删掉。 */
 
-type CandidateDeleteBatch = { photoId: string; ids: string[] };
-
 type PendingDelete =
   | { kind: 'question'; id: string }
   | { kind: 'candidates'; batches: CandidateDeleteBatch[] };
@@ -56,13 +55,6 @@ function batchesByPhoto(selected: readonly { id: string; photoId?: string }[]): 
     else byPhoto.set(photoId, [candidate.id]);
   }
   return [...byPhoto].map(([photoId, ids]) => ({ photoId, ids }));
-}
-
-function deleteFailureMessage(removedCount: number, failures: readonly string[]): string {
-  const details = [...new Set(failures.map(message => message.trim()).filter(Boolean))];
-  const detail = details.join(' ') || '请刷新后再试。';
-  if (removedCount > 0) return `已经去掉 ${removedCount} 道。没去掉的还在列表里：${detail}`;
-  return `没有去掉，还在列表里：${detail}`;
 }
 
 /** After a 409, the candidate id may carry a newer revision. Keep the same question on the same photo. */
@@ -84,6 +76,17 @@ export function IntakePage(): ReactNode {
   const { data, error, reload } = useLoad(() => api.intake(listParams), [listParams.date ?? '', listParams.page ?? '']);
   const [picked, setPicked] = useState<Record<string, Set<string>>>({});
   const [hiddenCandidates, setHiddenCandidates] = useState<Set<string>>(() => new Set());
+  const [hiddenQuestions, setHiddenQuestions] = useState<Set<string>>(() => new Set());
+  const [deletePending, setDeletePending] = useState(0);
+  const hiddenCandidatesRef = useRef(hiddenCandidates);
+  const hiddenQuestionsRef = useRef(hiddenQuestions);
+  const picksRef = useRef(picked);
+  hiddenCandidatesRef.current = hiddenCandidates;
+  hiddenQuestionsRef.current = hiddenQuestions;
+  picksRef.current = picked;
+  const inFlightCandidateIds = useRef(new Set<string>());
+  const inFlightQuestionIds = useRef(new Set<string>());
+  const deleteQueue = useRef(createDeleteQueue());
   const [toast, setToast] = useState<string | null>(null);
   const [toastMs, setToastMs] = useState(3000);
   const notify = (message: string, duration = 3000): void => {
@@ -134,10 +137,11 @@ export function IntakePage(): ReactNode {
   // 筛选切换后，上一份结果（全部或另一天）先不要当成这一次的列表。
   const listReady = intakeResponseMatches(filter, data);
   const sourcePhotos: IntakePhoto[] = (listReady ? data?.photos : []) ?? [];
-  const photos: IntakePhoto[] = hiddenCandidates.size
+  const photos: IntakePhoto[] = hiddenCandidates.size || hiddenQuestions.size
     ? sourcePhotos.map(photo => {
-      const candidates = photo.candidates.filter(candidate => !hiddenCandidates.has(candidate.id));
-      return candidates.length === photo.candidates.length ? photo : { ...photo, candidates };
+      const candidates = hiddenCandidates.size ? photo.candidates.filter(candidate => !hiddenCandidates.has(candidate.id)) : photo.candidates;
+      const questions = hiddenQuestions.size ? photo.questions.filter(question => !hiddenQuestions.has(question.id)) : photo.questions;
+      return candidates.length === photo.candidates.length && questions.length === photo.questions.length ? photo : { ...photo, candidates, questions };
     })
     : sourcePhotos;
   // 本批上传的照片在前，其余（历史）折在后面。
@@ -196,15 +200,31 @@ export function IntakePage(): ReactNode {
     });
   }, [data, hiddenCandidates, listReady, selectLimit]);
 
-  // A reload that still lists an id wins. Ids the server dropped stay hidden until they are gone from this payload.
+  // A reload that still lists an id shows it again, except while that id's delete is in flight.
+  // Ids the server dropped stay hidden so a slow list cannot paint them back.
   useEffect(() => {
     if (!data) return;
-    const present = new Set<string>();
-    for (const photo of data.photos) for (const candidate of photo.candidates) present.add(candidate.id);
-    for (const group of data.groups ?? []) for (const candidate of group.candidates) present.add(candidate.id);
+    const presentCandidates = new Set<string>();
+    const presentQuestions = new Set<string>();
+    for (const photo of data.photos) {
+      for (const candidate of photo.candidates) presentCandidates.add(candidate.id);
+      for (const question of photo.questions) presentQuestions.add(question.id);
+    }
+    for (const group of data.groups ?? []) {
+      for (const candidate of group.candidates) presentCandidates.add(candidate.id);
+      for (const question of group.questions) presentQuestions.add(question.id);
+    }
     setHiddenCandidates(current => {
-      if (![...current].some(id => present.has(id))) return current;
-      return new Set([...current].filter(id => !present.has(id)));
+      const next = reconcileHidden(current, presentCandidates, inFlightCandidateIds.current);
+      if (!next) return current;
+      hiddenCandidatesRef.current = next;
+      return next;
+    });
+    setHiddenQuestions(current => {
+      const next = reconcileHidden(current, presentQuestions, inFlightQuestionIds.current);
+      if (!next) return current;
+      hiddenQuestionsRef.current = next;
+      return next;
     });
   }, [data]);
 
@@ -224,7 +244,7 @@ export function IntakePage(): ReactNode {
     try { observer.observe(node, { box: 'border-box' }); }
     catch { observer.observe(node); }
     return () => observer.disconnect();
-  }, [capture.pages.length, selectedText, listReady]);
+  }, [capture.pages.length, deletePending, selectedText, listReady]);
 
   useEffect(() => {
     if (!listReady) return;
@@ -240,54 +260,107 @@ export function IntakePage(): ReactNode {
     if (!visible) row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [data, listReady, dockPad]);
 
-  const remove = async (itemId: string): Promise<void> => {
-    try { const result = await api.discard([itemId]); if (result.failed[0]) notify(result.failed[0].message); }
-    catch (caught) { notify(caught instanceof Error ? caught.message : '没有移除'); }
-    await reload();
-  };
-  const dismissBatch = async (photoId: string, ids: string[]): Promise<{ removed: string[]; failed: { id: string; message: string }[] }> => {
+  const dismissBatch = async (photoId: string, ids: string[]): Promise<{ removed: string[]; failed: { id: string; message: string }[]; sent: string[] }> => {
     try {
-      return await api.dismissCandidates(photoId, ids);
+      const result = await api.dismissCandidates(photoId, ids);
+      return { ...result, sent: ids };
     } catch (caught) {
       // A busy list often bumps the revision. Retry once with the id the server now lists.
       if (!(caught instanceof RequestError) || caught.status !== 409 || caught.code !== 'revision_conflict' || !busy) throw caught;
       const fresh = await api.intake(listParams);
-      return await api.dismissCandidates(photoId, ids.map(id => refreshedCandidateId(photoId, id, fresh)));
+      const sent = ids.map(id => refreshedCandidateId(photoId, id, fresh));
+      const result = await api.dismissCandidates(photoId, sent);
+      return { ...result, sent };
     }
   };
-  const commitDelete = async (pending: PendingDelete): Promise<void> => {
-    if (pending.kind === 'question') { await remove(pending.id); return; }
-    const removed = new Set<string>();
-    const failures: string[] = [];
-    for (const batch of pending.batches) {
-      if (!batch.photoId || !batch.ids.length) continue;
+  const enqueueDelete = (task: () => Promise<void>): void => {
+    setDeletePending(count => count + 1);
+    void deleteQueue.current.enqueue(task).finally(() => setDeletePending(count => Math.max(0, count - 1)));
+  };
+  const beginQuestionDelete = (id: string): void => {
+    if (!id || inFlightQuestionIds.current.has(id)) return;
+    inFlightQuestionIds.current.add(id);
+    const next = new Set(hiddenQuestionsRef.current);
+    next.add(id);
+    hiddenQuestionsRef.current = next;
+    setHiddenQuestions(next);
+    enqueueDelete(async () => {
+      let removed = false;
       try {
-        const result = await dismissBatch(batch.photoId, batch.ids);
-        for (const id of result.removed) removed.add(id);
-        // HTTP 200 with nothing removed is the usual miss. Do not treat it as success.
-        if (result.failed.length) failures.push(result.failed[0]?.message || '没有去掉');
+        const result = await api.discard([id]);
+        if (result.failed[0]) notify(result.failed[0].message);
+        removed = result.removed.includes(id);
       } catch (caught) {
-        failures.push(caught instanceof Error ? caught.message : '没有去掉');
-      }
-    }
-    if (removed.size) {
-      setHiddenCandidates(current => {
-        const next = new Set(current);
-        for (const id of removed) next.add(id);
-        return next;
-      });
-      setPicked(currentPicks => {
-        const next = { ...currentPicks };
-        for (const batch of pending.batches) {
-          const set = new Set(next[batch.photoId] ?? []);
-          for (const id of removed) set.delete(id);
-          next[batch.photoId] = set;
+        notify(caught instanceof Error ? caught.message : '没有移除');
+      } finally {
+        if (!removed) {
+          setHiddenQuestions(current => {
+            if (!current.has(id)) return current;
+            const restored = new Set(current);
+            restored.delete(id);
+            hiddenQuestionsRef.current = restored;
+            return restored;
+          });
         }
-        return next;
-      });
-    }
-    if (failures.length) notify(deleteFailureMessage(removed.size, failures), 8000);
-    await reload();
+        inFlightQuestionIds.current.delete(id);
+      }
+      await reload();
+    });
+  };
+  const beginCandidateDelete = (requested: readonly CandidateDeleteBatch[]): void => {
+    const batches = requested
+      .map(batch => ({ photoId: batch.photoId, ids: batch.ids.filter(id => id && !inFlightCandidateIds.current.has(id)) }))
+      .filter(batch => batch.photoId && batch.ids.length);
+    if (!batches.length) return;
+    const applied = applyCandidateHide(hiddenCandidatesRef.current, picksRef.current, batches);
+    hiddenCandidatesRef.current = applied.hidden;
+    picksRef.current = applied.picks;
+    for (const batch of batches) for (const id of batch.ids) inFlightCandidateIds.current.add(id);
+    setHiddenCandidates(applied.hidden);
+    setPicked(applied.picks);
+    const restorePicks = applied.restorePicks;
+    enqueueDelete(async () => {
+      const removed = new Set<string>();
+      const failed = new Set<string>();
+      const hideAlso: string[] = [];
+      const failures: string[] = [];
+      try {
+        for (const batch of batches) {
+          try {
+            const result = await dismissBatch(batch.photoId, batch.ids);
+            const matched = matchDismissResult(batch.ids, result.sent, result.removed);
+            for (const id of matched.kept) removed.add(id);
+            for (const id of matched.failed) failed.add(id);
+            hideAlso.push(...matched.hideAlso);
+            // HTTP 200 with nothing removed is the usual miss. Do not treat it as success.
+            if (result.failed.length) failures.push(result.failed[0]?.message || '没有去掉');
+          } catch (caught) {
+            for (const id of batch.ids) failed.add(id);
+            failures.push(caught instanceof Error ? caught.message : '没有去掉');
+          }
+        }
+        if (failed.size || hideAlso.length) {
+          setHiddenCandidates(current => {
+            const next = new Set(current);
+            for (const id of failed) next.delete(id);
+            for (const id of hideAlso) next.add(id);
+            hiddenCandidatesRef.current = next;
+            return next;
+          });
+        }
+        if (failed.size) {
+          setPicked(current => {
+            const next = restoreCandidateHide(new Set(), current, restorePicks, failed).picks;
+            picksRef.current = next;
+            return next;
+          });
+        }
+        if (failures.length) notify(deleteFailureMessage(removed.size, failures), 8000);
+      } finally {
+        for (const batch of batches) for (const id of batch.ids) inFlightCandidateIds.current.delete(id);
+      }
+      await reload();
+    });
   };
   const confirmDelete = (pending: PendingDelete): void => {
     const count = pending.kind === 'candidates' ? pending.batches.reduce((sum, batch) => sum + batch.ids.length, 0) : 0;
@@ -297,7 +370,14 @@ export function IntakePage(): ReactNode {
       header: pending.kind === 'question' ? '把这道题移出错题本？' : several ? `去掉这 ${count} 道还没加入的题？` : '去掉这道还没加入的题？',
       subHeader: pending.kind === 'question' ? '原图保留，移出后可以在错题本撤销。' : '只从录入列表移除，不会加入错题本。',
       buttons: [
-        { text: '删除', role: 'destructive', handler: () => { void commitDelete(pending); } },
+        {
+          text: '删除',
+          role: 'destructive',
+          handler: () => {
+            if (pending.kind === 'question') beginQuestionDelete(pending.id);
+            else beginCandidateDelete(pending.batches);
+          },
+        },
         { text: '取消', role: 'cancel' },
       ],
     });
@@ -414,7 +494,7 @@ export function IntakePage(): ReactNode {
             <button slot="end" type="button" className="intake-delete-button" data-testid="question-delete" aria-label={`删除${question.excerpt || '这道题'}`}
               onClick={event => { event.preventDefault(); event.stopPropagation(); confirmDelete({ kind: 'question', id: question.id }); }}>删除</button>
           </IonItem>
-          <IonItemOptions side="end"><IonItemOption color="danger" data-testid="question-swipe-delete" onClick={() => void remove(question.id)}>删除</IonItemOption></IonItemOptions>
+          <IonItemOptions side="end"><IonItemOption color="danger" data-testid="question-swipe-delete" onClick={() => beginQuestionDelete(question.id)}>删除</IonItemOption></IonItemOptions>
         </IonItemSliding>)}
         {photo.candidates.length ? <>
           <IonItem lines="full" className="intake-note"><IonLabel className="ion-text-wrap"><p data-testid="intake-page-note">{pageNote(!!photo.progress, hasFocus)}</p></IonLabel></IonItem>
@@ -660,6 +740,7 @@ export function IntakePage(): ReactNode {
       {earlier.length ? <details className="intake-earlier"><summary>更早的 {earlier.length} 张</summary>{earlierGroups.map(renderGroup)}{earlier.filter(photo => !groupedPhotoIds.has(photo.id)).map(renderPhoto)}</details> : null}
       <div className="bottom-space intake-space" data-testid="intake-scroll-pad" style={dockPad > 0 ? { height: dockPad } : undefined} />
       <div className="intake-bottom" ref={bottomRef}>
+        {deletePending > 0 ? <p className="intake-delete-progress" role="status" aria-live="polite" aria-busy="true" data-testid="intake-delete-progress"><IonSpinner name="lines-small" /> 正在删除…</p> : null}
         <p className="intake-selected" role="status" data-testid="intake-selected">{selectedText}</p>
         <IonButton expand="block" shape="round" size="large" onClick={() => { uploader.finishBatch(); navigate('/', { replace: true }); }} data-testid="intake-done"><IonIcon icon={checkmark} slot="start" />完成</IonButton>
         <CaptureDock placement="inline" />

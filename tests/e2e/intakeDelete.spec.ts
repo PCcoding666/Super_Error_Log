@@ -335,3 +335,90 @@ test('a dismiss response that removes nothing keeps the row and says so', async 
     expect((await g.snapshot()).material_inclusion ?? []).toHaveLength(0);
   } finally { await g.close(); }
 });
+
+test('confirm hides selected rows immediately, shows progress, and a second confirm waits its turn', async ({ page }) => {
+  test.setTimeout(120_000);
+  const g = await materialGateway({ pages: [{ parts: [
+    { role: 'question', number: '1', text: '1. LAG-ONE 计算 1+1。' },
+    { role: 'question', number: '2', text: '2. LAG-TWO 计算 2+2。' },
+    { role: 'question', number: '3', text: '3. LAG-THREE 计算 3+3。' },
+  ] }] });
+  const releases: ((action: 'ok' | 'fail') => void)[] = [];
+  await page.route(/\/dismiss-candidates$/, async route => {
+    const action = await new Promise<'ok' | 'fail'>(resolve => { releases.push(resolve); });
+    if (action === 'fail') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ removed: [], failed: [{ id: 'synthetic', message: '这道题已经不在待选列表里，请刷新后再试。' }] }),
+      });
+    } else await route.continue();
+  });
+  const toastText = async (): Promise<string> => {
+    const toasts = page.locator('ion-toast');
+    const messages: string[] = [];
+    for (let index = 0; index < await toasts.count(); index += 1) messages.push(await toasts.nth(index).evaluate(element => (element as { message?: string }).message ?? ''));
+    return messages.join('\n');
+  };
+  try {
+    await login(page, g.base, g.codes[0]!);
+    await uploadOne(page, await jpeg({ r: 200, g: 160, b: 140 }));
+    await expect.poll(async () => (await g.snapshot()).material_job!.every(job => !['running', 'queued'].includes(String(job.state)))).toBe(true);
+    const photo = page.locator('section.intake-photo');
+    await expect(photo.getByTestId('pick-candidate')).toHaveCount(3, { timeout: 20_000 });
+    const row = (text: string) => photo.locator('[data-testid="pick-candidate"]', { hasText: text });
+    await row('LAG-ONE').getByTestId('pick-checkbox').click();
+    await row('LAG-TWO').getByTestId('pick-checkbox').click();
+    await expect(page.getByTestId('intake-selected')).toHaveText('已选 2 题');
+    await expect(page.getByTestId('intake-delete-progress')).toHaveCount(0);
+
+    await photo.getByTestId('candidate-delete-selected').click();
+    await expect(openSheet(page)).toContainText('去掉这 2 道还没加入的题');
+    await sheetButton(page, '删除').click();
+    await expect(row('LAG-ONE')).toHaveCount(0);
+    await expect(row('LAG-TWO')).toHaveCount(0);
+    await expect(row('LAG-THREE')).toBeVisible();
+    await expect(page.getByTestId('intake-selected')).toHaveText('已选 0 题');
+    const progress = page.getByTestId('intake-delete-progress');
+    await expect(progress).toBeVisible();
+    await expect(progress).toContainText('正在删除');
+    await expect(progress.locator('ion-spinner')).toBeVisible();
+    await expect.poll(() => releases.length).toBe(1);
+
+    await row('LAG-THREE').getByTestId('pick-checkbox').click();
+    await expect(page.getByTestId('intake-selected')).toHaveText('已选 1 题');
+    await row('LAG-THREE').getByTestId('candidate-delete').click();
+    await expect(openSheet(page)).toContainText('去掉这道还没加入的题');
+    await sheetButton(page, '删除').click();
+    await expect(row('LAG-THREE')).toHaveCount(0);
+    await expect(page.getByTestId('intake-selected')).toHaveText('已选 0 题');
+    await expect(progress).toBeVisible();
+    expect(releases).toHaveLength(1);
+
+    releases[0]!('fail');
+    await expect(row('LAG-ONE')).toBeVisible();
+    await expect(row('LAG-TWO')).toBeVisible();
+    await expect(row('LAG-THREE')).toHaveCount(0);
+    await expect(page.getByTestId('intake-selected')).toHaveText('已选 2 题');
+    await expect.poll(toastText).toContain('没有去掉，还在列表里');
+    await expect.poll(toastText).toContain('请刷新后再试');
+    await expect(progress).toBeVisible();
+    await expect.poll(() => releases.length).toBe(2);
+    expect(releases).toHaveLength(2);
+
+    releases[1]!('ok');
+    await expect(progress).toHaveCount(0);
+    await expect(row('LAG-ONE')).toBeVisible();
+    await expect(row('LAG-TWO')).toBeVisible();
+    await expect(row('LAG-THREE')).toHaveCount(0);
+    await expect(page.getByTestId('intake-selected')).toHaveText('已选 2 题');
+    const after = await g.snapshot();
+    expect(after.error_item ?? []).toHaveLength(0);
+    const kept = stemOf(after, 'LAG-THREE');
+    const excluded = (after.material_inclusion ?? []).filter(row => Number(row.included) === 0).map(row => String(row.question_id));
+    expect(excluded).toEqual([kept.questionId]);
+  } finally {
+    for (const release of releases) release('ok');
+    await g.close();
+  }
+});

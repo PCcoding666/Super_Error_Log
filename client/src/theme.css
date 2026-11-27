@@ -209,6 +209,8 @@ ion-fab-button.corner-search { width: 56px; height: 56px; --color: var(--ion-tex
 .intake-candidate-text h3 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .intake-candidate-text p { margin: 2px 0 0; font-size: 14px; color: var(--sel-muted); }
 .intake-selected { margin: 0 4px 8px; text-align: center; font-size: 14px; line-height: 1.4; color: var(--sel-muted); }
+.intake-delete-progress { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 4px 8px; font-size: 14px; line-height: 1.4; color: var(--sel-muted); }
+.intake-delete-progress ion-spinner { width: 16px; height: 16px; }
 .candidate-detail { padding: 8px 20px 32px; }
 .candidate-detail h2 { margin: 4px 0 8px; font-size: 22px; font-weight: 700; }
 .candidate-detail h3 { margin: 18px 0 6px; font-size: 13px; font-weight: 600; color: var(--sel-muted); }
