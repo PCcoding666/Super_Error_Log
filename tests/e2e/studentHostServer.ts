@@ -29,6 +29,32 @@ const linkCode = registry.issueInvitation(registry.createStudent().studentId).co
   db.prepare('UPDATE invitations SET expires_at = ? WHERE student_id = ?').run(new Date(Date.now() + 3 * 86_400_000 - 60_000).toISOString(), expiringStudent);
   db.close();
 }
+function seedQueuedExtract(db: DatabaseSync, owner: string): { jobId: string; state: string; questions: number } {
+  const batch = crypto.randomUUID();
+  const source = crypto.randomUUID();
+  const capture = crypto.randomUUID();
+  const asset = crypto.randomUUID();
+  const jobId = crypto.randomUUID();
+  const at = new Date().toISOString();
+  db.exec('BEGIN');
+  try {
+    db.prepare('INSERT OR IGNORE INTO material_workspace(owner_id, draft_namespace) VALUES (?, ?)').run(owner, crypto.randomUUID());
+    db.prepare('INSERT INTO source_batch(id, student_id, status, created_at) VALUES (?,?,?,?)').run(batch, owner, 'saved', at);
+    db.prepare('INSERT INTO source_asset(id, batch_id, filename, mime, size, content_hash, storage_path, created_at) VALUES (?,?,?,?,?,?,?,?)')
+      .run(source, batch, 'synthetic.jpg', 'image/jpeg', 1, source, '/synthetic.jpg', at);
+    db.prepare('INSERT INTO material_capture(id, owner_id, request_id) VALUES (?,?,?)').run(capture, owner, crypto.randomUUID());
+    db.prepare('INSERT INTO material_asset(id, owner_id, capture_id, source_asset_id) VALUES (?,?,?,?)').run(asset, owner, capture, source);
+    db.prepare("INSERT INTO material_job(id, owner_id, request_id, kind, asset_id, state) VALUES (?,?,?,'extract',?,'queued')").run(jobId, owner, crypto.randomUUID(), asset);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  const questions = (db.prepare('SELECT count(*) n FROM material_question WHERE owner_id=?').get(owner) as { n: number }).n;
+  const state = (db.prepare('SELECT state FROM material_job WHERE id=?').get(jobId) as { state: string }).state;
+  return { jobId, state, questions };
+}
+
 const control = path.join(root, 'material-control.json');
 fs.writeFileSync(control, process.env.SEL_E2E_MATERIAL_CONFIG ?? '{}');
 const fixtureEnv = process.env.SEL_E2E_MATERIAL_JOURNEY === '1' ? { SEL_E2E_MATERIAL_FIXTURE: pathToFileURL(path.resolve('tests/e2e/materialFixture.ts')).href, SEL_E2E_MATERIAL_CONTROL: control } : {};
@@ -81,12 +107,26 @@ process.on('message', async (message: { id?: string; action?: string; student?: 
       }
       result={jobId:id};
     }
+    if (message.action === 'queueExtract' || message.action === 'failExtract') {
+      const db = new DatabaseSync(file, { timeout: 5000 });
+      db.exec('PRAGMA foreign_keys=ON');
+      try {
+        const owner = (db.prepare('SELECT id FROM student_profile LIMIT 1').get() as { id: string } | undefined)?.id;
+        if (!owner) throw new Error('student profile is not ready');
+        if (message.action === 'queueExtract') result = seedQueuedExtract(db, owner);
+        else {
+          const updated = db.prepare("UPDATE material_job SET state='failed', error=? WHERE owner_id=? AND kind='extract' AND state IN ('queued','running')")
+            .run(JSON.stringify({ code: 'provider_unavailable', message: 'Synthetic failure for the notebook hint.', retryable: true }), owner);
+          result = { updated: Number(updated.changes) };
+        }
+      } finally { db.close(); }
+    }
     if (message.action === 'snapshot' || message.action === 'age') {
       const db = new DatabaseSync(file, { timeout: 5000 }); // wait for the worker's write lock instead of failing at once
       if (message.action === 'age') {
         db.exec("UPDATE review_packet SET generated_at=datetime('now','-7 days'); UPDATE error_item SET created_at=datetime('now','-7 days'); UPDATE material_asset SET created_at=datetime('now','-1 day'); UPDATE material_capture SET created_at=datetime('now','-1 day')");
       } else {
-        result = Object.fromEntries(['material_capture','material_document','material_answer_selection','material_question','material_asset','material_fragment','material_attempt','material_answer','material_grade','material_job','material_link_event','error_item','review_packet','review_attempt','v2_reflection_turn'].map(table=>[table,db.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]));
+        result = Object.fromEntries(['material_capture','material_document','material_answer_selection','material_question','material_asset','material_fragment','material_attempt','material_answer','material_grade','material_job','material_link_event','material_inclusion','error_item','review_packet','review_attempt','v2_reflection_turn'].map(table=>[table,db.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]));
       }
       db.close();
     }

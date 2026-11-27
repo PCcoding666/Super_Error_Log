@@ -1,6 +1,9 @@
+import { contextQuestions, questionInPairedSet } from '../materials/answerSheet.js';
+import { intakeVerdict } from '../materials/grading.js';
 import { findPreview } from '../materials/intakeProgress.js';
+import { assetImageUrl, fragmentCropUrl } from '../materials/displayDerivatives.js';
 import { previewCrop, previewStatus } from './intakeProgressView.js';
-import type { QuestionBundle, ReferenceAnswer } from '../materials/contracts.js';
+import type { Fragment, QuestionBundle, ReferenceAnswer } from '../materials/contracts.js';
 import { learningObservationFragments } from '../materials/learning.js';
 import { readQuestion } from '../materials/queries.js';
 import type { MaterialStore } from '../materials/store.js';
@@ -26,9 +29,10 @@ export function readIntakeCandidateDetail(store: MaterialStore, questionId: stri
     const q = store.listQuestions().find(q => q.stem.some(f => f.fragmentId === fragment.fragmentId));
     if (q && progress.phase === 'done') return { ok: true, detail: { ...toDetail(store, q), id: questionId, revision, status: previewStatus(progress, fragment, q) } };
     return { ok: true, detail: { id: questionId, revision, label: fragment.number ? `第 ${fragment.number} 题` : '题号不清',
-      subject: progress.extraction.document.subject, status: previewStatus(progress, fragment, q),
+      subject: progress.extraction.document.subject, status: previewStatus(progress, fragment, q), ...intakeVerdict(q, store),
       stem: [{ role: 'question', text: fragment.text, number: fragment.number, check: fragment.check, uncertainties: fragment.uncertainties, requiresDiagram: fragment.requiresDiagram }],
-      crop: previewCrop(questionId, revision), source: `/s/materials/assets/${fragment.assetId}/image`, work: [], marks: [], answers: [], grades: [] } };
+      crop: previewCrop(fragment, 'big'), figures: diagramFigures(fragment, progress.extraction.fragments, item => previewCrop(item, 'big')),
+      source: assetImageUrl(fragment.assetId, fragment.sourceHash, 'big'), work: [], marks: [], answers: [], grades: [] } };
   }
   const question = readQuestion(store, questionId);
   if (!question) return { ok: false, status: 404, code: 'not_found', message: '题目不存在。' };
@@ -36,9 +40,29 @@ export function readIntakeCandidateDetail(store: MaterialStore, questionId: stri
   return { ok: true, detail: toDetail(store, question) };
 }
 
+/** A diagram that already carries this question's printed number. The question crop is not widened. */
+function diagramFigures<T extends { fragmentId: string; role: string; number: string | null; subpart: string | null }>(question: { fragmentId: string; number: string | null; subpart: string | null }, fragments: T[], url: (fragment: T) => string): { crop: string }[] {
+  if (question.number === null) return [];
+  return fragments.filter(fragment => fragment.role === 'diagram' && fragment.fragmentId !== question.fragmentId && fragment.number === question.number && fragment.subpart === question.subpart)
+    .map(fragment => ({ crop: url(fragment) }));
+}
+
+function assembledStem(store: MaterialStore, question: QuestionBundle): Fragment[] {
+  const parents = questionInPairedSet(store, question) ? contextQuestions(question, store.listQuestions()) : [];
+  const seen = new Set<string>();
+  const stem: Fragment[] = [];
+  for (const fragment of [...parents.flatMap(parent => parent.stem), ...question.stem]) {
+    if (seen.has(fragment.fragmentId)) continue;
+    seen.add(fragment.fragmentId);
+    stem.push(fragment);
+  }
+  return stem;
+}
+
 function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandidateDetail {
-  const primary = question.stem.find(fragment => fragment.role === 'question') ?? question.stem[0] ?? null;
-  const stem: IntakeCandidateFragment[] = question.stem
+  const visible = assembledStem(store, question);
+  const primary = visible.find(fragment => fragment.role === 'question') ?? question.stem.find(fragment => fragment.role === 'question') ?? visible[0] ?? question.stem[0] ?? null;
+  const stem: IntakeCandidateFragment[] = visible
     .filter(fragment => fragment.role === 'question' || fragment.role === 'diagram')
     .map(fragment => ({
       role: fragment.role === 'diagram' ? 'diagram' : 'question',
@@ -68,9 +92,11 @@ function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandida
     revision: question.revision,
     label: question.number ? `第 ${question.number} 题` : '题号不清',
     subject: question.subject,
+    ...intakeVerdict(question, store),
     stem,
-    crop: primary ? `/s/materials/fragments/${primary.fragmentId}/crop?revision=${primary.revision}` : null,
-    source: primary ? `/s/materials/assets/${primary.assetId}/image` : null,
+    crop: primary ? fragmentCropUrl(primary, 'big') : null,
+    figures: visible.filter(fragment => fragment.role === 'diagram' && fragment.fragmentId !== primary?.fragmentId).map(fragment => ({ crop: fragmentCropUrl(fragment, 'big') })),
+    source: primary ? assetImageUrl(primary.assetId, primary.sourceHash, 'big') : null,
     work: question.attempts.flatMap(attempt => attempt.fragments.flatMap((fragment): IntakeCandidateDetail['work'] => {
       if (!fragment.text.trim()) return [];
       if (fragment.role === 'student_work') return [{ text: fragment.text, label: null }];
@@ -79,7 +105,7 @@ function toDetail(store: MaterialStore, question: QuestionBundle): IntakeCandida
     })),
     marks: question.teacherMarks.filter(fragment => fragment.text.trim()).map(fragment => ({ text: fragment.text })),
     answers,
-    grades: question.grades.map(grade => ({
+    grades: question.grades.filter(grade => grade.source !== 'intake').map(grade => ({
       result: grade.result,
       findings: grade.findings.map(finding => finding.text).filter(text => text.trim()),
       score: grade.score && Number.isFinite(grade.score.earned) && Number.isFinite(grade.score.total)

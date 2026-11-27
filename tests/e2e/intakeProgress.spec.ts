@@ -18,7 +18,8 @@ test('first crops are selectable while enrichment runs; picks and pending filing
     await page.locator('#camera-input').setInputFiles({ name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: await sharp({ create: { width: 240, height: 320, channels: 3, background: '#fff' } }).jpeg().toBuffer() });
     const candidate = page.getByTestId('pick-candidate');
     await expect(candidate).toHaveCount(1);
-    await expect(candidate).toContainText('待识别');
+    await expect(candidate).toContainText('可以先看图勾选');
+    await expect(candidate).not.toContainText('不确定');
     await expect(page.getByText('这页没有批改痕迹，勾出做错的题', { exact: true })).toHaveCount(0);
     await expect.poll(() => candidate.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
     await expect(candidate.getByTestId('pick-checkbox')).toBeEnabled();
@@ -28,7 +29,8 @@ test('first crops are selectable while enrichment runs; picks and pending filing
     await candidate.getByTestId('pick-checkbox').click();
     await g.configure({ pages, progressStage: 'read' });
     await expect(candidate).toContainText('求 1 + 1 的结果。', { timeout: 10000 });
-    await expect(candidate).toContainText('校验中');
+    await expect(candidate).toContainText('还在整理，可以先勾选');
+    await expect(candidate).not.toContainText('不确定');
     await expect(candidate.getByTestId('pick-checkbox')).toBeChecked();
     expect((await g.snapshot()).error_item).toHaveLength(0);
     await page.getByTestId('pick-submit').click();

@@ -20,12 +20,13 @@ import { MobileRecognitionService } from '../../src/mobile/service.js';
 import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { acquireProcessImage } from '../../src/mobile/admission.js';
 import { createStudentApi } from '../../src/web/api.js';
+import { assetImageUrl, fragmentCropUrl } from '../../src/materials/displayDerivatives.js';
 
 type Progress = { extraction: Extraction; phase: 'located' | 'enriching' };
 type ProgressCallback = (progress: Progress) => void | Promise<void>;
 type Candidate = { id: string; crop: string | null; excerpt: string; status: string; submitted?: boolean };
 type Photo = {
-  id: string; state: string; candidates: Candidate[]; questions: { id: string }[];
+  id: string; state: string; thumb?: string; full?: string; candidates: Candidate[]; questions: { id: string }[];
   progress?: { stage: string; total: number; verified: number };
 };
 type Intake = { busy: boolean; photos: Photo[] };
@@ -120,7 +121,9 @@ async function fixture() {
     return {
       ...saved, owner, fragment, candidateId: `${fragment.fragmentId}:1`, extraction,
       detail: `/s/api/intake/candidates/${fragment.fragmentId}?revision=1`,
-      crop: `/s/api/intake/candidates/${fragment.fragmentId}/crop?revision=1`,
+      crop: fragmentCropUrl(fragment, 'list', 'preview'),
+      detailCrop: fragmentCropUrl(fragment, 'big', 'preview'),
+      source: assetImageUrl(saved.assetId, fragment.sourceHash, 'big'),
       gate: () => gates.get(saved.assetId)!,
       publish: (phase: Progress['phase'], extra: Partial<Fragment> = {}, siblings: Fragment[] = []) => gates.get(saved.assetId)!.publish({ phase, extraction: extraction(extra, siblings) }),
       finish: async (extra: Partial<Fragment> = {}, siblings: Fragment[] = []) => {
@@ -153,6 +156,8 @@ describe('first selectable intake candidates', () => {
       candidates: [{ id: page.candidateId, crop: page.crop, status: 'preliminary' }],
       progress: { stage: 'located', total: 1, verified: 0 },
     });
+    expect(first.photos[0]!.thumb).toContain('s=thumb');
+    expect(first.photos[0]!.full).toMatch(/\/image$/);
     const before = f.evidence();
     expect(Object.values(before)).toEqual(Array(8).fill(0));
     await page.publish('enriching', { text: '1. 求 x 的值。' });
@@ -183,14 +188,16 @@ describe('first selectable intake candidates', () => {
       expect(detail.status).toBe(200);
       expect(detail.headers.get('cache-control')).toContain('no-store');
       expect(await detail.json()).toMatchObject({
-        id: page.fragment.fragmentId, revision: 1, crop: page.crop, source: `/s/materials/assets/${page.assetId}/image`,
+        id: page.fragment.fragmentId, revision: 1, crop: page.detailCrop, source: page.source,
         stem: [{ text: longStem, check: 'unchecked' }], answers: [], grades: [], work: [], marks: [],
       });
-      const crop = await f.get(page.crop);
+      const crop = await f.get(page.detailCrop);
       expect(crop.status).toBe(200);
       expect(crop.headers.get('content-type')).toMatch(/^image\/jpeg/);
-      expect(crop.headers.get('cache-control')).toContain('no-store');
+      expect(crop.headers.get('cache-control')).toBe('private, max-age=31536000, immutable');
       expect(await sharp(Buffer.from(await crop.arrayBuffer())).metadata()).toMatchObject({ width: 120, height: 80 });
+      const uncached = await f.get(page.detailCrop.replace(/[?&]v=[^&]+/, ''));
+      expect(uncached.headers.get('cache-control')).toContain('no-store');
     }
     expect(f.fingerprint()).toEqual(before);
   });
@@ -218,18 +225,31 @@ describe('first selectable intake candidates', () => {
     expect(f.evidence()).toEqual(before);
   });
 
-  it('waits for the shared image permit before serving a preview crop', async () => {
+  it('serves a precomputed preview crop without waiting for the shared image permit', async () => {
     const f = await fixture();
     const page = await f.page();
     await page.publish('located');
+    const release = await acquireProcessImage();
+    try {
+      const crop = await f.get(page.crop);
+      expect(crop.status).toBe(200);
+      expect(crop.headers.get('cache-control')).toContain('immutable');
+      expect(await sharp(Buffer.from(await crop.arrayBuffer())).metadata()).toMatchObject({ width: 120, height: 80 });
+    } finally { release(); }
+  });
+
+  it('waits for the shared image permit when the preview crop has not been written', async () => {
+    const f = await fixture();
+    const page = await f.page();
+    await page.publish('located');
+    const stored = f.db.prepare(`SELECT s.storage_path FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.id=?`).get(page.assetId) as { storage_path: string };
+    rmSync(path.join(path.dirname(stored.storage_path), 'crops'), { recursive: true, force: true });
     const release = await acquireProcessImage();
     const received = new Promise<void>(resolve => f.server.once('request', () => resolve()));
     let settled = false;
     const response = f.get(page.crop).then(response => { settled = true; return response; });
     try {
       await received;
-      // The request reached Express. This bounded negative check only verifies
-      // it cannot finish while another image operation owns the shared permit.
       await new Promise<void>(resolve => setTimeout(resolve, 50));
       expect(settled).toBe(false);
     } finally { release(); }
@@ -326,6 +346,44 @@ describe('first selectable intake candidates', () => {
     await expect.poll(() => f.jobs.a.get(page.job.id)?.state).toBe('failed');
     expect(f.count('error_item')).toBe(0);
     expect((await f.intake()).photos[0]!.candidates[0]!.status).not.toBe('verified');
+  });
+
+  it('drops a selected heading after role_mismatch and still shows a short mismatched question', async () => {
+    const f = await fixture();
+    const page = await f.page();
+    const heading: Fragment = {
+      ...page.fragment, fragmentId: newId('mfr'), number: '1', order: 1,
+      box: { x: 0.02, y: 0.08, width: 0.96, height: 0.03 },
+    };
+    const shortQuestion: Fragment = {
+      ...page.fragment, fragmentId: newId('mfr'), number: null, order: 2,
+      box: { x: 0.02, y: 0.5, width: 0.4, height: 0.03 },
+    };
+    const headingId = `${heading.fragmentId}:1`;
+    const shortId = `${shortQuestion.fragmentId}:1`;
+    await page.publish('located', {}, [heading, shortQuestion]);
+    expect((await f.select(page.assetId, [page.candidateId, headingId, shortId])).body).toMatchObject({ included: 0, pending: 3, skipped: 0 });
+    await page.publish('enriching', { text: '1. synthetic stem', check: 'low', uncertainties: ['text_mismatch'] }, [
+      { ...heading, text: 'synthetic heading', check: 'low', uncertainties: ['role_mismatch'] },
+      { ...shortQuestion, text: 'synthetic short stem', check: 'low', uncertainties: ['text_mismatch'] },
+    ]);
+    const during = (await f.intake('/reload/api')).photos[0]!;
+    expect(during.state).not.toBe('failed');
+    expect(during.candidates.map(candidate => candidate.id)).not.toContain(headingId);
+    expect(during.candidates.find(candidate => candidate.id === shortId)).toMatchObject({ status: 'needs_review', submitted: true });
+    expect(during.candidates.find(candidate => candidate.id === page.candidateId)).toMatchObject({ status: 'needs_review', submitted: true });
+    expect((await f.select(page.assetId, [headingId])).body.skipped).toBe(1);
+    await page.finish({ text: '1. synthetic stem', check: 'low', uncertainties: ['text_mismatch'] }, [
+      { ...heading, text: 'synthetic heading', check: 'low', uncertainties: ['role_mismatch'] },
+      { ...shortQuestion, text: 'synthetic short stem', check: 'low', uncertainties: ['text_mismatch'] },
+    ]);
+    expect(f.count('error_item')).toBe(0);
+    const questions = f.stores.a.listQuestions();
+    const numbered = questions.find(question => question.stem.some(fragment => fragment.fragmentId === page.fragment.fragmentId));
+    expect(numbered?.stem.some(fragment => fragment.fragmentId === heading.fragmentId)).toBe(false);
+    expect(questions.some(question => question.stem.some(fragment => fragment.fragmentId === heading.fragmentId))).toBe(false);
+    expect(questions.some(question => question.stem.some(fragment => fragment.fragmentId === shortQuestion.fragmentId))).toBe(true);
+    expect(f.stores.a.db.prepare('SELECT content_json FROM material_fragment WHERE id=?').get(heading.fragmentId)).toBeTruthy();
   });
 
   it('does not automatically file an intermediate stem before its low continuation is linked', async () => {

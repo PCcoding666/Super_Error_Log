@@ -15,6 +15,7 @@ import { MobileRecognitionStore } from '../../src/mobile/store.js';
 import { AdmissionController } from '../../src/mobile/admission.js';
 import { createStudentApi } from '../../src/web/api.js';
 import { readQuestion } from '../../src/materials/queries.js';
+import { assetImageUrl, fragmentCropUrl } from '../../src/materials/displayDerivatives.js';
 
 const dir = mkdtempSync(path.join(os.tmpdir(), 'intake-detail-'));
 const db = new DatabaseSync(path.join(dir, 'app.db'));
@@ -76,6 +77,7 @@ db.prepare('INSERT INTO material_grade(id,revision,owner_id,attempt_id,basis_key
   .run(grade.id, 1, 'a', attempt, 'synthetic', '[]', JSON.stringify(grade), 0);
 
 const richRevision = readQuestion(store, richId)!.revision;
+const richCrop = fragmentCropUrl(stem, 'big');
 const plainRevision = readQuestion(store, plainId)!.revision;
 
 addAsset(other, 'asset-b');
@@ -151,8 +153,10 @@ it('returns the stored question, answer and judgment for an unsaved candidate an
   expect(response.body.grades).toEqual([{
     result: 'incorrect', findings: ['移项时符号没有变。'], score: { earned: 2, total: 6 }, stale: false,
   }]);
-  expect(String(response.body.crop)).toMatch(/\/s\/materials\/fragments\/mfr_[0-9a-f]+\/crop\?revision=1/);
-  expect(response.body.source).toBe(`/s/materials/assets/${asset}/image`);
+  expect(response.body.crop).toBe(richCrop);
+  expect(richCrop).toContain('s=big');
+  expect(response.body.source).toBe(assetImageUrl(asset, 'hash', 'big'));
+  expect(String(response.body.source)).toContain('s=big');
   expect(readQuestion(store, richId)!.itemId).toBeNull();
   expect(fingerprint()).toEqual(before);
 });
@@ -165,6 +169,29 @@ it('says when no answer or judgment exists and keeps the recognition uncertainty
   expect(response.body.work).toEqual([]);
   expect(response.body.marks).toEqual([]);
   expect(response.body.stem).toMatchObject([{ text: '2. PAGE-A-TWO 看不清的式子', check: 'low', uncertainties: ['blurry'] }]);
+});
+
+it('serves an associated side diagram separately and keeps a missing figure in review', async () => {
+  const withFigure = store.createQuestion({ number: '4', subject: '数学' }).id;
+  const question = piece(asset, 'question', '4. synthetic left text', { number: '4', box: { x: 0.02, y: 0.28, width: 0.68, height: 0.15 }, requiresDiagram: true });
+  const diagram = piece(asset, 'diagram', 'synthetic circle', { number: '4', box: { x: 0.72, y: 0.30, width: 0.24, height: 0.12 } });
+  store.putFragment(question);
+  store.putFragment(diagram);
+  store.linkFragment(question.fragmentId, 1, { questionId: withFigure, attemptId: null });
+  store.linkFragment(diagram.fragmentId, 1, { questionId: withFigure, attemptId: null });
+  const found = await get(`/s/api/intake/candidates/${withFigure}?revision=${readQuestion(store, withFigure)!.revision}`);
+  expect(found.status).toBe(200);
+  expect(found.body.crop).toBe(fragmentCropUrl(question, 'big'));
+  expect(found.body.figures).toEqual([{ crop: fragmentCropUrl(diagram, 'big') }]);
+
+  const missingId = store.createQuestion({ number: '8', subject: '数学' }).id;
+  const missing = piece(asset, 'question', '8. synthetic text without a figure', { number: '8', requiresDiagram: true, check: 'low', uncertainties: ['missing_diagram'] });
+  store.putFragment(missing);
+  store.linkFragment(missing.fragmentId, 1, { questionId: missingId, attemptId: null });
+  const absent = await get(`/s/api/intake/candidates/${missingId}?revision=${readQuestion(store, missingId)!.revision}`);
+  expect(absent.body.figures).toEqual([]);
+  expect(absent.body.crop).toBe(fragmentCropUrl(missing, 'big'));
+  expect(absent.body.stem).toMatchObject([{ check: 'low', requiresDiagram: true, uncertainties: ['missing_diagram'] }]);
 });
 
 it('rejects another student, a stale revision and a legacy workspace without copying the question', async () => {

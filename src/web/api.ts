@@ -1,8 +1,7 @@
-import { withProcessImage } from '../mobile/admission.js';
 import { dismissPreviewCandidates, findPreview, progressQuestion, readIntakeProgress, selectPreviewCandidates } from '../materials/intakeProgress.js';
 import { photoProgress, previewCandidates } from './intakeProgressView.js';
-import { readNormalizedSource } from '../materials/media.js';
-import { cropPhoto } from '../media/images.js';
+import { applyImageCache, assetImageUrl, cropVersion, fragmentCropUrl, imageCacheControl, readCropDisplay } from '../materials/displayDerivatives.js';
+import { displaySize } from './images.js';
 /**
  * 学生端单页应用（client/）用的 JSON 接口，挂在 /s/api 下，和服务端页面同一套鉴权、限流与学段门槛。
  * 只做「取数 → 整形 → 返回」，规则都在现有服务里（学习周、证据、分类、材料收录），不在这里另写一份。
@@ -34,11 +33,20 @@ import { directCorrection, getEvidenceView } from '../v2/correctionService.js';
 import { discardV2Item, getRegisteredPhotos, restoreV2Item } from '../v2/weekService.js';
 import { MobileRequestError, type MobileRecognitionService } from '../mobile/service.js';
 import { canRecover } from '../mobile/contracts.js';
-import { excludeQuestions, includeQuestions, inclusionIntents, markedRight, notYetIncluded, setQuestionIncluded, sortQuestions, unplacedMaterial } from '../materials/learning.js';
+import { intakeGradesPending, intakeVerdict } from '../materials/grading.js';
+import { excludeQuestions, includeQuestions, inclusionIntents, markedRight, materialIntakeSummary, notYetIncluded, setQuestionIncluded, sortQuestions, unplacedMaterial } from '../materials/learning.js';
 import { ASSET_PAGE_SIZE, createdAtRangeSql, DayFilterError, instantInRange, parseAssetDayFilter, type AssetDayFilter } from '../materials/dayFilter.js';
 import { unsupportedSubject, UNSUPPORTED_SUBJECT_MESSAGE } from '../materials/subjects.js';
 import type { MaterialJobs } from '../materials/jobs.js';
 import type { QuestionBundle } from '../materials/contracts.js';
+
+function questionOnPhoto(question: QuestionBundle, photoId: string): boolean {
+  const stem = question.stem.find(fragment => fragment.role === 'question');
+  if (stem) return stem.assetId === photoId;
+  return question.stem.some(fragment => fragment.assetId === photoId)
+    || question.teacherMarks.some(fragment => fragment.assetId === photoId)
+    || question.attempts.some(attempt => attempt.fragments.some(fragment => fragment.assetId === photoId));
+}
 import { dayOrdinal, localDayText } from '../domain/calendarDay.js';
 import { COOKIE, readCookies, readPhotoMarks, setCookie, clearCookie, writePhotoMarks } from './session.js';
 import { matchesNotebook, NOTEBOOK_STATUS_GROUPS, notebookStatusFilter, notebookStatusGroup, resolveNotebookStage, stagesInScope } from './notebook.js';
@@ -46,6 +54,7 @@ import { loadPhotos, type PhotoView, type WebContext } from './state.js';
 import { detailPhotos } from './detailPhotos.js';
 import { stemFirstSentence } from './views/materials.js';
 import { readIntakeCandidateDetail } from './intakeCandidateDetail.js';
+import { buildIntakeGroups } from './intakeGroups.js';
 import { INTAKE_SELECT_LIMIT } from './intakeSelection.js';
 import type {
   DiscardResponse, IntakeCandidate, IntakePhoto, IntakeQuestion, IntakeResponse, ItemAnswerPhoto, ItemDetailResponse, ItemInsight, ItemTrace,
@@ -241,12 +250,15 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     }
     const order = (items: NotebookItem[]) => [...items].sort((a, b) => (b.intakeDay ?? '').localeCompare(a.intakeDay ?? ''));
     const photos = getRegisteredPhotos(ctx.mobileDataDir, true);
+    // processing is the latest extract per photo while it is queued or running. Failed and interrupted jobs stay out.
+    // pending is the same not-yet-included count as before; processing is not added there.
+    const intake = ctx.materials ? materialIntakeSummary(ctx.materials) : null;
     const body: NotebookResponse = {
       subject, subjects, grade: resolved.grade, stages: resolved.stages, chapter, chapters, status, tag, tags, q,
       total: scope.length, shown: shown.length, todo: shown.filter(item => notebookStatusGroup(item.status) === 'todo').length,
       groups: ([['today', '今天'], ['week', '本周'], ['earlier', '更早']] as const).filter(([key]) => groups[key].length).map(([key, title]) => ({ key, title, items: order(groups[key]) })),
-      finding: photos.filter(photo => photo.recognition === 'processing').length,
-      pendingIntake: ctx.materials ? notYetIncluded(ctx.materials).reduce((n, g) => n + g.questions.length, 0) : 0,
+      finding: photos.filter(photo => photo.recognition === 'processing').length + (intake?.processing ?? 0),
+      pendingIntake: intake?.pending ?? 0,
     };
     return body;
   }));
@@ -437,7 +449,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const toPhoto = (photo: PhotoView): IntakePhoto => {
       const questions: IntakeQuestion[] = (byJob.get(photo.jobId) ?? []).map(item => ({ id: item.id, excerpt: item.questionExcerpt ?? '', chapter: item.chapter || '未分类', thumb: `/s/img/item/${item.id}?s=thumb` }));
       const candidates: IntakeCandidate[] = photo.state === 'needsPick' || (photo.job && !photo.pickDone)
-        ? (photo.job?.questions ?? []).filter(q => q.status === 'unselected').map(q => ({ id: q.id, label: `第 ${q.number} 题`, excerpt: '', crop: `/s/img/cand/${photo.jobId}/${q.id}?s=list` }))
+        ? (photo.job?.questions ?? []).filter(q => q.status === 'unselected').map(q => ({ id: q.id, label: `第 ${q.number} 题`, excerpt: '', crop: `/s/img/cand/${photo.jobId}/${q.id}?s=list`, verdict: 'confirm' as const, preselected: false }))
         : [];
       // Skipping a candidate moves it off `unselected`, which used to make the whole page look finished
       // while the other candidates were still waiting. Keep the page in the pick state when nothing was filed.
@@ -466,7 +478,8 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const previews = readIntakeProgress(store);
     const range = createdAtRangeSql(filter);
     const total = filter ? (store.db.prepare(`SELECT count(*) n FROM material_asset WHERE owner_id=?${range.sql}`).get(store.studentId, ...range.params) as { n: number }).n : 0;
-    const assets = store.db.prepare(`SELECT id, created_at, json_extract(extraction_json, '$.document.subject') AS subject FROM material_asset WHERE owner_id=?${range.sql} ORDER BY created_at DESC, rowid DESC${filter ? ` LIMIT ${ASSET_PAGE_SIZE} OFFSET ?` : ''}`).all(...(filter ? [store.studentId, ...range.params, page * ASSET_PAGE_SIZE] : [store.studentId])) as { id: string; created_at: string; subject: string | null }[];
+    const rangeSql = range.sql.replaceAll('created_at', 'a.created_at');
+    const assets = store.db.prepare(`SELECT a.id, a.created_at, s.content_hash, json_extract(a.extraction_json, '$.document.subject') AS subject FROM material_asset a JOIN source_asset s ON s.id=a.source_asset_id WHERE a.owner_id=?${rangeSql} ORDER BY a.created_at DESC, a.rowid DESC${filter ? ` LIMIT ${ASSET_PAGE_SIZE} OFFSET ?` : ''}`).all(...(filter ? [store.studentId, ...range.params, page * ASSET_PAGE_SIZE] : [store.studentId])) as { id: string; created_at: string; content_hash: string; subject: string | null }[];
     const jobs = store.db.prepare(`SELECT j.id, j.state, j.asset_id, j.error FROM material_job j WHERE j.owner_id=? AND j.kind='extract'
       AND NOT EXISTS (SELECT 1 FROM material_job n WHERE n.owner_id=j.owner_id AND n.kind='extract' AND n.asset_id=j.asset_id AND n.rowid>j.rowid)`).all(store.studentId) as { id: string; state: string; asset_id: string | null; error: string | null }[];
     const jobByAsset = new Map(jobs.map(job => [job.asset_id, job]));
@@ -480,7 +493,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       if (!asset || !q.itemId || intents.get(q.id) === false) continue;
       included.set(asset, [...(included.get(asset) ?? []), q]);
     }
-    const cropOf = (q: QuestionBundle): string | null => { const f = q.stem.find(fragment => fragment.role === 'question') ?? q.stem[0]; return f ? `/s/materials/fragments/${f.fragmentId}/crop?revision=${f.revision}` : null; };
+    const cropOf = (q: QuestionBundle, size: 'thumb' | 'list'): string | null => { const f = q.stem.find(fragment => fragment.role === 'question') ?? q.stem[0]; return f ? fragmentCropUrl(f, size) : null; };
     const span = filter ? total : assets.length;
     const offset = filter ? page * ASSET_PAGE_SIZE : 0;
     const photos: IntakePhoto[] = assets.map((asset, index) => {
@@ -491,27 +504,50 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       try { if (job?.error) retryable = canRecover({ ...JSON.parse(job.error), stage: 'transcribe' }); } catch { retryable = false; }
       const processing = job?.state === 'queued' || job?.state === 'running';
       const failed = job?.state === 'failed' || job?.state === 'interrupted';
-      const questions: IntakeQuestion[] = (included.get(asset.id) ?? []).map(q => ({ id: q.itemId!, excerpt: stemFirstSentence(q, 60), chapter: (() => { try { return categoryForItem(q.itemId!).chapter || '未分类'; } catch { return q.subject ?? '未分类'; } })(), thumb: cropOf(q) ?? `/s/img/item/${q.itemId}?s=thumb` }));
-      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q) }));
-      if (preview) candidates.push(...previewCandidates(preview, all, intents));
+      const questions: IntakeQuestion[] = (included.get(asset.id) ?? []).map(q => ({ id: q.itemId!, excerpt: stemFirstSentence(q, 60), chapter: (() => { try { return categoryForItem(q.itemId!).chapter || '未分类'; } catch { return q.subject ?? '未分类'; } })(), thumb: cropOf(q, 'thumb') ?? `/s/img/item/${q.itemId}?s=thumb` }));
+      const candidates: IntakeCandidate[] = (pending.get(asset.id) ?? []).filter(q => !preview || !progressQuestion(preview, q)).map(q => ({ id: `${q.id}:${q.revision}`, label: q.number ? `第 ${q.number} 题` : '题号不清', excerpt: stemFirstSentence(q, 60), crop: cropOf(q, 'list'), ...intakeVerdict(q, store) }));
+      if (preview) candidates.push(...previewCandidates(preview, all, intents, store));
       const state = processing ? (preview ? (preview.phase === 'located' ? 'located' : 'enriching') : 'finding') : failed ? 'failed' : other ? 'unsupported' : candidates.length ? 'needsPick' : 'done';
       const correct = all.filter(q => assetOf(q) === asset.id && markedRight(q)).length;
       const statusText = state === 'located' ? '已找到题目 · 可以先勾选' : state === 'enriching' ? '正在识别和校验 · 可以先勾选' : state === 'finding' ? 'AI 正在找题' : state === 'failed' ? '没整理成功' : state === 'unsupported' ? `${other}：${UNSUPPORTED_SUBJECT_MESSAGE}`
         : state === 'needsPick' ? '没有批改痕迹 · 勾出做错的题' : questions.length ? `找到 ${questions.length} 道${correct ? ` · ${correct} 道打了 √` : ''}` : correct ? `${correct} 道都打了 √，没有错题` : '没有新增错题';
       return {
         id: asset.id, number: span - offset - index, takenAt: asset.created_at.includes('T') ? asset.created_at : asset.created_at.replace(' ', 'T') + 'Z',
-        thumb: `/s/materials/assets/${asset.id}/image`, full: `/s/materials/assets/${asset.id}/image`, state, statusText, questions, candidates, ...(preview ? { progress: photoProgress(preview) } : {}),
+        thumb: assetImageUrl(asset.id, asset.content_hash, 'thumb'), full: assetImageUrl(asset.id, null, null), state, statusText, questions, candidates, ...(preview ? { progress: photoProgress(preview) } : {}),
         failure: failed ? { title: '没整理成功', detail: retryable ? '原图已保留，可以重新整理。' : '看不清或格式不对，请重拍这张。', retryable } : null,
       };
     });
     const listedIds = filter
       ? new Set((store.db.prepare(`SELECT id FROM material_asset WHERE owner_id=?${range.sql}`).all(store.studentId, ...range.params) as { id: string }[]).map(row => row.id))
       : null;
-    const busy = listedIds
+    const visibleQuestions = new Set(all.filter(question => {
+      const asset = assetOf(question);
+      return !!asset && (!listedIds || listedIds.has(asset));
+    }).map(question => question.id));
+    const busy = (listedIds
       ? jobs.some(job => !!job.asset_id && listedIds.has(job.asset_id) && (job.state === 'queued' || job.state === 'running'))
-      : jobs.some(job => job.state === 'queued' || job.state === 'running');
+      : jobs.some(job => job.state === 'queued' || job.state === 'running'))
+      || intakeGradesPending(store, visibleQuestions);
+    const listed = new Set(assets.map(asset => asset.id));
+    const listedQuestions = all.filter(question => [...question.stem, ...question.teacherMarks, ...question.attempts.flatMap(attempt => attempt.fragments)].some(fragment => listed.has(fragment.assetId)));
+    const filedQuestions = photos.flatMap(photo => photo.questions);
+    const filedByQuestion = new Map<string, string>();
+    for (const question of listedQuestions) if (question.itemId) filedByQuestion.set(question.id, question.itemId);
+    const groups = buildIntakeGroups(store, listedQuestions, filedQuestions, filedByQuestion);
+    for (const group of groups) {
+      for (const candidate of group.candidates) {
+        // Right rows stay on the question card only. A photo list must not offer them for the notebook.
+        if (candidate.verdict === 'right') continue;
+        const photo = photos.find(item => item.id === candidate.photoId);
+        if (!photo) continue;
+        const existing = photo.candidates.find(item => item.id === candidate.id);
+        if (existing) { existing.verdict = candidate.verdict; existing.preselected = candidate.preselected; existing.photoId = candidate.photoId; }
+        else photo.candidates.push(candidate);
+      }
+    }
     return {
       mode: 'materials', draftNamespace: store.getWorkspace().draftNamespace, photos, busy,
+      ...(groups.length ? { groups } : {}),
       ...(filter ? dayFilterBody(filter, page, total) : {}),
     };
   };
@@ -537,13 +573,16 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
     const store = ctx.materials;
     const revision = Number(request.query.revision);
     if (!store || !Number.isSafeInteger(revision) || revision < 1) fail(404, 'not_found', '题目裁图不存在。');
-    const found = findPreview(store!, String(request.params.fragmentId), revision);
+    const found = findPreview(store!, String(request.params.fragmentId), revision, ['question', 'diagram']);
     if (!found) fail(404, 'not_found', '题目裁图不存在或已更新。');
-    const image = await withProcessImage(async () => cropPhoto(await readNormalizedSource(store!, found!.fragment), found!.fragment.box));
-    const latest = findPreview(store!, String(request.params.fragmentId), revision);
-    if (!latest || latest.fragment.sourceHash !== found!.fragment.sourceHash) fail(409, 'revision_conflict', '材料已更新。');
-    response.setHeader('Cache-Control', 'private, no-store');
-    response.type('image/jpeg').send(image);
+    else {
+      const size = displaySize(request.query.s);
+      const image = await readCropDisplay(store!, found.fragment, size);
+      const latest = findPreview(store!, String(request.params.fragmentId), revision, ['question', 'diagram']);
+      if (!latest || latest.fragment.sourceHash !== found.fragment.sourceHash || cropVersion(latest.fragment) !== cropVersion(found.fragment)) fail(409, 'revision_conflict', '材料已更新。');
+      applyImageCache(response, imageCacheControl(request.query.v, cropVersion(found.fragment), size !== null));
+      response.type('image/jpeg').send(image);
+    }
   }));
   // 上传队列在发第一张之前先问这个：材料流程的学生空间不接受旧的 /s/capture。
   r.get('/upload', handler((): UploadModeResponse => (ctx.materials ? { mode: 'materials', draftNamespace: ctx.materials.getWorkspace().draftNamespace } : { mode: 'legacy', draftNamespace: null })));
@@ -559,7 +598,11 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       const previewPicks = picks.filter(p => p.questionId.startsWith('mfr_'));
       const questions = new Map(store.listQuestions().map(q => [q.id, q]));
       const regular = picks.filter(p => !p.questionId.startsWith('mfr_'));
-      const owned = regular.filter(p => questions.get(p.questionId)?.stem.some(f => f.role === 'question' && f.assetId === photoId));
+      const owned = regular.filter(p => {
+        const question = questions.get(p.questionId);
+        // A blank whose stem is not in the upload stays on the list; it is not filed as an invented question.
+        return !!question && questionOnPhoto(question, photoId) && !question.missing.includes('stem');
+      });
       const saved = includeQuestions(store, owned);
       const early = selectPreviewCandidates(store, photoId, previewPicks);
       return { ok: true, included: saved.included + early.included, pending: early.pending, skipped: saved.skipped + early.skipped + regular.length - owned.length };
@@ -608,8 +651,7 @@ export function createStudentApi(ctx: WebContext, options: StudentApiOptions): R
       for (const pick of regular) {
         const question = questions.get(pick.questionId);
         if (!question) { failed.push({ id: pick.clientId, message: '题目不存在。' }); continue; }
-        const asset = question.stem.find(fragment => fragment.role === 'question')?.assetId ?? question.stem[0]?.assetId ?? null;
-        if (asset !== photoId) { failed.push({ id: pick.clientId, message: '这道题不在这张照片上。' }); continue; }
+        if (!questionOnPhoto(question, photoId)) { failed.push({ id: pick.clientId, message: '这道题不在这张照片上。' }); continue; }
         if (question.itemId) { failed.push({ id: pick.clientId, message: '这道题已经在错题本里。' }); continue; }
         accepted.push(pick);
       }

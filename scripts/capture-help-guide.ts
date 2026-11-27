@@ -1,61 +1,55 @@
 /**
- * 给公开说明页拍合成示例图。只启动本机临时服务器，照片和账号都是编的，退出即删。
+ * 给公开说明页拍应用内配图。题目来自两份真实历史试卷（见 scripts/help-real-papers.ts），
+ * 不是合成卷，也不是 mock 的 “Synthetic question”。
  * 运行：npx tsx scripts/capture-help-guide.ts
  *
- * 错题本 / 录入 / 详情走邀请码网关 + 材料流程。空闲首页是「新增」；单页 / 多页在点开之后的选择层里，点「开始」才打开选择器。
- * 注册 / 登录 / 找回等仍用同一网关。练习截图不再拍：设置里写着即将推出，学生端没有入口。
+ * 邀请码在截图前改成占位圆点，不把完整邀请码写进图片。
+ * 不拍设置、学段、安装说明：那些页会把未发布的入口或重复说明带进帮助页。
+ * iPhone 确认页、主屏幕和微信群二维码沿用已有实拍，本脚本不覆盖。
  */
 import { fork, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { chromium, type Page } from '@playwright/test';
 import sharp from 'sharp';
+import { prepareHelpPages } from './help-real-papers.js';
 
 const OUT = path.resolve('src/portal/help-img');
-/** `npx tsx scripts/capture-help-guide.ts --only register` 只重拍注册页，避免盖掉其它图。 */
 const onlyShot = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] ?? '' : '';
-const onlyNames = onlyShot === 'notebook' ? new Set(['notebook-empty', 'intake-auto']) : onlyShot ? new Set([onlyShot]) : null;
+const onlyNames = onlyShot ? new Set([onlyShot]) : null;
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+const BANNED = ['Synthetic', '未分类', '还没有知识点', '稍后给出', '【mock】', '数学小卷', '1 + 1'];
 
 fs.mkdirSync(OUT, { recursive: true });
-
-/** 合成试卷：偏红 = 有批改痕迹，偏蓝 = 没有。文字是编的，不是学生作业。 */
-async function jpeg(kind: 'marked' | 'plain'): Promise<Buffer> {
-  const paper = kind === 'marked' ? '#f7d4cf' : '#d7e7f3';
-  const mark = kind === 'marked'
-    ? '<g stroke="#c8402f" stroke-width="8" stroke-linecap="round"><line x1="760" y1="250" x2="820" y2="310"/><line x1="820" y1="250" x2="760" y2="310"/></g>'
-    : '';
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="860" height="1160">
-    <rect width="860" height="1160" fill="${paper}"/>
-    <text x="48" y="90" font-size="28" font-family="sans-serif" fill="#222">数学小卷（合成示例）</text>
-    <text x="48" y="180" font-size="24" font-family="sans-serif" fill="#222">1. 解方程：x + 3 = 5</text>
-    <text x="48" y="280" font-size="24" font-family="sans-serif" fill="#222">2. 求 y = x² − 2x + 2 的对称轴</text>
-    <text x="48" y="380" font-size="24" font-family="sans-serif" fill="#222">3. 相似三角形，求相似比</text>
-    ${mark}
-  </svg>`;
-  return sharp(Buffer.from(svg)).jpeg({ quality: 80 }).toBuffer();
-}
 
 async function save(page: Page, name: string): Promise<void> {
   if (onlyNames && !onlyNames.has(name)) return;
   const png = await page.screenshot({ type: 'png', animations: 'disabled' });
   const file = path.join(OUT, `${name}.webp`);
   await sharp(png).webp({ quality: 58, effort: 5 }).toFile(file);
-  const kb = Math.round(fs.statSync(file).size / 1024);
-  console.log(`${name}.webp ${kb}KB`);
+  console.log(`${name}.webp ${Math.round(fs.statSync(file).size / 1024)}KB`);
 }
 
-function startHost(): { child: ChildProcess; ready: Promise<{ base: string; codes: string[] }> } {
-  const child = fork(path.resolve('tests/e2e/studentHostServer.ts'), [], {
+async function assertReal(page: Page, label: string): Promise<void> {
+  const text = await page.locator('body').innerText();
+  for (const banned of BANNED) {
+    if (text.includes(banned)) throw new Error(`${label} contains ${banned}`);
+  }
+  if (/\d{4}-\d{4}-\d{4}/.test(text)) throw new Error(`${label} still shows an invite code`);
+}
+
+function startHost(): { child: ChildProcess; ready: Promise<{ base: string }> } {
+  const child = fork(path.resolve('scripts/help-real-server.ts'), [], {
     execArgv: ['--import', 'tsx'],
-    env: { ...process.env, NODE_ENV: 'test', SEL_AI_MODE: 'mock', SEL_E2E_MATERIAL_CAPTURE: '1', SEL_HELP_CAPTURE_ORIGIN: 'https://study.pccoding666.com' },
+    env: { ...process.env, SEL_HELP_CAPTURE_ORIGIN: 'https://study.pccoding666.com' },
     stdio: ['ignore', 'inherit', 'pipe', 'ipc'],
   });
   child.stderr?.on('data', chunk => process.stderr.write(chunk));
-  const ready = new Promise<{ base: string; codes: string[] }>((resolve, reject) => {
+  const ready = new Promise<{ base: string }>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('host timeout')), 60_000);
-    child.once('exit', () => { clearTimeout(timer); reject(new Error('host exited')); });
-    child.once('message', message => { clearTimeout(timer); resolve(message as { base: string; codes: string[] }); });
+    child.once('exit', code => { clearTimeout(timer); reject(new Error(`host exited ${code}`)); });
+    child.once('message', message => { clearTimeout(timer); resolve(message as { base: string }); });
   });
   return { child, ready };
 }
@@ -69,7 +63,16 @@ async function stopHost(child: ChildProcess): Promise<void> {
   });
 }
 
+async function maskInviteCode(page: Page): Promise<void> {
+  const code = page.getByTestId('registered-invite-code');
+  await code.evaluate(element => { element.textContent = '••••-••••-••••'; });
+}
+
 async function main(): Promise<void> {
+  const onlyEmpty = onlyNames?.size === 1 && onlyNames.has('notebook-empty');
+  const pages = onlyEmpty ? null : await prepareHelpPages(fs.mkdtempSync(path.join(os.tmpdir(), 'sel-help-pages-')));
+  const exam = pages ? fs.readFileSync(pages.exam) : Buffer.alloc(0);
+  const factor = pages ? fs.readFileSync(pages.factor) : Buffer.alloc(0);
   const browser = await chromium.launch();
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -83,105 +86,115 @@ async function main(): Promise<void> {
   const page = await context.newPage();
   const { child, ready } = startHost();
   try {
-    const { base, codes } = await ready;
+    const { base } = await ready;
 
     await page.goto(`${base}/s/`);
     await page.getByTestId('login-title').waitFor();
     await save(page, 'login');
 
-    await page.goto(`${base}/s/register`);
-    await page.getByRole('heading', { name: '注册账号' }).waitFor();
-    await save(page, 'register');
-    if (onlyShot === 'register') return;
-    await page.locator('#register-name').fill('示例学生');
-    await page.locator('#register-phone').fill('13800001111');
-    await page.getByTestId('register-pin-input').fill('2580');
-    await page.locator('#register-form').evaluate((form: HTMLFormElement) => form.requestSubmit());
-    await page.getByTestId('registered-invite-code').waitFor({ timeout: 20_000 });
-    await save(page, 'register-done');
-
     await page.goto(`${base}/s/recover`);
     await page.getByRole('heading', { name: '找回邀请码' }).waitFor();
     await save(page, 'recover');
 
-    await page.goto(`${base}/s/`);
-    await page.getByLabel('12 位邀请码').fill(codes[0]!);
-    await page.getByRole('button', { name: '进入我的错题本' }).click();
-    await page.waitForURL(/login=1/);
+    await page.goto(`${base}/s/register`);
+    await page.getByRole('heading', { name: '注册账号' }).waitFor();
+    await page.getByText('找回码跟手机号仅用于找回账户').waitFor();
+    await save(page, 'register');
+
+    await page.locator('#register-name').fill('帮助页示例');
+    await page.locator('#register-phone').fill('13800001111');
+    await page.getByTestId('register-pin-input').fill('2580');
+    await page.locator('#register-form').evaluate((form: HTMLFormElement) => form.requestSubmit());
+    await page.getByTestId('registered-invite-code').waitFor({ timeout: 20_000 });
+    await maskInviteCode(page);
+    await assertReal(page, 'register-done');
+    await save(page, 'register-done');
+
+    await page.getByRole('button', { name: '我已保存，进入错题本' }).click();
+    await page.waitForURL(/\/s\//);
     if (await page.getByRole('heading', { name: '你现在读初中还是高中？' }).count()) {
-      await save(page, 'stage');
       await page.getByRole('button', { name: '初中', exact: true }).click();
     }
 
     await page.getByTestId('empty-notebook').waitFor();
     await page.locator('[data-testid="capture-dock"]:visible').waitFor();
     await page.waitForFunction(() => document.querySelector('[data-testid="capture-dock"]')?.getAttribute('data-capture-choice') === 'sheet');
-    await page.waitForTimeout(400);
-    await save(page, 'notebook-empty');
-
     await page.locator('[data-testid="capture-add"]:visible').click();
-    await page.getByTestId('capture-mode-single').click();
-    // 材料合成提取默认给出没有批改痕迹、需要勾选的题；再传一张同批照片只为占位。
+    await page.getByTestId('capture-mode-sheet').waitFor();
+    await page.getByTestId('capture-mode-single').waitFor();
+    await page.getByTestId('capture-mode-multi').waitFor();
+    await page.getByTestId('capture-start').waitFor();
+    await page.getByText('拍一张你的错题照片').waitFor();
+    await page.getByText('AI 会找出错题，放进这里。').waitFor();
+    if (await page.getByText('拍一张批改过的卷子').count()) throw new Error('notebook-empty still shows the old empty-state headline');
+    await save(page, 'notebook-empty');
+    if (onlyEmpty) return;
+
     await page.locator('#camera-input').setInputFiles([
-      { name: 'plain.jpg', mimeType: 'image/jpeg', buffer: await jpeg('plain') },
-      { name: 'marked.jpg', mimeType: 'image/jpeg', buffer: await jpeg('marked') },
+      { name: 'exam.jpg', mimeType: 'image/jpeg', buffer: exam },
+      { name: 'factor.jpg', mimeType: 'image/jpeg', buffer: factor },
     ]);
     await page.waitForURL(/\/s\/new$/);
-    // Ionic keeps the previous page mounted. Idle 录入 opens the mode sheet from 新增 and does not show the tray pill.
-    await page.locator('.capture-inline').waitFor();
-    await page.waitForFunction(() => {
-      const dock = document.querySelector('.capture-inline');
-      return dock?.getAttribute('data-capture-choice') === 'sheet' && !dock.querySelector('[data-testid="capture-mode-bar"]');
-    });
-    const pick = page.locator('section.intake-photo[data-state="needsPick"]').first();
-    await pick.waitFor({ timeout: 60_000 });
-    await page.waitForTimeout(500);
-    await save(page, 'intake-auto');
-    if (onlyShot === 'notebook') return;
-    await pick.scrollIntoViewIfNeeded();
-    await pick.getByTestId('pick-candidate').first().click();
+    const examPhoto = page.locator('section.intake-photo:visible').filter({ hasText: '用配方法解方程' });
+    const factorPhoto = page.locator('section.intake-photo:visible').filter({ hasText: '分解因式' });
+    await examPhoto.waitFor({ timeout: 90_000 });
+    await factorPhoto.waitFor({ timeout: 90_000 });
+    await examPhoto.getByTestId('pick-candidate').filter({ hasText: '用配方法' }).getByTestId('pick-checkbox').click();
     await page.waitForTimeout(300);
+    await assertReal(page, 'intake-pick');
+    await examPhoto.scrollIntoViewIfNeeded();
     await save(page, 'intake-pick');
-    await pick.getByTestId('pick-submit').click();
-    await page.locator('section.intake-photo[data-state="done"]').first().waitFor({ timeout: 40_000 });
 
+    for (const photo of [examPhoto, factorPhoto]) {
+      await photo.getByTestId('pick-page').click();
+      await photo.getByTestId('pick-submit').click();
+      await photo.locator('[data-testid="intake-question"]').first().waitFor({ timeout: 40_000 });
+    }
     await page.getByTestId('intake-done').click();
     await page.waitForURL(/\/s\/?(\?|$)/);
-    await page.getByTestId('item-card').first().waitFor({ timeout: 40_000 });
-    await page.waitForTimeout(400);
+    await page.getByTestId('item-card').filter({ hasText: '用配方法' }).first().waitFor({ timeout: 40_000 });
+    await page.getByText('因式分解').first().waitFor();
+    await assertReal(page, 'notebook-list');
+    await page.getByTestId('item-card').filter({ hasText: '用配方法' }).first().scrollIntoViewIfNeeded();
     await save(page, 'notebook-list');
 
-    await page.getByTestId('item-card').first().click();
-    await page.getByTestId('question-text').waitFor();
-    await page.getByTestId('item-photo').waitFor();
-    await page.waitForTimeout(400);
+    await page.getByTestId('item-card').filter({ hasText: '用配方法' }).first().click();
+    const detail = page.locator('ion-content.item');
+    await detail.getByTestId('question-text').waitFor();
+    await detail.getByTestId('item-photo').waitFor();
+    await detail.getByTestId('question-text').getByText('用配方法解方程').waitFor();
+    await detail.getByText('AI 解答，仅供参考').waitFor({ timeout: 40_000 });
+    await page.waitForFunction(() => !document.body.innerText.includes('稍后给出') && !document.body.innerText.includes('【mock】') && !document.body.innerText.includes('Synthetic'));
+    await assertReal(page, 'item-detail');
+    await detail.getByTestId('item-photo').scrollIntoViewIfNeeded();
     await save(page, 'item-detail');
-    await page.getByTestId('item-answer').scrollIntoViewIfNeeded();
+
+    await page.getByTestId('item-answer').evaluate(element => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
     await page.waitForTimeout(300);
+    await detail.locator('.item-chapter-name', { hasText: '一元二次方程' }).waitFor();
+    await detail.getByTestId('item-tags').getByText('配方法', { exact: true }).waitFor();
+    await detail.getByTestId('item-tags').getByText('一元二次方程', { exact: true }).waitFor();
+    await assertReal(page, 'item-answer');
     await save(page, 'item-answer');
-    await page.evaluate(() => window.scrollTo(0, 0));
+
+    await detail.getByTestId('item-photo').scrollIntoViewIfNeeded();
     await page.getByTestId('item-more').click();
     await page.locator('ion-popover').getByText('不是错题，移除').waitFor();
+    await assertReal(page, 'item-menu');
     await save(page, 'item-menu');
-
-    await page.goto(`${base}/s/me`);
-    await page.getByText('即将推出').waitFor();
-    await page.getByTestId('settings-my-invite').waitFor();
-    await save(page, 'settings');
-    await page.goto(`${base}/s/install`);
-    await page.getByRole('heading', { name: '放到主屏幕' }).waitFor();
-    await save(page, 'install');
   } finally {
     await stopHost(child);
     await context.close();
     await browser.close();
   }
 
-  for (const stale of ['practice-home', 'practice-question', 'practice-print', 'practice-record', 'practice-submit', 'settings-practice', 'account']) {
-    const file = path.join(OUT, `${stale}.webp`);
-    if (fs.existsSync(file)) {
-      fs.unlinkSync(file);
-      console.log(`removed ${stale}.webp`);
+  if (!onlyNames) {
+    for (const stale of ['intake-auto', 'stage', 'settings', 'install', 'account']) {
+      const file = path.join(OUT, `${stale}.webp`);
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+        console.log(`removed ${stale}.webp`);
+      }
     }
   }
 }

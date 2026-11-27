@@ -285,8 +285,10 @@ describe('multi-page capture', () => {
     const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2, pageKind: 'paper' } });
     const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' } });
     await expect(extractMaterial(f.store, { extract: async () => { throw new MaterialProviderError('provider_down', '模型没有返回。', true); } }, paper.job.id, new AbortController().signal)).rejects.toMatchObject({ code: 'provider_down' });
-    expect(f.jobs.get(sheet.job.id)?.state).toBe('failed');
-    expect(jobError(f.db, sheet.job.id)).toMatchObject({ code: 'set_page_missing', retryable: true });
+    expect(f.jobs.get(sheet.job.id)?.state).toBe('queued');
+    expect(jobInput(f.db, sheet.job.id)).toMatchObject({ isolatedFallback: 'pending' });
+    expect(jobInput(f.db, sheet.job.id).setRole).toBeUndefined();
+    expect(jobError(f.db, sheet.job.id)).toBeNull();
     expect(storedExtraction(f.db, paper.assetId)).toBeNull();
     expect(storedExtraction(f.db, sheet.assetId)).toBeNull();
     expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 2 });
@@ -298,12 +300,13 @@ describe('multi-page capture', () => {
     await expect(extractMaterial(f.store, { extract: async () => { throw new PartialMaterialExtractionError(partialResult, new MaterialProviderError('fragment_unavailable', '有一块没读出来。', true)); } }, lead.job.id, new AbortController().signal)).rejects.toMatchObject({ code: 'fragment_unavailable' });
     expect(storedExtraction(f.db, lead.assetId)).toContain('1+1=?');
     expect(storedExtraction(f.db, omitted.assetId)).toBeNull();
-    expect(f.jobs.get(omitted.job.id)?.state).toBe('failed');
-    expect(jobError(f.db, omitted.job.id)).toMatchObject({ code: 'set_page_missing', retryable: true });
+    expect(f.jobs.get(omitted.job.id)?.state).toBe('queued');
+    expect(jobInput(f.db, omitted.job.id)).toMatchObject({ isolatedFallback: 'pending' });
+    expect(jobError(f.db, omitted.job.id)).toBeNull();
     expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 4 });
   });
 
-  it('marks a page the model left out as failed and retryable, then a retry reads that page alone', async () => {
+  it('queues an isolated extract when the model leaves a page out, and that extract reads the page alone', async () => {
     const f = await fixture();
     const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2, pageKind: 'paper' } });
     const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' } });
@@ -312,21 +315,19 @@ describe('multi-page capture', () => {
     await extractMaterial(f.store, { extract: async (input: { pages?: MaterialPageImage[] }) => { seen.push(input.pages?.length ?? 0); return { ...lead, set: [lead] }; } }, paper.job.id, new AbortController().signal);
     expect(seen).toEqual([2]);
     expect(f.jobs.get(paper.job.id)?.state).toBe('queued');
-    expect(f.jobs.get(sheet.job.id)?.state).toBe('failed');
-    expect(jobError(f.db, sheet.job.id)).toMatchObject({ code: 'set_page_missing', retryable: true });
+    expect(f.jobs.get(sheet.job.id)?.state).toBe('queued');
+    expect(jobInput(f.db, sheet.job.id)).toMatchObject({ isolatedFallback: 'pending' });
     expect(jobInput(f.db, sheet.job.id).setRole).toBeUndefined();
+    expect(jobError(f.db, sheet.job.id)).toBeNull();
     expect(storedExtraction(f.db, sheet.assetId)).toBeNull();
-    const retried = f.jobs.retry(sheet.job.id, randomUUID());
-    expect(retried.state).toBe('queued');
-    await f.jobs.resume();
-    expect(f.jobs.get(sheet.job.id)?.state).not.toBe('failed');
     const alone = pageExtraction(f.uploads, sheet.assetId, 'student_work', '2');
     await extractMaterial(f.store, { extract: async (input: { pages?: MaterialPageImage[] }) => { seen.push(input.pages?.length ?? 0); return alone; } }, sheet.job.id, new AbortController().signal);
     expect(seen).toEqual([2, 0]);
     expect(storedExtraction(f.db, sheet.assetId)).toContain('2');
+    expect(f.store.listQuestions()[0]?.documentId).toBe(`set_${f.captureId}`);
   });
 
-  it('fails a follower left queued when restart finds the first page already finished', async () => {
+  it('queues an isolated extract when restart finds the first page already finished', async () => {
     const f = await fixture();
     const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2 } });
     const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2 } });
@@ -341,9 +342,38 @@ describe('multi-page capture', () => {
     cleanups.push(async () => { await scheduler.stop(); });
     await restarted.resume();
     expect(restarted.get(paper.job.id)?.state).toBe('succeeded');
-    expect(restarted.get(sheet.job.id)?.state).toBe('failed');
-    expect(jobError(f.db, sheet.job.id)).toMatchObject({ code: 'set_page_missing', retryable: true });
+    expect(restarted.get(sheet.job.id)?.state).toBe('queued');
+    expect(jobInput(f.db, sheet.job.id)).toMatchObject({ isolatedFallback: 'pending' });
+    expect(jobError(f.db, sheet.job.id)).toBeNull();
     expect(f.db.prepare('SELECT count(*) n FROM material_asset').get()).toEqual({ n: 2 });
+  });
+
+  it('starts an isolated extract for every page when the combined call is invalid_output', async () => {
+    const f = await fixture();
+    const paper = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'paper.jpg', bytes: await f.jpeg('#fff'), hints: { captureMode: 'multi', pageIndex: 1, pageCount: 2, pageKind: 'paper' } });
+    const sheet = await f.uploads.save({ captureId: f.captureId, uploadId: randomUUID(), filename: 'sheet.jpg', bytes: await f.jpeg('#111'), hints: { captureMode: 'multi', pageIndex: 2, pageCount: 2, pageKind: 'answer_sheet' } });
+    const calls: { assetId: string; pages: number }[] = [];
+    f.jobs.register('extract', async (jobId, signal) => {
+      await extractMaterial(f.store, { extract: async input => {
+        calls.push({ assetId: input.assetId, pages: input.pages?.length ?? 0 });
+        if ((input.pages?.length ?? 0) > 1) throw new MaterialProviderError('invalid_output', '材料提取结果未通过来源或结构校验。', false);
+        const role = input.assetId === paper.assetId ? 'question' as const : 'teacher_mark' as const;
+        const text = input.assetId === paper.assetId ? '1. 合成题干' : '×';
+        return pageExtraction(f.uploads, input.assetId, role, text);
+      } }, jobId, signal);
+    });
+    await f.jobs.resume();
+    await expect.poll(() => storedExtraction(f.db, paper.assetId), { timeout: 5_000 }).toContain('合成题干');
+    await expect.poll(() => storedExtraction(f.db, sheet.assetId), { timeout: 5_000 }).toContain('×');
+    expect(calls.filter(call => call.pages > 1)).toHaveLength(1);
+    expect(calls.filter(call => call.pages === 0).map(call => call.assetId).sort()).toEqual([paper.assetId, sheet.assetId].sort());
+    expect(f.jobs.get(paper.job.id)?.state).toBe('succeeded');
+    expect(f.jobs.get(sheet.job.id)?.state).toBe('succeeded');
+    const questions = f.store.listQuestions();
+    expect(questions).toHaveLength(1);
+    expect(questions[0]?.documentId).toBe(`set_${f.captureId}`);
+    expect(questions[0]?.teacherMarks.map(mark => mark.text)).toEqual(['×']);
+    expect(questions[0]?.itemId).toBeNull();
   });
 
   it('reports a full queue from complete instead of claiming the set started', async () => {
